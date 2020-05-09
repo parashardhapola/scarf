@@ -1,6 +1,7 @@
 from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 from .writers import create_zarr_dataset
 from .ann import AnnStream
+import numpy as np
 
 __all__ = ['make_knn_graph']
 
@@ -26,6 +27,7 @@ def make_knn_graph(ann_obj: AnnStream, chunk_size: int, store,
     nsample_start = 0
     for i in ann_obj.iter_blocks(msg='Saving KNN graph'):
         ki, kv = ann_obj.transform_ann(ann_obj.reducer(i))
+        kv = kv.astype(np.float32, order='C')
         sigmas, rhos = smooth_knn_dist(kv, k=n_neighbors,
                                        local_connectivity=lc, bandwidth=bw)
         rows, cols, vals = compute_membership_strengths(ki, kv, sigmas, rhos)
