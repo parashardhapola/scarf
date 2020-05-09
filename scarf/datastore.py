@@ -293,7 +293,7 @@ class DataStore:
         pc[:, 1] = rescale_array(pc[:, 1])
         clusters = self.cells.table[self._col_renamer(from_assay, 'I', 'kmeans_cluster')]
         clusters = clusters[self.cells.table[cell_key]]
-        return np.array([pc[x] for x in clusters]).astype(np.float32)
+        return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', use_full_graph: bool = True,
                  min_edge_weight: float = 0, ini_embed: np.ndarray = None,
@@ -342,7 +342,7 @@ class DataStore:
             dendrogram = self._z[from_assay][graph_loc]['dendrogram'][:]
             print("INFO: Using existing dendrogram")
         else:
-            paris = skn.hierarchy.Paris(engine='python')
+            paris = skn.hierarchy.Paris()
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self._z[from_assay][graph_loc], 'dendrogram',
@@ -352,7 +352,7 @@ class DataStore:
         if balanced_cut:
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
         else:
-            labels = skn.hierarchy.straight_cut(dendrogram, n_clusters=n_clusters) + 1
+            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
         if return_clusters:
             return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
         else:
