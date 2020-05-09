@@ -2,3 +2,5 @@
 .vscode
 __pycache__
 data
+build
+scarf.egg-info
