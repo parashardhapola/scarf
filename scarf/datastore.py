@@ -56,7 +56,7 @@ class DataStore:
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = 'RNA',
                  min_genes_per_cell: int = 200, min_cells_per_gene: int = 20,
-                 auto_filter: bool = False, force_recalc: bool = False,
+                 auto_filter: bool = False, show_qc_plots: bool = True, force_recalc: bool = False,
                  mito_pattern: str = None, ribo_pattern: str = None):
         self._fn = zarr_loc
         self._z = zarr.open(self._fn, 'r+')
@@ -76,9 +76,11 @@ class DataStore:
             assay.add_percent_feature(mito_pattern, 'percentMito', verbose=False)
             assay.add_percent_feature(ribo_pattern, 'percentRibo', verbose=False)
         if auto_filter:
-            self.plot_cells_dists(cols=['percent*'], all_cells=True)
+            if show_qc_plots:
+                self.plot_cells_dists(cols=['percent*'], all_cells=True)
             self.auto_filter_cells(attrs=['nCounts', 'nFeatures', 'percentMito', 'percentRibo'])
-            self.plot_cells_dists(cols=['percent*'])
+            if show_qc_plots:
+                self.plot_cells_dists(cols=['percent*'])
 
     def _load_cells(self) -> MetaData:
         if 'cellData' not in self._z:
@@ -105,7 +107,7 @@ class DataStore:
                                  "Please note that names are case-sensitive.")
         else:
             if self.assayNames[0] != assay_name:
-                print(f"INFO: Default assay name was reset to {self.assayNames[0]}")
+                print(f"INFO: Default assay name was reset to {self.assayNames[0]}", flush=True)
                 assay_name = self.assayNames[0]
         return assay_name
 
@@ -180,7 +182,7 @@ class DataStore:
                 print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             x = self.cells.sift(self.cells.table[i].values, j, k)
-            print(f"INFO: {len(x) - x.sum()} cells failed filtering for {i}")
+            print(f"INFO: {len(x) - x.sum()} cells failed filtering for {i}", flush=True)
             self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
@@ -206,10 +208,10 @@ class DataStore:
         if reduction_method == 'auto':
             assay_type = str(assay.__class__).split('.')[-1][:-2]
             if assay_type == 'ATACassay':
-                print("INFO: Using LSI for dimension reduction")
+                print("INFO: Using LSI for dimension reduction", flush=True)
                 reduction_method = 'lsi'
             else:
-                print("INFO: Using PCA for dimension reduction")
+                print("INFO: Using PCA for dimension reduction", flush=True)
                 reduction_method = 'pca'
 
         if batch_size is None:
@@ -224,7 +226,7 @@ class DataStore:
         loadings_hash = hash((assay.create_subset_hash(cell_key, feat_key), dims))
         if loadings_name in assay.attrs and assay.attrs[loadings_name] == loadings_hash and \
                 loadings_name in assay._z[from_assay]:
-            print("INFO: Loading cached component coefficients/loadings")
+            print("INFO: Loading cached component coefficients/loadings", flush=True)
             loadings = self._z[from_assay][loadings_name][:]
         if dims is None and loadings is None:
             raise ValueError("ERROR: No cached data found. Please provide a value for 'dims'")
@@ -254,7 +256,7 @@ class DataStore:
             # This means that we used cached PCA data, which means that nothing changed upstream.
             store = self._z[from_assay][graph_loc]
             if store.attrs['k'] == k:
-                print("INFO: ANN index instantiated but will reuse the existing graph.")
+                print("INFO: ANN index instantiated but will reuse the existing graph.", flush=True)
                 return None
         graph_dir = f"{self._fn}/{from_assay}/{graph_loc}"
         if os.path.isdir(graph_dir):
@@ -328,7 +330,7 @@ class DataStore:
                                  "this parameter free")
         else:
             if n_clusters is not None:
-                print("INFO: Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.")
+                print("INFO: Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.", flush=True)
             if max_size is None or min_size is None:
                 raise ValueError("ERROR: Please provide value for max_size and min_size")
         graph = self._load_graph(from_assay, cell_key, 'csr', min_edge_weight=min_edge_weight, symmetric=True)
@@ -340,7 +342,7 @@ class DataStore:
         if 'dendrogram' in self._z[from_assay][graph_loc] and \
                 assay.attrs['dendrogram_hash'] == params:
             dendrogram = self._z[from_assay][graph_loc]['dendrogram'][:]
-            print("INFO: Using existing dendrogram")
+            print("INFO: Using existing dendrogram", flush=True)
         else:
             paris = skn.hierarchy.Paris()
             dendrogram = paris.fit_transform(graph)
