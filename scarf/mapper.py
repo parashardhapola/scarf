@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from .writers import create_zarr_dataset
 
+__all__ = ['Mapper']
+
 
 class Mapper():
     def __init__(self, ref, target, feat_key, name, assay_z, chunk_size, save_k = None):
