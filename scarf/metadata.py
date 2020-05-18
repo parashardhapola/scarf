@@ -49,6 +49,15 @@ class MetaData:
         self._save(k)
         return None
 
+    def remove(self, k: str) -> None:
+        if k in ['I', 'ids', 'names']:
+            raise ValueError(f"ERROR: {k} is a protected name in MetaData class. Cannot be deleted")
+        if k in self.table.columns:
+            self.table.drop(columns=k, inplace=True)
+            self._del(k)
+        else:
+            print (f"WARNING: {k} does not exist. Nothing to remove")
+
     def update(self, bool_arr: np.array, key: str = 'I') -> None:
         """
         Update valid rows using a boolean array and 'and' operation
@@ -140,8 +149,12 @@ class MetaData:
     def _save(self, key: str = None) -> None:
         if key is not None and key in self.table:
             create_zarr_obj_array(self._zgrp, key, self.table[key].values, self.table[key].dtype)
-        # FIXME: Why is following line here?
+        # FIXME: Why is the following line here?
         self._zgrp['I'] = self.table['I'].values
+
+    def _del(self, key: str = None) -> None:
+        if key is not None and key in self.table:
+            del self._zgrp[key]
 
     def __repr__(self):
         return f"MetaData of {self.table['I'].sum()}({self.N}) elements"
