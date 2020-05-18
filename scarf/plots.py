@@ -1,19 +1,15 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    import matplotlib.pyplot as plt
-    import matplotlib as mpl
-    import seaborn as sns
-    import numpy as np
-    import pandas as pd
-    from typing import Tuple
-    from cmocean import cm
-    from IPython.display import display
-    from holoviews.plotting import mpl as hmpl
-    from holoviews.operation.datashader import datashade, dynspread
-    import holoviews as hv
-    import datashader as dsh
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import seaborn as sns
+import numpy as np
+import pandas as pd
+from typing import Tuple
+from cmocean import cm
+from IPython.display import display
+from holoviews.plotting import mpl as hmpl
+from holoviews.operation.datashader import datashade, dynspread
+import holoviews as hv
+import datashader as dsh
 
 __all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter']
 

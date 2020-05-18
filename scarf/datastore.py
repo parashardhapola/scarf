@@ -1,22 +1,18 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    import zarr
-    import os
-    import shutil
-    import numpy as np
-    from typing import List, Iterable, Union
-    import re
-    from dask import optimize
-    from scipy.stats import norm
-    import pandas as pd
-    from uuid import uuid4
-    from .writers import create_zarr_dataset
-    from .metadata import MetaData
-    from .assay import Assay, RNAassay, ATACassay, ADTassay
-    from .utils import show_progress
+import zarr
+import os
+import shutil
+import numpy as np
+from typing import List, Iterable, Union
+import re
+from dask import optimize
+from scipy.stats import norm
+import pandas as pd
+from uuid import uuid4
+from scipy.sparse import coo_matrix, csr_matrix, triu
+from .writers import create_zarr_dataset
+from .metadata import MetaData
+from .assay import Assay, RNAassay, ATACassay, ADTassay
+from .utils import show_progress
 
 
 __all__ = ['DataStore']
@@ -197,7 +193,6 @@ class DataStore:
                    rand_state: int = 4466, batch_size: int = None,
                    save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
         from .ann import AnnStream
-        from .knn_utils import make_knn_graph
         if from_assay is None:
             from_assay = self.defaultAssay
         assay = self.__getattribute__(from_assay)
@@ -264,12 +259,12 @@ class DataStore:
         store.attrs['n_cells'] = ann_obj.nCells
         store.attrs['k'] = ann_obj.k
         store.attrs['self_uuid'] = uuid4().hex
+        from .knn_utils import make_knn_graph
         make_knn_graph(ann_obj, batch_size, store, save_raw_dists=save_raw_dists)
         return None
 
     def _load_graph(self, from_assay: str, cell_key: str, graph_format: str,
                     min_edge_weight: float = 0, symmetric: bool = True):
-        from scipy.sparse import coo_matrix, csr_matrix, triu
         graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
         if graph_loc not in self._z[from_assay]:
             print(f"ERROR: {graph_loc} not found for assay {from_assay}. Run `make_graph` for assay {from_assay}")

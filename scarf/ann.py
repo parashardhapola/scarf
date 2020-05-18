@@ -1,14 +1,10 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    from sklearn.decomposition import IncrementalPCA
-    from sklearn.cluster import MiniBatchKMeans
-    import hnswlib
-    from tqdm import tqdm
-    import numpy as np
-    from scipy import sparse
-    from gensim.models import LsiModel
+from sklearn.decomposition import IncrementalPCA
+from sklearn.cluster import MiniBatchKMeans
+import hnswlib
+from tqdm import tqdm
+import numpy as np
+from scipy import sparse
+from gensim.models import LsiModel
 
 __all__ = ['AnnStream']
 

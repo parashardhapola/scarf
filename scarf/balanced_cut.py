@@ -1,13 +1,9 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    import numpy as np
-    import networkx as nx
-    import logzero
-    from logzero import logger
-    import logging
-    from typing import List, Dict
+import numpy as np
+import networkx as nx
+import logzero
+from logzero import logger
+import logging
+from typing import List, Dict
 
 formatter = logging.Formatter('(%(asctime)s) [%(levelname)s]: %(message)s', "%H:%M:%S")
 logzero.formatter(formatter)

@@ -1,11 +1,7 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    import numpy as np
-    from umap.umap_ import smooth_knn_dist, compute_membership_strengths
-    from .writers import create_zarr_dataset
-    from .ann import AnnStream
+import numpy as np
+from umap.umap_ import smooth_knn_dist, compute_membership_strengths
+from .writers import create_zarr_dataset
+from .ann import AnnStream
 
 __all__ = ['make_knn_graph']
 

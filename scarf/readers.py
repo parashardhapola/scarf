@@ -1,16 +1,12 @@
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
-    from abc import ABC, abstractmethod
-    from typing import Generator, Dict, List, Optional, Tuple
-    import numpy as np
-    import pandas as pd
-    import h5py
-    import os
-    import sparse
-    import gzip
-    from typing import IO
+from abc import ABC, abstractmethod
+from typing import Generator, Dict, List, Optional, Tuple
+import numpy as np
+import pandas as pd
+import h5py
+import os
+import sparse
+import gzip
+from typing import IO
 
 
 __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader']
