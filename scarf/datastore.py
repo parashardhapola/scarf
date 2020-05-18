@@ -289,16 +289,16 @@ class DataStore:
         else:
             return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
-    def _ini_embed(self, from_assay: str, cell_key: str):
-        pc = PCA(n_components=2).fit_transform(self._z[from_assay]['kmeans_cluster_centers'][:])
-        pc[:, 0] = rescale_array(pc[:, 0])
-        pc[:, 1] = rescale_array(pc[:, 1])
+    def _ini_embed(self, from_assay: str, cell_key: str, n_comps: int):
+        pc = PCA(n_components=n_comps).fit_transform(self._z[from_assay]['kmeans_cluster_centers'][:])
+        for i in range(n_comps):
+            pc[:, i] = rescale_array(pc[:, i])
         clusters = self.cells.table[self._col_renamer(from_assay, 'I', 'kmeans_cluster')]
         clusters = clusters[self.cells.table[cell_key]]
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', use_full_graph: bool = True,
-                 min_edge_weight: float = 0, ini_embed: np.ndarray = None,
+                 min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
                  spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
                  random_seed: int = 4444, parallel: bool = False, **kwargs) -> None:
         if from_assay is None:
@@ -310,12 +310,13 @@ class DataStore:
             nodes = np.where(self.cells.table[self.cells.table.I][cell_key].values)[0]
             graph = graph[nodes, :][:, nodes].tocoo()
         if ini_embed is None:
-            ini_embed = self._ini_embed(from_assay, cell_key)
+            ini_embed = self._ini_embed(from_assay, cell_key, umap_dims)
         t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, parallel=parallel, **kwargs)
-        self.cells.add(self._col_renamer(from_assay, cell_key, 'UMAP1'), t[:, 0], key=cell_key, overwrite=True)
-        self.cells.add(self._col_renamer(from_assay, cell_key, 'UMAP2'), t[:, 1], key=cell_key, overwrite=True)
+        for i in range(umap_dims):
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'UMAP{i+1}'),
+                           t[:, i], key=cell_key, overwrite=True)
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I',
@@ -408,7 +409,7 @@ class DataStore:
             vals = self.cells.fetch(k, cell_key)
             if vals.dtype == object:
                 vals = pd.Series(vals, dtype="category")
-            elif all(vals == vals.astype(int)):
+            elif vals.dtype == int:
                 vals = pd.Series(vals, dtype="category")
             else:
                 vals = pd.Series(vals, dtype=float)
