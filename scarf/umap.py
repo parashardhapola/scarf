@@ -3,14 +3,18 @@
 #
 # License: BSD 3 clause
 
-import numpy as np
-from sklearn.utils import check_random_state
-from umap.umap_ import make_epochs_per_sample, find_ab_params
-from umap.layouts import optimize_layout_euclidean
-import numba
-import locale
-from umap.utils import tau_rand_int
-from tqdm import tqdm
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import numpy as np
+    from sklearn.utils import check_random_state
+    from umap.umap_ import make_epochs_per_sample, find_ab_params
+    from umap.layouts import optimize_layout_euclidean
+    import numba
+    import locale
+    from tqdm import tqdm
+
 locale.setlocale(locale.LC_NUMERIC, "C")
 
 

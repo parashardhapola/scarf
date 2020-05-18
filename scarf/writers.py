@@ -1,9 +1,13 @@
-import zarr
-from numcodecs import Blosc
-from typing import Any, Tuple
-import numpy as np
-from tqdm import tqdm
-from .readers import CrReader
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import zarr
+    from numcodecs import Blosc
+    from typing import Any, Tuple
+    import numpy as np
+    from tqdm import tqdm
+    from .readers import CrReader
 
 __all__ = ['CrToZarr', 'subset_assay_zarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'dask_to_zarr']
 

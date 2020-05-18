@@ -1,25 +1,22 @@
-import zarr
-import os
-import shutil
-import numpy as np
-from typing import List, Iterable, Union
-import re
-from dask import optimize
-from scipy.stats import norm
-from scipy.sparse import coo_matrix, csr_matrix, triu
-from sklearn.decomposition import PCA
-import sknetwork as skn
-import pandas as pd
-from .writers import create_zarr_dataset
-from .metadata import MetaData
-from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import show_progress
-from .ann import AnnStream
-from .knn_utils import make_knn_graph
-from .umap import fit_transform
-from .plots import plot_qc, plot_mean_var, plot_scatter, shade_scatter
-from uuid import uuid4
-from .balanced_cut import BalancedCut
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import zarr
+    import os
+    import shutil
+    import numpy as np
+    from typing import List, Iterable, Union
+    import re
+    from dask import optimize
+    from scipy.stats import norm
+    import pandas as pd
+    from uuid import uuid4
+    from .writers import create_zarr_dataset
+    from .metadata import MetaData
+    from .assay import Assay, RNAassay, ATACassay, ADTassay
+    from .utils import show_progress
 
 
 __all__ = ['DataStore']
@@ -199,6 +196,8 @@ class DataStore:
                    ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = 5, ann_nthreads: int = 1,
                    rand_state: int = 4466, batch_size: int = None,
                    save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
+        from .ann import AnnStream
+        from .knn_utils import make_knn_graph
         if from_assay is None:
             from_assay = self.defaultAssay
         assay = self.__getattribute__(from_assay)
@@ -270,6 +269,7 @@ class DataStore:
 
     def _load_graph(self, from_assay: str, cell_key: str, graph_format: str,
                     min_edge_weight: float = 0, symmetric: bool = True):
+        from scipy.sparse import coo_matrix, csr_matrix, triu
         graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
         if graph_loc not in self._z[from_assay]:
             print(f"ERROR: {graph_loc} not found for assay {from_assay}. Run `make_graph` for assay {from_assay}")
@@ -290,6 +290,7 @@ class DataStore:
             return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
     def _ini_embed(self, from_assay: str, cell_key: str, n_comps: int):
+        from sklearn.decomposition import PCA
         pc = PCA(n_components=n_comps).fit_transform(self._z[from_assay]['kmeans_cluster_centers'][:])
         for i in range(n_comps):
             pc[:, i] = rescale_array(pc[:, i])
@@ -301,6 +302,7 @@ class DataStore:
                  min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
                  spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
                  random_seed: int = 4444, parallel: bool = False, **kwargs) -> None:
+        from .umap import fit_transform
         if from_assay is None:
             from_assay = self.defaultAssay
         if use_full_graph:
@@ -323,6 +325,8 @@ class DataStore:
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
                        return_clusters: bool = False) -> Union[None, pd.Series]:
+        import sknetwork as skn
+        from .balanced_cut import BalancedCut
         if from_assay is None:
             from_assay = self.defaultAssay
         if balanced_cut is False:
@@ -363,6 +367,7 @@ class DataStore:
                            fill_val=-1, key=cell_key, overwrite=True)
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
+        from .plots import plot_qc
         plot_cols = ['nCounts', 'nFeatures']
         if cols is not None:
             if type(cols) != list:
@@ -382,6 +387,7 @@ class DataStore:
         return None
 
     def plot_gene_mean_var(self, **kwargs):
+        from .plots import plot_mean_var
         assay = self.__getattribute__(self.defaultAssay)
         if 'hvgs' not in assay.feats.table.columns:
             raise KeyError(f"ERROR: HVGs have not been marked yet. Run 'mark_hvgs' first in {self.defaultAssay} assay.")
@@ -418,6 +424,7 @@ class DataStore:
     def plot_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
                   color_by: str = None, clip_fraction: float = 0.01, shade: bool = False,
                   labels_kwargs: dict = None, legends_kwargs: dict = None, **kwargs):
+        from .plots import plot_scatter, shade_scatter
         if from_assay is None:
             from_assay = self.defaultAssay
         if feat_assay is None:

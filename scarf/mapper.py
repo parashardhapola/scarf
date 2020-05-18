@@ -1,6 +1,10 @@
-import pandas as pd
-import numpy as np
-from .writers import create_zarr_dataset
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import pandas as pd
+    import numpy as np
+    from .writers import create_zarr_dataset
 
 __all__ = ['Mapper']
 

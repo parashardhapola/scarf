@@ -1,9 +1,13 @@
-import pandas as pd
-import numpy as np
-from statsmodels.nonparametric.smoothers_lowess import lowess
-from typing import Callable
-from dask.diagnostics import ProgressBar
-import functools
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import pandas as pd
+    import numpy as np
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+    from typing import Callable
+    from dask.diagnostics import ProgressBar
+    import functools
 
 
 def fit_lowess(a, b, n_bins: int,

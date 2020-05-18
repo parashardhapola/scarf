@@ -1,9 +1,13 @@
-import numpy as np
-import dask.array as daskarr
-import zarr
-from .metadata import MetaData
-from .utils import show_progress
-from .writers import dask_to_zarr
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+    import numpy as np
+    import dask.array as daskarr
+    import zarr
+    from .metadata import MetaData
+    from .utils import show_progress
+    from .writers import dask_to_zarr
 
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
