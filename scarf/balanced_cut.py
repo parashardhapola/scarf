@@ -117,7 +117,7 @@ class BalancedCut:
                     s.extend(list(self.graph.successors(i)))
         return bps
 
-    def _valid_names_in_brachpoints(self) -> None:
+    def _valid_names_in_branchpoints(self) -> None:
         leaves = []
         for i in self.branchpoints:
             leaves.extend(self.branchpoints[i])
@@ -136,7 +136,7 @@ class BalancedCut:
         """
         Make cluster label array from `get_branchpoints` output
         """
-        self._valid_names_in_brachpoints()
+        self._valid_names_in_branchpoints()
         c = np.zeros(self.nCells).astype(int)
         for n, i in enumerate(self.branchpoints, start=1):
             c[self.branchpoints[i]] = n
