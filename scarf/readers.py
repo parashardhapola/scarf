@@ -108,8 +108,11 @@ class CrReader(ABC):
             self._read_dataset('feature_ids'), assay)
 
     def feature_names(self, assay: str = None) -> List[str]:
-        return self._subset_by_assay(
-            self._read_dataset('feature_names'), assay)
+        vals = self._read_dataset('feature_names')
+        if vals is None:
+            print('WARNING: Feature names extraction failed using feature IDs', flush=True)
+            vals = self._read_dataset('feature_ids')
+        return self._subset_by_assay(vals, assay)
 
     def feature_types(self) -> List[str]:
         if self.grpNames['feature_types'] is not None:
@@ -181,14 +184,19 @@ class CrDirReader(CrReader):
             self.matFn = self.loc + 'matrix.mtx'
             grps = {'feature_ids': ('genes.tsv', 0),
                     'feature_names': ('genes.tsv', 1),
-                    'feature_types': None, 'cell_names': ('barcodes.tsv', 0)}
+                    'feature_types': None,
+                    'cell_names': ('barcodes.tsv', 0)}
         else:
             raise IOError("ERROR: Couldn't find files")
         return grps
 
     def _read_dataset(self, key: Optional[str] = None):
-        return [x.split('\t')[self.grpNames[key][1]] for x in
-                read_file(self.loc + self.grpNames[key][0])]
+        try:
+            vals = [x.split('\t')[self.grpNames[key][1]] for x in
+                    read_file(self.loc + self.grpNames[key][0])]
+        except IndexError:
+            vals = None
+        return vals
 
     def to_sparse(self, a):
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
