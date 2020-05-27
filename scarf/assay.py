@@ -9,23 +9,22 @@ from .writers import dask_to_zarr
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
 
-def dummy_norm(counts: daskarr, **kwargs) -> daskarr:
+def norm_dummy(assay, counts: daskarr) -> daskarr:
     return counts
 
 
-def norm_lib_size(counts: daskarr, sf: float, n_counts: np.ndarray) -> daskarr:
-    return sf * counts / (n_counts.reshape(-1, 1)+1)
+def norm_lib_size(assay, counts: daskarr) -> daskarr:
+    return assay.sf * counts / (assay.scalar.reshape(-1, 1)+1)
 
 
-def norm_clr(counts: daskarr) -> daskarr:
+def norm_clr(assay, counts: daskarr) -> daskarr:
     f = np.exp(np.log1p(counts).sum(axis=0) / len(counts))
     return np.log1p(counts / f)
 
 
-def norm_tf_idf(counts: daskarr, n_docs: int, n_feats_per_cell: np.ndarray,
-                n_cells_per_feat: np.ndarray) -> daskarr:
-    tf = counts / n_feats_per_cell.reshape(-1, 1)
-    idf = np.log2(n_docs / (n_cells_per_feat+1))
+def norm_tf_idf(assay, counts: daskarr) -> daskarr:
+    tf = counts / assay._n_term_per_doc.reshape(-1, 1)
+    idf = np.log2(assay._n_docs / (assay._n_docs_per_term + 1))
     return tf * idf
 
 
@@ -41,7 +40,7 @@ class Assay:
         if 'percentFeatures' not in self.attrs:
             self.attrs['percentFeatures'] = {}
         self.annObj = None  # Can be dynamically attached for debugging purposes
-        self.normMethod = dummy_norm
+        self.normMethod = norm_dummy
         self.sf = None
         self._ini_feature_props()
 
@@ -50,7 +49,8 @@ class Assay:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        return self.normMethod(self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize))
+        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        return self.normMethod(self, counts)
 
     @show_progress
     def _ini_feature_props(self, force_recalc: bool = False) -> None:
@@ -113,6 +113,7 @@ class RNAassay(Assay):
         super().__init__(fn, name, cell_data)
         self.normMethod = norm_lib_size
         self.sf = 10000
+        self.scalar = None
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, renormed: bool = False):
         if cell_idx is None:
@@ -121,10 +122,10 @@ class RNAassay(Assay):
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
         if renormed:
-            scalar = counts.sum(axis=1).reshape(-1, 1) + 1
+            self.scalar = counts.sum(axis=1).reshape(-1, 1) + 1
         else:
-            scalar = self.cells.table['nCounts'].values[cell_idx]
-        return self.normMethod(counts, self.sf, scalar)
+            self.scalar = self.cells.table['nCounts'].values[cell_idx]
+        return self.normMethod(self, counts)
 
     def correct_var(self, n_bins: int = 200, lowess_frac: float = 0.1) -> None:
         self.feats.remove_trend('c_var', 'avg', 'sigmas', n_bins, lowess_frac)
@@ -187,15 +188,20 @@ class ATACassay(Assay):
     def __init__(self, fn: str, name: str, cell_data: MetaData):
         super().__init__(fn, name, cell_data)
         self.normMethod = norm_tf_idf
+        self._n_term_per_doc = None
+        self._n_docs = None
+        self._n_docs_per_term = None
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        return self.normMethod(self.rawData[cell_idx, :][:, feat_idx], n_docs=len(cell_idx),
-                               n_feats_per_cell=self.cells.table['nFeatures'].values[cell_idx],
-                               n_cells_per_feat=self.feats.table['nCells'].values[feat_idx])
+        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        self._n_term_per_doc = self.cells.table['nFeatures'].values[cell_idx]
+        self._n_docs = len(cell_idx)
+        self._n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
+        return self.normMethod(self, counts)
 
     @show_progress
     def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I') -> None:
@@ -237,4 +243,5 @@ class ADTassay(Assay):
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        return self.normMethod(self.rawData[cell_idx, :][:, feat_idx])
+        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        return self.normMethod(self, counts)
