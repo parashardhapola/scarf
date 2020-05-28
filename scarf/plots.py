@@ -208,7 +208,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
 
 
 def shade_scatter(df, fig_size: float = 7, width_px: int = 1000, height_px: int = 1000,
-                  x_sampling: float = 0.5, y_sampling: float = 0.5,
+                  x_sampling: float = 0.2, y_sampling: float = 0.2,
                   spread_px: int = 1, min_alpha: int = 10, cmap=None, color_key: dict = None,
                   labels_kwargs: dict = None, legends_kwargs: dict = None):
     x, y, v = df.columns
