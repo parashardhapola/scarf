@@ -9,38 +9,38 @@ formatter = logging.Formatter('(%(asctime)s) [%(levelname)s]: %(message)s', "%H:
 logzero.formatter(formatter)
 logzero.loglevel(logging.INFO)
 
-__all__ = ['BalancedCut']
+__all__ = ['BalancedCut', 'SummarizedTree']
+
+
+def make_digraph(d: np.ndarray) -> nx.DiGraph:
+    """
+    Convert dendrogram into directed graph
+    """
+    g = nx.DiGraph()
+    n = d.shape[0] + 1  # Dendrogram contains one less sample
+    for i in d:
+        v = i[2]  # Distance between clusters
+        i = i.astype(int)
+        g.add_node(n, nleaves=i[3], dist=v)
+        if i[0] <= d.shape[0]:
+            g.add_node(i[0], nleaves=0, dist=v)
+        if i[1] <= d.shape[0]:
+            g.add_node(i[1], nleaves=0, dist=v)
+        g.add_edge(n, i[0])
+        g.add_edge(n, i[1])
+        n += 1
+    return g
 
 
 class BalancedCut:
     def __init__(self, dendrogram: np.ndarray, max_size: int, min_size: int,
                  max_distance_fc: float):
         self.nCells = dendrogram.shape[0] + 1
-        self.graph = self._make_digraph(dendrogram)
+        self.graph = make_digraph(dendrogram)
         self.maxSize = max_size
         self.minSize = min_size
         self.maxDistFc = max_distance_fc
         self.branchpoints = self._get_branchpoints()
-
-    @staticmethod
-    def _make_digraph(d: np.ndarray) -> nx.DiGraph:
-        """
-        Convert dendrogram into directed graph
-        """
-        g = nx.DiGraph()
-        n = d.shape[0] + 1  # Dendrogram contains one less sample
-        for i in d:
-            v = i[2]  # Distance between clusters
-            i = i.astype(int)
-            g.add_node(n, nleaves=i[3], dist=v)
-            if i[0] <= d.shape[0]:
-                g.add_node(i[0], nleaves=0, dist=v)
-            if i[1] <= d.shape[0]:
-                g.add_node(i[1], nleaves=0, dist=v)
-            g.add_edge(n, i[0])
-            g.add_edge(n, i[1])
-            n += 1
-        return g
 
     def _successors(self, start: int, min_leaves: int) -> List[int]:
         """
@@ -193,3 +193,51 @@ class BalancedCut:
         #
         # res = [9, 5, 5, 1, 1, 1, 1, 7, 7, 7, 3, 3, 3, 3, 3, 4, 4, 4, 2, 2, 2, 8,
         #        8, 8, 6, 6, 6, 6, 6, 6]
+
+
+class SummarizedTree:
+    def __init__(self, dendrogram: np.ndarray):
+        self.g = make_digraph(dendrogram)
+        self.root = len(self.g.nodes()) - 1
+
+    def _find_common_ancestor(self, leaves):
+        q = [self.root]
+        candidates = []
+        nl = len(leaves)
+        while len(q) > 0:
+            for i in self.g.successors(q.pop(0)):
+                q.append(i)
+                if self.g.nodes[i]['nleaves'] == nl:
+                    candidates.append(i)
+        for c in candidates:
+            q = [c]
+            l = []
+            while len(q) > 0:
+                for i in self.g.successors(q.pop(0)):
+                    if self.g.nodes[i]['nleaves'] == 0:
+                        l.append(i)
+                    else:
+                        q.append(i)
+            l = np.array(sorted(l))
+            if all(leaves == l):
+                return c
+        return False
+
+    def extract_ancestor_tree(self, ids: np.ndarray) -> nx.Graph:
+        sn = {}
+        for i in sorted(set(ids)):
+            idx = np.where(ids == i)[0]
+            ca = self._find_common_ancestor(idx)
+            if ca is False:
+                print(f'WARNING: No stop node found for {i}')
+            else:
+                sn[ca] = i
+        q = [self.root]
+        o = [self.root]
+        while len(q) > 0:
+            for i in self.g.successors(q.pop(0)):
+                if self.g.nodes[i]['nleaves'] != 0:
+                    if i not in sn:
+                        q.append(i)
+                    o.append(i)
+        return nx.subgraph(self.g, o)

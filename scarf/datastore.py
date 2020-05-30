@@ -321,7 +321,7 @@ class DataStore:
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
                        return_clusters: bool = False) -> Union[None, pd.Series]:
         import sknetwork as skn
-        from .balanced_cut import BalancedCut
+        from .dendrogram import BalancedCut
         if from_assay is None:
             from_assay = self.defaultAssay
         if balanced_cut is False:
