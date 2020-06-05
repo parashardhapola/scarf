@@ -14,7 +14,6 @@ from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
 from .utils import show_progress
 
-
 __all__ = ['DataStore']
 
 
@@ -106,7 +105,7 @@ class DataStore:
 
     def _load_assays(self, assays: dict) -> None:
         assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay}
-        print_options = '\n'.join(["{'%s': '"+x+"'}" for x in assay_types])
+        print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "CAUTION: %s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter. You can provide assay type in one these ways:\n" + print_options
@@ -191,6 +190,7 @@ class DataStore:
                    reduction_method: str = 'auto', k: int = 11, n_cluster: int = 100, dims: int = None,
                    ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = 5, ann_nthreads: int = 1,
                    rand_state: int = 4466, batch_size: int = None,
+                   log_transform: bool = False, renormalize_subset: bool = True,
                    save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
         from .ann import AnnStream
         if from_assay is None:
@@ -199,25 +199,27 @@ class DataStore:
         reduction_method = reduction_method.lower()
         if reduction_method not in ['pca', 'lsi', 'auto']:
             raise ValueError("ERROR: Please choose either 'pca' or 'lsi' as reduction method")
+        assay_type = str(assay.__class__).split('.')[-1][:-2]
         if reduction_method == 'auto':
-            assay_type = str(assay.__class__).split('.')[-1][:-2]
             if assay_type == 'ATACassay':
                 print("INFO: Using LSI for dimension reduction", flush=True)
                 reduction_method = 'lsi'
             else:
                 print("INFO: Using PCA for dimension reduction", flush=True)
                 reduction_method = 'pca'
-
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
-        data = assay.select_and_normalize(cell_key, feat_key, batch_size)
+        data = assay.select_and_normalize(cell_key, feat_key, batch_size,
+                                          log_transform=log_transform,
+                                          renormalize_subset=renormalize_subset)
         # data is not guaranteed to have same indices as raw data and may be shifted. we handle this in the pipeline
         mu = clean_array(data.mean(axis=0).compute())
         sigma = clean_array(data.std(axis=0).compute(), 1)
 
         loadings = None
         loadings_name = reduction_method if cell_key == 'I' else cell_key + '_' + reduction_method
-        loadings_hash = hash((assay.create_subset_hash(cell_key, feat_key), dims))
+        loadings_hash = hash((assay.create_subset_hash(cell_key, feat_key), dims,
+                              log_transform, renormalize_subset))
         if loadings_name in assay.attrs and assay.attrs[loadings_name] == loadings_hash and \
                 loadings_name in assay._z[from_assay]:
             print("INFO: Loading cached component coefficients/loadings", flush=True)
@@ -277,7 +279,7 @@ class DataStore:
         graph = coo_matrix((store['weights'][:], (store['edges'][:, 0], store['edges'][:, 1])),
                            shape=(n_cells, n_cells))
         if symmetric:
-            graph = triu((graph + graph.T)/2)
+            graph = triu((graph + graph.T) / 2)
         idx = graph.data > min_edge_weight
         if graph_format == 'coo':
             return coo_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
@@ -312,7 +314,7 @@ class DataStore:
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, parallel=parallel, **kwargs)
         for i in range(umap_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'UMAP{i+1}'),
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'UMAP{i + 1}'),
                            t[:, i], key=cell_key, overwrite=True)
         return None
 
@@ -330,7 +332,8 @@ class DataStore:
                                  "this parameter free")
         else:
             if n_clusters is not None:
-                print("INFO: Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.", flush=True)
+                print("INFO: Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.",
+                      flush=True)
             if max_size is None or min_size is None:
                 raise ValueError("ERROR: Please provide value for max_size and min_size")
         graph = self._load_graph(from_assay, cell_key, 'csr', min_edge_weight=min_edge_weight, symmetric=True)
