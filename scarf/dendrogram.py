@@ -240,4 +240,10 @@ class SummarizedTree:
                     if i not in sn:
                         q.append(i)
                     o.append(i)
-        return nx.subgraph(self.g, o)
+        g = nx.DiGraph(nx.subgraph(self.g, o))
+        for i in g.nodes():
+            if i in sn:
+                g.nodes[i]['partition_id'] = sn[i]
+            else:
+                g.nodes[i]['partition_id'] = -1
+        return g
