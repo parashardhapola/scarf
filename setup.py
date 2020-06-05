@@ -30,6 +30,6 @@ if __name__ == "__main__":
         keywords=KEYWORDS,
         install_requires=[x.strip() for x in open('requirements.txt')],
         version=VERSION,
-        packages=find_packages(exclude=['data']),
+        packages=find_packages(exclude=['data', 'bin']),
         include_package_data=False
     )
