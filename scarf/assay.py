@@ -84,7 +84,7 @@ class Assay:
         feat_idx = self.feats.active_index(feat_key)
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
-    def select_and_normalize(self, cell_key: str, feat_key: str, batch_size: int) -> daskarr:
+    def select_and_normalize(self, cell_key: str, feat_key: str, batch_size: int, **kwargs) -> daskarr:
         if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
             raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
         if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
@@ -97,8 +97,8 @@ class Assay:
         if subset_name in self.attrs and self.attrs[subset_name] == subset_hash and loc in self._z:
             print(f"INFO: Exact features already selected for assay {self.name}")
         else:
-            # renormed parameter will not have an effect unless the norMethod uses it. But this is hard coded
-            dask_to_zarr(self.normed(cell_idx, feat_idx, renormed=True), self._z, loc, batch_size)
+            vals = self.normed(cell_idx, feat_idx, **kwargs)
+            dask_to_zarr(vals, self._z, loc, batch_size)
             self.attrs[subset_name] = subset_hash
         return daskarr.from_zarr(self._z[loc])
 
@@ -115,13 +115,16 @@ class RNAassay(Assay):
         self.sf = 10000
         self.scalar = None
 
-    def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, renormed: bool = False):
+    def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None,
+               renormalize_subset: bool = False, log_transform: bool = False, **kwargs):
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
-        if renormed:
+        if log_transform:
+            counts = np.log1p(counts)
+        if renormalize_subset:
             self.scalar = counts.sum(axis=1).reshape(-1, 1) + 1
         else:
             self.scalar = self.cells.table['nCounts'].values[cell_idx]
