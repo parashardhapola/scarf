@@ -295,6 +295,35 @@ class DataStore:
         clusters = clusters[self.cells.table[cell_key]]
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
+    def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I',
+                 tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200,
+                 alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.') -> None:
+        from uuid import uuid4
+        from .knn_utils import export_knn_to_mtx
+        from pathlib import Path
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        uid = str(uuid4())
+
+        ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
+        with open(ini_emb_fn, 'w') as h:
+            ini_emb = self._ini_embed(from_assay, cell_key, 2).flatten()
+            h.write('\n'.join(map(str, ini_emb)))
+        knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
+        export_knn_to_mtx(knn_mtx_fn, self._z[from_assay].graph)
+        out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
+
+        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
+              f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
+        os.system(cmd)
+        emb = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values.T
+        for i in range(tsne_dims):
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'tSNE{i + 1}'),
+                           emb[i], key=cell_key, overwrite=True)
+        for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
+            Path.unlink(fn)
+
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', use_full_graph: bool = True,
                  min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
                  spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
@@ -419,9 +448,9 @@ class DataStore:
                 vals = pd.Series(vals, dtype=float)
             return vals
 
-    def plot_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
-                  color_by: str = None, clip_fraction: float = 0.01, shade: bool = False,
-                  labels_kwargs: dict = None, legends_kwargs: dict = None, **kwargs):
+    def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
+                    layout_key: str = 'UMAP', color_by: str = None, clip_fraction: float = 0.01, shade: bool = False,
+                    labels_kwargs: dict = None, legends_kwargs: dict = None, **kwargs):
         from .plots import plot_scatter, shade_scatter
         if from_assay is None:
             from_assay = self.defaultAssay
@@ -429,14 +458,14 @@ class DataStore:
             feat_assay = from_assay
         if clip_fraction >= 0.5:
             raise ValueError("ERROR: clip_fraction cannot be larger than or equal to 0.5")
-        x = self.cells.fetch(self._col_renamer(from_assay, cell_key, 'UMAP1'), cell_key)
-        y = self.cells.fetch(self._col_renamer(from_assay, cell_key, 'UMAP2'), cell_key)
+        x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{layout_key}1'), cell_key)
+        y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{layout_key}2'), cell_key)
         if color_by is not None:
             v = self.get_cell_vals(from_assay=feat_assay, cell_key=cell_key, k=color_by,
                                    clip_fraction=clip_fraction)
         else:
             v = np.ones(len(x))
-        df = pd.DataFrame({'UMAP 1': x, 'UMAP 2': y, 'v': v})
+        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'v': v})
         if shade:
             return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs, **kwargs)
         else:
