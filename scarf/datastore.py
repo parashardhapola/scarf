@@ -191,6 +191,7 @@ class DataStore:
                    ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = 5, ann_nthreads: int = 1,
                    rand_state: int = 4466, batch_size: int = None,
                    log_transform: bool = False, renormalize_subset: bool = True,
+                   local_connectivity: float = 1, bandwidth: float = 1.5,
                    save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
         from .ann import AnnStream
         if from_assay is None:
@@ -262,7 +263,7 @@ class DataStore:
         store.attrs['k'] = ann_obj.k
         store.attrs['self_uuid'] = uuid4().hex
         from .knn_utils import make_knn_graph
-        make_knn_graph(ann_obj, batch_size, store, save_raw_dists=save_raw_dists)
+        make_knn_graph(ann_obj, batch_size, store, local_connectivity, bandwidth, save_raw_dists)
         return None
 
     def _load_graph(self, from_assay: str, cell_key: str, graph_format: str,

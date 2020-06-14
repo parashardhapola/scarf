@@ -8,7 +8,7 @@ __all__ = ['make_knn_graph', 'export_knn_to_mtx']
 
 
 def make_knn_graph(ann_obj: AnnStream, chunk_size: int, store,
-                  lc: float = 1, bw: float = 1.5, save_raw_dists: bool = False):
+                  lc: float, bw: float, save_raw_dists: bool):
     # bandwidth: Higher value will push the mean of distribution of graph edge weights towards right
     # local_connectivity: Higher values will create push distribution of edge weights towards terminal values (binary
     # like) Lower values will accumulate edge weights around the mean produced by bandwidth
