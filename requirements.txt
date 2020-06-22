@@ -1,5 +1,4 @@
 logzero
-IPython
 holoviews
 cmocean
 datashader
@@ -23,4 +22,3 @@ statsmodels
 seaborn
 tqdm
 matplotlib
-ipytree

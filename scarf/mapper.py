@@ -1,11 +1,10 @@
 import pandas as pd
-import numpy as np
 from .writers import create_zarr_dataset
 
 __all__ = ['Mapper']
 
 
-class Mapper():
+class Mapper:
     def __init__(self, ref, target, feat_key, name, assay_z, chunk_size, save_k = None):
         self.ref = ref
         self.target = target
@@ -44,10 +43,10 @@ class Mapper():
         colnames = self.target.feats.table.ids[
             self.target.feats.table[self.targetFeatKey]].values
         if len(colnames) == 0:
-            raise ValueError("No common featrures found between the two datasets")
+            raise ValueError("No common features found between the two datasets")
         else:
-            print (f"INFO: {len(colnames)} common features from {len(self.featIds)} "
-                    "reference features will be used")
+            print(f"INFO: {len(colnames)} common features from {len(self.featIds)} "
+                  f"reference features will be used")
         for i in self.data.blocks:
             yield pd.DataFrame(i.compute(), columns=colnames).T.reindex(
                 self.featIds).fillna(0).T.values
