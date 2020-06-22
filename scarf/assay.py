@@ -4,6 +4,7 @@ import zarr
 from .metadata import MetaData
 from .utils import show_progress
 from .writers import dask_to_zarr
+from dask import compute
 
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
@@ -69,7 +70,7 @@ class Assay:
                 if verbose:
                     print(f"INFO: Percentage feature {name} already exists. Not adding again")
                 return None
-        feat_idx = self.feats.get_idx_by_names(self.feats.grep(feat_pattern))
+        feat_idx = sorted(self.feats.get_idx_by_names(self.feats.grep(feat_pattern)))
         if len(feat_idx) == 0:
             print(f"WARNING: No matches found for pattern {feat_pattern}. Will not add/update percentage feature")
             return None
@@ -138,33 +139,31 @@ class RNAassay(Assay):
 
     @show_progress
     def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I', min_cells: int = 10) -> None:
-        subset_name = f"subset_{cell_key}_{feat_key}"
         cell_idx = self.cells.active_index(cell_key)
-
         feat_idx = self.feats.active_index(feat_key)
+        subset_name = f"subset_{cell_key}_{feat_key}"
         subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
         if subset_name in self.attrs and self.attrs[subset_name] == subset_hash:
             print("INFO: Using cached feature stats data")
             return None
 
-        print(f"INFO: ({self.name}) Cells per features (1/3)", flush=True)
-        n_cells = (self.normed(cell_idx, feat_idx) > 0).sum(axis=0).compute()
+        print(f"INFO: ({self.name}) Calculating feature stats", flush=True)
+        n_cells = (self.normed(cell_idx, feat_idx) > 0).sum(axis=0)
+        tot = self.normed(cell_idx, feat_idx).sum(axis=0)
+        sigmas = self.normed(cell_idx, feat_idx).var(axis=0)
+        n_cells, tot, sigmas = compute(n_cells, tot, sigmas)
+        idx = n_cells > min_cells
+        n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
+
+        self.feats.update(idx, key=feat_key)
+        self.feats.add('normed_tot', tot, key=feat_key, overwrite=True)
+        self.feats.add('avg', tot / self.cells.N, key=feat_key, overwrite=True)
+        self.feats.add('nz_mean', tot / n_cells, key=feat_key, overwrite=True)
+        self.feats.add('sigmas', sigmas, key=feat_key, overwrite=True)
         self.feats.add('normed_n', n_cells, key=feat_key, overwrite=True)
-        self.feats.update(n_cells > min_cells, key=feat_key)
-        n_cells = self.feats.fetch('normed_n', key=feat_key)
+
         feat_idx = self.feats.active_index(feat_key)
         subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
-
-        print(f"INFO: ({self.name}) Feature sum (2/3)", flush=True)
-        tot = self.normed(cell_idx, feat_idx).sum(axis=0).compute()
-        self.feats.add('normed_tot', tot, key=feat_key, overwrite=True)
-        self.feats.add('avg', tot / self.cells.N,  key=feat_key, overwrite=True)
-        self.feats.add('nz_mean', tot / n_cells, key=feat_key, overwrite=True)
-
-        print(f"INFO: ({self.name}) Feature variance (3/3)", flush=True)
-        sigmas = self.normed(cell_idx, feat_idx).var(axis=0).compute()
-        self.feats.add('sigmas', sigmas, key=feat_key, overwrite=True)
-
         self.attrs[subset_name] = subset_hash
         return None
 
