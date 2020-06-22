@@ -128,6 +128,7 @@ class DataStore:
                     # FIXME: Should this be silent?
                     assay = assay_types[i](self._fn, i, self.cells)
                 else:
+                    #FIXME
                     print(caution_statement % i)
                     assay = Assay(self._fn, i, self.cells)
             setattr(self, i, assay)
@@ -351,7 +352,7 @@ class DataStore:
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I',
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
-                       return_clusters: bool = False) -> Union[None, pd.Series]:
+                       return_clusters: bool = False, force_recalc_dendrogram: bool = False) -> Union[None, pd.Series]:
         import sknetwork as skn
         from .dendrogram import BalancedCut
         if from_assay is None:
@@ -373,7 +374,7 @@ class DataStore:
         params = [graph_uuid, min_edge_weight]  # this should not be changed to a tuple.
         # tuple are changed to list when saved as zarr attrs
         if 'dendrogram' in self._z[from_assay][graph_loc] and \
-                assay.attrs['dendrogram_hash'] == params:
+                assay.attrs['dendrogram_hash'] == params and force_recalc_dendrogram is False:
             dendrogram = self._z[from_assay][graph_loc]['dendrogram'][:]
             print("INFO: Using existing dendrogram", flush=True)
         else:
