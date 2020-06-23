@@ -5,6 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from scipy import sparse
 from gensim.models import LsiModel
+from . import threadpool_limits
 
 __all__ = ['AnnStream']
 
@@ -23,9 +24,8 @@ def vec_to_bow(x):
 class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
                  dims: int, loadings: np.ndarray,
-                 ann_metric: str, ann_efc: int, ann_ef: int, ann_nthreads: int,
+                 ann_metric: str, ann_efc: int, ann_ef: int, nthreads: int,
                  rand_state: int, mu: np.ndarray, sigma: np.ndarray, **kmeans_kwargs):
-        # TODO: consider gensim for LSA: https://radimrehurek.com/gensim/models/lsimodel.html
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -40,7 +40,7 @@ class AnnStream:
         self.annMetric = ann_metric
         self.annEfc = ann_efc
         self.annEf = ann_ef
-        self.annNthreads = ann_nthreads
+        self.nthreads = nthreads
         self.randState = rand_state
         self.batchSize = self._handle_batch_size()
         self.kmeansKwargs = kmeans_kwargs
@@ -70,7 +70,7 @@ class AnnStream:
         idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
                        M=self.dims, random_seed=self.randState)
         idx.set_ef(self.annEf)
-        idx.set_num_threads(self.annNthreads)
+        idx.set_num_threads(1)
         return idx
 
     def _init_kmeans(self):
@@ -86,10 +86,12 @@ class AnnStream:
         return (a - self.mu) / self.sigma
 
     def transform_pca(self, a: np.ndarray):
-        return a.dot(self.loadings)
+        ret_val = a.dot(self.loadings)
+        return ret_val
 
     def transform_lsi(self, a: np.ndarray):
-        return a.dot(self.loadings)
+        ret_val = a.dot(self.loadings)
+        return ret_val
 
     def transform_ann(self, a: np.ndarray, k: int = None):
         if k is None:
@@ -121,28 +123,30 @@ class AnnStream:
         self.loadings = self._lsiModel.get_topics().T
 
     def fit(self):
-        if self.method == 'pca':
-            self.reducer = lambda x: self.transform_pca(self.transform_z(x))
-        elif self.method == 'lsi':
-            self.reducer = self.transform_lsi
-        else:
-            raise ValueError("ERROR: Unknown reduction method")
-        if self.loadings is None:
+        with threadpool_limits(limits=self.nthreads):
             if self.method == 'pca':
-                self._fit_pca()
+                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
             elif self.method == 'lsi':
-                self._fit_lsi()
-        for i in self.iter_blocks(msg='Fitting ANN'):
-            a = self.reducer(i)
-            self.annIdx.add_items(a)
-            self.kmeans.partial_fit(a)
-        self.estimate_partitions()
+                self.reducer = self.transform_lsi
+            else:
+                raise ValueError("ERROR: Unknown reduction method")
+            if self.loadings is None:
+                if self.method == 'pca':
+                    self._fit_pca()
+                elif self.method == 'lsi':
+                    self._fit_lsi()
+            for i in self.iter_blocks(msg='Fitting ANN'):
+                a = self.reducer(i)
+                self.annIdx.add_items(a)
+                self.kmeans.partial_fit(a)
+            self.estimate_partitions()
 
     def refit_kmeans(self, n_clusters: int, **kwargs):
         self.nClusters = n_clusters
         self.kmeansKwargs = kwargs
         clean_kmeans_kwargs(self.kmeansKwargs)
         self.kmeans = self._init_kmeans()
-        for i in self.iter_blocks(msg='Fitting kmeans'):
-            self.kmeans.partial_fit(self.reducer(i))
-        self.estimate_partitions()
+        with threadpool_limits(limits=self.nthreads):
+            for i in self.iter_blocks(msg='Fitting kmeans'):
+                self.kmeans.partial_fit(self.reducer(i))
+            self.estimate_partitions()
