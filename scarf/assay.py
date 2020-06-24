@@ -2,9 +2,8 @@ import numpy as np
 import dask.array as daskarr
 import zarr
 from .metadata import MetaData
-from .utils import show_progress
 from .writers import dask_to_zarr
-from dask import compute
+from .utils import calc_computed
 
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
@@ -24,13 +23,13 @@ def norm_clr(assay, counts: daskarr) -> daskarr:
 
 
 def norm_tf_idf(assay, counts: daskarr) -> daskarr:
-    tf = counts / assay._n_term_per_doc.reshape(-1, 1)
-    idf = np.log2(assay._n_docs / (assay._n_docs_per_term + 1))
+    tf = counts / assay.n_term_per_doc.reshape(-1, 1)
+    idf = np.log2(assay.n_docs / (assay.n_docs_per_term + 1))
     return tf * idf
 
 
 class Assay:
-    def __init__(self, fn: str, name: str, cell_data: MetaData):
+    def __init__(self, fn: str, name: str, cell_data: MetaData, min_cells_per_feature: int = 10):
         self._fn = fn
         self._z = zarr.open(fn, 'r+')
         self.name = name
@@ -43,27 +42,26 @@ class Assay:
         self.annObj = None  # Can be dynamically attached for debugging purposes
         self.normMethod = norm_dummy
         self.sf = None
-        self._ini_feature_props()
+        self._ini_feature_props(min_cells_per_feature)
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        counts = self.rawData[:, feat_idx][cell_idx, :]
         return self.normMethod(self, counts)
 
-    @show_progress
-    def _ini_feature_props(self, force_recalc: bool = False) -> None:
-        if 'nCells' in self.feats.table.columns and  \
-                'dropOuts' in self.feats.table.columns and force_recalc is False:
+    def _ini_feature_props(self, min_cells: int) -> None:
+        if 'nCells' in self.feats.table.columns and 'dropOuts' in self.feats.table.columns:
             pass
         else:
-            print(f"INFO: ({self.name}) Computing nCells and dropOuts", flush=True)
-            self.feats.add('nCells', (self.rawData > 0).sum(axis=0).compute(), overwrite=True)
+            ncells = calc_computed((self.rawData > 0).sum(axis=0),
+                                   f"INFO: ({self.name}) Computing nCells and dropOuts")
+            self.feats.add('nCells', ncells, overwrite=True)
             self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
+            self.feats.update(ncells > min_cells)
 
-    @show_progress
     def add_percent_feature(self, feat_pattern: str, name: str, verbose: bool = True) -> None:
         if name in self.attrs['percentFeatures']:
             if self.attrs['percentFeatures'][name] == feat_pattern:
@@ -74,8 +72,8 @@ class Assay:
         if len(feat_idx) == 0:
             print(f"WARNING: No matches found for pattern {feat_pattern}. Will not add/update percentage feature")
             return None
-        print(f"Computing percentage of {name}", flush=True)
-        total = self.rawData[:, feat_idx].rechunk(self.rawData.chunksize).sum(axis=1).compute()
+        total = calc_computed(self.rawData[:, feat_idx].sum(axis=1),
+                              f"Computing percentage of {name}")
         self.cells.add(name, 100 * total / self.cells.table['nCounts'], overwrite=True)
         self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
                                          **{name: feat_pattern}}
@@ -110,8 +108,8 @@ class Assay:
 
 
 class RNAassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData):
-        super().__init__(fn, name, cell_data)
+    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(fn, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
         self.sf = 10000
         self.scalar = None
@@ -122,7 +120,7 @@ class RNAassay(Assay):
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        counts = self.rawData[:, feat_idx][cell_idx, :]
         if log_transform:
             counts = np.log1p(counts)
         if renormalize_subset:
@@ -137,7 +135,6 @@ class RNAassay(Assay):
     def correct_dropouts(self, n_bins: int = 200, lowess_frac: float = 0.1) -> None:
         self.feats.remove_trend('c_dropOuts', 'avg', 'dropOuts', n_bins, lowess_frac)
 
-    @show_progress
     def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I', min_cells: int = 10) -> None:
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
@@ -147,11 +144,12 @@ class RNAassay(Assay):
             print("INFO: Using cached feature stats data")
             return None
 
-        print(f"INFO: ({self.name}) Calculating feature stats", flush=True)
-        n_cells = (self.normed(cell_idx, feat_idx) > 0).sum(axis=0)
-        tot = self.normed(cell_idx, feat_idx).sum(axis=0)
-        sigmas = self.normed(cell_idx, feat_idx).var(axis=0)
-        n_cells, tot, sigmas = compute(n_cells, tot, sigmas)
+        n_cells = calc_computed((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
+                                f"INFO: ({self.name}) Computing nCells")
+        tot = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
+                            f"INFO: ({self.name}) Computing normed_tot")
+        sigmas = calc_computed(self.normed(cell_idx, feat_idx).var(axis=0),
+                               f"INFO: ({self.name}) Computing sigmas")
         idx = n_cells > min_cells
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
@@ -187,43 +185,38 @@ class RNAassay(Assay):
 
 
 class ATACassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData):
-        super().__init__(fn, name, cell_data)
+    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(fn, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
-        self._n_term_per_doc = None
-        self._n_docs = None
-        self._n_docs_per_term = None
+        self.n_term_per_doc = None
+        self.n_docs = None
+        self.n_docs_per_term = None
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
-        self._n_term_per_doc = self.cells.table['nFeatures'].values[cell_idx]
-        self._n_docs = len(cell_idx)
-        self._n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
+        counts = self.rawData[:, feat_idx][cell_idx, :]
+        self.n_term_per_doc = self.cells.table['nFeatures'].values[cell_idx]
+        self.n_docs = len(cell_idx)
+        self.n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
         return self.normMethod(self, counts)
 
-    @show_progress
     def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I') -> None:
         subset_name = f"subset_{cell_key}_{feat_key}"
         cell_idx = self.cells.active_index(cell_key)
-
         feat_idx = self.feats.active_index(feat_key)
         subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
         if subset_name in self.attrs and self.attrs[subset_name] == subset_hash:
             print("INFO: Using cached feature stats data", flush=True)
             return None
-
-        print(f"INFO: ({self.name}) Calculating peak prevalence across cells", flush=True)
-        prevalence = self.normed(cell_idx, feat_idx).sum(axis=0).compute()
+        prevalence = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
+                                   f"INFO: ({self.name}) Calculating peak prevalence across cells")
         self.feats.add('prevalence', prevalence, fill_val=False, overwrite=True)
-
         self.attrs[subset_name] = subset_hash
         return None
 
-    @show_progress
     def mark_top_prevalent_peaks(self, n_top: int = 1000):
         if 'prevalence' not in self.feats.table:
             raise ValueError("ERROR: Please 'run set_feature_stats' first")
@@ -236,8 +229,8 @@ class ATACassay(Assay):
 
 
 class ADTassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData):
-        super().__init__(fn, name, cell_data)
+    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(fn, name, cell_data, **kwargs)
         self.normMethod = norm_clr
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
@@ -245,5 +238,5 @@ class ADTassay(Assay):
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
-        counts = self.rawData[:, feat_idx][cell_idx, :].rechunk(self.rawData.chunksize)
+        counts = self.rawData[:, feat_idx][cell_idx, :]
         return self.normMethod(self, counts)
