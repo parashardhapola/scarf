@@ -3,6 +3,7 @@ import numpy as np
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from typing import Callable
 from dask.diagnostics import ProgressBar
+from dask.distributed import progress
 import functools
 
 
@@ -41,6 +42,15 @@ def show_progress(func: Callable):
         pbar.unregister()
         return ret_val
     return wrapper
+
+
+def calc_computed(a, msg: str = None):
+    if msg is not None:
+        print(msg, flush=True)
+    a = a.persist()
+    progress(a)
+    print(flush=True)
+    return a.compute()
 
 
 def load_zarr_table(zgrp) -> pd.DataFrame:
