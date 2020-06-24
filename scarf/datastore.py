@@ -4,7 +4,6 @@ import shutil
 import numpy as np
 from typing import List, Iterable, Union
 import re
-from dask import compute
 from scipy.stats import norm
 import pandas as pd
 from uuid import uuid4
@@ -12,7 +11,8 @@ from scipy.sparse import coo_matrix, csr_matrix, triu
 from .writers import create_zarr_dataset
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from dask.distributed import Client, progress
+from .utils import calc_computed
+from dask.distributed import Client, LocalCluster
 
 
 __all__ = ['DataStore']
@@ -47,20 +47,22 @@ def clean_array(x, fill_val: int = 0):
 
 class DataStore:
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = 'RNA',
-                 min_genes_per_cell: int = 200, min_cells_per_gene: int = 20,
+                 min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True, force_recalc: bool = False,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
         self._fn = zarr_loc
         self._z = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
-        self.dClient = Client(processes=False, n_workers=1, threads_per_worker=nthreads)
+        cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
+        self.daskClient = Client(cluster)
+
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
         self.defaultAssay = self._set_default_assay_name(default_assay)
-        self._load_assays(assay_types)
+        self._load_assays(assay_types, min_cells_per_feature)
         # TODO: Reset all attrs, pca, dendrogram etc
-        self._ini_cell_props(min_genes_per_cell, min_cells_per_gene, force_recalc)
+        self._ini_cell_props(min_features_per_cell)
         if mito_pattern is None:
             mito_pattern = 'MT-'
         if ribo_pattern is None:
@@ -105,55 +107,46 @@ class DataStore:
                 assay_name = self.assayNames[0]
         return assay_name
 
-    def _load_assays(self, assays: dict) -> None:
+    def _load_assays(self, predefined_assays: dict, min_cells) -> None:
         assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay}
-        print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
+        # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "CAUTION: %s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter."
         caution_statement = caution_statement + "\nIf you have more than one assay in the dataset then you can set" \
                                                 "assay_types={'assay1': 'RNA', 'assay2': 'ADT'} " \
                                                 "Just replace with actual assay names instead of assay1 and assay2"
-        if assays is None:
-            assays = {}
+        if predefined_assays is None:
+            predefined_assays = {}
         for i in self.assayNames:
-            if i in assays:
-                if assays[i] in assay_types:
-                    assay = assay_types[assays[i]](self._fn, i, self.cells)
+            if i in predefined_assays:
+                if predefined_assays[i] in assay_types:
+                    assay = assay_types[predefined_assays[i]]
                 else:
-                    print(f"WARNING: {assays[i]} is not a recognized assay type. Has to be one of "
+                    print(f"WARNING: {predefined_assays[i]} is not a recognized assay type. Has to be one of "
                           f"{', '.join(list(assay_types.keys()))}\nPLease note that the names are case-sensitive.")
                     print(caution_statement % i)
-                    assay = Assay(self._fn, i, self.cells)
+                    assay = Assay
             else:
                 if i in assay_types:
-                    # FIXME: Should this be silent?
-                    assay = assay_types[i](self._fn, i, self.cells)
+                    assay = assay_types[i]
                 else:
-                    #FIXME
                     print(caution_statement % i)
-                    assay = Assay(self._fn, i, self.cells)
-            setattr(self, i, assay)
+                    assay = Assay
+            setattr(self, i, assay(self._fn, i, self.cells, min_cells_per_feature=min_cells))
         return None
 
-    def _ini_cell_props(self, min_features: int, min_cells: int, force_recalc: bool = False) -> None:
-        # TODO: add adt data as well?
+    def _ini_cell_props(self, min_features: int) -> None:
         assay = self.__getattribute__(self.defaultAssay)
-        if 'nCounts' in self.cells.table.columns and \
-                'nFeatures' in self.cells.table.columns and force_recalc is False:
+        if 'nCounts' in self.cells.table.columns and 'nFeatures' in self.cells.table.columns:
             pass
         else:
-            print(f"INFO: Computing UMI and feats / cell", flush=True)
-            n_c = assay.rawData.sum(axis=1)
-            n_f = (assay.rawData > 0).sum(axis=1)
-            fn = (assay.rawData > 0).sum(axis=0)
-            n_c, n_f, fn = progress(compute(n_c, n_f, fn))
+            n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: Computing nCounts")
+            n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: Computing nFeatures")
             self.cells.add('nCounts', n_c, overwrite=True)
             self.cells.add('nFeatures', n_f, overwrite=True)
             self.cells.update(self.cells.sift(self.cells.fetch('nFeatures'),
                                               min_features, np.Inf))
-            assay.feats.update(fn > min_cells)
-        self.dClient.restart()
 
     def _col_renamer(self, from_assay: str, col_key: str, suffix: str) -> str:
         if from_assay == self.defaultAssay:
@@ -195,7 +188,6 @@ class DataStore:
                    local_connectivity: float = 1, bandwidth: float = 1.5,
                    save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
         from .ann import AnnStream
-        self.dClient.restart()
         if from_assay is None:
             from_assay = self.defaultAssay
         assay = self.__getattribute__(from_assay)
@@ -266,7 +258,6 @@ class DataStore:
         store.attrs['self_uuid'] = uuid4().hex
         from .knn_utils import make_knn_graph
         make_knn_graph(ann_obj, batch_size, store, self.nthreads, local_connectivity, bandwidth, save_raw_dists)
-        self.dClient.restart()
         return None
 
     def _load_graph(self, from_assay: str, cell_key: str, graph_format: str,
