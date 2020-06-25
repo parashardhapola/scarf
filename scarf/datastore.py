@@ -18,7 +18,13 @@ from dask.distributed import Client, LocalCluster
 __all__ = ['DataStore']
 
 
-def sanitize_hierarchy(z, assay_name) -> bool:
+def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
+    """
+    Test if an assay node in zarr object was created properly
+    :param z: Zarr hierarchy object
+    :param assay_name: string value with name of assay
+    :return: True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
+    """
     if assay_name in z:
         if 'counts' not in z[assay_name]:
             raise KeyError(f"ERROR: 'counts' not found in {assay_name}")
@@ -30,6 +36,14 @@ def sanitize_hierarchy(z, assay_name) -> bool:
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
+    """
+    Performs edge trimming on values of the input vector and constraints them between within frac and 1-frac density of
+    normal distribution created with the sample mean and std. dev. of a
+
+    :param a: numeric vector
+    :param frac: Value between 0 and 1.
+    :return:
+    """
     loc = (np.median(a) + np.median(a[::-1])) / 2
     dist = norm(loc, np.std(a))
     minv, maxv = dist.ppf(1 - frac), dist.ppf(frac)
@@ -39,6 +53,12 @@ def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
 
 
 def clean_array(x, fill_val: int = 0):
+    """
+    Remove nan and infinite values from
+    :param x:
+    :param fill_val:
+    :return:
+    """
     x = np.nan_to_num(x, copy=True)
     x[(x == np.Inf) | (x == -np.Inf)] = 0
     x[x == 0] = fill_val
@@ -49,13 +69,14 @@ class DataStore:
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = 'RNA',
                  min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True, force_recalc: bool = False,
-                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
+                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
         self._fn = zarr_loc
         self._z = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
-        cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
-        self.daskClient = Client(cluster)
-
+        if dask_client is None:
+            cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
+            self.daskClient = Client(cluster)
+        self.daskClient = dask_client
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
