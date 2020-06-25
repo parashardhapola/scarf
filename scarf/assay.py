@@ -93,12 +93,14 @@ class Assay:
         subset_hash = self.create_subset_hash(cell_key, feat_key)
         subset_name = f"subset_{cell_key}_{feat_key}"
         loc = f"{self.name}/{subset_name}"
-        if subset_name in self.attrs and self.attrs[subset_name] == subset_hash and loc in self._z:
+        if subset_name in self.attrs and self.attrs[subset_name] == subset_hash and loc in self._z and \
+                'selection_kwargs' in self.attrs and self.attrs['selection_kwargs'] == kwargs:
             print(f"INFO: Exact features already selected for assay {self.name}")
         else:
             vals = self.normed(cell_idx, feat_idx, **kwargs)
             dask_to_zarr(vals, self._z, loc, batch_size)
             self.attrs[subset_name] = subset_hash
+            self.attrs['selection_kwargs'] = kwargs
         return daskarr.from_zarr(self._z[loc])
 
     def __repr__(self):

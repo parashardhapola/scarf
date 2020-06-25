@@ -1,11 +1,12 @@
 import pandas as pd
 from .writers import create_zarr_dataset
+from tqdm import tqdm
 
 __all__ = ['Mapper']
 
 
 class Mapper:
-    def __init__(self, ref, target, feat_key, name, assay_z, chunk_size, save_k = None):
+    def __init__(self, ref, target, feat_key, name, assay_z, chunk_size, save_k: int = None):
         self.ref = ref
         self.target = target
         self.refFeatKey = feat_key
@@ -14,7 +15,7 @@ class Mapper:
         self.featIds = self.add_target_feats()
         # TODO: renormalize the data to account for missing feats
         self.data = self.target.select_and_normalize(
-            cell_key='I', feat_key=self.targetFeatKey, batch_size=1000)
+            cell_key='I', feat_key=self.targetFeatKey, batch_size=1000, **ref.attrs['selection_kwargs'])
         self.zi, self.zd = self.prep_store(assay_z, name, chunk_size)
 
     def add_target_feats(self):
@@ -46,14 +47,14 @@ class Mapper:
             raise ValueError("No common features found between the two datasets")
         else:
             print(f"INFO: {len(colnames)} common features from {len(self.featIds)} "
-                  f"reference features will be used")
+                  f"reference features will be used", flush=True)
         for i in self.data.blocks:
             yield pd.DataFrame(i.compute(), columns=colnames).T.reindex(
                 self.featIds).fillna(0).T.values
 
     def run(self):
         entry_start = 0
-        for i in self.aligned_feat_data():
+        for i in tqdm(self.aligned_feat_data(), desc='Mapping'):
             ki, kd = self.ref.annObj.transform_ann(self.ref.annObj.reducer(i))
             entry_end = entry_start + len(ki)
             self.zi[entry_start:entry_end, :] = ki[:, :self.saveK]
