@@ -48,7 +48,7 @@ def calc_computed(a, msg: str = None):
     if msg is not None:
         print(msg, flush=True)
     a = a.persist()
-    progress(a)
+    progress(a, notebook=False)
     print(flush=True)
     return a.compute()
 
