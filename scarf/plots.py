@@ -10,8 +10,9 @@ from holoviews.plotting import mpl as hmpl
 from holoviews.operation.datashader import datashade, dynspread
 import holoviews as hv
 import datashader as dsh
+import cmocean
 
-__all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter']
+__all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter', 'plot_marker_heatmap']
 
 plt.style.use('fivethirtyeight')
 
@@ -89,6 +90,32 @@ def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.
     clean_axis(ax)
     plt.tight_layout()
     plt.show()
+
+
+def plot_marker_heatmap(markers, assay, topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
+                        fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
+                        cmap=cmocean.cm.matter_r, batch_size: int = None, figsize=None):
+    if batch_size is None:
+        batch_size = min(999, int(1e7/assay.cells.N))+1
+    goi = sum([list(v[:topn].index) for k, v in markers.items()], [])
+    goi = sorted(set(goi))
+    cdf = []
+    for i in np.array_split(goi, len(goi)//batch_size+1):
+        feat_idx = assay.feats.get_idx_by_names(i)
+        df = pd.DataFrame(assay.normed(feat_idx=feat_idx, log_transform=log_transform).compute(), columns=i)
+        df['cluster'] = assay.cells.fetch('cluster')
+        df = df.groupby('cluster').mean().T
+        df = df.apply(lambda x: (x-x.mean())/x.std(), axis=1)
+        cdf.append(df)
+    cdf = pd.concat(cdf, axis=0)
+    if figsize is None:
+        figsize = (cdf.shape[1]*fontsize*width_factor, fontsize*cdf.shape[0]*height_factor)
+    cgx = sns.clustermap(cdf, yticklabels=cdf.index, xticklabels=cdf.columns, method='ward',
+                         figsize=figsize, vmax=vmax, vmin=max(vmin, cdf.min().min()), cmap=cmap)
+    cgx.ax_heatmap.set_yticklabels(cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize)
+    cgx.ax_heatmap.set_xticklabels(cdf.columns[cgx.dendrogram_col.reordered_ind], fontsize=fontsize)
+    plt.show()
+    return None
 
 
 def scatter_make_cmap(df, cmap=None, color_key=None):
