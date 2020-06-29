@@ -491,6 +491,19 @@ class DataStore:
         else:
             return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs, **kwargs)
 
+    def plot_cluster_tree(self, *, from_assay: str = None, cluster_key: str = 'cluster',
+                          width: float = 1.5, lvr_factor: float = 0.5,
+                          min_node_size: float = 20, node_size_expand_factor: float = 2, cmap='tab20'):
+        from .plots import plot_cluster_hierarchy
+        from .dendrogram import SummarizedTree
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        clusts = self.cells.fetch(cluster_key)
+        sg = SummarizedTree(self._z[from_assay]['graph']['dendrogram'][:]).extract_ancestor_tree(clusts)
+        plot_cluster_hierarchy(sg, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
+                               node_size_expand_factor=node_size_expand_factor, cmap=cmap)
+
     def __repr__(self):
         x = ' '.join(self.assayNames)
         return f"DataStore with {self.cells.N} cells containing {len(self.assayNames)} assays: {x}"

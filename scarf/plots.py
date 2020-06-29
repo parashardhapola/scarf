@@ -124,8 +124,9 @@ def plot_marker_heatmap(markers, assay, topn: int = 5, log_transform: bool = Tru
     return None
 
 
-def plot_cluster_hierarchy(sg, clusts, width: float = 1.5, lvr_factor: float = 0.5):
-    cmap = sns.color_palette('tab20', n_colors=len(set(clusts))).as_hex()
+def plot_cluster_hierarchy(sg, clusts, width: float, lvr_factor: float,
+                           min_node_size: float, node_size_expand_factor: float, cmap):
+    cmap = sns.color_palette(cmap, n_colors=len(set(clusts))).as_hex()
     cs = pd.Series(clusts).value_counts().to_dict()
     nc = []
     ns = []
@@ -133,10 +134,10 @@ def plot_cluster_hierarchy(sg, clusts, width: float = 1.5, lvr_factor: float = 0
         v = sg.nodes[i]['partition_id']
         if v != -1:
             nc.append(cmap[v - 1])
-            ns.append(cs[v] * 2 + 10)
+            ns.append(cs[v] * node_size_expand_factor + min_node_size)
         else:
             nc.append('#000000')
-            ns.append(20)
+            ns.append(min_node_size)
     pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor)
     new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
     nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc)
