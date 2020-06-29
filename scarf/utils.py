@@ -5,6 +5,8 @@ from typing import Callable
 from dask.diagnostics import ProgressBar
 from dask.distributed import progress
 import functools
+import subprocess
+import shlex
 
 
 def fit_lowess(a, b, n_bins: int,
@@ -51,6 +53,18 @@ def calc_computed(a, msg: str = None):
     progress(a, notebook=False)
     print(flush=True)
     return a.compute()
+
+
+def system_call(command):
+    process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
+    while True:
+        output = process.stdout.readline()
+        if process.poll() is not None:
+            break
+        if output:
+            print(output.strip())
+    rc = process.poll()
+    return None
 
 
 def load_zarr_table(zgrp) -> pd.DataFrame:
