@@ -11,7 +11,7 @@ from scipy.sparse import coo_matrix, csr_matrix, triu
 from .writers import create_zarr_dataset
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed
+from .utils import calc_computed, system_call
 from dask.distributed import Client, LocalCluster
 
 
@@ -313,7 +313,7 @@ class DataStore:
 
     def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I',
                  tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200,
-                 alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.') -> None:
+                 alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True) -> None:
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
         from pathlib import Path
@@ -332,7 +332,10 @@ class DataStore:
 
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
-        os.system(cmd)
+        if verbose:
+            system_call(cmd)
+        else:
+            os.system(cmd)
         emb = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values.T
         for i in range(tsne_dims):
             self.cells.add(self._col_renamer(from_assay, cell_key, f'tSNE{i + 1}'),
@@ -402,7 +405,8 @@ class DataStore:
         if balanced_cut:
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
         else:
-            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
+            # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
+            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters-1) + 1
         if return_clusters:
             return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
         else:
