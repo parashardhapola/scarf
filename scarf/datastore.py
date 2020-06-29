@@ -327,7 +327,8 @@ class DataStore:
             ini_emb = self._ini_embed(from_assay, cell_key, 2).flatten()
             h.write('\n'.join(map(str, ini_emb)))
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        export_knn_to_mtx(knn_mtx_fn, self._z[from_assay].graph)
+        graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
+        export_knn_to_mtx(knn_mtx_fn, self._z[from_assay][graph_loc])
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
 
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
