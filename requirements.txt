@@ -22,3 +22,4 @@ statsmodels
 seaborn
 tqdm
 matplotlib
+EoN
