@@ -4,6 +4,7 @@ import logzero
 from logzero import logger
 import logging
 from typing import List, Dict
+from tqdm import tqdm
 
 formatter = logging.Formatter('(%(asctime)s) [%(levelname)s]: %(message)s', "%H:%M:%S")
 logzero.formatter(formatter)
@@ -18,7 +19,7 @@ def make_digraph(d: np.ndarray) -> nx.DiGraph:
     """
     g = nx.DiGraph()
     n = d.shape[0] + 1  # Dendrogram contains one less sample
-    for i in d:
+    for i in tqdm(d, desc='Constructing graph from dendrogram'):
         v = i[2]  # Distance between clusters
         i = i.astype(int)
         g.add_node(n, nleaves=i[3], dist=v)
@@ -84,8 +85,10 @@ class BalancedCut:
         n_leaves = int((self.graph.number_of_nodes() + 1) / 2)
         leaves = {x: None for x in range(n_leaves)}
         bps = {}
+        pbar = tqdm(total=len(leaves), desc='Identifying nodes to split')
         while len(leaves) > 0:
             leaf, _ = leaves.popitem()
+            pbar.update(1)
             logger.debug(f"FRESH STEP: Leaf {leaf} plucked as base leaf")
             cur = leaf
             while True:
@@ -109,12 +112,14 @@ class BalancedCut:
                     bps[cur].append(i)
                     leaves.pop(i)
                     logger.debug(f"Leaf {i} plucked in aggregation step")
+                    pbar.update(1)
                 elif i in bps and i != cur:
                     logger.debug(f"Skipping branch {i} because its already taken")
                 elif self.graph.nodes[i]['nleaves'] >= self.maxSize and i != cur:
                     logger.debug(f"Skipping branch {i} to prevent greedy behaviour")
                 else:
                     s.extend(list(self.graph.successors(i)))
+        pbar.close()
         return bps
 
     def _valid_names_in_branchpoints(self) -> None:
