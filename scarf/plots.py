@@ -11,8 +11,12 @@ from holoviews.operation.datashader import datashade, dynspread
 import holoviews as hv
 import datashader as dsh
 import cmocean
+import EoN
+import math
+import networkx as nx
 
-__all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter', 'plot_marker_heatmap']
+__all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter',
+           'plot_marker_heatmap', 'plot_cluster_hierarchy']
 
 plt.style.use('fivethirtyeight')
 
@@ -114,6 +118,32 @@ def plot_marker_heatmap(markers, assay, topn: int = 5, log_transform: bool = Tru
                          figsize=figsize, vmax=vmax, vmin=max(vmin, cdf.min().min()), cmap=cmap)
     cgx.ax_heatmap.set_yticklabels(cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize)
     cgx.ax_heatmap.set_xticklabels(cdf.columns[cgx.dendrogram_col.reordered_ind], fontsize=fontsize)
+    cgx.ax_heatmap.figure.patch.set_alpha(0)
+    cgx.ax_heatmap.patch.set_alpha(0)
+    plt.show()
+    return None
+
+
+def plot_cluster_hierarchy(sg, clusts, width: float = 1.5, lvr_factor: float = 0.5):
+    cmap = sns.color_palette('tab20', n_colors=len(set(clusts))).as_hex()
+    cs = pd.Series(clusts).value_counts().to_dict()
+    nc = []
+    ns = []
+    for i in sg.nodes():
+        v = sg.nodes[i]['partition_id']
+        if v != -1:
+            nc.append(cmap[v - 1])
+            ns.append(cs[v] * 2 + 10)
+        else:
+            nc.append('#000000')
+            ns.append(20)
+    pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor)
+    new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
+    nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc)
+    for i in sg.nodes():
+        v = sg.nodes[i]['partition_id']
+        if v != -1:
+            plt.text(new_pos[i][0], new_pos[i][1], v)
     plt.show()
     return None
 
