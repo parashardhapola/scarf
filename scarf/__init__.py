@@ -7,3 +7,4 @@ from .readers import *
 from .writers import *
 from .mapper import *
 from .markers import *
+from .plots import *
