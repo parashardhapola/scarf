@@ -28,7 +28,9 @@ def make_knn_graph(ann_obj: AnnStream, chunk_size: int, store, nthreads: int,
     nsample_start = 0
     with threadpool_limits(limits=nthreads):
         for i in ann_obj.iter_blocks(msg='Saving KNN graph'):
-            ki, kv = ann_obj.transform_ann(ann_obj.reducer(i))
+            nsample_end = nsample_start + i.shape[0]
+            ki, kv = ann_obj.transform_ann(ann_obj.reducer(i), k=n_neighbors,
+                                           self_indices=np.arange(nsample_start, nsample_end))
             kv = kv.astype(np.float32, order='C')
             sigmas, rhos = smooth_knn_dist(kv, k=n_neighbors,
                                            local_connectivity=lc, bandwidth=bw)
@@ -38,7 +40,6 @@ def make_knn_graph(ann_obj: AnnStream, chunk_size: int, store, nthreads: int,
             end = val_counts + len(rows)
             last_row = rows[-1] + 1
             val_counts += len(rows)
-            nsample_end = nsample_start + len(ki)
             if save_raw_dists:
                 z_knn[nsample_start:nsample_end, :] = ki
                 z_dist[nsample_start:nsample_end, :] = kv
