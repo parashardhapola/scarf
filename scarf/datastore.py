@@ -203,7 +203,7 @@ class DataStore:
 
     def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = 'I',
                    reduction_method: str = 'auto', k: int = 11, n_cluster: int = 100, dims: int = None,
-                   ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = 5,
+                   ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = None, ann_m: int = None,
                    rand_state: int = 4466, batch_size: int = None,
                    log_transform: bool = False, renormalize_subset: bool = True,
                    local_connectivity: float = 1, bandwidth: float = 1.5,
@@ -229,8 +229,8 @@ class DataStore:
                                           log_transform=log_transform,
                                           renormalize_subset=renormalize_subset)
         # data is not guaranteed to have same indices as raw data and may be shifted. we handle this in the pipeline
-        mu = clean_array(data.mean(axis=0).compute())
-        sigma = clean_array(data.std(axis=0).compute(), 1)
+        mu = clean_array(calc_computed(data.mean(axis=0), 'INFO: Calculating mean of norm. data'))
+        sigma = clean_array(calc_computed(data.std(axis=0), 'INFO: Calculating std. dev. of norm. data'), 1)
 
         loadings = None
         loadings_name = reduction_method if cell_key == 'I' else cell_key + '_' + reduction_method
@@ -244,7 +244,7 @@ class DataStore:
             raise ValueError("ERROR: No cached data found. Please provide a value for 'dims'")
 
         ann_obj = AnnStream(data, k, n_cluster, reduction_method, dims, loadings,
-                            ann_metric, ann_efc, ann_ef,
+                            ann_metric, ann_efc, ann_ef, ann_m,
                             self.nthreads, rand_state, mu, sigma, **kmeans_kwargs)
         if save_ann_obj:
             assay.annObj = ann_obj  # before calling fit, so that annObj can be diagnosed if an error arises
