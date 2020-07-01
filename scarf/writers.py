@@ -82,14 +82,14 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size):
-    re_df = df.rechunk(chunks=(chunk_size, df.shape[0]))
+    # df = df.rechunk(chunks=(chunk_size, df.shape[0]))
     og = z.create_dataset(
         loc, overwrite=True, chunks=(chunk_size, None),
-        shape=re_df.shape, dtype='float64',
+        shape=df.shape, dtype='float64',
         compressor=Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE))
     pos_start, pos_end = 0, 0
-    for i in tqdm(re_df.blocks, total=len(re_df.chunks[0]), desc=f"Writing data to {loc}"):
-        pos_end += len(i)
+    for i in tqdm(df.blocks, total=df.numblocks[0], desc=f"Writing data to {loc}"):
+        pos_end += i.shape[0]
         og[pos_start:pos_end, :] = i.compute()
         pos_start = pos_end
     return None
