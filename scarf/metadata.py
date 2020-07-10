@@ -56,7 +56,7 @@ class MetaData:
             self.table.drop(columns=k, inplace=True)
             self._del(k)
         else:
-            print (f"WARNING: {k} does not exist. Nothing to remove")
+            print(f"WARNING: {k} does not exist. Nothing to remove")
 
     def update(self, bool_arr: np.array, key: str = 'I') -> None:
         """
@@ -91,12 +91,12 @@ class MetaData:
         return sorted(set([x for x in names
                            if re.match(pattern.upper(), x) is not None]))
 
-    def remove_trend(self, name: str, x: str, y: str, n_bins: int = 200,
-                     lowess_frac: float = 0.1) -> None:
+    def remove_trend(self, x: str, y: str, n_bins: int = 200,
+                     lowess_frac: float = 0.1) -> np.ndarray:
         a = fit_lowess(self.fetch(x).astype(float),
                        self.fetch(y).astype(float),
                        n_bins, lowess_frac)
-        self.add(name, a, overwrite=True)
+        return a
 
     def idx_to_bool(self, idx, invert: bool = False) -> np.ndarray:
         a = np.zeros(self.N, dtype=bool)
