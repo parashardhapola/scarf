@@ -7,10 +7,11 @@ from dask.distributed import progress
 import functools
 import subprocess
 import shlex
+from scipy.stats import norm
 
 
 def fit_lowess(a, b, n_bins: int,
-               lowess_frac: float) -> np.array:
+               lowess_frac: float) -> np.ndarray:
     stats = pd.DataFrame({'a': a, 'b': b}).apply(np.log)
     bin_edges = np.histogram(stats.a, bins=n_bins)[1]
     bin_edges[-1] += 0.1  # For including last gene
@@ -33,6 +34,36 @@ def fit_lowess(a, b, n_bins: int,
         for idx in indices:
             fixed_var[idx] = np.e ** (stats.b[idx] - bcf)
     return np.array([fixed_var[x] for x in range(len(a))])
+
+
+def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
+    """
+    Performs edge trimming on values of the input vector and constraints them between within frac and 1-frac density of
+    normal distribution created with the sample mean and std. dev. of a
+
+    :param a: numeric vector
+    :param frac: Value between 0 and 1.
+    :return:
+    """
+    loc = (np.median(a) + np.median(a[::-1])) / 2
+    dist = norm(loc, np.std(a))
+    minv, maxv = dist.ppf(1 - frac), dist.ppf(frac)
+    a[a < minv] = minv
+    a[a > maxv] = maxv
+    return a
+
+
+def clean_array(x, fill_val: int = 0):
+    """
+    Remove nan and infinite values from
+    :param x:
+    :param fill_val:
+    :return:
+    """
+    x = np.nan_to_num(x, copy=True)
+    x[(x == np.Inf) | (x == -np.Inf)] = 0
+    x[x == 0] = fill_val
+    return x
 
 
 def show_progress(func: Callable):
@@ -63,7 +94,7 @@ def system_call(command):
             break
         if output:
             print(output.strip())
-    rc = process.poll()
+    process.poll()
     return None
 
 
