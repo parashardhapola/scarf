@@ -6,15 +6,9 @@ import numpy as np
 from scipy import sparse
 from gensim.models import LsiModel
 from . import threadpool_limits
+from .utils import calc_computed, clean_array
 
 __all__ = ['AnnStream']
-
-
-def clean_kmeans_kwargs(kw):
-    for i in ['n_clusters' 'random_state', 'batch_size']:
-        if i in kw:
-            print(f"INFO: Ignoring {i} kmeans_kwargs")
-            del kw[i]
 
 
 def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarray):
@@ -46,8 +40,8 @@ def vec_to_bow(x):
 class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
                  dims: int, loadings: np.ndarray,
-                 ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, nthreads: int,
-                 rand_state: int, mu: np.ndarray, sigma: np.ndarray, **kmeans_kwargs):
+                 ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
+                 nthreads: int, rand_state: int, fit_kmeans: bool):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -70,17 +64,23 @@ class AnnStream:
         self.nthreads = nthreads
         self.randState = rand_state
         self.batchSize = self._handle_batch_size()
-        self.kmeansKwargs = kmeans_kwargs
-        clean_kmeans_kwargs(self.kmeansKwargs)
-        self.mu = mu
-        self.sigma = sigma
         self.method = reduction_method
         self.nCells, self.nFeats = self.data.shape
-        self.annIdx = self._init_ann()
         self.clusterLabels: np.ndarray = np.repeat(-1, self.nCells)
-        self.kmeans = self._init_kmeans()
-
-        self.reducer = None
+        with threadpool_limits(limits=self.nthreads):
+            if self.method == 'pca':
+                self.mu, self.sigma = self._init_z()
+                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
+                if self.loadings is None:
+                    self._fit_pca()
+            elif self.method == 'lsi':
+                self.reducer = self.transform_lsi
+                if self.loadings is None:
+                    self._fit_lsi()
+            else:
+                raise ValueError("ERROR: Unknown reduction method")
+            self.annIdx = self._fit_ann(ann_idx_loc)
+            self.kmeans = self._fit_kmeans(fit_kmeans)
 
     def _handle_batch_size(self):
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
@@ -92,18 +92,12 @@ class AnnStream:
             print(f"INFO: Cluster number reduced to batch size of {batch_size}")
         return batch_size
 
-    def _init_ann(self):
-        idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
-        idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
-                       M=self.annM, random_seed=self.randState)
-        idx.set_ef(self.annEf)
-        idx.set_num_threads(1)
-        return idx
-
-    def _init_kmeans(self):
-        return MiniBatchKMeans(
-            n_clusters=self.nClusters, random_state=self.randState,
-            batch_size=self.batchSize, **self.kmeansKwargs)
+    def _init_z(self):
+        mu = clean_array(calc_computed(self.data.mean(axis=0),
+                                       'INFO: Calculating mean of norm. data'))
+        sigma = clean_array(calc_computed(self.data.std(axis=0),
+                                          'INFO: Calculating std. dev. of norm. data'), 1)
+        return mu, sigma
 
     def iter_blocks(self, msg: str = ''):
         for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
@@ -131,12 +125,6 @@ class AnnStream:
             i, d = self.annIdx.knn_query(a, k=k+1)
             return fix_knn_query(i, d, self_indices)
 
-    def estimate_partitions(self):
-        temp = []
-        for i in self.iter_blocks(msg='Estimating seed partitions'):
-            temp.extend(self.kmeans.predict(self.reducer(i)))
-        self.clusterLabels = np.array(temp)
-
     def _fit_pca(self):
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
@@ -153,31 +141,31 @@ class AnnStream:
             self._lsiModel.add_documents(vec_to_bow(i))
         self.loadings = self._lsiModel.get_topics().T
 
-    def fit(self):
-        with threadpool_limits(limits=self.nthreads):
-            if self.method == 'pca':
-                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
-            elif self.method == 'lsi':
-                self.reducer = self.transform_lsi
-            else:
-                raise ValueError("ERROR: Unknown reduction method")
-            if self.loadings is None:
-                if self.method == 'pca':
-                    self._fit_pca()
-                elif self.method == 'lsi':
-                    self._fit_lsi()
+    def _fit_ann(self, ann_idx_loc):
+        ann_idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
+        if ann_idx_loc is None:
+            ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
+                               M=self.annM, random_seed=self.randState)
+        else:
+            ann_idx.load_index(ann_idx_loc)
+        ann_idx.set_ef(self.annEf)
+        ann_idx.set_num_threads(1)
+        if ann_idx_loc is None:
             for i in self.iter_blocks(msg='Fitting ANN'):
-                a = self.reducer(i)
-                self.annIdx.add_items(a)
-                self.kmeans.partial_fit(a)
-            self.estimate_partitions()
+                ann_idx.add_items(self.reducer(i))
+        return ann_idx
 
-    def refit_kmeans(self, n_clusters: int, **kwargs):
-        self.nClusters = n_clusters
-        self.kmeansKwargs = kwargs
-        clean_kmeans_kwargs(self.kmeansKwargs)
-        self.kmeans = self._init_kmeans()
+    def _fit_kmeans(self, fit_kmeans):
+        if fit_kmeans is False:
+            return None
+        kmeans = MiniBatchKMeans(
+            n_clusters=self.nClusters, random_state=self.randState,
+            batch_size=self.batchSize)
         with threadpool_limits(limits=self.nthreads):
             for i in self.iter_blocks(msg='Fitting kmeans'):
-                self.kmeans.partial_fit(self.reducer(i))
-            self.estimate_partitions()
+                kmeans.partial_fit(self.reducer(i))
+        temp = []
+        for i in self.iter_blocks(msg='Estimating seed partitions'):
+            temp.extend(kmeans.predict(self.reducer(i)))
+        self.clusterLabels = np.array(temp)
+        return kmeans
