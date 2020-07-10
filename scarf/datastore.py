@@ -1,18 +1,16 @@
-import zarr
 import os
-import shutil
 import numpy as np
 from typing import List, Iterable, Union
-import re
-from scipy.stats import norm
 import pandas as pd
-from uuid import uuid4
+import re
+import zarr
+from dask.distributed import Client, LocalCluster
 from scipy.sparse import coo_matrix, csr_matrix, triu
-from .writers import create_zarr_dataset
+from scipy.stats import norm
+from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed, system_call
-from dask.distributed import Client, LocalCluster
+from .utils import calc_computed, system_call, rescale_array
 
 
 __all__ = ['DataStore']
@@ -35,43 +33,13 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     return True
 
 
-def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
-    """
-    Performs edge trimming on values of the input vector and constraints them between within frac and 1-frac density of
-    normal distribution created with the sample mean and std. dev. of a
-
-    :param a: numeric vector
-    :param frac: Value between 0 and 1.
-    :return:
-    """
-    loc = (np.median(a) + np.median(a[::-1])) / 2
-    dist = norm(loc, np.std(a))
-    minv, maxv = dist.ppf(1 - frac), dist.ppf(frac)
-    a[a < minv] = minv
-    a[a > maxv] = maxv
-    return a
-
-
-def clean_array(x, fill_val: int = 0):
-    """
-    Remove nan and infinite values from
-    :param x:
-    :param fill_val:
-    :return:
-    """
-    x = np.nan_to_num(x, copy=True)
-    x[(x == np.Inf) | (x == -np.Inf)] = 0
-    x[x == 0] = fill_val
-    return x
-
-
 class DataStore:
-    def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = 'RNA',
+    def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True, force_recalc: bool = False,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
-        self._fn = zarr_loc
-        self._z = zarr.open(self._fn, 'r+')
+        self._fn: str = zarr_loc
+        self._z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
         if dask_client is None:
             cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
@@ -88,7 +56,7 @@ class DataStore:
             mito_pattern = 'MT-'
         if ribo_pattern is None:
             ribo_pattern = 'RPS|RPL|MRPS|MRPL'
-        assay = self.__getattribute__(self.defaultAssay)
+        assay = self._get_assay('')
         if type(assay) == RNAassay:
             assay.add_percent_feature(mito_pattern, 'percentMito', verbose=False)
             assay.add_percent_feature(ribo_pattern, 'percentRibo', verbose=False)
@@ -154,11 +122,20 @@ class DataStore:
                 else:
                     print(caution_statement % i)
                     assay = Assay
-            setattr(self, i, assay(self._fn, i, self.cells, min_cells_per_feature=min_cells))
+            setattr(self, i, assay(self._z, i, self.cells, min_cells_per_feature=min_cells))
         return None
 
+    def _get_assay(self, from_assay: str):
+        if from_assay is None or from_assay == '':
+            from_assay = self.defaultAssay
+        return self.__getattribute__(from_assay)
+
+    def _get_latest_feat_key(self, from_assay: str):
+        assay = self._get_assay(from_assay)
+        return assay.attrs['latest_feat_key']
+
     def _ini_cell_props(self, min_features: int) -> None:
-        assay = self.__getattribute__(self.defaultAssay)
+        assay = self._get_assay('')
         if 'nCounts' in self.cells.table.columns and 'nFeatures' in self.cells.table.columns:
             pass
         else:
@@ -201,17 +178,8 @@ class DataStore:
             dist = norm(np.median(a), np.std(a))
             self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
 
-    def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = 'I',
-                   reduction_method: str = 'auto', k: int = 11, n_cluster: int = 100, dims: int = None,
-                   ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = None, ann_m: int = None,
-                   rand_state: int = 4466, batch_size: int = None,
-                   log_transform: bool = False, renormalize_subset: bool = True,
-                   local_connectivity: float = 1, bandwidth: float = 1.5,
-                   save_ann_obj: bool = False, save_raw_dists: bool = False, **kmeans_kwargs):
-        from .ann import AnnStream
-        if from_assay is None:
-            from_assay = self.defaultAssay
-        assay = self.__getattribute__(from_assay)
+    @staticmethod
+    def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
         reduction_method = reduction_method.lower()
         if reduction_method not in ['pca', 'lsi', 'auto']:
             raise ValueError("ERROR: Please choose either 'pca' or 'lsi' as reduction method")
@@ -223,74 +191,119 @@ class DataStore:
             else:
                 print("INFO: Using PCA for dimension reduction", flush=True)
                 reduction_method = 'pca'
+        return reduction_method
+
+    def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                   reduction_method: str = 'auto', k: int = 11, n_cluster: int = 100, dims: int = None,
+                   ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = None, ann_m: int = None,
+                   rand_state: int = 4466, batch_size: int = None,
+                   log_transform: bool = False, renormalize_subset: bool = True,
+                   local_connectivity: float = 1, bandwidth: float = 1.5):
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        assay = self._get_assay(from_assay)
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
-        data = assay.select_and_normalize(cell_key, feat_key, batch_size,
-                                          log_transform=log_transform,
-                                          renormalize_subset=renormalize_subset)
-        # data is not guaranteed to have same indices as raw data and may be shifted. we handle this in the pipeline
-        mu = clean_array(calc_computed(data.mean(axis=0), 'INFO: Calculating mean of norm. data'))
-        sigma = clean_array(calc_computed(data.std(axis=0), 'INFO: Calculating std. dev. of norm. data'), 1)
+        if feat_key is None:
+            bool_cols = [x.split('__', 1) for x in assay.feats.table.columns if assay.feats.table[x].dtype == bool
+                         and x != 'I']
+            bool_cols = [f"{x[1]}({x[0]})" for x in bool_cols]
+            bool_cols = ' '.join(map(str, bool_cols))
+            raise ValueError("ERROR: You have to choose which features that should be used for graph construction. "
+                             "Ideally you should have performed a feature selection step before making this graph. "
+                             "Feature selection step adds a column to your feature table. You can access your feature "
+                             f"table for for assay {from_assay} like this ds.{from_assay}.feats.table replace 'ds' "
+                             f"with the name of DataStore object.\nYou have following boolean columns in the feature "
+                             f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
+                             f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
+                             f"as `feat_key` means that you will use all the genes for graph creation.")
+        reduction_method = self._choose_reduction_method(assay, reduction_method)
+        params = {
+            'normed': (cell_key, feat_key),
+            'reduction': (reduction_method, dims),
+            'ann': (ann_metric, ann_efc, ann_ef, ann_m, rand_state),
+            'kmeans': (n_cluster, rand_state),
+            'knn': (k,),
+            'graph': (local_connectivity, bandwidth)
+        }
+        param_joiner = lambda x: x + '__' + '__'.join(map(str, params[x]))
+        normed_loc = f"{assay.name}/{param_joiner('normed')}"
+        reduction_loc = f"{normed_loc}/{param_joiner('reduction')}"
+        ann_loc = f"{reduction_loc}/{param_joiner('ann')}"
+        kmeans_loc = f"{reduction_loc}/{param_joiner('kmeans')}"
+        knn_loc = f"{ann_loc}/{param_joiner('knn')}"
+        graph_loc = f"{knn_loc}/{param_joiner('graph')}"
 
         loadings = None
-        loadings_name = reduction_method if cell_key == 'I' else cell_key + '_' + reduction_method
-        loadings_hash = hash((assay.create_subset_hash(cell_key, feat_key), dims,
-                              log_transform, renormalize_subset))
-        if loadings_name in assay.attrs and assay.attrs[loadings_name] == loadings_hash and \
-                loadings_name in assay._z[from_assay]:
-            print("INFO: Loading cached component coefficients/loadings", flush=True)
-            loadings = self._z[from_assay][loadings_name][:]
-        if dims is None and loadings is None:
-            raise ValueError("ERROR: No cached data found. Please provide a value for 'dims'")
-
+        ann_idx_loc = None
+        fit_kmeans = False
+        # The order of statements can be critical here. FOr example save_normalized_data will overwrite the entire
+        # zarr group and hence will prevent loading of stale cache data
+        data = assay.save_normalized_data(cell_key, feat_key, batch_size, param_joiner('normed'),
+                                          log_transform, renormalize_subset)
+        if reduction_loc in self._z:
+            loadings = self._z[reduction_loc]['reduction'][:]
+            print(f"INFO: Using existing loadings for {reduction_method} with {dims} dims", flush=True)
+        if kmeans_loc not in self._z:
+            fit_kmeans = True
+        else:
+            print(f"INFO: Will not recompute kmeans cluster centers", flush=True)
+        if ann_loc in self._z:
+            ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
+            print(f"INFO: Will not recompute ANN index. Will load from pickled object", flush=True)
+        from .ann import AnnStream
         ann_obj = AnnStream(data, k, n_cluster, reduction_method, dims, loadings,
-                            ann_metric, ann_efc, ann_ef, ann_m,
-                            self.nthreads, rand_state, mu, sigma, **kmeans_kwargs)
-        if save_ann_obj:
-            assay.annObj = ann_obj  # before calling fit, so that annObj can be diagnosed if an error arises
-        ann_obj.fit()
-
+                            ann_metric, ann_efc, ann_ef, ann_m, ann_idx_loc,
+                            self.nthreads, rand_state, fit_kmeans)
+        if ann_idx_loc is None:
+            ann_obj.annIdx.save_index(f"{self._fn}/{ann_loc}/ann_idx")
         if loadings is None:
-            g = create_zarr_dataset(self._z[from_assay], loadings_name,
+            self._z.create_group(reduction_loc, overwrite=True)
+            g = create_zarr_dataset(self._z[reduction_loc], 'reduction',
                                     (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
-            assay.attrs[loadings_name] = loadings_hash
-
-        self.cells.add(self._col_renamer(from_assay, cell_key, 'kmeans_cluster'), ann_obj.clusterLabels,
-                       fill_val=-1, key=cell_key, overwrite=True)
-        kmeans_loc = 'kmeans_cluster_centers' if cell_key == 'I' else cell_key + '_kmeans_cluster_centers'
-        g = create_zarr_dataset(self._z[from_assay], kmeans_loc,
-                                (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
-        g[:, :] = ann_obj.kmeans.cluster_centers_
-
-        graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
-        if loadings is not None:
-            # This means that we used cached PCA data, which means that nothing changed upstream.
-            store = self._z[from_assay][graph_loc]
-            if store.attrs['k'] == k:
-                print("INFO: ANN index instantiated but will reuse the existing graph.", flush=True)
-                return None
-        graph_dir = f"{self._fn}/{from_assay}/{graph_loc}"
-        if os.path.isdir(graph_dir):
-            shutil.rmtree(graph_dir, ignore_errors=True)
-        store = self._z[from_assay].create_group(graph_loc)
-        store.attrs['n_cells'] = ann_obj.nCells
-        store.attrs['k'] = ann_obj.k
-        store.attrs['self_uuid'] = uuid4().hex
-        from .knn_utils import make_knn_graph
-        make_knn_graph(ann_obj, batch_size, store, self.nthreads, local_connectivity, bandwidth, save_raw_dists)
+        if fit_kmeans:
+            self._z.create_group(kmeans_loc, overwrite=True)
+            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_centers',
+                                    (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
+            g[:, :] = ann_obj.kmeans.cluster_centers_
+            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_labels',
+                                    (1000,), 'f8', ann_obj.clusterLabels.shape)
+            g[:] = ann_obj.clusterLabels
+        if knn_loc in self._z and graph_loc in self._z:
+            print(f"INFO: KNN graph already exists will not recompute.", flush=True)
+        else:
+            from .knn_utils import self_query_knn, smoothen_dists
+            if knn_loc not in self._z:
+                self_query_knn(ann_obj, self._z.create_group(knn_loc, overwrite=True), batch_size, self.nthreads)
+            smoothen_dists(self._z.create_group(graph_loc, overwrite=True),
+                           self._z[knn_loc]['indices'], self._z[knn_loc]['distances'],
+                           local_connectivity, bandwidth)
+        self._z[normed_loc].attrs['latest_reduction'] = reduction_loc
+        self._z[reduction_loc].attrs['latest_ann'] = ann_loc
+        self._z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
+        self._z[ann_loc].attrs['latest_knn'] = knn_loc
+        self._z[knn_loc].attrs['latest_graph'] = graph_loc
         return None
 
-    def _load_graph(self, from_assay: str, cell_key: str, graph_format: str,
+    def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        reduction_loc = self._z[normed_loc].attrs['latest_reduction']
+        ann_loc = self._z[reduction_loc].attrs['latest_ann']
+        knn_loc = self._z[ann_loc].attrs['latest_knn']
+        return self._z[knn_loc].attrs['latest_graph']
+
+    def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                     min_edge_weight: float = 0, symmetric: bool = True):
-        graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
-        if graph_loc not in self._z[from_assay]:
-            print(f"ERROR: {graph_loc} not found for assay {from_assay}. Run `make_graph` for assay {from_assay}")
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        if graph_loc not in self._z:
+            print(f"ERROR: {graph_loc} not found in zarr location {self._fn}. Run `make_graph` for assay {from_assay}")
             return None
         if graph_format not in ['coo', 'csr']:
             raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
-        store = self._z[from_assay][graph_loc]
-        n_cells = store.attrs['n_cells']
+        store = self._z[graph_loc]
+        knn_loc = self._z[graph_loc.rsplit('/', 1)[0]]
+        n_cells = knn_loc['indices'].shape[0]
         # TODO: can we have a progress bar for graph loading. Append to coo matrix?
         graph = coo_matrix((store['weights'][:], (store['edges'][:, 0], store['edges'][:, 1])),
                            shape=(n_cells, n_cells))
@@ -302,16 +315,18 @@ class DataStore:
         else:
             return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
-    def _ini_embed(self, from_assay: str, cell_key: str, n_comps: int):
+    def _ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int):
         from sklearn.decomposition import PCA
-        pc = PCA(n_components=n_comps).fit_transform(self._z[from_assay]['kmeans_cluster_centers'][:])
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        reduction_loc = self._z[normed_loc].attrs['latest_reduction']
+        kmeans_loc = self._z[reduction_loc].attrs['latest_kmeans']
+        pc = PCA(n_components=n_comps).fit_transform(self._z[kmeans_loc]['cluster_centers'][:])
         for i in range(n_comps):
             pc[:, i] = rescale_array(pc[:, i])
-        clusters = self.cells.table[self._col_renamer(from_assay, 'I', 'kmeans_cluster')]
-        clusters = clusters[self.cells.table[cell_key]]
+        clusters = self._z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
-    def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I',
+    def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200,
                  alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True) -> None:
         from uuid import uuid4
@@ -320,15 +335,19 @@ class DataStore:
 
         if from_assay is None:
             from_assay = self.defaultAssay
-        uid = str(uuid4())
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
 
+        uid = str(uuid4())
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
         with open(ini_emb_fn, 'w') as h:
-            ini_emb = self._ini_embed(from_assay, cell_key, 2).flatten()
+            ini_emb = self._ini_embed(from_assay, cell_key, feat_key, tsne_dims).flatten()
             h.write('\n'.join(map(str, ini_emb)))
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
-        export_knn_to_mtx(knn_mtx_fn, self._z[from_assay][graph_loc])
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        knn_loc = self._z[graph_loc.rsplit('/', 1)[0]]
+        n_cells, n_neighbors = knn_loc['indices'].shape
+        export_knn_to_mtx(knn_mtx_fn, self._z[graph_loc], n_cells, n_neighbors)
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
 
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
@@ -344,21 +363,18 @@ class DataStore:
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
 
-    def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', use_full_graph: bool = True,
+    def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
                  spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
                  random_seed: int = 4444, parallel: bool = False, **kwargs) -> None:
         from .umap import fit_transform
         if from_assay is None:
             from_assay = self.defaultAssay
-        if use_full_graph:
-            graph = self._load_graph(from_assay, cell_key, 'coo', min_edge_weight, symmetric=False)
-        else:
-            graph = self._load_graph(from_assay, 'I', 'csr', min_edge_weight, symmetric=False)
-            nodes = np.where(self.cells.table[self.cells.table.I][cell_key].values)[0]
-            graph = graph[nodes, :][:, nodes].tocoo()
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight, symmetric=False)
         if ini_embed is None:
-            ini_embed = self._ini_embed(from_assay, cell_key, umap_dims)
+            ini_embed = self._ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, parallel=parallel, **kwargs)
@@ -367,14 +383,16 @@ class DataStore:
                            t[:, i], key=cell_key, overwrite=True)
         return None
 
-    def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I',
+    def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
-                       return_clusters: bool = False, force_recalc_dendrogram: bool = False) -> Union[None, pd.Series]:
+                       return_clusters: bool = False, force_recalc: bool = False) -> Union[None, pd.Series]:
         import sknetwork as skn
-        from .dendrogram import BalancedCut
+
         if from_assay is None:
             from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
         if balanced_cut is False:
             if n_clusters is None:
                 raise ValueError("ERROR: Please provide a value for n_clusters parameter. We are working on making "
@@ -385,25 +403,24 @@ class DataStore:
                       flush=True)
             if max_size is None or min_size is None:
                 raise ValueError("ERROR: Please provide value for max_size and min_size")
-        graph = self._load_graph(from_assay, cell_key, 'csr', min_edge_weight=min_edge_weight, symmetric=True)
-        assay = self.__getattribute__(from_assay)
-        graph_loc = 'graph' if cell_key == 'I' else cell_key + '_graph'
-        graph_uuid = self._z[from_assay][graph_loc].attrs['self_uuid']
-        params = [graph_uuid, min_edge_weight]  # this should not be changed to a tuple.
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        dendrogram_loc = f"{graph_loc}/dendrogram__{min_edge_weight}"
         # tuple are changed to list when saved as zarr attrs
-        if 'dendrogram' in self._z[from_assay][graph_loc] and \
-                assay.attrs['dendrogram_hash'] == params and force_recalc_dendrogram is False:
-            dendrogram = self._z[from_assay][graph_loc]['dendrogram'][:]
+        if dendrogram_loc in self._z and force_recalc is False:
+            dendrogram = self._z[dendrogram_loc][:]
             print("INFO: Using existing dendrogram", flush=True)
         else:
             paris = skn.hierarchy.Paris()
+            graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                                     symmetric=True)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
-            g = create_zarr_dataset(self._z[from_assay][graph_loc], 'dendrogram',
+            g = create_zarr_dataset(self._z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
                                     (5000,), 'f8', (graph.shape[0] - 1, 4))
             g[:] = dendrogram
-            assay.attrs['dendrogram_hash'] = params
+        self._z[graph_loc].attrs['latest_dendrogram'] = dendrogram_loc
         if balanced_cut:
+            from .dendrogram import BalancedCut
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
         else:
             # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
@@ -413,6 +430,23 @@ class DataStore:
         else:
             self.cells.add(self._col_renamer(from_assay, cell_key, 'cluster'), labels,
                            fill_val=-1, key=cell_key, overwrite=True)
+
+    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, threshold: float = 0.25) -> None:
+        from .markers import find_markers_by_rank
+
+        if group_key is None:
+            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'")
+            group_key = 'cluster'
+        assay = self._get_assay(from_assay)
+        markers = find_markers_by_rank(assay, group_key, threshold)
+        if 'markers' not in self._z:
+            self._z.create_group('markers')
+        group = self._z['markers'].create_group(group_key, overwrite=True)
+        for i in markers:
+            g = group.create_group(i)
+            create_zarr_obj_array(g, 'names', list(markers[i].index))
+            create_zarr_dataset(group, 'scores', (10000,), float, markers[i].values.shape)
+        return None
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
         from .plots import plot_qc
@@ -434,18 +468,10 @@ class DataStore:
             plot_qc(self.cells.table[self.cells.table.I][plot_cols], **kwargs)
         return None
 
-    def plot_gene_mean_var(self, **kwargs):
-        from .plots import plot_mean_var
-        assay = self.__getattribute__(self.defaultAssay)
-        if 'hvgs' not in assay.feats.table.columns:
-            raise KeyError(f"ERROR: HVGs have not been marked yet. Run 'mark_hvgs' first in {self.defaultAssay} assay.")
-        nzm, vf, nc = [assay.feats.fetch(x).astype('float') for x in ['nz_mean', 'c_var', 'nCells']]
-        plot_mean_var(nzm, vf, nc, assay.feats.fetch('hvgs'), **kwargs)
-
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
         cell_idx = self.cells.active_index(cell_key)
         if k not in self.cells.table.columns:
-            assay = self.__getattribute__(from_assay)
+            assay = self._get_assay(from_assay)
             feat_idx = assay.feats.get_idx_by_names([k], True)
             if len(feat_idx) == 0:
                 raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
@@ -492,18 +518,56 @@ class DataStore:
         else:
             return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs, **kwargs)
 
-    def plot_cluster_tree(self, *, from_assay: str = None, cluster_key: str = 'cluster',
-                          width: float = 1.5, lvr_factor: float = 0.5,
+    def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                          cluster_key: str = 'cluster', width: float = 1.5, lvr_factor: float = 0.5,
                           min_node_size: float = 20, node_size_expand_factor: float = 2, cmap='tab20'):
         from .plots import plot_cluster_hierarchy
         from .dendrogram import SummarizedTree
 
         if from_assay is None:
             from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
         clusts = self.cells.fetch(cluster_key)
-        sg = SummarizedTree(self._z[from_assay]['graph']['dendrogram'][:]).extract_ancestor_tree(clusts)
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        dendrogram_loc = self._z[graph_loc].attrs['latest_dendrogram']
+        sg = SummarizedTree(self._z[dendrogram_loc][:]).extract_ancestor_tree(clusts)
         plot_cluster_hierarchy(sg, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
                                node_size_expand_factor=node_size_expand_factor, cmap=cmap)
+
+    def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, topn: int = 5,
+                            log_transform: bool = True, vmin: float = -1, vmax: float = 2,
+                            batch_size: int = None, **heatmap_kwargs):
+        from .plots import plot_heatmap
+
+        assay = self._get_assay(from_assay)
+        if batch_size is None:
+            batch_size = min(999, int(1e7 / assay.cells.N)) + 1
+        if group_key is None:
+            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'")
+            group_key = 'cluster'
+        if 'markers' not in self._z:
+            raise KeyError("ERROR: Please run `run_marker_search` first")
+        if group_key not in self._z['markers']:
+            raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key`")
+        g = self._z['markers'][group_key]
+        goi = []
+        for i in g.keys():
+            goi.extend(g[i]['names'][:][:topn])
+        goi = sorted(set(goi))
+        cdf = []
+        for i in np.array_split(goi, len(goi) // batch_size + 1):
+            feat_idx = assay.feats.get_idx_by_names(i)
+            df = pd.DataFrame(assay.normed(feat_idx=feat_idx, log_transform=log_transform).compute(), columns=i)
+            df['cluster'] = assay.cells.fetch('cluster')
+            df = df.groupby('cluster').mean().T
+            df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
+            cdf.append(df)
+        cdf = pd.concat(cdf, axis=0)
+        # noinspection PyTypeChecker
+        cdf[cdf < vmin] = vmin
+        cdf[cdf > vmax] = vmax
+        plot_heatmap(cdf, **heatmap_kwargs)
 
     def __repr__(self):
         x = ' '.join(self.assayNames)

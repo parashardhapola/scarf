@@ -2,9 +2,8 @@ import numpy as np
 import dask.array as daskarr
 import zarr
 from .metadata import MetaData
-from .writers import dask_to_zarr
 from .utils import calc_computed
-
+from .writers import dask_to_zarr, create_zarr_dataset
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -14,7 +13,7 @@ def norm_dummy(assay, counts: daskarr) -> daskarr:
 
 
 def norm_lib_size(assay, counts: daskarr) -> daskarr:
-    return assay.sf * counts / (assay.scalar.reshape(-1, 1)+1)
+    return assay.sf * counts / (assay.scalar.reshape(-1, 1) + 1)
 
 
 def norm_clr(assay, counts: daskarr) -> daskarr:
@@ -24,22 +23,21 @@ def norm_clr(assay, counts: daskarr) -> daskarr:
 
 def norm_tf_idf(assay, counts: daskarr) -> daskarr:
     tf = counts / assay.n_term_per_doc.reshape(-1, 1)
+    # TODO: Split TF and IDF functionality to make it similar to norml_lib and zscaling
     idf = np.log2(assay.n_docs / (assay.n_docs_per_term + 1))
     return tf * idf
 
 
 class Assay:
-    def __init__(self, fn: str, name: str, cell_data: MetaData, min_cells_per_feature: int = 10):
-        self._fn = fn
-        self._z = zarr.open(fn, 'r+')
+    def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, min_cells_per_feature: int = 10):
         self.name = name
+        self._z = z[self.name]
         self.cells = cell_data
-        self.rawData = daskarr.from_zarr(self._z[self.name]['counts'])
-        self.feats = MetaData(self._z[self.name]['featureData'])
-        self.attrs = self._z[self.name].attrs
+        self.rawData = daskarr.from_zarr(self._z['counts'])
+        self.feats = MetaData(self._z['featureData'])
+        self.attrs = self._z.attrs
         if 'percentFeatures' not in self.attrs:
             self.attrs['percentFeatures'] = {}
-        self.annObj = None  # Can be dynamically attached for debugging purposes
         self.normMethod = norm_dummy
         self.sf = None
         self._ini_feature_props(min_cells_per_feature)
@@ -62,6 +60,12 @@ class Assay:
             self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
             self.feats.update(ncells > min_cells)
 
+    def _verify_keys(self, cell_key: str, feat_key: str) -> None:
+        if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
+            raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
+        if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
+            raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
+
     def add_percent_feature(self, feat_pattern: str, name: str, verbose: bool = True) -> None:
         if name in self.attrs['percentFeatures']:
             if self.attrs['percentFeatures'][name] == feat_pattern:
@@ -83,25 +87,33 @@ class Assay:
         feat_idx = self.feats.active_index(feat_key)
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
-    def select_and_normalize(self, cell_key: str, feat_key: str, batch_size: int, **kwargs) -> daskarr:
-        if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
-            raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
-        if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
-            raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
+    def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
+                             location: str, log_transform: bool, renormalize_subset: bool) -> daskarr:
+        # Because HVGs and other feature selections have cell key appended in their metadata
+        if feat_key != 'I':
+            feat_key = cell_key + '__' + feat_key
+        self._verify_keys(cell_key, feat_key)
+
+        subset_hash = self.create_subset_hash(cell_key, feat_key)
+        subset_params = [log_transform, renormalize_subset]
+        if location in self._z:
+            if subset_hash == self._z[location].attrs['subset_hash'] and \
+                    subset_params == self._z[location].attrs['subset_params']:
+                print(f"INFO: Using existing normalized data with cell key {cell_key} and feat key {feat_key}",
+                      flush=True)
+                return daskarr.from_zarr(self._z[location + '/data'])
+            else:
+                # Creating group here to overwrite all children
+                self._z.create_group(location, overwrite=True)
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
-        subset_hash = self.create_subset_hash(cell_key, feat_key)
-        subset_name = f"subset_{cell_key}_{feat_key}"
-        loc = f"{self.name}/{subset_name}"
-        if subset_name in self.attrs and self.attrs[subset_name] == subset_hash and loc in self._z and \
-                'selection_kwargs' in self.attrs and self.attrs['selection_kwargs'] == kwargs:
-            print(f"INFO: Exact features already selected for assay {self.name}")
-        else:
-            vals = self.normed(cell_idx, feat_idx, **kwargs)
-            dask_to_zarr(vals, self._z, loc, batch_size)
-            self.attrs[subset_name] = subset_hash
-            self.attrs['selection_kwargs'] = kwargs
-        return daskarr.from_zarr(self._z[loc])
+        vals = self.normed(cell_idx, feat_idx, log_transform=log_transform,
+                           renormalize_subset=renormalize_subset)
+        dask_to_zarr(vals, self._z, location + '/data', batch_size)
+        self._z[location].attrs['subset_hash'] = subset_hash
+        self._z[location].attrs['subset_params'] = subset_params
+        self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
+        return daskarr.from_zarr(self._z[location + '/data'])
 
     def __repr__(self):
         f = self.feats.table['I']
@@ -110,8 +122,8 @@ class Assay:
 
 
 class RNAassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
-        super().__init__(fn, name, cell_data, **kwargs)
+    def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
         self.sf = 10000
         self.scalar = None
@@ -131,20 +143,18 @@ class RNAassay(Assay):
             self.scalar = self.cells.table['nCounts'].values[cell_idx]
         return self.normMethod(self, counts)
 
-    def correct_var(self, n_bins: int = 200, lowess_frac: float = 0.1) -> None:
-        self.feats.remove_trend('c_var', 'avg', 'sigmas', n_bins, lowess_frac)
-
-    def correct_dropouts(self, n_bins: int = 200, lowess_frac: float = 0.1) -> None:
-        self.feats.remove_trend('c_dropOuts', 'avg', 'dropOuts', n_bins, lowess_frac)
-
-    def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I', min_cells: int = 10) -> None:
+    def set_feature_stats(self, cell_key: str, min_cells: int = 10) -> None:
+        feat_key = 'I'  # Here we choose to calculate stats for all the features
+        self._verify_keys(cell_key, feat_key)
+        subset_hash = self.create_subset_hash(cell_key, feat_key)
+        stats_loc = f"summary_stats_{cell_key}"
+        if stats_loc in self._z:
+            attrs = self._z[stats_loc].attrs
+            if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
+                print(f"INFO: Using cached feature stats for cell_key {cell_key}")
+                return None
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
-        subset_name = f"subset_{cell_key}_{feat_key}"
-        subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
-        if subset_name in self.attrs and self.attrs[subset_name] == subset_hash:
-            print("INFO: Using cached feature stats data")
-            return None
 
         n_cells = calc_computed((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
                                 f"INFO: ({self.name}) Computing nCells")
@@ -153,24 +163,44 @@ class RNAassay(Assay):
         sigmas = calc_computed(self.normed(cell_idx, feat_idx).var(axis=0),
                                f"INFO: ({self.name}) Computing sigmas")
         idx = n_cells > min_cells
+        self.feats.update(idx, key=feat_key)
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
-        self.feats.update(idx, key=feat_key)
-        self.feats.add('normed_tot', tot, key=feat_key, overwrite=True)
-        self.feats.add('avg', tot / self.cells.N, key=feat_key, overwrite=True)
-        self.feats.add('nz_mean', tot / n_cells, key=feat_key, overwrite=True)
-        self.feats.add('sigmas', sigmas, key=feat_key, overwrite=True)
-        self.feats.add('normed_n', n_cells, key=feat_key, overwrite=True)
+        group = self._z.create_group(stats_loc, overwrite=True)
+        g = create_zarr_dataset(group, 'normed_tot', (50000,), float, tot.shape)
+        g[:] = tot
+        g = create_zarr_dataset(group, 'avg', (50000,), float, tot.shape)
+        g[:] = tot / self.cells.N
+        g = create_zarr_dataset(group, 'nz_mean', (50000,), float, tot.shape)
+        g[:] = tot / n_cells
+        g = create_zarr_dataset(group, 'sigmas', (50000,), float, tot.shape)
+        g[:] = sigmas
+        g = create_zarr_dataset(group, 'normed_n', (50000,), float, tot.shape)
+        g[:] = n_cells
 
-        feat_idx = self.feats.active_index(feat_key)
-        subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
-        self.attrs[subset_name] = subset_hash
+        self._z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
         return None
 
-    def mark_hvgs(self, min_cells: int = 20, top_n: int = 500,
+    def mark_hvgs(self, cell_key: str = 'I', min_cells: int = 20, top_n: int = 500,
                   min_var: float = -np.Inf, max_var: float = np.Inf,
                   min_mean: float = -np.Inf, max_mean: float = np.Inf,
-                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST"):
+                  n_bins: int = 200, lowess_frac: float = 0.1,
+                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
+        self.set_feature_stats(cell_key)
+        stats_loc = f"summary_stats_{cell_key}"
+        c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
+        slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
+        for i in slots:
+            self.feats.add(i, self._z[stats_loc + '/' + i], key='I', overwrite=True)
+        if c_var_loc in self._z[stats_loc]:
+            print("INFO: Using existing corrected dispersion values")
+        else:
+            c_var = self.feats.remove_trend('avg', 'sigmas', n_bins, lowess_frac)
+            g = create_zarr_dataset(self._z[stats_loc], c_var_loc, (50000,), float, c_var.shape)
+            g[:] = c_var
+        self.feats.add(c_var_loc, self._z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
+
         bl = self.feats.idx_to_bool(self.feats.get_idx_by_names(self.feats.grep(blacklist)), invert=True)
         if min_var == -np.Inf:
             if top_n < 1:
@@ -178,17 +208,28 @@ class RNAassay(Assay):
             idx = self.feats.multi_sift(
                 ['normed_n', 'nz_mean'], [min_cells, min_mean], [np.Inf, max_mean])
             idx = idx & self.feats.table['I'] & bl
-            min_var = self.feats.table[idx]['c_var'].sort_values(ascending=False).values[top_n]
+            min_var = self.feats.table[idx][c_var_loc].sort_values(ascending=False).values[top_n]
         hvgs = self.feats.multi_sift(
-            ['normed_n', 'nz_mean', 'c_var'], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
+            ['normed_n', 'nz_mean', c_var_loc], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
         hvgs = hvgs & self.feats.table['I'] & bl
+        hvg_key_name = cell_key + '__' + hvg_key_name
         print(f"INFO: {sum(hvgs)} genes marked as HVGs", flush=True)
-        self.feats.add('hvgs', hvgs, fill_val=False, overwrite=True)
+        self.feats.add(hvg_key_name, hvgs, fill_val=False, overwrite=True)
+
+        if show_plot:
+            from .plots import plot_mean_var
+            nzm, vf, nc = [self.feats.fetch(x).astype('float') for x in ['nz_mean', c_var_loc, 'nCells']]
+            plot_mean_var(nzm, vf, nc, self.feats.fetch(hvg_key_name), **plot_kwargs)
+
+        for i in slots:
+            self.feats.remove(i)
+        self.feats.remove(c_var_loc)
+        return None
 
 
 class ATACassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
-        super().__init__(fn, name, cell_data, **kwargs)
+    def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
         self.n_term_per_doc = None
         self.n_docs = None
@@ -206,6 +247,7 @@ class ATACassay(Assay):
         return self.normMethod(self, counts)
 
     def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I') -> None:
+        # FIXME for new API
         subset_name = f"subset_{cell_key}_{feat_key}"
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
@@ -220,6 +262,7 @@ class ATACassay(Assay):
         return None
 
     def mark_top_prevalent_peaks(self, n_top: int = 1000):
+        # FIXME for new API
         if 'prevalence' not in self.feats.table:
             raise ValueError("ERROR: Please 'run set_feature_stats' first")
         if n_top >= self.feats.N:
@@ -231,8 +274,8 @@ class ATACassay(Assay):
 
 
 class ADTassay(Assay):
-    def __init__(self, fn: str, name: str, cell_data: MetaData, **kwargs):
-        super().__init__(fn, name, cell_data, **kwargs)
+    def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_clr
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
