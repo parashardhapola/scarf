@@ -1,11 +1,12 @@
 import zarr
 from numcodecs import Blosc
-from typing import Any, Tuple
+from typing import Any, Tuple, List
 import numpy as np
 from tqdm import tqdm
 from .readers import CrReader
 
-__all__ = ['CrToZarr', 'subset_assay_zarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'dask_to_zarr']
+__all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
+           'subset_assay_zarr', 'dask_to_zarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -23,33 +24,35 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
 
+def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
+                            feat_ids: List[str], feat_names: List[str], dtype: str = 'uint32') -> zarr.hierarchy:
+    g = z.create_group(assay_name, overwrite=True)
+    g.attrs['is_assay'] = True
+    g.attrs['misc'] = {}
+    create_zarr_obj_array(g, 'featureData/ids', feat_ids)
+    create_zarr_obj_array(g, 'featureData/names', feat_names)
+    create_zarr_obj_array(g, 'featureData/I',
+                          [True for _ in range(len(feat_ids))], 'bool')
+    return create_zarr_dataset(g, 'counts', chunk_size, dtype,
+                               (n_cells, len(feat_ids)), overwrite=True)
+
+
 class CrToZarr:
-    def __init__(self, cr: CrReader, zarr_fn: str, chunk_sizes=(1000, 1000), dtype: str = 'uint32'):
+    def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
         self.cr = cr
         self.fn = zarr_fn
-        self.chunkSizes = chunk_sizes
+        self.chunkSizes = chunk_size
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
         for assay_name in self.cr.assayFeats.columns:
-            g = self.z.create_group(assay_name)
-            g.attrs['is_assay'] = True
-            g.attrs['misc'] = {}
-            create_zarr_dataset(g, 'counts', chunk_sizes, dtype,
-                                (self.cr.nCells, self.cr.assayFeats[assay_name]['nFeatures']))
-            self._ini_feature_data(assay_name)
+            create_zarr_count_assay(self.z, assay_name, chunk_size, self.cr.nCells,
+                                    self.cr.feature_ids(assay_name), self.cr.feature_names(assay_name), dtype)
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
         create_zarr_obj_array(g, 'ids', self.cr.cell_names())
         create_zarr_obj_array(g, 'names', self.cr.cell_names())
         create_zarr_obj_array(g, 'I', [True for _ in range(self.cr.nCells)], 'bool')
-
-    def _ini_feature_data(self, assay_name):
-        g = self.z[assay_name]
-        create_zarr_obj_array(g, 'featureData/ids', self.cr.feature_ids(assay_name))
-        create_zarr_obj_array(g, 'featureData/names', self.cr.feature_names(assay_name))
-        is_active_data = [True for _ in range(self.cr.assayFeats[assay_name].nFeatures)]
-        create_zarr_obj_array(g, 'featureData/I', is_active_data, 'bool')
 
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
         stores = [self.z["%s/counts" % x] for x in self.cr.assayFeats.columns]
@@ -82,7 +85,6 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size):
-    # df = df.rechunk(chunks=(chunk_size, df.shape[0]))
     og = z.create_dataset(
         loc, overwrite=True, chunks=(chunk_size, None),
         shape=df.shape, dtype='float64',
