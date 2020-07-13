@@ -6,19 +6,27 @@ __all__ = ['Mapper']
 
 
 class Mapper:
-    def __init__(self, ref, target, feat_key, name, assay_z, chunk_size, save_k: int = None):
+    def __init__(self, ref, ref_cell_key, ref_feat_key, target, name, assay_z, chunk_size,
+                 reducer, ann_idx, save_k: int = None):
         self.ref = ref
         self.target = target
-        self.refFeatKey = feat_key
+        self.refFeatKey = ref_cell_key
         self.saveK = save_k
-        self.targetFeatKey = name + '_' + feat_key
-        self.featIds = self.add_target_feats()
+        self.targetFeatKey = name + '_' + ref_feat_key
+        self.featIds = self._add_target_feats()
+        self.reducer = reducer
+        self.annIdx = ann_idx
         # TODO: renormalize the data to account for missing feats
-        self.data = self.target.select_and_normalize(
-            cell_key='I', feat_key=self.targetFeatKey, batch_size=1000, **ref.attrs['selection_kwargs'])
-        self.zi, self.zd = self.prep_store(assay_z, name, chunk_size)
+        # normed_data_loc =
+        #
+        # data = assay.save_normalized_data(cell_key, feat_key, batch_size, param_joiner('normed'),
+        #                                   log_transform, renormalize_subset)
 
-    def add_target_feats(self):
+        self.data = self.target.save_normalized_data(
+            cell_key='I', feat_key=self.targetFeatKey, batch_size=1000, **ref.attrs['selection_kwargs'])
+        self.zi, self.zd = self._prep_store(assay_z, name, chunk_size)
+
+    def _add_target_feats(self):
         feat_ids = self.ref.feats.table.ids[
             self.ref.feats.table[self.refFeatKey]].values
         self.target.feats.add(k=self.targetFeatKey,
@@ -26,7 +34,7 @@ class Mapper:
                               fill_val=False, overwrite=True)
         return feat_ids
     
-    def prep_store(self, assay_z, name, chunk_size):
+    def _prep_store(self, assay_z, name, chunk_size):
         z_key = f'projections/{name}'
         if z_key in assay_z:
             del assay_z[z_key]
@@ -55,9 +63,9 @@ class Mapper:
     def run(self):
         entry_start = 0
         for i in tqdm(self.aligned_feat_data(), desc='Mapping'):
-            ki, kd = self.ref.annObj.transform_ann(self.ref.annObj.reducer(i))
+            ki, kd = self.annIdx.knn_query(self.reducer(i), k=self.saveK)
             entry_end = entry_start + len(ki)
-            self.zi[entry_start:entry_end, :] = ki[:, :self.saveK]
-            self.zd[entry_start:entry_end, :] = kd[:, :self.saveK]
+            self.zi[entry_start:entry_end, :] = ki
+            self.zd[entry_start:entry_end, :] = kd
             entry_start = entry_end
         return None
