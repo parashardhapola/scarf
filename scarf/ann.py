@@ -6,7 +6,6 @@ import numpy as np
 from scipy import sparse
 from gensim.models import LsiModel
 from . import threadpool_limits
-from .utils import calc_computed, clean_array
 
 __all__ = ['AnnStream']
 
@@ -39,9 +38,9 @@ def vec_to_bow(x):
 
 class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
-                 dims: int, loadings: np.ndarray,
+                 dims: int, loadings: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
-                 nthreads: int, rand_state: int, fit_kmeans: bool):
+                 nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -56,11 +55,7 @@ class AnnStream:
         self.annMetric = ann_metric
         self.annEfc = ann_efc
         self.annEf = ann_ef
-        if self.annEf is None:
-            self.annEf = self.k * 2
         self.annM = ann_m
-        if self.annM is None:
-            self.annM = int(self.dims * 1.5)
         self.nthreads = nthreads
         self.randState = rand_state
         self.batchSize = self._handle_batch_size()
@@ -69,18 +64,18 @@ class AnnStream:
         self.clusterLabels: np.ndarray = np.repeat(-1, self.nCells)
         with threadpool_limits(limits=self.nthreads):
             if self.method == 'pca':
-                self.mu, self.sigma = self._init_z()
-                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
+                self.mu, self.sigma = mu, sigma
                 if self.loadings is None:
                     self._fit_pca()
+                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
             elif self.method == 'lsi':
-                self.reducer = self.transform_lsi
                 if self.loadings is None:
                     self._fit_lsi()
+                self.reducer = self.transform_lsi
             else:
                 raise ValueError("ERROR: Unknown reduction method")
-            self.annIdx = self._fit_ann(ann_idx_loc)
-            self.kmeans = self._fit_kmeans(fit_kmeans)
+            self.annIdx = self._fit_ann(ann_idx_loc, do_ann_fit)
+            self.kmeans = self._fit_kmeans(do_kmeans_fit)
 
     def _handle_batch_size(self):
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
@@ -91,13 +86,6 @@ class AnnStream:
             self.nClusters = batch_size
             print(f"INFO: Cluster number reduced to batch size of {batch_size}")
         return batch_size
-
-    def _init_z(self):
-        mu = clean_array(calc_computed(self.data.mean(axis=0),
-                                       'INFO: Calculating mean of norm. data'))
-        sigma = clean_array(calc_computed(self.data.std(axis=0),
-                                          'INFO: Calculating std. dev. of norm. data'), 1)
-        return mu, sigma
 
     def iter_blocks(self, msg: str = ''):
         for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
@@ -141,22 +129,22 @@ class AnnStream:
             self._lsiModel.add_documents(vec_to_bow(i))
         self.loadings = self._lsiModel.get_topics().T
 
-    def _fit_ann(self, ann_idx_loc):
+    def _fit_ann(self, ann_idx_loc, do_ann_fit):
         ann_idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
-        if ann_idx_loc is None:
+        if do_ann_fit is True:
             ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
                                M=self.annM, random_seed=self.randState)
         else:
             ann_idx.load_index(ann_idx_loc)
         ann_idx.set_ef(self.annEf)
         ann_idx.set_num_threads(1)
-        if ann_idx_loc is None:
+        if do_ann_fit is True:
             for i in self.iter_blocks(msg='Fitting ANN'):
                 ann_idx.add_items(self.reducer(i))
         return ann_idx
 
-    def _fit_kmeans(self, fit_kmeans):
-        if fit_kmeans is False:
+    def _fit_kmeans(self, do_ann_fit):
+        if do_ann_fit is False:
             return None
         kmeans = MiniBatchKMeans(
             n_clusters=self.nClusters, random_state=self.randState,
