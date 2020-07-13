@@ -10,7 +10,8 @@ from scipy.stats import norm
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed, system_call, rescale_array
+from .utils import calc_computed, system_call, rescale_array, clean_array
+from tqdm import tqdm
 
 
 __all__ = ['DataStore']
@@ -194,11 +195,13 @@ class DataStore:
         return reduction_method
 
     def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                   reduction_method: str = 'auto', k: int = 11, n_cluster: int = 100, dims: int = None,
-                   ann_metric: str = 'l2', ann_efc: int = 100, ann_ef: int = None, ann_m: int = None,
-                   rand_state: int = 4466, batch_size: int = None,
-                   log_transform: bool = False, renormalize_subset: bool = True,
-                   local_connectivity: float = 1, bandwidth: float = 1.5):
+                   reduction_method: str = 'auto', dims: int = None, k: int = None,
+                   ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
+                   rand_state: int = None, n_centroids: int = None, batch_size: int = None,
+                   log_transform: bool = None, renormalize_subset: bool = None,
+                   local_connectivity: float = None, bandwidth: float = None, return_ann_obj: bool = False):
+        from .ann import AnnStream
+
         if from_assay is None:
             from_assay = self.defaultAssay
         assay = self._get_assay(from_assay)
@@ -218,58 +221,202 @@ class DataStore:
                              f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
                              f"as `feat_key` means that you will use all the genes for graph creation.")
         reduction_method = self._choose_reduction_method(assay, reduction_method)
-        params = {
-            'normed': (cell_key, feat_key),
-            'reduction': (reduction_method, dims),
-            'ann': (ann_metric, ann_efc, ann_ef, ann_m, rand_state),
-            'kmeans': (n_cluster, rand_state),
-            'knn': (k,),
-            'graph': (local_connectivity, bandwidth)
-        }
-        param_joiner = lambda x: x + '__' + '__'.join(map(str, params[x]))
-        normed_loc = f"{assay.name}/{param_joiner('normed')}"
-        reduction_loc = f"{normed_loc}/{param_joiner('reduction')}"
-        ann_loc = f"{reduction_loc}/{param_joiner('ann')}"
-        kmeans_loc = f"{reduction_loc}/{param_joiner('kmeans')}"
-        knn_loc = f"{ann_loc}/{param_joiner('knn')}"
-        graph_loc = f"{knn_loc}/{param_joiner('graph')}"
+
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        if log_transform is None or renormalize_subset is None:
+            if normed_loc in self._z and 'subset_params' in self._z[normed_loc].attrs:
+                # This works in coordination with save_normalized_data
+                c_log_transform, c_renormalize_subset = self._z[normed_loc].attrs['subset_params']
+            else:
+                c_log_transform, c_renormalize_subset = None, None
+            if log_transform is None and c_log_transform is not None:
+                log_transform = c_log_transform
+                print(f'INFO: No value provided for parameter `log_transform`. '
+                      f'Will use previously used value: {log_transform}', flush=True)
+            else:
+                log_transform = False
+                print(f'INFO: No value provided for parameter `log_transform`. '
+                      f'Will use default value: {log_transform}', flush=True)
+            if renormalize_subset is None and c_renormalize_subset is not None:
+                renormalize_subset = c_renormalize_subset
+                print(f'INFO: No value provided for parameter `renormalize_subset`. '
+                      f'Will use previously used value: {renormalize_subset}', flush=True)
+            else:
+                renormalize_subset = True
+                print(f'INFO: No value provided for parameter `renormalize_subset`. '
+                      f'Will use default value: {renormalize_subset}', flush=True)
+        else:
+            log_transform = bool(log_transform)
+            renormalize_subset = bool(renormalize_subset)
+
+        data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
+                                          log_transform, renormalize_subset)
+
+        if dims is None:
+            if normed_loc in self._z and 'latest_reduction' in self._z[normed_loc].attrs:
+                reduction_loc = self._z[normed_loc].attrs['latest_reduction']
+                dims = int(reduction_loc.rsplit('__', 1)[1])
+                print(f'INFO: No value provided for parameter `dims`. '
+                      f'Will use previously used value: {dims}', flush=True)
+            else:
+                dims = 11
+                print(f'INFO: No value provided for parameter `dims`. Will use default value: {dims}', flush=True)
+        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
+
+        if ann_metric is None or ann_efc is None or ann_ef is None or ann_m is None or rand_state is None:
+            if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
+                ann_loc = self._z[reduction_loc].attrs['latest_ann']
+                c_ann_metric, c_ann_efc, c_ann_ef, c_ann_m, c_rand_state = \
+                    ann_loc.rsplit('/', 1)[1].split('__')[1:]
+            else:
+                c_ann_metric, c_ann_efc, c_ann_ef, c_ann_m, c_rand_state = \
+                    None, None, None, None, None
+            if ann_metric is None and c_ann_metric is not None:
+                ann_metric = c_ann_metric
+                print(f'INFO: No value provided for parameter `ann_metric`. '
+                      f'Will use previously used value: {ann_metric}', flush=True)
+            else:
+                ann_metric = 'l2'
+                print(f'INFO: No value provided for parameter `ann_metric`. '
+                      f'Will use default value: {ann_metric}', flush=True)
+            if ann_efc is None and c_ann_efc is not None:
+                ann_efc = int(c_ann_efc)
+                print(f'INFO: No value provided for parameter `ann_efc`. '
+                      f'Will use previously used value: {ann_efc}', flush=True)
+            else:
+                ann_efc = 10
+                print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}', flush=True)
+            if ann_ef is None and c_ann_ef is not None:
+                ann_ef = int(c_ann_ef)
+                print(f'INFO: No value provided for parameter `ann_ef`. '
+                      f'Will use previously used value: {ann_ef}', flush=True)
+            else:
+                ann_ef = None  # Will be set after value for k is determined
+            if ann_m is None and c_ann_m is not None:
+                ann_m = int(c_ann_m)
+                print(f'INFO: No value provided for parameter `ann_m`. '
+                      f'Will use previously used value: {ann_m}', flush=True)
+            else:
+                ann_m = int(dims * 1.5)
+                print(f'INFO: No value provided for parameter `ann_m`. Will use default value: {ann_m}', flush=True)
+            if rand_state is None and c_rand_state is not None:
+                rand_state = int(c_rand_state)
+                print(f'INFO: No value provided for parameter `rand_state`. '
+                      f'Will use previously used value: {rand_state}', flush=True)
+            else:
+                rand_state = 4466
+                print(f'INFO: No value provided for parameter `rand_state`. '
+                      f'Will use default value: {rand_state}', flush=True)
+        else:
+            ann_metric = str(ann_metric)
+            ann_efc = int(ann_efc)
+            ann_ef = int(ann_ef)
+            ann_m = int(ann_m)
+            rand_state = int(rand_state)
+
+        if k is None:
+            if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
+                ann_loc = self._z[reduction_loc].attrs['latest_ann']
+                knn_loc = self._z[ann_loc].attrs['latest_knn']
+                k = int(knn_loc.rsplit('__', 1)[1])  # depends on param_joiner
+                print(f'INFO: No value provided for parameter `k`. Will use previously used value: {k}', flush=True)
+            else:
+                k = 11
+                print(f'INFO: No value provided for parameter `k`. Will use default value: {k}', flush=True)
+        else:
+            k = int(k)
+        if ann_ef is None:
+            ann_ef = k * 2
+        ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
+        ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
+        knn_loc = f"{ann_loc}/knn__{k}"
+
+        if n_centroids is None:
+            if reduction_loc in self._z and 'latest_kmeans' in self._z[reduction_loc].attrs:
+                kmeans_loc = self._z[reduction_loc].attrs['latest_kmeans']
+                n_centroids = int(kmeans_loc.split('/')[-1].split('__')[1])  # depends on param_joiner
+                print(f'INFO: No value provided for parameter `n_centroids`.'
+                      f' Will use previously used value: {n_centroids}', flush=True)
+            else:
+                n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
+                print(f'INFO: No value provided for parameter `n_centroids`. '
+                      f'Will use default value: {n_centroids}', flush=True)
+        kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
+
+        if local_connectivity is None or bandwidth is None:
+            if knn_loc in self._z and 'latest_graph' in self._z[knn_loc].attrs:
+                graph_loc = self._z[knn_loc].attrs['latest_graph']
+                c_local_connectivity, c_bandwidth = map(float, graph_loc.rsplit('/')[-1].split('__')[1:])
+            else:
+                c_local_connectivity, c_bandwidth = None, None
+            if local_connectivity is None and c_local_connectivity is not None:
+                local_connectivity = c_local_connectivity
+                print(f'INFO: No value provided for parameter `local_connectivity`. '
+                      f'Will use previously used value: {local_connectivity}', flush=True)
+            else:
+                local_connectivity = 1.0
+                print(f'INFO: No value provided for parameter `local_connectivity`. '
+                      f'Will use default value: {local_connectivity}', flush=True)
+            if bandwidth is None and c_bandwidth is not None:
+                bandwidth = c_bandwidth
+                print(f'INFO: No value provided for parameter `bandwidth`. '
+                      f'Will use previously used value: {bandwidth}', flush=True)
+            else:
+                bandwidth = 1.5
+                print(f'INFO: No value provided for parameter `bandwidth`. Will use default value: {bandwidth}',
+                      flush=True)
+        else:
+            local_connectivity = float(local_connectivity)
+            bandwidth = float(bandwidth)
+        graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
         loadings = None
-        ann_idx_loc = None
-        fit_kmeans = False
-        # The order of statements can be critical here. FOr example save_normalized_data will overwrite the entire
-        # zarr group and hence will prevent loading of stale cache data
-        data = assay.save_normalized_data(cell_key, feat_key, batch_size, param_joiner('normed'),
-                                          log_transform, renormalize_subset)
+        fit_kmeans = True
+        fit_ann = True
+        mu, sigma = np.ndarray([]), np.ndarray([])
+
         if reduction_loc in self._z:
             loadings = self._z[reduction_loc]['reduction'][:]
+            if reduction_method == 'pca':
+                mu = self._z[reduction_loc]['mu'][:]
+                sigma = self._z[reduction_loc]['sigma'][:]
             print(f"INFO: Using existing loadings for {reduction_method} with {dims} dims", flush=True)
-        if kmeans_loc not in self._z:
-            fit_kmeans = True
         else:
-            print(f"INFO: Will not recompute kmeans cluster centers", flush=True)
+            if reduction_method == 'pca':
+                mu = clean_array(calc_computed(data.mean(axis=0),
+                                               'INFO: Calculating mean of norm. data'))
+                sigma = clean_array(calc_computed(data.std(axis=0),
+                                                  'INFO: Calculating std. dev. of norm. data'), 1)
         if ann_loc in self._z:
-            ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
-            print(f"INFO: Will not recompute ANN index. Will load from pickled object", flush=True)
-        from .ann import AnnStream
-        ann_obj = AnnStream(data, k, n_cluster, reduction_method, dims, loadings,
-                            ann_metric, ann_efc, ann_ef, ann_m, ann_idx_loc,
-                            self.nthreads, rand_state, fit_kmeans)
-        if ann_idx_loc is None:
-            ann_obj.annIdx.save_index(f"{self._fn}/{ann_loc}/ann_idx")
+            fit_ann = False
+            print(f"INFO: Using existing ANN index", flush=True)
+        if kmeans_loc in self._z:
+            fit_kmeans = False
+            print(f"INFO: using existing kmeans cluster centers", flush=True)
+        ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
+                            dims=dims, loadings=loadings, mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
+                            ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=ann_idx_loc, nthreads=self.nthreads,
+                            rand_state=rand_state, do_ann_fit=fit_ann, do_kmeans_fit=fit_kmeans)
+
         if loadings is None:
             self._z.create_group(reduction_loc, overwrite=True)
-            g = create_zarr_dataset(self._z[reduction_loc], 'reduction',
-                                    (1000, 1000), 'f8', ann_obj.loadings.shape)
+            g = create_zarr_dataset(self._z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
+            g = create_zarr_dataset(self._z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
+            g[:] = mu
+            g = create_zarr_dataset(self._z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
+            g[:] = sigma
+        if ann_loc not in self._z:
+            self._z.create_group(ann_loc, overwrite=True)
+            ann_obj.annIdx.save_index(ann_idx_loc)
         if fit_kmeans:
             self._z.create_group(kmeans_loc, overwrite=True)
             g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_centers',
                                     (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
             g[:, :] = ann_obj.kmeans.cluster_centers_
-            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_labels',
-                                    (1000,), 'f8', ann_obj.clusterLabels.shape)
+            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_labels', (100000,), 'f8', ann_obj.clusterLabels.shape)
             g[:] = ann_obj.clusterLabels
+
         if knn_loc in self._z and graph_loc in self._z:
             print(f"INFO: KNN graph already exists will not recompute.", flush=True)
         else:
@@ -279,11 +426,14 @@ class DataStore:
             smoothen_dists(self._z.create_group(graph_loc, overwrite=True),
                            self._z[knn_loc]['indices'], self._z[knn_loc]['distances'],
                            local_connectivity, bandwidth)
+
         self._z[normed_loc].attrs['latest_reduction'] = reduction_loc
         self._z[reduction_loc].attrs['latest_ann'] = ann_loc
         self._z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
         self._z[ann_loc].attrs['latest_knn'] = knn_loc
         self._z[knn_loc].attrs['latest_graph'] = graph_loc
+        if return_ann_obj:
+            return ann_obj
         return None
 
     def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
@@ -435,17 +585,62 @@ class DataStore:
         from .markers import find_markers_by_rank
 
         if group_key is None:
-            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'")
+            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'", flush=True)
             group_key = 'cluster'
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(assay, group_key, threshold)
-        if 'markers' not in self._z:
-            self._z.create_group('markers')
-        group = self._z['markers'].create_group(group_key, overwrite=True)
+        z = self._z[assay.name]
+        if 'markers' not in z:
+            z.create_group('markers')
+        group = z['markers'].create_group(group_key, overwrite=True)
         for i in markers:
             g = group.create_group(i)
-            create_zarr_obj_array(g, 'names', list(markers[i].index))
-            create_zarr_dataset(group, 'scores', (10000,), float, markers[i].values.shape)
+            vals = markers[i]
+            if len(vals) != 0:
+                create_zarr_obj_array(g, 'names', list(vals.index))
+                g_s = create_zarr_dataset(g, 'scores', (10000,), float, vals.values.shape)
+                g_s[:] = vals.values
+        return None
+
+    def run_mapping(self, *, target_assay: Assay, target_name: str, from_assay: str = None,
+                    cell_key: str = 'I', feat_key: str = None, save_k: int = 1, batch_size: int = 1000):
+        assay = self._get_assay(from_assay)
+        from_assay = assay.name
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        feat_ids = assay.feats.table.ids[assay.feats.table[feat_key]].values
+        tfk = 'asdfverasfa'
+        target_assay.feats.add(k=tfk, v=target_assay.feats.table.ids.isin(feat_ids).values,
+                               fill_val=False, overwrite=True)
+        colnames = target_assay.feats.table.ids[target_assay.feats.table[tfk]].values
+        if len(colnames) == 0:
+            raise ValueError("ERROR: No common features found between the two datasets")
+        else:
+            print(f"INFO: {len(colnames)} common features from {len(feat_ids)} "
+                  f"reference features will be used", flush=True)
+
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        if 'projections' not in self._z[graph_loc]:
+            self._z[graph_loc].create_group('projections')
+        store = self._z[graph_loc]['projections'].create_group(target_name, overwrite=True)
+        nc, nk = target_assay.cells.table.I.sum(), save_k
+        zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
+        zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
+
+        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key, return_ann_obj=True)
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        data = target_assay.save_normalized_data(cell_key, tfk, batch_size, f"normed__{cell_key}__{tfk}",
+                                                 **self._z[normed_loc].attrs['subset_params'])
+        entry_start = 0
+        for i in tqdm(data.blocks, desc='Mapping'):
+            i = pd.DataFrame(i.compute(), columns=colnames).T.reindex(feat_ids).fillna(0).T.values
+            ki, kd = ann_obj.transform_ann(ann_obj.reducer(i), k=save_k)
+            entry_end = entry_start + len(ki)
+            zi[entry_start:entry_end, :] = ki
+            zd[entry_start:entry_end, :] = kd
+            entry_start = entry_end
+
+        target_assay.feats.remove(tfk)
         return None
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
@@ -546,14 +741,15 @@ class DataStore:
         if group_key is None:
             print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'")
             group_key = 'cluster'
-        if 'markers' not in self._z:
+        if 'markers' not in self._z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
-        if group_key not in self._z['markers']:
+        if group_key not in self._z[assay.name]['markers']:
             raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key`")
-        g = self._z['markers'][group_key]
+        g = self._z[assay.name]['markers'][group_key]
         goi = []
         for i in g.keys():
-            goi.extend(g[i]['names'][:][:topn])
+            if 'names' in g[i]:
+                goi.extend(g[i]['names'][:][:topn])
         goi = sorted(set(goi))
         cdf = []
         for i in np.array_split(goi, len(goi) // batch_size + 1):
@@ -566,6 +762,7 @@ class DataStore:
         cdf = pd.concat(cdf, axis=0)
         # noinspection PyTypeChecker
         cdf[cdf < vmin] = vmin
+        # noinspection PyTypeChecker
         cdf[cdf > vmax] = vmax
         plot_heatmap(cdf, **heatmap_kwargs)
 
