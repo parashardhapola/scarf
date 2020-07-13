@@ -2,7 +2,7 @@ import numpy as np
 from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 from .writers import create_zarr_dataset
 from .ann import AnnStream
-from . import threadpool_limits
+from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
 __all__ = ['self_query_knn', 'smoothen_dists', 'export_knn_to_mtx']

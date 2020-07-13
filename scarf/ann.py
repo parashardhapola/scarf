@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from scipy import sparse
 from gensim.models import LsiModel
-from . import threadpool_limits
+from threadpoolctl import threadpool_limits
 
 __all__ = ['AnnStream']
 
