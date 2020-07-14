@@ -608,11 +608,12 @@ class DataStore:
         from_assay = assay.name
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        feat_ids = assay.feats.table.ids[assay.feats.table[feat_key]].values
+        feat_ids = assay.feats.table.ids[assay.feats.table[cell_key+'__'+feat_key]].values
+        # FIXME: find a better way to initialize this
         tfk = 'asdfverasfa'
-        target_assay.feats.add(k=tfk, v=target_assay.feats.table.ids.isin(feat_ids).values,
+        target_assay.feats.add(k='I__'+tfk, v=target_assay.feats.table.ids.isin(feat_ids).values,
                                fill_val=False, overwrite=True)
-        colnames = target_assay.feats.table.ids[target_assay.feats.table[tfk]].values
+        colnames = target_assay.feats.table.ids[target_assay.feats.table['I__'+tfk]].values
         if len(colnames) == 0:
             raise ValueError("ERROR: No common features found between the two datasets")
         else:
@@ -629,8 +630,8 @@ class DataStore:
 
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key, return_ann_obj=True)
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        data = target_assay.save_normalized_data(cell_key, tfk, batch_size, f"normed__{cell_key}__{tfk}",
-                                                 **self._z[normed_loc].attrs['subset_params'])
+        norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
+        data = target_assay.save_normalized_data(cell_key, tfk, batch_size, f"normed__I__{tfk}", **norm_params)
         entry_start = 0
         for i in tqdm(data.blocks, desc='Mapping'):
             i = pd.DataFrame(i.compute(), columns=colnames).T.reindex(feat_ids).fillna(0).T.values
@@ -639,9 +640,46 @@ class DataStore:
             zi[entry_start:entry_end, :] = ki
             zd[entry_start:entry_end, :] = kd
             entry_start = entry_end
-
-        target_assay.feats.remove(tfk)
+        target_assay.feats.remove(cell_key+'__'+tfk)
         return None
+
+    def get_mapping_score(self,  *, target_name: str, target_groups: np.ndarray = None,
+                          from_assay: str = None, cell_key: str = 'I', feat_key: str = None,) -> np.ndarray:
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        store_loc = f"{graph_loc}/projections/{target_name}"
+        if store_loc not in self._z:
+            raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
+                           f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters")
+        store = self._z[store_loc]
+
+        indices = store['indices'][:]
+        dists = store['distances'][:]
+        dists = 1 / np.log1p(dists)
+        n_cells = indices.shape[0]
+
+        if target_groups is not None:
+            if len(target_groups) != n_cells:
+                raise ValueError(f"ERROR: Length of target_groups {len(target_groups)} not same as number of target "
+                                 f"cells in the projection {n_cells}")
+            groups = pd.Series(target_groups)
+        else:
+            groups = pd.Series(np.zeros(n_cells))
+
+        ref_n_cells = self.cells.table[cell_key].sum()
+        for group in sorted(groups.unique()):
+            coi = {x: None for x in groups[groups == group].index.values}
+            ms = np.zeros(ref_n_cells)
+            for n, i, j in zip(range(len(indices)), indices, dists):
+                if n in coi:
+                    for x, y in zip(i, j):
+                        ms[x] += y
+            ms = np.log1p(1000 * ms / len(coi))
+            yield group, ms
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
         from .plots import plot_qc
