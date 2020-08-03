@@ -101,6 +101,7 @@ class Assay:
                     subset_params == self._z[location].attrs['subset_params']:
                 print(f"INFO: Using existing normalized data with cell key {cell_key} and feat key {feat_key}",
                       flush=True)
+                self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
                 return daskarr.from_zarr(self._z[location + '/data'])
             else:
                 # Creating group here to overwrite all children
@@ -246,31 +247,38 @@ class ATACassay(Assay):
         self.n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
         return self.normMethod(self, counts)
 
-    def set_feature_stats(self, cell_key: str = 'I', feat_key: str = 'I') -> None:
-        # FIXME for new API
-        subset_name = f"subset_{cell_key}_{feat_key}"
+    def set_feature_stats(self, cell_key: str = 'I') -> None:
+        feat_key = 'I'
+        self._verify_keys(cell_key, feat_key)
+        subset_hash = self.create_subset_hash(cell_key, feat_key)
+        stats_loc = f"summary_stats_{cell_key}"
+        if stats_loc in self._z:
+            attrs = self._z[stats_loc].attrs
+            if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
+                print(f"INFO: Using cached feature stats for cell_key {cell_key}")
+                return None
+
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
-        subset_hash = hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
-        if subset_name in self.attrs and self.attrs[subset_name] == subset_hash:
-            print("INFO: Using cached feature stats data", flush=True)
-            return None
         prevalence = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"INFO: ({self.name}) Calculating peak prevalence across cells")
-        self.feats.add('prevalence', prevalence, fill_val=False, overwrite=True)
-        self.attrs[subset_name] = subset_hash
+        group = self._z.create_group(stats_loc, overwrite=True)
+        g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)
+        g[:] = prevalence
+        self._z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
         return None
 
-    def mark_top_prevalent_peaks(self, n_top: int = 1000):
-        # FIXME for new API
-        if 'prevalence' not in self.feats.table:
-            raise ValueError("ERROR: Please 'run set_feature_stats' first")
+    def mark_top_prevalent_peaks(self, cell_key: str = 'I', n_top: int = 1000):
+        self.set_feature_stats(cell_key)
         if n_top >= self.feats.N:
             raise ValueError(f"ERROR: n_top should be less than total number of features ({self.feats.N})]")
         if type(n_top) != int:
             raise TypeError("ERROR: n_top must a positive integer value")
+        stats_loc = f"summary_stats_{cell_key}"
+        self.feats.add('prevalence', self._z[stats_loc + '/prevalence'], key='I', overwrite=True)
         idx = self.feats.table['prevalence'].sort_values(ascending=False)[:n_top].index
-        self.feats.add('top_peaks', self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
+        self.feats.add(cell_key+'__top_peaks', self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
+        self.feats.remove('prevalence')
 
 
 class ADTassay(Assay):
