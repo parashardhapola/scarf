@@ -271,48 +271,51 @@ class DataStore:
             else:
                 c_ann_metric, c_ann_efc, c_ann_ef, c_ann_m, c_rand_state = \
                     None, None, None, None, None
-            if ann_metric is None and c_ann_metric is not None:
-                ann_metric = c_ann_metric
-                print(f'INFO: No value provided for parameter `ann_metric`. '
-                      f'Will use previously used value: {ann_metric}', flush=True)
-            else:
-                ann_metric = 'l2'
-                print(f'INFO: No value provided for parameter `ann_metric`. '
-                      f'Will use default value: {ann_metric}', flush=True)
-            if ann_efc is None and c_ann_efc is not None:
-                ann_efc = int(c_ann_efc)
-                print(f'INFO: No value provided for parameter `ann_efc`. '
-                      f'Will use previously used value: {ann_efc}', flush=True)
-            else:
-                ann_efc = 10
-                print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}', flush=True)
-            if ann_ef is None and c_ann_ef is not None:
-                ann_ef = int(c_ann_ef)
-                print(f'INFO: No value provided for parameter `ann_ef`. '
-                      f'Will use previously used value: {ann_ef}', flush=True)
-            else:
-                ann_ef = None  # Will be set after value for k is determined
-            if ann_m is None and c_ann_m is not None:
-                ann_m = int(c_ann_m)
-                print(f'INFO: No value provided for parameter `ann_m`. '
-                      f'Will use previously used value: {ann_m}', flush=True)
-            else:
-                ann_m = int(dims * 1.5)
-                print(f'INFO: No value provided for parameter `ann_m`. Will use default value: {ann_m}', flush=True)
-            if rand_state is None and c_rand_state is not None:
-                rand_state = int(c_rand_state)
-                print(f'INFO: No value provided for parameter `rand_state`. '
-                      f'Will use previously used value: {rand_state}', flush=True)
-            else:
-                rand_state = 4466
-                print(f'INFO: No value provided for parameter `rand_state`. '
-                      f'Will use default value: {rand_state}', flush=True)
-        else:
-            ann_metric = str(ann_metric)
-            ann_efc = int(ann_efc)
-            ann_ef = int(ann_ef)
-            ann_m = int(ann_m)
-            rand_state = int(rand_state)
+            if ann_metric is None:
+                if c_ann_metric is not None:
+                    ann_metric = c_ann_metric
+                    print(f'INFO: No value provided for parameter `ann_metric`. '
+                          f'Will use previously used value: {ann_metric}', flush=True)
+                else:
+                    ann_metric = 'l2'
+                    print(f'INFO: No value provided for parameter `ann_metric`. '
+                          f'Will use default value: {ann_metric}', flush=True)
+            if ann_efc is None:
+                if c_ann_efc is not None:
+                    ann_efc = int(c_ann_efc)
+                    print(f'INFO: No value provided for parameter `ann_efc`. '
+                          f'Will use previously used value: {ann_efc}', flush=True)
+                else:
+                    ann_efc = 10
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}', flush=True)
+            if ann_ef is None:
+                if c_ann_ef is not None:
+                    ann_ef = int(c_ann_ef)
+                    print(f'INFO: No value provided for parameter `ann_ef`. '
+                          f'Will use previously used value: {ann_ef}', flush=True)
+                else:
+                    ann_ef = None  # Will be set after value for k is determined
+            if ann_m is None:
+                if c_ann_m is not None:
+                    ann_m = int(c_ann_m)
+                    print(f'INFO: No value provided for parameter `ann_m`. '
+                          f'Will use previously used value: {ann_m}', flush=True)
+                else:
+                    ann_m = int(dims * 1.5)
+                    print(f'INFO: No value provided for parameter `ann_m`. Will use default value: {ann_m}', flush=True)
+            if rand_state is None:
+                if c_rand_state is not None:
+                    rand_state = int(c_rand_state)
+                    print(f'INFO: No value provided for parameter `rand_state`. '
+                          f'Will use previously used value: {rand_state}', flush=True)
+                else:
+                    rand_state = 4466
+                    print(f'INFO: No value provided for parameter `rand_state`. '
+                          f'Will use default value: {rand_state}', flush=True)
+        ann_metric = str(ann_metric)
+        ann_efc = int(ann_efc)
+        ann_m = int(ann_m)
+        rand_state = int(rand_state)
 
         if k is None:
             if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
@@ -323,10 +326,10 @@ class DataStore:
             else:
                 k = 11
                 print(f'INFO: No value provided for parameter `k`. Will use default value: {k}', flush=True)
-        else:
-            k = int(k)
+        k = int(k)
         if ann_ef is None:
             ann_ef = k * 2
+        ann_ef = int(ann_ef)
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
         ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
         knn_loc = f"{ann_loc}/knn__{k}"
@@ -349,25 +352,26 @@ class DataStore:
                 c_local_connectivity, c_bandwidth = map(float, graph_loc.rsplit('/')[-1].split('__')[1:])
             else:
                 c_local_connectivity, c_bandwidth = None, None
-            if local_connectivity is None and c_local_connectivity is not None:
-                local_connectivity = c_local_connectivity
-                print(f'INFO: No value provided for parameter `local_connectivity`. '
-                      f'Will use previously used value: {local_connectivity}', flush=True)
-            else:
-                local_connectivity = 1.0
-                print(f'INFO: No value provided for parameter `local_connectivity`. '
-                      f'Will use default value: {local_connectivity}', flush=True)
-            if bandwidth is None and c_bandwidth is not None:
-                bandwidth = c_bandwidth
-                print(f'INFO: No value provided for parameter `bandwidth`. '
-                      f'Will use previously used value: {bandwidth}', flush=True)
-            else:
-                bandwidth = 1.5
-                print(f'INFO: No value provided for parameter `bandwidth`. Will use default value: {bandwidth}',
-                      flush=True)
-        else:
-            local_connectivity = float(local_connectivity)
-            bandwidth = float(bandwidth)
+            if local_connectivity is None:
+                if c_local_connectivity is not None:
+                    local_connectivity = c_local_connectivity
+                    print(f'INFO: No value provided for parameter `local_connectivity`. '
+                          f'Will use previously used value: {local_connectivity}', flush=True)
+                else:
+                    local_connectivity = 1.0
+                    print(f'INFO: No value provided for parameter `local_connectivity`. '
+                          f'Will use default value: {local_connectivity}', flush=True)
+            if bandwidth is None:
+                if c_bandwidth is not None:
+                    bandwidth = c_bandwidth
+                    print(f'INFO: No value provided for parameter `bandwidth`. '
+                          f'Will use previously used value: {bandwidth}', flush=True)
+                else:
+                    bandwidth = 1.5
+                    print(f'INFO: No value provided for parameter `bandwidth`. Will use default value: {bandwidth}',
+                          flush=True)
+        local_connectivity = float(local_connectivity)
+        bandwidth = float(bandwidth)
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
         loadings = None
@@ -402,10 +406,11 @@ class DataStore:
             self._z.create_group(reduction_loc, overwrite=True)
             g = create_zarr_dataset(self._z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
-            g = create_zarr_dataset(self._z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
-            g[:] = mu
-            g = create_zarr_dataset(self._z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
-            g[:] = sigma
+            if reduction_method == 'pca':
+                g = create_zarr_dataset(self._z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
+                g[:] = mu
+                g = create_zarr_dataset(self._z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
+                g[:] = sigma
         if ann_loc not in self._z:
             self._z.create_group(ann_loc, overwrite=True)
             ann_obj.annIdx.save_index(ann_idx_loc)
@@ -478,7 +483,8 @@ class DataStore:
 
     def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200,
-                 alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True) -> None:
+                 alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.', label: str = 'tSNE',
+                 verbose: bool = True) -> None:
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
         from pathlib import Path
@@ -508,7 +514,7 @@ class DataStore:
             os.system(cmd)
         emb = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values.T
         for i in range(tsne_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'tSNE{i + 1}'),
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
                            emb[i], key=cell_key, overwrite=True)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
@@ -516,7 +522,7 @@ class DataStore:
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
                  spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
-                 random_seed: int = 4444, parallel: bool = False, **kwargs) -> None:
+                 random_seed: int = 4444, parallel: bool = False, label='UMAP', **kwargs) -> None:
         from .umap import fit_transform
         if from_assay is None:
             from_assay = self.defaultAssay
@@ -529,7 +535,7 @@ class DataStore:
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, parallel=parallel, **kwargs)
         for i in range(umap_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'UMAP{i + 1}'),
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
                            t[:, i], key=cell_key, overwrite=True)
         return None
 
@@ -603,14 +609,15 @@ class DataStore:
         return None
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, from_assay: str = None,
-                    cell_key: str = 'I', feat_key: str = None, save_k: int = 1, batch_size: int = 1000):
+                    cell_key: str = 'I', feat_key: str = None, save_k: int = 1, batch_size: int = 1000,
+                    ref_mu: bool =True, ref_sigma: bool = True):
         assay = self._get_assay(from_assay)
         from_assay = assay.name
+        self_name = self._fn.split('/')[-1].rsplit('.', 1)[0]
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         feat_ids = assay.feats.table.ids[assay.feats.table[cell_key+'__'+feat_key]].values
-        # FIXME: find a better way to initialize this
-        tfk = 'asdfverasfa'
+        tfk = f"{feat_key}_{self_name}"
         target_assay.feats.add(k='I__'+tfk, v=target_assay.feats.table.ids.isin(feat_ids).values,
                                fill_val=False, overwrite=True)
         colnames = target_assay.feats.table.ids[target_assay.feats.table['I__'+tfk]].values
@@ -628,10 +635,21 @@ class DataStore:
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
 
-        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key, return_ann_obj=True)
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
         data = target_assay.save_normalized_data(cell_key, tfk, batch_size, f"normed__I__{tfk}", **norm_params)
+        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key, return_ann_obj=True)
+
+        if ann_obj.method == 'pca':
+            target_feat_ids = target_assay.feats.table.ids[target_assay.feats.table['I__'+tfk]].values
+            if ref_mu is False:
+                mu = calc_computed(data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
+                mu = pd.Series(mu, index=target_feat_ids).reindex(feat_ids).fillna(0)
+                ann_obj.mu = clean_array(mu.values)
+            if ref_sigma is False:
+                sigma = calc_computed(data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
+                sigma = pd.Series(sigma, index=target_feat_ids).reindex(feat_ids).fillna(0)
+                ann_obj.sigma = clean_array(sigma.values, 1)
         entry_start = 0
         for i in tqdm(data.blocks, desc='Mapping'):
             i = pd.DataFrame(i.compute(), columns=colnames).T.reindex(feat_ids).fillna(0).T.values
@@ -640,7 +658,7 @@ class DataStore:
             zi[entry_start:entry_end, :] = ki
             zd[entry_start:entry_end, :] = kd
             entry_start = entry_end
-        target_assay.feats.remove(cell_key+'__'+tfk)
+        # target_assay.feats.remove('I__'+tfk)
         return None
 
     def get_mapping_score(self,  *, target_name: str, target_groups: np.ndarray = None,
