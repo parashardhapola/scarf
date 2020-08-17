@@ -126,12 +126,12 @@ class DataStore:
             setattr(self, i, assay(self._z, i, self.cells, min_cells_per_feature=min_cells))
         return None
 
-    def _get_assay(self, from_assay: str):
+    def _get_assay(self, from_assay: str) -> Assay:
         if from_assay is None or from_assay == '':
             from_assay = self.defaultAssay
         return self.__getattribute__(from_assay)
 
-    def _get_latest_feat_key(self, from_assay: str):
+    def _get_latest_feat_key(self, from_assay: str) -> str:
         assay = self._get_assay(from_assay)
         return assay.attrs['latest_feat_key']
 
@@ -229,22 +229,24 @@ class DataStore:
                 c_log_transform, c_renormalize_subset = self._z[normed_loc].attrs['subset_params']
             else:
                 c_log_transform, c_renormalize_subset = None, None
-            if log_transform is None and c_log_transform is not None:
-                log_transform = c_log_transform
-                print(f'INFO: No value provided for parameter `log_transform`. '
-                      f'Will use previously used value: {log_transform}', flush=True)
-            else:
-                log_transform = False
-                print(f'INFO: No value provided for parameter `log_transform`. '
-                      f'Will use default value: {log_transform}', flush=True)
-            if renormalize_subset is None and c_renormalize_subset is not None:
-                renormalize_subset = c_renormalize_subset
-                print(f'INFO: No value provided for parameter `renormalize_subset`. '
-                      f'Will use previously used value: {renormalize_subset}', flush=True)
-            else:
-                renormalize_subset = True
-                print(f'INFO: No value provided for parameter `renormalize_subset`. '
-                      f'Will use default value: {renormalize_subset}', flush=True)
+            if log_transform is None:
+                if c_log_transform is not None:
+                    log_transform = bool(c_log_transform)
+                    print(f'INFO: No value provided for parameter `log_transform`. '
+                          f'Will use previously used value: {log_transform}', flush=True)
+                else:
+                    log_transform = False
+                    print(f'INFO: No value provided for parameter `log_transform`. '
+                          f'Will use default value: {log_transform}', flush=True)
+            if renormalize_subset is None:
+                if c_renormalize_subset is not None:
+                    renormalize_subset = bool(c_renormalize_subset)
+                    print(f'INFO: No value provided for parameter `renormalize_subset`. '
+                          f'Will use previously used value: {renormalize_subset}', flush=True)
+                else:
+                    renormalize_subset = True
+                    print(f'INFO: No value provided for parameter `renormalize_subset`. '
+                          f'Will use default value: {renormalize_subset}', flush=True)
         else:
             log_transform = bool(log_transform)
             renormalize_subset = bool(renormalize_subset)
@@ -748,7 +750,7 @@ class DataStore:
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
                     layout_key: str = 'UMAP', color_by: str = None, clip_fraction: float = 0.01, shade: bool = False,
-                    labels_kwargs: dict = None, legends_kwargs: dict = None, **kwargs):
+                    labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None, **kwargs):
         from .plots import plot_scatter, shade_scatter
         if from_assay is None:
             from_assay = self.defaultAssay
@@ -765,9 +767,11 @@ class DataStore:
             v = np.ones(len(x))
         df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'v': v})
         if shade:
-            return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs, **kwargs)
+            return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
+                                 savename=savename, **kwargs)
         else:
-            return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs, **kwargs)
+            return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
+                                savename=savename, **kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = 'cluster', width: float = 1.5, lvr_factor: float = 0.5,
@@ -809,7 +813,7 @@ class DataStore:
         goi = sorted(set(goi))
         cdf = []
         for i in np.array_split(goi, len(goi) // batch_size + 1):
-            feat_idx = assay.feats.get_idx_by_names(i)
+            feat_idx = assay.feats.get_idx_by_ids(i)
             df = pd.DataFrame(assay.normed(feat_idx=feat_idx, log_transform=log_transform).compute(), columns=i)
             df['cluster'] = assay.cells.fetch('cluster')
             df = df.groupby('cluster').mean().T
@@ -820,6 +824,7 @@ class DataStore:
         cdf[cdf < vmin] = vmin
         # noinspection PyTypeChecker
         cdf[cdf > vmax] = vmax
+        cdf.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(cdf.index)['names'].values
         plot_heatmap(cdf, **heatmap_kwargs)
 
     def __repr__(self):
