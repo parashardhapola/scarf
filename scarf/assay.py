@@ -13,7 +13,7 @@ def norm_dummy(assay, counts: daskarr) -> daskarr:
 
 
 def norm_lib_size(assay, counts: daskarr) -> daskarr:
-    return assay.sf * counts / (assay.scalar.reshape(-1, 1) + 1)
+    return assay.sf * counts / assay.scalar.reshape(-1, 1)
 
 
 def norm_clr(assay, counts: daskarr) -> daskarr:
@@ -78,6 +78,9 @@ class Assay:
             return None
         total = calc_computed(self.rawData[:, feat_idx].sum(axis=1),
                               f"Computing percentage of {name}")
+        if total.sum() == 0:
+            print(f"WARNING: Percentage feature {name} not added because not detected in any cell", flush=True)
+            return None
         self.cells.add(name, 100 * total / self.cells.table['nCounts'], overwrite=True)
         self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
                                          **{name: feat_pattern}}
@@ -139,7 +142,10 @@ class RNAassay(Assay):
         if log_transform:
             counts = np.log1p(counts)
         if renormalize_subset:
-            self.scalar = counts.sum(axis=1).reshape(-1, 1) + 1
+            print("INFO: Renormalizing normed data", flush=True)
+            a = counts.sum(axis=1).compute()
+            a[a == 0] = 1
+            self.scalar = a
         else:
             self.scalar = self.cells.table['nCounts'].values[cell_idx]
         return self.normMethod(self, counts)
