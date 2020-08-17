@@ -29,7 +29,8 @@ def find_markers_by_rank(assay, group_key: str, threshold: float = 0.25) -> dict
         res = val.apply(mean_rank_wrapper)
         res = res.T[(res < threshold).sum() != len(index_set)].T
         res.index = index_set
-        res.columns = assay.feats.table.names[assay.feats.table.ids.isin(res.columns)].values
+        # The following line was commented out to return results as gene IDs rather than gene names
+        # res.columns = assay.feats.table.names[assay.feats.table.ids.isin(res.columns)].values
         res = res.T
         for j in res:
             results[j].append(res[j][res[j] > threshold])
