@@ -19,6 +19,7 @@ __all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_s
            'plot_heatmap', 'plot_cluster_hierarchy']
 
 plt.style.use('fivethirtyeight')
+plt.rcParams['svg.fonttype'] = 'none'
 
 
 def clean_axis(ax, ts=11, ga=0.4):
@@ -222,7 +223,7 @@ def scatter_ax_cleanup(ax, spine_width: float = 0.5, spine_color: str = 'k',
 def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  cmap=None, color_key: dict = None,
                  s: float = 10, lw: float = 0.1, edge_color='k',
-                 labels_kwargs: dict = None, legends_kwargs: dict = None, **kwargs):
+                 labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None, **kwargs):
     x, y, v = df.columns
     if in_ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(width, height))
@@ -237,7 +238,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             kwargs['c'] = df[v]
     else:
         kwargs['c'] = [color_key[x] for x in df[v].values]
-    ax.scatter(df[x].values, df[y].values, s=s, lw=lw, edgecolor=edge_color, cmap=cmap, **kwargs)
+    ax.scatter(df[x].values, df[y].values, s=s, lw=lw, edgecolor=edge_color, cmap=cmap, rasterized=True, **kwargs)
     if labels_kwargs is None:
         labels_kwargs = {}
     scatter_ax_labels(ax, df, **labels_kwargs)
@@ -246,6 +247,8 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
     scatter_ax_legends(fig, ax, df, color_key, cmap, **legends_kwargs)
     scatter_ax_cleanup(ax)
     if in_ax is None:
+        if savename:
+            plt.savefig(savename, dpi=300)
         plt.show()
     else:
         return ax
@@ -254,7 +257,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
 def shade_scatter(df, fig_size: float = 7, width_px: int = 1000, height_px: int = 1000,
                   x_sampling: float = 0.2, y_sampling: float = 0.2,
                   spread_px: int = 1, min_alpha: int = 10, cmap=None, color_key: dict = None,
-                  labels_kwargs: dict = None, legends_kwargs: dict = None):
+                  labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None):
     x, y, v = df.columns
     points = hv.Points(df, kdims=[x, y], vdims=v)
     cmap, color_key = scatter_make_cmap(df, cmap, color_key)
