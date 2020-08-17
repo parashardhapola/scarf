@@ -73,9 +73,7 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       chunk_size: tuple):
     z = zarr.open(zarr_fn, 'r+')
     ig = z[in_grp]
-    og = z.create_dataset(
-        out_grp, chunks=chunk_size, dtype='uint32', shape=(len(cells_idx), len(feat_idx)),
-        compressor=Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE), overwrite=True)
+    og = create_zarr_dataset(z, out_grp, chunk_size, 'uint32', (len(cells_idx), len(feat_idx)))
     pos_start, pos_end = 0, 0
     for i in tqdm(np.array_split(cells_idx, len(cells_idx) // chunk_size[0] + 1)):
         pos_end += len(i)
@@ -85,10 +83,7 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size):
-    og = z.create_dataset(
-        loc, overwrite=True, chunks=(chunk_size, None),
-        shape=df.shape, dtype='float64',
-        compressor=Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE))
+    og = create_zarr_dataset(z, loc, chunk_size, 'float64', df.shape)
     pos_start, pos_end = 0, 0
     for i in tqdm(df.blocks, total=df.numblocks[0], desc=f"Writing data to {loc}"):
         pos_end += i.shape[0]
