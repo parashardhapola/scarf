@@ -5,10 +5,11 @@ import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
 
-__all__ = ['meld_assay']
+__all__ = ['meld_assay', 'make_bed_from_gff']
 
 
-def make_gene_bed(gff: str, up_offset: int = 2000, valid_ids: List[str] = None, flavour: str = 'body') -> pbt.BedTool:
+def make_bed_from_gff(gff: str, up_offset: int = 2000,
+                      valid_ids: List[str] = None, flavour: str = 'body') -> pbt.BedTool:
     """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended"""
     out = []
     ignored_genes = 0
@@ -72,7 +73,7 @@ def make_gene_bed(gff: str, up_offset: int = 2000, valid_ids: List[str] = None, 
     return pbt.BedTool('\n'.join(out), from_string=True)
 
 
-def create_bed_from_coord_ids(ids: List[str]) -> pbt.BedTool:
+def _create_bed_from_coord_ids(ids: List[str]) -> pbt.BedTool:
     """convert list of 'chr:start-end' format strings to pybedtools object"""
     out = []
     for i in ids:
@@ -82,7 +83,7 @@ def create_bed_from_coord_ids(ids: List[str]) -> pbt.BedTool:
     return pbt.BedTool('\n'.join(out), from_string=True)
 
 
-def get_merging_map(a: pbt.BedTool, b: pbt.BedTool, b_name_pos: int = 7) -> dict:
+def _get_merging_map(a: pbt.BedTool, b: pbt.BedTool, b_name_pos: int = 7) -> dict:
     """Intersect BED files to obtain a dict with b names as keys and
        overlapped a names for each b in values as list
     """
@@ -94,7 +95,7 @@ def get_merging_map(a: pbt.BedTool, b: pbt.BedTool, b_name_pos: int = 7) -> dict
     return res
 
 
-def convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
+def _convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
     """
     convert ids to indices from scarf feats table
     """
@@ -110,7 +111,7 @@ def convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
     return idx
 
 
-def create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) -> None:
+def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) -> None:
     c_pos_start = 0
     for a in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
         a = a.compute()
@@ -125,10 +126,10 @@ def create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) -
 
 
 def meld_assay(assay, reference_bed, out_name: str):
-    peaks_bed = create_bed_from_coord_ids(assay.feats.table.ids.values)
-    cross_idx_map = convert_ids_to_idx(assay.feats.table['ids'], get_merging_map(peaks_bed, reference_bed))
+    peaks_bed = _create_bed_from_coord_ids(assay.feats.table.ids.values)
+    cross_idx_map = _convert_ids_to_idx(assay.feats.table['ids'], _get_merging_map(peaks_bed, reference_bed))
     feat_ids = [x[3] for x in reference_bed]
     feat_names = [x[4] for x in reference_bed]
     g = create_zarr_count_assay(z=assay._z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
                                 n_cells=assay.rawData.shape[0], feat_ids=feat_ids, feat_names=feat_names)
-    create_counts_mat(assay=assay, out_store=g, feat_order=feat_ids, cross_idx_map=cross_idx_map)
+    _create_counts_mat(assay=assay, out_store=g, feat_order=feat_ids, cross_idx_map=cross_idx_map)
