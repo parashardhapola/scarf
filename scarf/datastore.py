@@ -631,8 +631,8 @@ class DataStore:
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
-        source_data = source_assay.save_normalized_data(cell_key, target_feat_key, batch_size,
-                                                        f"normed__I__{target_feat_key}", **norm_params)
+        source_data = source_assay.normed(source_assay.cells.active_index(cell_key),
+                                          source_assay.feats.active_index(target_feat_key), **norm_params)
         target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
         if run_coral is True:
             coral(source_data, target_data, target_assay, target_feat_key)
