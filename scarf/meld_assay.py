@@ -125,9 +125,9 @@ def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) 
     return None
 
 
-def meld_assay(assay, reference_bed, out_name: str):
-    peaks_bed = _create_bed_from_coord_ids(assay.feats.table.ids.values)
-    cross_idx_map = _convert_ids_to_idx(assay.feats.table['ids'], _get_merging_map(peaks_bed, reference_bed))
+def meld_assay(assay, reference_bed, out_name: str, peaks_col: str = 'ids'):
+    peaks_bed = _create_bed_from_coord_ids(assay.feats.table[peaks_col].values)
+    cross_idx_map = _convert_ids_to_idx(assay.feats.table[peaks_col], _get_merging_map(peaks_bed, reference_bed))
     feat_ids = [x[3] for x in reference_bed]
     feat_names = [x[4] for x in reference_bed]
     g = create_zarr_count_assay(z=assay._z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
