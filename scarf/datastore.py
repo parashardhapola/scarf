@@ -12,6 +12,7 @@ from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
 from .utils import calc_computed, system_call, rescale_array, clean_array
 from tqdm import tqdm
+import dask.array as daskarr
 
 
 __all__ = ['DataStore']
@@ -612,55 +613,46 @@ class DataStore:
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 1, batch_size: int = 1000,
-                    ref_mu: bool =True, ref_sigma: bool = True):
-        assay = self._get_assay(from_assay)
-        from_assay = assay.name
+                    ref_mu: bool =True, ref_sigma: bool = True, run_coral: bool = True):
+        from .mapping_utils import align_common_features, coral
+
+        source_assay = self._get_assay(from_assay)
+        from_assay = source_assay.name
         self_name = self._fn.split('/')[-1].rsplit('.', 1)[0]
+        target_feat_key = f"{feat_key}_{self_name}"
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        feat_ids = assay.feats.table.ids[assay.feats.table[cell_key+'__'+feat_key]].values
-        tfk = f"{feat_key}_{self_name}"
-        target_assay.feats.add(k='I__'+tfk, v=target_assay.feats.table.ids.isin(feat_ids).values,
-                               fill_val=False, overwrite=True)
-        colnames = target_assay.feats.table.ids[target_assay.feats.table['I__'+tfk]].values
-        if len(colnames) == 0:
-            raise ValueError("ERROR: No common features found between the two datasets")
-        else:
-            print(f"INFO: {len(colnames)} common features from {len(feat_ids)} "
-                  f"reference features will be used", flush=True)
-
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        if 'projections' not in self._z[graph_loc]:
-            self._z[graph_loc].create_group('projections')
-        store = self._z[graph_loc]['projections'].create_group(target_name, overwrite=True)
+        align_common_features(source_assay, target_assay, cell_key, feat_key, target_feat_key)
+        if 'projections' not in source_assay._z:
+            self._z.create_group('projections')
+        store = source_assay._z['projections'].create_group(target_name, overwrite=True)
         nc, nk = target_assay.cells.table.I.sum(), save_k
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
-
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
-        data = target_assay.save_normalized_data(cell_key, tfk, batch_size, f"normed__I__{tfk}", **norm_params)
-        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key, return_ann_obj=True)
-
+        source_data = target_assay.save_normalized_data(cell_key, target_feat_key, batch_size,
+                                                        f"normed__I__{target_feat_key}", **norm_params)
+        target_data = daskarr.from_zarr(target_assay._z[f"normed__I__{target_feat_key}/data"])
+        if run_coral is True:
+            coral(target_data, source_data, target_assay, target_feat_key)
+            target_data = daskarr.from_zarr(target_assay._z[f"normed__I__{target_feat_key}/data_coral"])
+        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=target_feat_key,
+                                  return_ann_obj=True)
         if ann_obj.method == 'pca':
-            target_feat_ids = target_assay.feats.table.ids[target_assay.feats.table['I__'+tfk]].values
             if ref_mu is False:
-                mu = calc_computed(data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
-                mu = pd.Series(mu, index=target_feat_ids).reindex(feat_ids).fillna(0)
+                mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
                 ann_obj.mu = clean_array(mu.values)
             if ref_sigma is False:
-                sigma = calc_computed(data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
-                sigma = pd.Series(sigma, index=target_feat_ids).reindex(feat_ids).fillna(0)
+                sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
                 ann_obj.sigma = clean_array(sigma.values, 1)
         entry_start = 0
-        for i in tqdm(data.blocks, desc='Mapping'):
-            i = pd.DataFrame(i.compute(), columns=colnames).T.reindex(feat_ids).fillna(0).T.values
-            ki, kd = ann_obj.transform_ann(ann_obj.reducer(i), k=save_k)
+        for i in tqdm(target_data.blocks, desc='Mapping'):
+            ki, kd = ann_obj.transform_ann(ann_obj.reducer(i.compute()), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
             zd[entry_start:entry_end, :] = kd
             entry_start = entry_end
-        # target_assay.feats.remove('I__'+tfk)
         return None
 
     def get_mapping_score(self,  *, target_name: str, target_groups: np.ndarray = None,
