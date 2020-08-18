@@ -40,13 +40,13 @@ def align_common_features(source_assay: Assay, target_assay: Assay, source_cell_
     source_feat_ids = source_assay.feats.table.ids[source_assay.feats.table[
         source_cell_key + '__' + source_feat_key]].values
 
-    s_idx, t_idx = _add_feats_to_target(target_assay, source_feat_ids, target_feat_key)
+    s_idx, t_idx = _add_feats_to_target(source_assay, target_assay, source_feat_ids)
 
     normed_loc = f"{source_assay.name}/normed__{source_cell_key}__{source_feat_key}"
     norm_params = dict(zip(['log_transform', 'renormalize_subset'],
-                           source_assay._z['/'][normed_loc].attrs['subset_params']))
+                           source_assay.z['/'][normed_loc].attrs['subset_params']))
     dask_to_zarr(target_assay.normed(target_assay.cells.active_index('I'), t_idx, **norm_params),
-                 target_assay._z['/'], f"{target_assay.name}/normed__I__{target_feat_key}/data", 1000)
+                 target_assay.z['/'], f"{target_assay.name}/normed__I__{target_feat_key}/data", 1000)
 
     x = np.zeros(source_assay.feats.N).astype(bool)
     x[s_idx] = True
@@ -55,6 +55,6 @@ def align_common_features(source_assay: Assay, target_assay: Assay, source_cell_
 
 def coral(source_data, target_data, target_assay, target_feat_key):
     coral_target_data = _correlation_alignment((target_data - target_data.mean(axis=0)) / target_data.std(axis=0),
-                                              (source_data - source_data.mean(axis=0)) / source_data.std(axis=0))
-    dask_to_zarr(coral_target_data, target_assay._z['/'],
+                                               (source_data - source_data.mean(axis=0)) / source_data.std(axis=0))
+    dask_to_zarr(coral_target_data, target_assay.z['/'],
                  f"{target_assay.name}/normed__I__{target_feat_key}/data_coral", 1000)

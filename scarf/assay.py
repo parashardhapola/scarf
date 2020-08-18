@@ -31,11 +31,11 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 class Assay:
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, min_cells_per_feature: int = 10):
         self.name = name
-        self._z = z[self.name]
+        self.z = z[self.name]
         self.cells = cell_data
-        self.rawData = daskarr.from_zarr(self._z['counts'])
-        self.feats = MetaData(self._z['featureData'])
-        self.attrs = self._z.attrs
+        self.rawData = daskarr.from_zarr(self.z['counts'])
+        self.feats = MetaData(self.z['featureData'])
+        self.attrs = self.z.attrs
         if 'percentFeatures' not in self.attrs:
             self.attrs['percentFeatures'] = {}
         self.normMethod = norm_dummy
@@ -99,25 +99,25 @@ class Assay:
 
         subset_hash = self.create_subset_hash(cell_key, feat_key)
         subset_params = [log_transform, renormalize_subset]
-        if location in self._z:
-            if subset_hash == self._z[location].attrs['subset_hash'] and \
-                    subset_params == self._z[location].attrs['subset_params']:
+        if location in self.z:
+            if subset_hash == self.z[location].attrs['subset_hash'] and \
+                    subset_params == self.z[location].attrs['subset_params']:
                 print(f"INFO: Using existing normalized data with cell key {cell_key} and feat key {feat_key}",
                       flush=True)
                 self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
-                return daskarr.from_zarr(self._z[location + '/data'])
+                return daskarr.from_zarr(self.z[location + '/data'])
             else:
                 # Creating group here to overwrite all children
-                self._z.create_group(location, overwrite=True)
+                self.z.create_group(location, overwrite=True)
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
         vals = self.normed(cell_idx, feat_idx, log_transform=log_transform,
                            renormalize_subset=renormalize_subset)
-        dask_to_zarr(vals, self._z, location + '/data', batch_size)
-        self._z[location].attrs['subset_hash'] = subset_hash
-        self._z[location].attrs['subset_params'] = subset_params
+        dask_to_zarr(vals, self.z, location + '/data', batch_size)
+        self.z[location].attrs['subset_hash'] = subset_hash
+        self.z[location].attrs['subset_params'] = subset_params
         self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
-        return daskarr.from_zarr(self._z[location + '/data'])
+        return daskarr.from_zarr(self.z[location + '/data'])
 
     def __repr__(self):
         f = self.feats.table['I']
@@ -155,8 +155,8 @@ class RNAassay(Assay):
         self._verify_keys(cell_key, feat_key)
         subset_hash = self.create_subset_hash(cell_key, feat_key)
         stats_loc = f"summary_stats_{cell_key}"
-        if stats_loc in self._z:
-            attrs = self._z[stats_loc].attrs
+        if stats_loc in self.z:
+            attrs = self.z[stats_loc].attrs
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
                 print(f"INFO: Using cached feature stats for cell_key {cell_key}")
                 return None
@@ -173,7 +173,7 @@ class RNAassay(Assay):
         self.feats.update(idx, key=feat_key)
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
-        group = self._z.create_group(stats_loc, overwrite=True)
+        group = self.z.create_group(stats_loc, overwrite=True)
         g = create_zarr_dataset(group, 'normed_tot', (50000,), float, tot.shape)
         g[:] = tot
         g = create_zarr_dataset(group, 'avg', (50000,), float, tot.shape)
@@ -185,7 +185,7 @@ class RNAassay(Assay):
         g = create_zarr_dataset(group, 'normed_n', (50000,), float, tot.shape)
         g[:] = n_cells
 
-        self._z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
+        self.z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
         return None
 
     def mark_hvgs(self, cell_key: str = 'I', min_cells: int = 20, top_n: int = 500,
@@ -199,14 +199,14 @@ class RNAassay(Assay):
         c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
         slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
         for i in slots:
-            self.feats.add(i, self._z[stats_loc + '/' + i], key='I', overwrite=True)
-        if c_var_loc in self._z[stats_loc]:
+            self.feats.add(i, self.z[stats_loc + '/' + i], key='I', overwrite=True)
+        if c_var_loc in self.z[stats_loc]:
             print("INFO: Using existing corrected dispersion values")
         else:
             c_var = self.feats.remove_trend('avg', 'sigmas', n_bins, lowess_frac)
-            g = create_zarr_dataset(self._z[stats_loc], c_var_loc, (50000,), float, c_var.shape)
+            g = create_zarr_dataset(self.z[stats_loc], c_var_loc, (50000,), float, c_var.shape)
             g[:] = c_var
-        self.feats.add(c_var_loc, self._z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
+        self.feats.add(c_var_loc, self.z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
 
         bl = self.feats.idx_to_bool(self.feats.get_idx_by_names(self.feats.grep(blacklist)), invert=True)
         if min_var == -np.Inf:
@@ -258,8 +258,8 @@ class ATACassay(Assay):
         self._verify_keys(cell_key, feat_key)
         subset_hash = self.create_subset_hash(cell_key, feat_key)
         stats_loc = f"summary_stats_{cell_key}"
-        if stats_loc in self._z:
-            attrs = self._z[stats_loc].attrs
+        if stats_loc in self.z:
+            attrs = self.z[stats_loc].attrs
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
                 print(f"INFO: Using cached feature stats for cell_key {cell_key}")
                 return None
@@ -268,10 +268,10 @@ class ATACassay(Assay):
         feat_idx = self.feats.active_index(feat_key)
         prevalence = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"INFO: ({self.name}) Calculating peak prevalence across cells")
-        group = self._z.create_group(stats_loc, overwrite=True)
+        group = self.z.create_group(stats_loc, overwrite=True)
         g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)
         g[:] = prevalence
-        self._z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
+        self.z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
         return None
 
     def mark_top_prevalent_peaks(self, cell_key: str = 'I', n_top: int = 1000):
@@ -281,7 +281,7 @@ class ATACassay(Assay):
         if type(n_top) != int:
             raise TypeError("ERROR: n_top must a positive integer value")
         stats_loc = f"summary_stats_{cell_key}"
-        self.feats.add('prevalence', self._z[stats_loc + '/prevalence'], key='I', overwrite=True)
+        self.feats.add('prevalence', self.z[stats_loc + '/prevalence'], key='I', overwrite=True)
         idx = self.feats.table['prevalence'].sort_values(ascending=False)[:n_top].index
         self.feats.add(cell_key+'__top_peaks', self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
         self.feats.remove('prevalence')

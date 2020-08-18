@@ -130,6 +130,6 @@ def meld_assay(assay, reference_bed, out_name: str, peaks_col: str = 'ids'):
     cross_idx_map = _convert_ids_to_idx(assay.feats.table[peaks_col], _get_merging_map(peaks_bed, reference_bed))
     feat_ids = [x[3] for x in reference_bed]
     feat_names = [x[4] for x in reference_bed]
-    g = create_zarr_count_assay(z=assay._z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
+    g = create_zarr_count_assay(z=assay.z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
                                 n_cells=assay.rawData.shape[0], feat_ids=feat_ids, feat_names=feat_names)
     _create_counts_mat(assay=assay, out_store=g, feat_order=feat_ids, cross_idx_map=cross_idx_map)

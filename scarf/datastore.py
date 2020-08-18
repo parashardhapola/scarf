@@ -617,26 +617,26 @@ class DataStore:
         from .mapping_utils import align_common_features, coral
 
         source_assay = self._get_assay(from_assay)
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
         from_assay = source_assay.name
         self_name = self._fn.split('/')[-1].rsplit('.', 1)[0]
         target_feat_key = f"{feat_key}_{self_name}"
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
         align_common_features(source_assay, target_assay, cell_key, feat_key, target_feat_key)
-        if 'projections' not in source_assay._z:
-            self._z.create_group('projections')
-        store = source_assay._z['projections'].create_group(target_name, overwrite=True)
+        if 'projections' not in source_assay.z:
+            source_assay.z.create_group('projections')
+        store = source_assay.z['projections'].create_group(target_name, overwrite=True)
         nc, nk = target_assay.cells.table.I.sum(), save_k
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
-        source_data = target_assay.save_normalized_data(cell_key, target_feat_key, batch_size,
+        source_data = source_assay.save_normalized_data(cell_key, target_feat_key, batch_size,
                                                         f"normed__I__{target_feat_key}", **norm_params)
-        target_data = daskarr.from_zarr(target_assay._z[f"normed__I__{target_feat_key}/data"])
+        target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
         if run_coral is True:
-            coral(target_data, source_data, target_assay, target_feat_key)
-            target_data = daskarr.from_zarr(target_assay._z[f"normed__I__{target_feat_key}/data_coral"])
+            coral(source_data, target_data, target_assay, target_feat_key)
+            target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=target_feat_key,
                                   return_ann_obj=True)
         if ann_obj.method == 'pca':
@@ -662,8 +662,7 @@ class DataStore:
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        store_loc = f"{graph_loc}/projections/{target_name}"
+        store_loc = f"{from_assay}/projections/{target_name}"
         if store_loc not in self._z:
             raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
                            f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters")
