@@ -1,6 +1,5 @@
 from tqdm import tqdm
 from typing import List
-import pybedtools as pbt
 import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
@@ -9,8 +8,10 @@ __all__ = ['meld_assay', 'make_bed_from_gff']
 
 
 def make_bed_from_gff(gff: str, up_offset: int = 2000,
-                      valid_ids: List[str] = None, flavour: str = 'body') -> pbt.BedTool:
+                      valid_ids: List[str] = None, flavour: str = 'body'):
     """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended"""
+    from pybedtools import BedTool
+    
     out = []
     ignored_genes = 0
     unknown_ids = 0
@@ -70,20 +71,22 @@ def make_bed_from_gff(gff: str, up_offset: int = 2000,
     print(f"INFO: {len(out)} genes found in the GFF file", flush=True)
     print(f"INFO: {ignored_genes} genes were ignored as they were not present in the valid_ids", flush=True)
     print(f"INFO: {unknown_ids} genes were ignored as they did not have gene_id column", flush=True)
-    return pbt.BedTool('\n'.join(out), from_string=True)
+    return BedTool('\n'.join(out), from_string=True)
 
 
-def _create_bed_from_coord_ids(ids: List[str]) -> pbt.BedTool:
+def _create_bed_from_coord_ids(ids: List[str]):
     """convert list of 'chr:start-end' format strings to pybedtools object"""
+    from pybedtools import BedTool
+
     out = []
     for i in ids:
         j = i.split(':')
         o = [j[0], j[1].split('-')[0], j[1].split('-')[1], i]
         out.append('\t'.join(o))
-    return pbt.BedTool('\n'.join(out), from_string=True)
+    return BedTool('\n'.join(out), from_string=True)
 
 
-def _get_merging_map(a: pbt.BedTool, b: pbt.BedTool, b_name_pos: int = 7) -> dict:
+def _get_merging_map(a, b, b_name_pos: int = 7) -> dict:
     """Intersect BED files to obtain a dict with b names as keys and
        overlapped a names for each b in values as list
     """

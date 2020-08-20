@@ -1,6 +1,4 @@
 import pandas as pd
-import pcst_fast
-from scipy.sparse.csgraph import connected_components
 from typing import List, Tuple, Dict
 import numpy as np
 
@@ -23,8 +21,11 @@ def get_seed_nodes(clusts: pd.Series, frac: float,
 
 
 def pcst(graph, clusters: pd.Series, seed_frac: float, min_nodes: int,
-         rewards: Tuple[float, float], pruning_method : str,
+         rewards: Tuple[float, float], pruning_method: str,
          rand_state: int) -> Tuple[List, List]:
+    from scipy.sparse.csgraph import connected_components
+    import pcst_fast
+
     ss, se = [], []
     _, l = connected_components(graph)
     seeds = get_seed_nodes(clusters, seed_frac, min_nodes, rand_state)

@@ -1,5 +1,4 @@
 import numpy as np
-import networkx as nx
 import logzero
 from logzero import logger
 import logging
@@ -13,10 +12,12 @@ logzero.loglevel(logging.INFO)
 __all__ = ['BalancedCut', 'SummarizedTree']
 
 
-def make_digraph(d: np.ndarray) -> nx.DiGraph:
+def make_digraph(d: np.ndarray):
     """
     Convert dendrogram into directed graph
     """
+    import networkx as nx
+
     g = nx.DiGraph()
     n = d.shape[0] + 1  # Dendrogram contains one less sample
     for i in tqdm(d, desc='Constructing graph from dendrogram'):
@@ -228,7 +229,9 @@ class SummarizedTree:
                 return c
         return False
 
-    def extract_ancestor_tree(self, ids: np.ndarray) -> nx.Graph:
+    def extract_ancestor_tree(self, ids: np.ndarray):
+        import networkx as nx
+
         sn = {}
         for i in sorted(set(ids)):
             idx = np.where(ids == i)[0]

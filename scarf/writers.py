@@ -1,5 +1,4 @@
 import zarr
-from numcodecs import Blosc
 from typing import Any, Tuple, List
 import numpy as np
 from tqdm import tqdm
@@ -11,6 +10,8 @@ __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_z
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
+    from numcodecs import Blosc
+
     compressor = Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE)
     return g.create_dataset(name, chunks=chunks, dtype=dtype,
                             shape=shape, compressor=compressor, overwrite=overwrite)

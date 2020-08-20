@@ -3,7 +3,7 @@ import dask.array as daskarr
 import zarr
 from .metadata import MetaData
 from .utils import calc_computed
-from .writers import dask_to_zarr, create_zarr_dataset
+from .writers import create_zarr_dataset
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -93,6 +93,8 @@ class Assay:
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
                              location: str, log_transform: bool, renormalize_subset: bool) -> daskarr:
         # Because HVGs and other feature selections have cell key appended in their metadata
+        from .writers import dask_to_zarr
+
         if feat_key != 'I':
             feat_key = cell_key + '__' + feat_key
         self._verify_keys(cell_key, feat_key)

@@ -1,14 +1,14 @@
 import numpy as np
-from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 from .writers import create_zarr_dataset
 from .ann import AnnStream
-from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
 __all__ = ['self_query_knn', 'smoothen_dists', 'export_knn_to_mtx']
 
 
 def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> None:
+    from threadpoolctl import threadpool_limits
+
     n_cells, n_neighbors = ann_obj.nCells, ann_obj.k
     z_knn = create_zarr_dataset(store, 'indices', (chunk_size,), 'u8',
                                 (n_cells, n_neighbors))
@@ -30,6 +30,7 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int =
     # bandwidth: Higher value will push the mean of distribution of graph edge weights towards right
     # local_connectivity: Higher values will create push distribution of edge weights towards terminal values (binary
     # like) Lower values will accumulate edge weights around the mean produced by bandwidth
+    from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 
     n_cells, n_neighbors = z_idx.shape
     zge = create_zarr_dataset(store, f'edges', (chunk_size,), ('u8', 'u8'),

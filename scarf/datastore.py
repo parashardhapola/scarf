@@ -2,13 +2,9 @@ import os
 import numpy as np
 from typing import List, Iterable, Union
 import pandas as pd
-import re
 import zarr
-from dask.distributed import Client, LocalCluster
 from tqdm import tqdm
 import dask.array as daskarr
-from scipy.sparse import coo_matrix, csr_matrix, triu
-from scipy.stats import norm
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
@@ -39,6 +35,8 @@ class DataStore:
                  min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
+        from dask.distributed import Client, LocalCluster
+
         self._fn: str = zarr_loc
         self._z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
@@ -171,6 +169,8 @@ class DataStore:
             self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
+        from scipy.stats import norm
+
         for i in attrs:
             if i not in self.cells.table.columns:
                 print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
@@ -470,6 +470,8 @@ class DataStore:
 
     def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                     min_edge_weight: float = -1, symmetric: bool = True):
+        from scipy.sparse import coo_matrix, csr_matrix, triu
+
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc not in self._z:
             print(f"ERROR: {graph_loc} not found in zarr location {self._fn}. Run `make_graph` for assay {from_assay}")
@@ -755,6 +757,8 @@ class DataStore:
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
         from .plots import plot_qc
+        import re
+
         plot_cols = ['nCounts', 'nFeatures']
         if cols is not None:
             if type(cols) != list:
@@ -830,9 +834,10 @@ class DataStore:
                           fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
                           color_by: str = None, ref_color='coral', target_color='k',
                           shade: bool = False, labels_kwargs: dict = None, legends_kwargs: dict = None,
-                          savename: str = None, **kwargs):
+                          savename: str = None, shade_kwargs: dict = None, scatter_kwargs: dict = None):
         from .umap import fit_transform
         from .plots import plot_scatter, shade_scatter
+        from scipy.sparse import coo_matrix
 
         if from_assay is None:
             from_assay = self.defaultAssay
@@ -842,7 +847,7 @@ class DataStore:
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         edges = self._z[graph_loc].edges[:]
         weights = self._z[graph_loc].weights[:]
-        n_cells = self.cells.active_index(cell_key).sum()
+        n_cells = self.cells.table[cell_key].sum()
         pidx = self._z[from_assay].projections[target_name].indices[:, :use_k]
         ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
 
@@ -873,10 +878,10 @@ class DataStore:
         df = pd.DataFrame({'UMAP1': x[idx], 'UMAP2': y[idx], 'v': c[idx]})
         if shade:
             return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                 savename=savename, **kwargs)
+                                 savename=savename, shade_kwargs=shade_kwargs)
         else:
             return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                savename=savename, **kwargs)
+                                savename=savename, scatter_kwargs=scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = 'cluster', width: float = 1.5, lvr_factor: float = 0.5,

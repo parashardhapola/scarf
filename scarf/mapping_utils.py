@@ -1,6 +1,5 @@
 import dask.array as daskarr
 import numpy as np
-from scipy.linalg import fractional_matrix_power as fmp
 from typing import Tuple
 from .writers import dask_to_zarr
 from .assay import Assay
@@ -18,6 +17,8 @@ def _cov_diaged(da: daskarr) -> daskarr:
 
 
 def _correlation_alignment(s: daskarr, t: daskarr) -> daskarr:
+    from scipy.linalg import fractional_matrix_power as fmp
+
     s_cov = calc_computed(_cov_diaged(s), f"CORAL: Computing source covariance")
     t_cov = calc_computed(_cov_diaged(t), f"CORAL: Computing target covariance")
     a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))

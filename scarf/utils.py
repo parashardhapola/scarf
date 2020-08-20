@@ -1,17 +1,11 @@
-import pandas as pd
 import numpy as np
-from statsmodels.nonparametric.smoothers_lowess import lowess
 from typing import Callable
-from dask.diagnostics import ProgressBar
-from dask.distributed import progress
-import functools
-import subprocess
-import shlex
-from scipy.stats import norm
 
 
-def fit_lowess(a, b, n_bins: int,
-               lowess_frac: float) -> np.ndarray:
+def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+    import pandas as pd
+
     stats = pd.DataFrame({'a': a, 'b': b}).apply(np.log)
     bin_edges = np.histogram(stats.a, bins=n_bins)[1]
     bin_edges[-1] += 0.1  # For including last gene
@@ -45,6 +39,8 @@ def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
     :param frac: Value between 0 and 1.
     :return:
     """
+    from scipy.stats import norm
+
     loc = (np.median(a) + np.median(a[::-1])) / 2
     dist = norm(loc, np.std(a))
     minv, maxv = dist.ppf(1 - frac), dist.ppf(frac)
@@ -67,6 +63,9 @@ def clean_array(x, fill_val: int = 0):
 
 
 def show_progress(func: Callable):
+    from dask.diagnostics import ProgressBar
+    import functools
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         pbar = ProgressBar()
@@ -78,6 +77,8 @@ def show_progress(func: Callable):
 
 
 def calc_computed(a, msg: str = None):
+    from dask.distributed import progress
+
     if msg is not None:
         print(msg, flush=True)
     a = a.persist()
@@ -87,6 +88,9 @@ def calc_computed(a, msg: str = None):
 
 
 def system_call(command):
+    import subprocess
+    import shlex
+
     process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
     while True:
         output = process.stdout.readline()
