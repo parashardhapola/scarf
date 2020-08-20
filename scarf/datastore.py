@@ -5,14 +5,14 @@ import pandas as pd
 import re
 import zarr
 from dask.distributed import Client, LocalCluster
+from tqdm import tqdm
+import dask.array as daskarr
 from scipy.sparse import coo_matrix, csr_matrix, triu
 from scipy.stats import norm
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
 from .utils import calc_computed, system_call, rescale_array, clean_array
-from tqdm import tqdm
-import dask.array as daskarr
 
 
 __all__ = ['DataStore']
@@ -659,10 +659,10 @@ class DataStore:
         if ann_obj.method == 'pca':
             if ref_mu is False or run_coral is True:
                 mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
-                mu = clean_array(mu)
+                ann_obj.mu = clean_array(mu)
             if ref_sigma is False or run_coral is True:
                 sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
-                sigma = clean_array(sigma, 1)
+                ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
         store = source_assay.z['projections'].create_group(target_name, overwrite=True)
@@ -673,7 +673,7 @@ class DataStore:
         for i in tqdm(target_data.blocks, desc='Mapping'):
             a: np.ndarray = i.compute()
             if run_coral is True:
-                a = (a - mu) / sigma
+                a = (a - ann_obj.mu) / ann_obj.sigma
             ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
@@ -714,6 +714,42 @@ class DataStore:
                         ms[x] += y
             ms = np.log1p(1000 * ms / len(coi))
             yield group, ms
+
+    def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                        clusters: pd.Series = None, min_edge_weight: float = 0, seed_frac: float = 0.1,
+                        min_nodes: int = 3, rewards: tuple = (1, 0), rand_state: int = 4466, return_vals: bool = False):
+        from .pcst import pcst
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight=min_edge_weight,
+                                 symmetric=True)
+        if clusters is None:
+            clusters = pd.Series(self.cells.fetch(self._col_renamer(from_assay, cell_key, 'cluster'), cell_key))
+        if len(clusters) != graph.shape[0]:
+            raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
+                             f"{graph.shape[0]} cells.")
+        steiner_nodes, steiner_edges = pcst(
+            graph=graph, clusters=clusters, seed_frac=seed_frac, min_nodes=min_nodes,
+            rewards=rewards, pruning_method='strong', rand_state=rand_state)
+        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a[steiner_nodes] = True
+        label = 'sketched1'
+        new_key = self._col_renamer(from_assay, cell_key, label)
+        if cell_key.startswith('sketched') or cell_key.startswith(from_assay + '_sketched'):
+            try:
+                label = 'sketched' + str(int(cell_key.split('sketched')[-1]) + 1)
+            except TypeError:
+                label = 'sketched1'
+            else:
+                new_key = self._col_renamer(from_assay, 'I', label)
+        self.cells.add(new_key, a, fill_val=False, key=cell_key, overwrite=True)
+        print(f"INFO: Sketched cells saved with keyname '{label}'")
+        if return_vals:
+            return steiner_nodes, steiner_edges
 
     def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
         from .plots import plot_qc
