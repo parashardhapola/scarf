@@ -467,7 +467,7 @@ class DataStore:
         return self._z[knn_loc].attrs['latest_graph']
 
     def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                    min_edge_weight: float = 0, symmetric: bool = True):
+                    min_edge_weight: float = -1, symmetric: bool = True):
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc not in self._z:
             print(f"ERROR: {graph_loc} not found in zarr location {self._fn}. Run `make_graph` for assay {from_assay}")
@@ -816,6 +816,59 @@ class DataStore:
         else:
             v = np.ones(len(x))
         df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'v': v})
+        if shade:
+            return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
+                                 savename=savename, **kwargs)
+        else:
+            return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
+                                savename=savename, **kwargs)
+
+    def plot_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                          use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
+                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
+                          color_by: str = None, ref_color='coral', target_color='k',
+                          shade: bool = False, labels_kwargs: dict = None, legends_kwargs: dict = None,
+                          savename: str = None, **kwargs):
+        from .umap import fit_transform
+        from .plots import plot_scatter, shade_scatter
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        edges = self._z[graph_loc].edges[:]
+        weights = self._z[graph_loc].weights[:]
+        n_cells = self.cells.active_index(cell_key).sum()
+        pidx = self._z[from_assay].projections[target_name].indices[:, :use_k]
+        ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
+
+        ne = []
+        nw = []
+        for n, i in enumerate(pidx):
+            for j in i:
+                ne.append([n_cells + n, j])
+                nw.append(target_weight)
+        me = np.vstack([edges, ne]).astype(int)
+        mw = np.hstack([weights, nw])
+        tot_cells = n_cells + pidx.shape[0]
+        graph = coo_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
+        ie = np.vstack([ini_embed, ini_embed[pidx[:, 0]]])
+        t = fit_transform(graph, ie, spread=spread, min_dist=min_dist,
+                          tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
+                          random_seed=random_seed, parallel=False)
+        x = t[:, 0]
+        y = t[:, 1]
+        if color_by is None:
+            c = np.hstack([np.ones(n_cells), np.ones(pidx.shape[0]) + 1]).astype(object)
+            c[c == 1] = ref_color
+            c[c == 2] = target_color
+        else:
+            c = np.hstack([self.cells.fetch(color_by, cell_key), ['k' for x in range(pidx.shape[0])]]).astype(object)
+        idx = pd.Series(range(len(c))).sample(frac=1).values
+
+        df = pd.DataFrame({'UMAP1': x[idx], 'UMAP2': y[idx], 'v': c[idx]})
         if shade:
             return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
                                  savename=savename, **kwargs)
