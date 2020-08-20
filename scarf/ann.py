@@ -40,7 +40,8 @@ class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
                  dims: int, loadings: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
-                 nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool):
+                 nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool,
+                 scale_features: bool = True):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -65,11 +66,14 @@ class AnnStream:
         with threadpool_limits(limits=self.nthreads):
             if self.method == 'pca':
                 self.mu, self.sigma = mu, sigma
-                if self.loadings is None:
-                    self._fit_pca()
-                self.reducer = lambda x: self.transform_pca(self.transform_z(x))
+                if self.loadings is None or len(self.loadings) == 0:
+                    self._fit_pca(scale_features)
+                if scale_features:
+                    self.reducer = lambda x: self.transform_pca(self.transform_z(x))
+                else:
+                    self.reducer = lambda x: self.transform_pca(x)
             elif self.method == 'lsi':
-                if self.loadings is None:
+                if self.loadings is None or len(self.loadings) == 0:
                     self._fit_lsi()
                 self.reducer = self.transform_lsi
             else:
@@ -87,22 +91,22 @@ class AnnStream:
             print(f"INFO: Cluster number reduced to batch size of {batch_size}")
         return batch_size
 
-    def iter_blocks(self, msg: str = ''):
+    def iter_blocks(self, msg: str = '') -> np.ndarray:
         for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
             yield i.compute()
 
-    def transform_z(self, a: np.ndarray):
+    def transform_z(self, a: np.ndarray) -> np.ndarray:
         return (a - self.mu) / self.sigma
 
-    def transform_pca(self, a: np.ndarray):
+    def transform_pca(self, a: np.ndarray) -> np.ndarray:
         ret_val = a.dot(self.loadings)
         return ret_val
 
-    def transform_lsi(self, a: np.ndarray):
+    def transform_lsi(self, a: np.ndarray) -> np.ndarray:
         ret_val = a.dot(self.loadings)
         return ret_val
 
-    def transform_ann(self, a: np.ndarray, k: int = None, self_indices: np.ndarray = None):
+    def transform_ann(self, a: np.ndarray, k: int = None, self_indices: np.ndarray = None) -> tuple:
         if k is None:
             k = self.k
         # Adding +1 to k because first neighbour will be the query itself
@@ -113,14 +117,17 @@ class AnnStream:
             i, d = self.annIdx.knn_query(a, k=k+1)
             return fix_knn_query(i, d, self_indices)
 
-    def _fit_pca(self):
+    def _fit_pca(self, scale_features) -> None:
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
         for i in self.iter_blocks(msg='Fitting PCA'):
-            self._pca.partial_fit(self.transform_z(i), check_input=False)
+            if scale_features:
+                self._pca.partial_fit(self.transform_z(i), check_input=False)
+            else:
+                self._pca.partial_fit(i, check_input=False)
         self.loadings = self._pca.components_[:-1, :].T
 
-    def _fit_lsi(self):
+    def _fit_lsi(self) -> None:
         self._lsiModel = LsiModel(vec_to_bow(self.data.blocks[0].compute()), num_topics=self.dims,
                                   chunksize=self.data.chunksize[0])
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
