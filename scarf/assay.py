@@ -98,7 +98,7 @@ class Assay:
         self._verify_keys(cell_key, feat_key)
 
         subset_hash = self.create_subset_hash(cell_key, feat_key)
-        subset_params = [log_transform, renormalize_subset]
+        subset_params = {'log_transform': log_transform, 'renormalize_subset': renormalize_subset}
         if location in self.z:
             if subset_hash == self.z[location].attrs['subset_hash'] and \
                     subset_params == self.z[location].attrs['subset_params']:
