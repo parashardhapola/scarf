@@ -195,34 +195,9 @@ class DataStore:
                 reduction_method = 'pca'
         return reduction_method
 
-    def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                   reduction_method: str = 'auto', dims: int = None, k: int = None,
-                   ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
-                   rand_state: int = None, n_centroids: int = None, batch_size: int = None,
-                   log_transform: bool = None, renormalize_subset: bool = None,
-                   local_connectivity: float = None, bandwidth: float = None, return_ann_obj: bool = False):
-        from .ann import AnnStream
-
-        if from_assay is None:
-            from_assay = self.defaultAssay
-        assay = self._get_assay(from_assay)
-        if batch_size is None:
-            batch_size = assay.rawData.chunksize[0]
-        if feat_key is None:
-            bool_cols = [x.split('__', 1) for x in assay.feats.table.columns if assay.feats.table[x].dtype == bool
-                         and x != 'I']
-            bool_cols = [f"{x[1]}({x[0]})" for x in bool_cols]
-            bool_cols = ' '.join(map(str, bool_cols))
-            raise ValueError("ERROR: You have to choose which features that should be used for graph construction. "
-                             "Ideally you should have performed a feature selection step before making this graph. "
-                             "Feature selection step adds a column to your feature table. You can access your feature "
-                             f"table for for assay {from_assay} like this ds.{from_assay}.feats.table replace 'ds' "
-                             f"with the name of DataStore object.\nYou have following boolean columns in the feature "
-                             f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
-                             f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
-                             f"as `feat_key` means that you will use all the genes for graph creation.")
-        reduction_method = self._choose_reduction_method(assay, reduction_method)
-
+    def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
+                          reduction_method='auto', dims=None, ann_metric=None, ann_efc=None, ann_ef=None, ann_m=None,
+                          rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None):
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self._z and 'subset_params' in self._z[normed_loc].attrs:
@@ -248,12 +223,8 @@ class DataStore:
                     renormalize_subset = True
                     print(f'INFO: No value provided for parameter `renormalize_subset`. '
                           f'Will use default value: {renormalize_subset}', flush=True)
-        else:
-            log_transform = bool(log_transform)
-            renormalize_subset = bool(renormalize_subset)
-
-        data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
-                                          log_transform, renormalize_subset)
+        log_transform = bool(log_transform)
+        renormalize_subset = bool(renormalize_subset)
 
         if dims is None:
             if normed_loc in self._z and 'latest_reduction' in self._z[normed_loc].attrs:
@@ -264,6 +235,8 @@ class DataStore:
             else:
                 dims = 11
                 print(f'INFO: No value provided for parameter `dims`. Will use default value: {dims}', flush=True)
+        dims = int(dims)
+        reduction_method = self._choose_reduction_method(self._get_assay(from_assay), reduction_method)
         reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
 
         if ann_metric is None or ann_efc is None or ann_ef is None or ann_m is None or rand_state is None:
@@ -290,7 +263,8 @@ class DataStore:
                           f'Will use previously used value: {ann_efc}', flush=True)
                 else:
                     ann_efc = 10
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}', flush=True)
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}',
+                          flush=True)
             if ann_ef is None:
                 if c_ann_ef is not None:
                     ann_ef = int(c_ann_ef)
@@ -334,7 +308,6 @@ class DataStore:
             ann_ef = k * 2
         ann_ef = int(ann_ef)
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
-        ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
         knn_loc = f"{ann_loc}/knn__{k}"
 
         if n_centroids is None:
@@ -344,10 +317,11 @@ class DataStore:
                 print(f'INFO: No value provided for parameter `n_centroids`.'
                       f' Will use previously used value: {n_centroids}', flush=True)
             else:
-                n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
+                # n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
+                n_centroids = 500
                 print(f'INFO: No value provided for parameter `n_centroids`. '
                       f'Will use default value: {n_centroids}', flush=True)
-        kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
+        n_centroids = int(n_centroids)
 
         if local_connectivity is None or bandwidth is None:
             if knn_loc in self._z and 'latest_graph' in self._z[knn_loc].attrs:
@@ -375,13 +349,56 @@ class DataStore:
                           flush=True)
         local_connectivity = float(local_connectivity)
         bandwidth = float(bandwidth)
+
+        return (log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m,
+                rand_state, k, n_centroids, local_connectivity, bandwidth)
+
+    def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                   reduction_method: str = 'auto', dims: int = None, k: int = None,
+                   ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
+                   rand_state: int = None, n_centroids: int = None, batch_size: int = None,
+                   log_transform: bool = None, renormalize_subset: bool = None,
+                   local_connectivity: float = None, bandwidth: float = None):
+        from .ann import AnnStream
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        assay = self._get_assay(from_assay)
+        if batch_size is None:
+            batch_size = assay.rawData.chunksize[0]
+        if feat_key is None:
+            bool_cols = [x.split('__', 1) for x in assay.feats.table.columns if assay.feats.table[x].dtype == bool
+                         and x != 'I']
+            bool_cols = [f"{x[1]}({x[0]})" for x in bool_cols]
+            bool_cols = ' '.join(map(str, bool_cols))
+            raise ValueError("ERROR: You have to choose which features that should be used for graph construction. "
+                             "Ideally you should have performed a feature selection step before making this graph. "
+                             "Feature selection step adds a column to your feature table. You can access your feature "
+                             f"table for for assay {from_assay} like this ds.{from_assay}.feats.table replace 'ds' "
+                             f"with the name of DataStore object.\nYou have following boolean columns in the feature "
+                             f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
+                             f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
+                             f"as `feat_key` means that you will use all the genes for graph creation.")
+
+        (log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m, rand_state, k,
+         n_centroids, local_connectivity, bandwidth) = self._set_graph_params(from_assay, cell_key, feat_key,
+            log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m,
+            rand_state, k, n_centroids, local_connectivity, bandwidth)
+
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
+        ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
+        ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
+        knn_loc = f"{ann_loc}/knn__{k}"
+        kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
+        data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
+                                          log_transform, renormalize_subset)
         loadings = None
         fit_kmeans = True
         fit_ann = True
         mu, sigma = np.ndarray([]), np.ndarray([])
-
         if reduction_loc in self._z:
             loadings = self._z[reduction_loc]['reduction'][:]
             if reduction_method == 'pca':
@@ -440,8 +457,6 @@ class DataStore:
         self._z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
         self._z[ann_loc].attrs['latest_knn'] = knn_loc
         self._z[knn_loc].attrs['latest_graph'] = graph_loc
-        if return_ann_obj:
-            return ann_obj
         return None
 
     def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
@@ -611,44 +626,55 @@ class DataStore:
                 g_s[:] = vals.values
         return None
 
-    def run_mapping(self, *, target_assay: Assay, target_name: str, from_assay: str = None,
-                    cell_key: str = 'I', feat_key: str = None, save_k: int = 1, batch_size: int = 1000,
-                    ref_mu: bool =True, ref_sigma: bool = True, run_coral: bool = True):
+    def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
+                    cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
+                    ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = True, ann_metric='l2'):
         from .mapping_utils import align_common_features, coral
-
+        from .ann import AnnStream
+        from .writers import dask_to_zarr
         source_assay = self._get_assay(from_assay)
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         from_assay = source_assay.name
-        self_name = self._fn.split('/')[-1].rsplit('.', 1)[0]
-        target_feat_key = f"{feat_key}_{self_name}"
-        align_common_features(source_assay, target_assay, cell_key, feat_key, target_feat_key)
+        feat_idx = align_common_features(source_assay, target_assay, cell_key, feat_key, target_feat_key)
+        print(f"INFO: {len(feat_idx)} common features between reference and target being used", flush=True)
+        (log_transform, renormalize_subset, reduction_method, dims, _, ann_efc, ann_ef, ann_m, rand_state, k,
+         n_centroids, local_connectivity, bandwidth) = self._set_graph_params(from_assay, cell_key, feat_key)
+        dask_to_zarr(source_assay.normed(source_assay.cells.active_index(cell_key), feat_idx,
+                                         log_transform=log_transform, renormalize_subset=renormalize_subset),
+                     source_assay.z['/'], f"{source_assay.name}/normed__I__{target_feat_key}/data", 1000)
+        source_data = daskarr.from_zarr(source_assay.z[f"normed__I__{target_feat_key}/data"])
+        target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
+        if run_coral is True:
+            coral(source_data, target_data, source_assay, target_feat_key)
+            source_data = daskarr.from_zarr(source_assay.z[f"normed__I__{target_feat_key}/data_coral"])
+        mu, sigma = np.ndarray([]), np.ndarray([])
+        if reduction_method == 'pca' and run_coral is False:
+            mu = clean_array(calc_computed(source_data.mean(axis=0), 'INFO: Calculating mean of norm. data'))
+            sigma = clean_array(calc_computed(source_data.std(axis=0), 'INFO: Calculating std. dev. of norm. data'), 1)
+        ann_obj = AnnStream(data=source_data, k=save_k, n_cluster=n_centroids, reduction_method=reduction_method,
+                            dims=dims, loadings=np.array([]), mu=mu, sigma=sigma, ann_metric=ann_metric,
+                            ann_efc=ann_efc, ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=None, nthreads=self.nthreads,
+                            rand_state=rand_state, do_ann_fit=True, do_kmeans_fit=False, scale_features=not run_coral)
+        if ann_obj.method == 'pca':
+            if ref_mu is False or run_coral is True:
+                mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
+                mu = clean_array(mu)
+            if ref_sigma is False or run_coral is True:
+                sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
+                sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
         store = source_assay.z['projections'].create_group(target_name, overwrite=True)
         nc, nk = target_assay.cells.table.I.sum(), save_k
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
-        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        norm_params = dict(zip(['log_transform', 'renormalize_subset'], self._z[normed_loc].attrs['subset_params']))
-        source_data = source_assay.normed(source_assay.cells.active_index(cell_key),
-                                          source_assay.feats.active_index(target_feat_key), **norm_params)
-        target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
-        if run_coral is True:
-            coral(source_data, target_data, target_assay, target_feat_key)
-            target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
-        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=target_feat_key,
-                                  return_ann_obj=True)
-        if ann_obj.method == 'pca':
-            if ref_mu is False:
-                mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
-                ann_obj.mu = clean_array(mu.values)
-            if ref_sigma is False:
-                sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
-                ann_obj.sigma = clean_array(sigma.values, 1)
         entry_start = 0
         for i in tqdm(target_data.blocks, desc='Mapping'):
-            ki, kd = ann_obj.transform_ann(ann_obj.reducer(i.compute()), k=save_k)
+            a: np.ndarray = i.compute()
+            if run_coral is True:
+                a = (a - mu) / sigma
+            ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
             zd[entry_start:entry_end, :] = kd
@@ -656,12 +682,9 @@ class DataStore:
         return None
 
     def get_mapping_score(self,  *, target_name: str, target_groups: np.ndarray = None,
-                          from_assay: str = None, cell_key: str = 'I', feat_key: str = None,) -> np.ndarray:
+                          from_assay: str = None, cell_key: str = 'I') -> np.ndarray:
         if from_assay is None:
             from_assay = self.defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
-
         store_loc = f"{from_assay}/projections/{target_name}"
         if store_loc not in self._z:
             raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
