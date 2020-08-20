@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Callable
+import pandas as pd
 
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
