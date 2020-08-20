@@ -5,15 +5,8 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 from cmocean import cm
-from IPython.display import display
-from holoviews.plotting import mpl as hmpl
-from holoviews.operation.datashader import datashade, dynspread
-import holoviews as hv
-import datashader as dsh
 import cmocean
-import EoN
-import math
-import networkx as nx
+
 
 __all__ = ['plot_qc', 'plot_mean_var', 'plot_graph_qc', 'plot_scatter', 'shade_scatter',
            'plot_heatmap', 'plot_cluster_hierarchy']
@@ -113,6 +106,10 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
 
 def plot_cluster_hierarchy(sg, clusts, width: float, lvr_factor: float,
                            min_node_size: float, node_size_expand_factor: float, cmap):
+    import networkx as nx
+    import EoN
+    import math
+
     cmap = sns.color_palette(cmap, n_colors=len(set(clusts))).as_hex()
     cs = pd.Series(clusts).value_counts().to_dict()
     nc = []
@@ -222,23 +219,30 @@ def scatter_ax_cleanup(ax, spine_width: float = 0.5, spine_color: str = 'k',
 
 def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  cmap=None, color_key: dict = None,
-                 s: float = 10, lw: float = 0.1, edge_color='k',
-                 labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None, **kwargs):
+                 labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None,
+                 scatter_kwargs: dict = None):
     x, y, v = df.columns
     if in_ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(width, height))
     else:
         ax = in_ax
-    cmap, color_key = scatter_make_cmap(df, cmap, color_key)
-    if color_key is None:
-        if df[v].nunique() == 1:
-            kwargs['c'] = 'steelblue'
+    if 'c' not in scatter_kwargs:
+        cmap, color_key = scatter_make_cmap(df, cmap, color_key)
+        if color_key is None:
+            if df[v].nunique() == 1:
+                scatter_kwargs['c'] = 'steelblue'
+            else:
+                df[v] = (df[v] - df[v].min()) / (df[v].max() - df[v].min())
+                scatter_kwargs['c'] = df[v]
         else:
-            df[v] = (df[v] - df[v].min()) / (df[v].max() - df[v].min())
-            kwargs['c'] = df[v]
-    else:
-        kwargs['c'] = [color_key[x] for x in df[v].values]
-    ax.scatter(df[x].values, df[y].values, s=s, lw=lw, edgecolor=edge_color, cmap=cmap, rasterized=True, **kwargs)
+            scatter_kwargs['c'] = [color_key[x] for x in df[v].values]
+    if 's' not in scatter_kwargs:
+        scatter_kwargs['s'] = 10
+    if 'lw' not in scatter_kwargs:
+        scatter_kwargs['lw'] = 0.1
+    if 'edge_color' not in scatter_kwargs:
+        scatter_kwargs['edge_color'] = 'k'
+    ax.scatter(df[x].values, df[y].values, cmap=cmap, rasterized=True, **scatter_kwargs)
     if labels_kwargs is None:
         labels_kwargs = {}
     scatter_ax_labels(ax, df, **labels_kwargs)
@@ -258,6 +262,12 @@ def shade_scatter(df, fig_size: float = 7, width_px: int = 1000, height_px: int 
                   x_sampling: float = 0.2, y_sampling: float = 0.2,
                   spread_px: int = 1, min_alpha: int = 10, cmap=None, color_key: dict = None,
                   labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None):
+    from holoviews.plotting import mpl as hmpl
+    from holoviews.operation.datashader import datashade, dynspread
+    import holoviews as hv
+    import datashader as dsh
+    from IPython.display import display
+
     x, y, v = df.columns
     points = hv.Points(df, kdims=[x, y], vdims=v)
     cmap, color_key = scatter_make_cmap(df, cmap, color_key)

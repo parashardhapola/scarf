@@ -2,10 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
-import h5py
 import os
 import sparse
-import gzip
 from typing import IO
 
 
@@ -13,6 +11,8 @@ __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader']
 
 
 def get_file_handle(fn: str) -> IO:
+    import gzip
+
     try:
         if fn.rsplit('.', 1)[-1] == 'gz':
             return gzip.open(fn, mode='rt')
@@ -127,6 +127,8 @@ class CrReader(ABC):
 
 class CrH5Reader(CrReader):
     def __init__(self, h5_fn, file_type: str = None):
+        import h5py
+
         self.h5obj = h5py.File(h5_fn, mode='r')
         self.grp = None
         super().__init__(self._handle_version(), file_type)

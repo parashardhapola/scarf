@@ -1,10 +1,6 @@
-from sklearn.decomposition import IncrementalPCA
-from sklearn.cluster import MiniBatchKMeans
-import hnswlib
 from tqdm import tqdm
 import numpy as np
 from scipy import sparse
-from gensim.models import LsiModel
 from threadpoolctl import threadpool_limits
 
 __all__ = ['AnnStream']
@@ -118,6 +114,8 @@ class AnnStream:
             return fix_knn_query(i, d, self_indices)
 
     def _fit_pca(self, scale_features) -> None:
+        from sklearn.decomposition import IncrementalPCA
+
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
         for i in self.iter_blocks(msg='Fitting PCA'):
@@ -128,6 +126,8 @@ class AnnStream:
         self.loadings = self._pca.components_[:-1, :].T
 
     def _fit_lsi(self) -> None:
+        from gensim.models import LsiModel
+
         self._lsiModel = LsiModel(vec_to_bow(self.data.blocks[0].compute()), num_topics=self.dims,
                                   chunksize=self.data.chunksize[0])
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
@@ -137,6 +137,8 @@ class AnnStream:
         self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self, ann_idx_loc, do_ann_fit):
+        import hnswlib
+
         ann_idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
         if do_ann_fit is True:
             ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
@@ -151,6 +153,8 @@ class AnnStream:
         return ann_idx
 
     def _fit_kmeans(self, do_ann_fit):
+        from sklearn.cluster import MiniBatchKMeans
+
         if do_ann_fit is False:
             return None
         kmeans = MiniBatchKMeans(

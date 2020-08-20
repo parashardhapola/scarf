@@ -1,12 +1,11 @@
-import numpy as np
-import pandas as pd
-from numba import jit
-from tqdm import tqdm
-
 __all__ = ['find_markers_by_rank']
 
 
 def find_markers_by_rank(assay, group_key: str, threshold: float = 0.25) -> dict:
+    from numba import jit
+    import numpy as np
+    import pandas as pd
+    from tqdm import tqdm
 
     @jit()
     def calc_mean_rank(v):
