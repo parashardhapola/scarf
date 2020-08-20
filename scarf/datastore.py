@@ -14,7 +14,6 @@ from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
 from .utils import calc_computed, system_call, rescale_array, clean_array
 
-
 __all__ = ['DataStore']
 
 
@@ -38,7 +37,7 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 class DataStore:
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
-                 auto_filter: bool = False, show_qc_plots: bool = True, force_recalc: bool = False,
+                 auto_filter: bool = False, show_qc_plots: bool = True,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
         self._fn: str = zarr_loc
         self._z: zarr.hierarchy = zarr.open(self._fn, 'r+')
@@ -382,8 +381,11 @@ class DataStore:
 
         (log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m, rand_state, k,
          n_centroids, local_connectivity, bandwidth) = self._set_graph_params(from_assay, cell_key, feat_key,
-            log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m,
-            rand_state, k, n_centroids, local_connectivity, bandwidth)
+                                                                              log_transform, renormalize_subset,
+                                                                              reduction_method, dims, ann_metric,
+                                                                              ann_efc, ann_ef, ann_m,
+                                                                              rand_state, k, n_centroids,
+                                                                              local_connectivity, bandwidth)
 
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
@@ -598,7 +600,7 @@ class DataStore:
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
         else:
             # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
-            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters-1) + 1
+            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters - 1) + 1
         if return_clusters:
             return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
         else:
@@ -681,7 +683,7 @@ class DataStore:
             entry_start = entry_end
         return None
 
-    def get_mapping_score(self,  *, target_name: str, target_groups: np.ndarray = None,
+    def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None,
                           from_assay: str = None, cell_key: str = 'I') -> np.ndarray:
         if from_assay is None:
             from_assay = self.defaultAssay
