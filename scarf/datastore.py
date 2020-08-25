@@ -562,7 +562,8 @@ class DataStore:
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
-                       return_clusters: bool = False, force_recalc: bool = False) -> Union[None, pd.Series]:
+                       return_clusters: bool = False, force_recalc: bool = False,
+                       label: str = 'cluster') -> Union[None, pd.Series]:
         import sknetwork as skn
 
         if from_assay is None:
@@ -598,13 +599,14 @@ class DataStore:
         if balanced_cut:
             from .dendrogram import BalancedCut
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
+            print(f"INFO: {len(labels)} clusters found", flush=True)
         else:
             # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters - 1) + 1
         if return_clusters:
             return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
         else:
-            self.cells.add(self._col_renamer(from_assay, cell_key, 'cluster'), labels,
+            self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
                            fill_val=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, threshold: float = 0.25) -> None:
@@ -750,7 +752,7 @@ class DataStore:
     def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                          use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
-                         ini_embed_with: str = 'kmeans', label: str ='UMAP'):
+                         ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
         from .umap import fit_transform
 
         if from_assay is None:
@@ -832,8 +834,9 @@ class DataStore:
         return None
 
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                        clusters: pd.Series = None, min_edge_weight: float = 0, seed_frac: float = 0.1,
-                        min_nodes: int = 3, rewards: tuple = (1, 0), rand_state: int = 4466, return_vals: bool = False):
+                        cluster_key: str = None, min_edge_weight: float = -1, seed_frac: float = 0.05,
+                        min_nodes: int = 3, rewards: tuple = (3, 0.1), rand_state: int = 4466,
+                        return_vals: bool = False):
         from .pcst import pcst
 
         if from_assay is None:
@@ -841,10 +844,11 @@ class DataStore:
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight=min_edge_weight,
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
                                  symmetric=True)
-        if clusters is None:
-            clusters = pd.Series(self.cells.fetch(self._col_renamer(from_assay, cell_key, 'cluster'), cell_key))
+        if cluster_key is None:
+            cluster_key = 'cluster'
+        clusters = pd.Series(self.cells.fetch(self._col_renamer(from_assay, cell_key, cluster_key), cell_key))
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
@@ -910,7 +914,8 @@ class DataStore:
         return vals
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
-                    layout_key: str = 'UMAP', color_by: str = None, size_vals = None, clip_fraction: float = 0.01,
+                    layout_key: str = 'UMAP', color_by: str = None, subselection_key: str = None,
+                    size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
                     missing_color: str = 'k', colormap=None, point_size: float = 10,
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
@@ -937,6 +942,13 @@ class DataStore:
             if len(size_vals) != len(x):
                 raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
             df['s'] = size_vals
+        if subselection_key is not None:
+            idx = self.cells.fetch(subselection_key, cell_key)
+            if idx.dtype != bool:
+                print(f"WARNING: `subselection_key` {subselection_key} is not bool type. Will not sub-select",
+                      flush=True)
+            else:
+                df = df[idx]
         return plot_scatter(df, None, None, width, height, default_color, missing_color, colormap, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
                             legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
@@ -944,7 +956,7 @@ class DataStore:
 
     def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                             layout_key: str = 'UMAP', show_target_only: bool = False,
-                            ref_color: str='coral', target_color='k', width: float = 6,
+                            ref_color: str = 'coral', target_color='k', width: float = 6,
                             height: float = 6, colormap=None, point_size: float = 10,
                             ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                             spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
