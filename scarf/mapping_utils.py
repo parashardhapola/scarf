@@ -21,7 +21,9 @@ def _correlation_alignment(s: daskarr, t: daskarr) -> daskarr:
 
     s_cov = calc_computed(_cov_diaged(s), f"CORAL: Computing source covariance")
     t_cov = calc_computed(_cov_diaged(t), f"CORAL: Computing target covariance")
+    print("INFO: Calculating fractional power of covariance matrices. This might take a while... ", flush=True, end='')
     a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))
+    print("Done", flush=True)
     return daskarr.dot(s, a_coral)
 
 
