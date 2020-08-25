@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 from cmocean import cm
-import cmocean
 
 
 plt.style.use('fivethirtyeight')
@@ -88,7 +87,7 @@ def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.
 
 
 def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
-                 cmap=cmocean.cm.matter_r, figsize=None):
+                 cmap=cm.matter_r, figsize=None):
     if figsize is None:
         figsize = (cdf.shape[1]*fontsize*width_factor, fontsize*cdf.shape[0]*height_factor)
     cgx = sns.clustermap(cdf, yticklabels=cdf.index, xticklabels=cdf.columns, method='ward',
@@ -140,6 +139,9 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  savename: str = None, scatter_kwargs: dict = None):
 
     def _vals_to_colors(v: pd.Series, na_c: str, cmap):
+        from matplotlib.colors import to_hex
+        if v.dtype.type == np.bool_:
+            v = v.astype(np.int_)
         if v.dtype.type == np.int_ or v.dtype.type == str:
             filler_val = '####&&****!@@#!#@$'
             if v.dtype.type == np.int_:
@@ -157,7 +159,8 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             if cmap is None:
                 cmap = cm.deep
             pal = plt.get_cmap(cmap)
-            c = [mpl.colors.to_hex(pal(x)) for x in v / v.max()]
+            mmv = (v - v.min()) / (v.max() - v.min())
+            c = [to_hex(pal(x)) for x in mmv]
         else:
             raise ValueError('Unknown dtype')
         return pd.Series(c, index=v.index)
@@ -166,7 +169,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         d = df.convert_dtypes()
         if 'c' not in d:
             if 'vc' not in d:
-                d['c'] = [c for x in d.index]
+                d['c'] = [c for _ in d.index]
             else:
                 d['c'] = _vals_to_colors(d['vc'].copy(), na_c, cmap)
         if 's' in d:
@@ -219,11 +222,17 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         return None
 
     def _legends(cmap, ondata: bool, onside: bool, fontsize: float,
-                 n_per_col: int, marker_scale: float, lspacing: float, cspacing: float) -> None:
+                 n_per_col: int, scale: float, ls: float, cs: float) -> None:
+        from matplotlib.colors import Normalize
+        from matplotlib.colorbar import ColorbarBase
+        from matplotlib.cm import get_cmap
+
         x, y = df.columns[:2]
         if 'vc' not in df:
             return None
         v = df['vc']
+        if v.dtype.type == np.bool_:
+            v = v.astype(np.int_)
         if v.dtype.type == np.int_ or v.dtype.type == str:
             centers = df[[x, y, 'vc']].groupby('vc').median().T
             for i in centers:
@@ -236,17 +245,18 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             if onside:
                 n_cols = max(1, int(v.nunique() / n_per_col))
                 ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
-                          markerscale=marker_scale, labelspacing=lspacing, columnspacing=cspacing)
+                          markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
             if v.nunique() <= 1:
                 pass
             elif fig is not None:
                 cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
-                norm = mpl.colors.Normalize(vmin=0, vmax=1)
+                norm = Normalize(vmin=0, vmax=1)
                 if cmap is None:
                     cmap = cm.deep
-                cb = mpl.colorbar.ColorbarBase(cbaxes, cmap=cmap, norm=norm,
-                                               orientation='horizontal')
+                else:
+                    cmap = get_cmap(cmap)
+                cb = ColorbarBase(cbaxes, cmap=cmap, norm=norm, orientation='horizontal')
                 cb.set_label('Relative values', fontsize=fontsize)
                 cb.ax.xaxis.set_label_position('top')
             else:
