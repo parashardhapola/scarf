@@ -28,7 +28,7 @@ class MetaData:
         Get column values for only valid rows
         """
         if k not in self.table.columns or key not in self.table.columns:
-            raise KeyError(f"ERROR: not found in MetaData")
+            raise KeyError(f"ERROR: '{k}' not found in MetaData")
         return self.table[k].values[self.table[key].values]
 
     def add(self, k: str, v: np.array, fill_val=np.NaN, key: str = 'I', overwrite: bool = False) -> None:
