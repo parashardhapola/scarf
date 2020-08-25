@@ -521,13 +521,11 @@ class DataStore:
         with open(ini_emb_fn, 'w') as h:
             ini_emb = self._ini_embed(from_assay, cell_key, feat_key, tsne_dims).flatten()
             h.write('\n'.join(map(str, ini_emb)))
-        knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        knn_loc = self._z[graph_loc.rsplit('/', 1)[0]]
-        n_cells, n_neighbors = knn_loc['indices'].shape
-        export_knn_to_mtx(knn_mtx_fn, self._z[graph_loc], n_cells, n_neighbors)
-        out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
 
+        knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
+        export_knn_to_mtx(knn_mtx_fn, self._load_graph(from_assay, cell_key, feat_key, 'csr', symmetric=False))
+
+        out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
         if verbose:
@@ -719,6 +717,120 @@ class DataStore:
             ms = np.log1p(1000 * ms / len(coi))
             yield group, ms
 
+    def _load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
+                            sparse_format: str = 'coo'):
+        from scipy.sparse import coo_matrix, csr_matrix
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        if sparse_format not in ['csr', 'coo']:
+            raise KeyError("ERROR: `sparse_format` should be either 'coo' or 'csr'")
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        edges = self._z[graph_loc].edges[:]
+        weights = self._z[graph_loc].weights[:]
+        n_cells = self.cells.table[cell_key].sum()
+        pidx = self._z[from_assay].projections[target_name].indices[:, :use_k]
+        ne = []
+        nw = []
+        for n, i in enumerate(pidx):
+            for j in i:
+                ne.append([n_cells + n, j])
+                # TODO:  Better way to weigh the target edges
+                nw.append(target_weight)
+        me = np.vstack([edges, ne]).astype(int)
+        mw = np.hstack([weights, nw])
+        tot_cells = n_cells + pidx.shape[0]
+        if sparse_format == 'coo':
+            return coo_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
+        elif sparse_format == 'csr':
+            return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
+
+    def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                         use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
+                         fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
+                         ini_embed_with: str = 'kmeans', label: str ='UMAP'):
+        from .umap import fit_transform
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        graph = self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
+        if ini_embed_with == 'kmeans':
+            ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
+        else:
+            x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}1'), cell_key)
+            y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}2'), cell_key)
+            ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
+        pidx = self._z[from_assay].projections[target_name].indices[:, 0]
+        ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
+        t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
+                          tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
+                          random_seed=random_seed, parallel=False)
+        g = create_zarr_dataset(self._z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
+        g[:] = t
+        label = f"{label}_{target_name}"
+        n_ref_cells = self.cells.fetch(cell_key).sum()
+        for i in range(2):
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+        return None
+
+    def run_unified_tsne(self, sgtsne_loc, target_name: str, from_assay: str = None, cell_key: str = 'I',
+                         feat_key: str = None, use_k: int = 3, target_weight: float = 0.5,
+                         lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200, alpha: int = 10,
+                         box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
+                         ini_embed_with: str = 'kmeans', label: str = 'tSNE'):
+        from uuid import uuid4
+        from .knn_utils import export_knn_to_mtx
+        from pathlib import Path
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        if ini_embed_with == 'kmeans':
+            ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
+        else:
+            x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}1'), cell_key)
+            y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}2'), cell_key)
+            ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
+        pidx = self._z[from_assay].projections[target_name].indices[:, 0]
+        ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
+        uid = str(uuid4())
+        ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
+        with open(ini_emb_fn, 'w') as h:
+            h.write('\n'.join(map(str, ini_embed.flatten())))
+        del ini_embed
+
+        knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
+        export_knn_to_mtx(knn_mtx_fn, self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
+                                                               target_weight, sparse_format='csr'))
+
+        out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
+        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
+              f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
+        if verbose:
+            system_call(cmd)
+        else:
+            os.system(cmd)
+
+        t = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values
+        g = create_zarr_dataset(self._z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
+        g[:] = t
+        label = f"{label}_{target_name}"
+        n_ref_cells = self.cells.fetch(cell_key).sum()
+        for i in range(2):
+            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+        for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
+            Path.unlink(fn)
+        return None
+
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                         clusters: pd.Series = None, min_edge_weight: float = 0, seed_frac: float = 0.1,
                         min_nodes: int = 3, rewards: tuple = (1, 0), rand_state: int = 4466, return_vals: bool = False):
@@ -793,21 +905,20 @@ class DataStore:
                 max_v = np.percentile(vals, 100 - 100 * clip_fraction)
                 vals[vals < min_v] = min_v
                 vals[vals > max_v] = max_v
-            return pd.Series(vals, dtype=float)
         else:
             vals = self.cells.fetch(k, cell_key)
-            if vals.dtype == object:
-                vals = pd.Series(vals, dtype="category")
-            elif vals.dtype == int:
-                vals = pd.Series(vals, dtype="category")
-            else:
-                vals = pd.Series(vals, dtype=float)
-            return vals
+        return vals
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
-                    layout_key: str = 'UMAP', color_by: str = None, clip_fraction: float = 0.01, shade: bool = False,
-                    labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None, **kwargs):
-        from .plots import plot_scatter, shade_scatter
+                    layout_key: str = 'UMAP', color_by: str = None, size_vals = None, clip_fraction: float = 0.01,
+                    width: float = 6, height: float = 6, default_color: str = 'steelblue',
+                    missing_color: str = 'k', colormap=None, point_size: float = 10,
+                    ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
+                    spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
+                    legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
+                    legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
+                    cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None):
+        from .plots import plot_scatter
         if from_assay is None:
             from_assay = self.defaultAssay
         if feat_assay is None:
@@ -821,67 +932,64 @@ class DataStore:
                                    clip_fraction=clip_fraction)
         else:
             v = np.ones(len(x))
-        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'v': v})
-        if shade:
-            return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                 savename=savename, **kwargs)
-        else:
-            return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                savename=savename, **kwargs)
+        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'vc': v})
+        if size_vals is not None:
+            if len(size_vals) != len(x):
+                raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
+            df['s'] = size_vals
+        return plot_scatter(df, None, None, width, height, default_color, missing_color, colormap, point_size,
+                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
+                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
+                            scatter_kwargs)
 
-    def plot_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
-                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
-                          color_by: str = None, ref_color='coral', target_color='k',
-                          shade: bool = False, labels_kwargs: dict = None, legends_kwargs: dict = None,
-                          savename: str = None, shade_kwargs: dict = None, scatter_kwargs: dict = None):
-        from .umap import fit_transform
-        from .plots import plot_scatter, shade_scatter
-        from scipy.sparse import coo_matrix
+    def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
+                            layout_key: str = 'UMAP', show_target_only: bool = False,
+                            ref_color: str='coral', target_color='k', width: float = 6,
+                            height: float = 6, colormap=None, point_size: float = 10,
+                            ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
+                            spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
+                            legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
+                            legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
+                            cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None,
+                            shuffle_zorder: bool = True):
+        from .plots import plot_scatter
 
         if from_assay is None:
             from_assay = self.defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
-
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        edges = self._z[graph_loc].edges[:]
-        weights = self._z[graph_loc].weights[:]
-        n_cells = self.cells.table[cell_key].sum()
-        pidx = self._z[from_assay].projections[target_name].indices[:, :use_k]
-        ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
-
-        ne = []
-        nw = []
-        for n, i in enumerate(pidx):
-            for j in i:
-                ne.append([n_cells + n, j])
-                nw.append(target_weight)
-        me = np.vstack([edges, ne]).astype(int)
-        mw = np.hstack([weights, nw])
-        tot_cells = n_cells + pidx.shape[0]
-        graph = coo_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
-        ie = np.vstack([ini_embed, ini_embed[pidx[:, 0]]])
-        t = fit_transform(graph, ie, spread=spread, min_dist=min_dist,
-                          tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
-                          random_seed=random_seed, parallel=False)
+        t = self._z[from_assay].projections[target_name][layout_key][:]
+        ref_n_cells = self.cells.table[cell_key].sum()
+        t_n_cells = t.shape[0] - ref_n_cells
         x = t[:, 0]
         y = t[:, 1]
-        if color_by is None:
-            c = np.hstack([np.ones(n_cells), np.ones(pidx.shape[0]) + 1]).astype(object)
+        df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
+        missing_color = target_color
+
+        if type(ref_color) is not str and type(target_color) is not str:
+            raise ValueError('ERROR: Please provide a fixed colour for one of either ref_color or target_color')
+        if type(ref_color) is str and type(target_color) is str:
+            c = np.hstack([np.ones(ref_n_cells), np.ones(t_n_cells) + 1]).astype(object)
             c[c == 1] = ref_color
             c[c == 2] = target_color
+            df['c'] = c
         else:
-            c = np.hstack([self.cells.fetch(color_by, cell_key), ['k' for x in range(pidx.shape[0])]]).astype(object)
-        idx = pd.Series(range(len(c))).sample(frac=1).values
-
-        df = pd.DataFrame({'UMAP1': x[idx], 'UMAP2': y[idx], 'v': c[idx]})
-        if shade:
-            return shade_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                 savename=savename, shade_kwargs=shade_kwargs)
-        else:
-            return plot_scatter(df, labels_kwargs=labels_kwargs, legends_kwargs=legends_kwargs,
-                                savename=savename, scatter_kwargs=scatter_kwargs)
+            if type(ref_color) is not str:
+                if len(ref_color) != ref_n_cells:
+                    raise ValueError("ERROR: Number of values in `ref_color` should be same as no. of ref cells")
+                df['vc'] = np.hstack([ref_color, [np.nan for _ in range(t_n_cells)]])
+            else:
+                if len(target_color) != t_n_cells:
+                    raise ValueError("ERROR: Number of values in `target_color` should be same as no. of target cells")
+                df['vc'] = np.hstack([[np.nan for _ in range(ref_n_cells)], target_color])
+                missing_color = ref_color
+                ref_color = missing_color
+        if show_target_only:
+            df = df[ref_n_cells:]
+        if shuffle_zorder:
+            df = df.sample(frac=1)
+        return plot_scatter(df, None, None, width, height, ref_color, missing_color, colormap, point_size,
+                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
+                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
+                            scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = 'cluster', width: float = 1.5, lvr_factor: float = 0.5,
