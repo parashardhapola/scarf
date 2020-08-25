@@ -469,7 +469,7 @@ class DataStore:
         return self._z[knn_loc].attrs['latest_graph']
 
     def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                    min_edge_weight: float = -1, symmetric: bool = True):
+                    min_edge_weight: float = -1, symmetric: bool = True, upper_only: bool = True):
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -485,7 +485,11 @@ class DataStore:
         graph = coo_matrix((store['weights'][:], (store['edges'][:, 0], store['edges'][:, 1])),
                            shape=(n_cells, n_cells))
         if symmetric:
-            graph = triu((graph + graph.T) / 2)
+            graph = (graph + graph.T) / 2
+            if upper_only:
+                graph = triu(graph)
+            else:
+                graph = graph.tocoo()
         idx = graph.data > min_edge_weight
         if graph_format == 'coo':
             return coo_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
@@ -589,7 +593,7 @@ class DataStore:
         else:
             paris = skn.hierarchy.Paris()
             graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                     symmetric=True)
+                                     symmetric=False)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self._z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -599,7 +603,7 @@ class DataStore:
         if balanced_cut:
             from .dendrogram import BalancedCut
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
-            print(f"INFO: {len(labels)} clusters found", flush=True)
+            print(f"INFO: {len(set(labels))} clusters found", flush=True)
         else:
             # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters - 1) + 1
@@ -835,25 +839,37 @@ class DataStore:
 
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                         cluster_key: str = None, min_edge_weight: float = -1, seed_frac: float = 0.05,
-                        min_nodes: int = 3, rewards: tuple = (3, 0.1), rand_state: int = 4466,
-                        return_vals: bool = False):
-        from .pcst import pcst
+                        dynamic_seed_frac: bool = True, min_nodes: int = 3, rewards: tuple = (3, 0.1),
+                        rand_state: int = 4466, return_vals: bool = False):
+        from .pcst import pcst, calc_neighbourhood_density
 
         if from_assay is None:
             from_assay = self.defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                 symmetric=True)
         if cluster_key is None:
             cluster_key = 'cluster'
-        clusters = pd.Series(self.cells.fetch(self._col_renamer(from_assay, cell_key, cluster_key), cell_key))
+        clust_name = self._col_renamer(from_assay, cell_key, cluster_key)
+        clusters = pd.Series(self.cells.fetch(clust_name, cell_key))
+
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                                 symmetric=False)
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
+
+        if dynamic_seed_frac:
+            self.cells.add('node_density', calc_neighbourhood_density(graph, nn=2), overwrite=True)
+            cff = self.cells.table[self.cells.table.I].groupby(clust_name)['node_density'].median()
+            cff = (cff - cff.min()) / (cff.max() - cff.min())
+            cff = 1 - cff
+        else:
+            n_clusts = clusters.nunique()
+            cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts+1)))
+
         steiner_nodes, steiner_edges = pcst(
-            graph=graph, clusters=clusters, seed_frac=seed_frac, min_nodes=min_nodes,
+            graph=graph, clusters=clusters, seed_frac=seed_frac, cluster_factor=cff, min_nodes=min_nodes,
             rewards=rewards, pruning_method='strong', rand_state=rand_state)
         a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
         a[steiner_nodes] = True
@@ -903,14 +919,15 @@ class DataStore:
             else:
                 if len(feat_idx) > 1:
                     print(f"WARNING: Plotting mean of {len(feat_idx)} features because {k} is not unique.")
-            vals = assay.normed(cell_idx, feat_idx).mean(axis=1).compute()
-            if clip_fraction > 0:
+            vals = assay.normed(cell_idx, feat_idx).mean(axis=1).compute().astype(np.float_)
+        else:
+            vals = self.cells.fetch(k, cell_key)
+        if clip_fraction > 0:
+            if vals.dtype == np.float_:
                 min_v = np.percentile(vals, 100 * clip_fraction)
                 max_v = np.percentile(vals, 100 - 100 * clip_fraction)
                 vals[vals < min_v] = min_v
                 vals[vals > max_v] = max_v
-        else:
-            vals = self.cells.fetch(k, cell_key)
         return vals
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
