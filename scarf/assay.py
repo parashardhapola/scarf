@@ -70,15 +70,20 @@ class Assay:
         if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
             raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
 
-    def add_percent_feature(self, feat_pattern: str, name: str, verbose: bool = True) -> None:
+    def add_percent_feature(self, feat_pattern: str, name: str) -> None:
         if name in self.attrs['percentFeatures']:
             if self.attrs['percentFeatures'][name] == feat_pattern:
-                if verbose:
-                    print(f"INFO: Percentage feature {name} already exists. Not adding again")
+                # if verbose:
+                #     print(f"INFO: Percentage feature {name} already exists. Not adding again", flush=True)
                 return None
+            else:
+                print(f"INFO: Pattern for percentage feature {name} updated.", flush=True)
+        self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
+                                         **{name: feat_pattern}}
         feat_idx = sorted(self.feats.get_idx_by_names(self.feats.grep(feat_pattern)))
         if len(feat_idx) == 0:
-            print(f"WARNING: No matches found for pattern {feat_pattern}. Will not add/update percentage feature")
+            print(f"WARNING: No matches found for pattern {feat_pattern}."
+                  f" Will not add/update percentage feature", flush=True)
             return None
         total = calc_computed(self.rawData[:, feat_idx].sum(axis=1),
                               f"Computing percentage of {name}")
@@ -86,8 +91,6 @@ class Assay:
             print(f"WARNING: Percentage feature {name} not added because not detected in any cell", flush=True)
             return None
         self.cells.add(name, 100 * total / self.cells.table[self.name+'_nCounts'], overwrite=True)
-        self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
-                                         **{name: feat_pattern}}
 
     def create_subset_hash(self, cell_key: str, feat_key: str):
         cell_idx = self.cells.active_index(cell_key)
