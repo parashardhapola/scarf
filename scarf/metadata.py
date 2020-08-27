@@ -153,7 +153,7 @@ class MetaData:
         self._zgrp['I'] = self.table['I'].values
 
     def _del(self, key: str = None) -> None:
-        if key is not None and key in self.table:
+        if key is not None and key in self._zgrp:
             del self._zgrp[key]
 
     def __repr__(self):
