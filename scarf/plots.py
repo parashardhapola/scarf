@@ -142,7 +142,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         from matplotlib.colors import to_hex
         if v.dtype.type == np.bool_:
             v = v.astype(np.int_)
-        if v.dtype.type == np.int_ or v.dtype.type == str:
+        if v.dtype.type in [np.int_, str]:
             filler_val = '####&&****!@@#!#@$'
             if v.dtype.type == np.int_:
                 filler_val = v.max() + 10
@@ -154,7 +154,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             pal = dict(zip(sorted(uni_vals), pal))
             pal[filler_val] = mpl.colors.to_hex(na_c)
             c = [pal[x] for x in fv]
-        elif v.dtype.type == np.float_:
+        elif v.dtype.type in [np.float_, np.uint64]:
             v = v.fillna(0)
             if cmap is None:
                 cmap = cm.deep
@@ -233,7 +233,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         v = df['vc']
         if v.dtype.type == np.bool_:
             v = v.astype(np.int_)
-        if v.dtype.type == np.int_ or v.dtype.type == str:
+        if v.dtype.type in [np.int_, str]:
             centers = df[[x, y, 'vc']].groupby('vc').median().T
             for i in centers:
                 if ondata:
