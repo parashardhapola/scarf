@@ -50,15 +50,7 @@ class DataStore:
         self.defaultAssay = self._set_default_assay_name(default_assay)
         self._load_assays(assay_types, min_cells_per_feature)
         # TODO: Reset all attrs, pca, dendrogram etc
-        self._ini_cell_props(min_features_per_cell)
-        if mito_pattern is None:
-            mito_pattern = 'MT-'
-        if ribo_pattern is None:
-            ribo_pattern = 'RPS|RPL|MRPS|MRPL'
-        assay = self._get_assay(self.defaultAssay)
-        if type(assay) == RNAassay:
-            assay.add_percent_feature(mito_pattern, self.defaultAssay + '_percentMito', verbose=False)
-            assay.add_percent_feature(ribo_pattern, self.defaultAssay + '_percentRibo', verbose=False)
+        self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
         if auto_filter:
             filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
@@ -134,20 +126,38 @@ class DataStore:
         assay = self._get_assay(from_assay)
         return assay.attrs['latest_feat_key']
 
-    def _ini_cell_props(self, min_features: int, from_assay: str = None) -> None:
-        if from_assay is None:
-            from_assay = self.defaultAssay
-        assay = self._get_assay(from_assay)
-        nc_name = from_assay + '_nCounts'
-        nf_name = from_assay + '_nFeatures'
-        if nc_name in self.cells.table.columns and nf_name in self.cells.table.columns:
-            pass
-        else:
-            n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: Computing nCounts")
-            n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: Computing nFeatures")
-            self.cells.add(nc_name, n_c, overwrite=True)
-            self.cells.add(nf_name, n_f, overwrite=True)
-            self.cells.update(self.cells.sift(self.cells.fetch(nf_name), min_features, np.Inf))
+    def _ini_cell_props(self, min_features: int, mito_pattern, ribo_pattern) -> None:
+        for from_assay in self.assayNames:
+            assay = self._get_assay(from_assay)
+
+            var_name = from_assay + '_nCounts'
+            if var_name not in self.cells.table.columns:
+                n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: ({from_assay}) Computing nCounts")
+                self.cells.add(var_name, n_c, overwrite=True)
+
+            var_name = from_assay + '_nFeatures'
+            if var_name not in self.cells.table.columns:
+                n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: ({from_assay}) Computing nFeatures")
+                self.cells.add(var_name, n_f, overwrite=True)
+
+            if type(assay) == RNAassay:
+                if mito_pattern is None:
+                    mito_pattern = 'MT-'
+                var_name = from_assay + '_percentMito'
+                assay.add_percent_feature(mito_pattern, var_name, verbose=False)
+
+                if ribo_pattern is None:
+                    ribo_pattern = 'RPS|RPL|MRPS|MRPL'
+                var_name = from_assay + '_percentRibo'
+                assay.add_percent_feature(ribo_pattern, var_name, verbose=False)
+
+            if from_assay == self.defaultAssay:
+                v = self.cells.fetch(from_assay + '_nFeatures')
+                if min_features > np.median(v):
+                    print(f"WARNING: More than of half of the less have less than {min_features} features for assay: "
+                          f"{from_assay}. Will not remove low quality cells automatically.")
+                else:
+                    self.cells.update(self.cells.sift(v, min_features, np.Inf))
 
     def _col_renamer(self, from_assay: str, col_key: str, suffix: str) -> str:
         if from_assay == self.defaultAssay:
@@ -205,7 +215,9 @@ class DataStore:
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self._z and 'subset_params' in self._z[normed_loc].attrs:
                 # This works in coordination with save_normalized_data
-                c_log_transform, c_renormalize_subset = self._z[normed_loc].attrs['subset_params']
+                subset_params = self._z[normed_loc].attrs['subset_params']
+                c_log_transform, c_renormalize_subset = subset_params['log_transform'], \
+                                                        subset_params['renormalize_subset']
             else:
                 c_log_transform, c_renormalize_subset = None, None
             if log_transform is None:
@@ -663,7 +675,7 @@ class DataStore:
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
                                   target_feat_key, filter_null, exclude_missing)
         print(f"INFO: {len(feat_idx)} features being used for mapping", flush=True)
-        if np.all(source_assay.feats.active_index(cell_key+'__'+feat_key) == feat_idx):
+        if np.all(source_assay.feats.active_index(cell_key + '__' + feat_key) == feat_idx):
             ann_feat_key = feat_key
         else:
             ann_feat_key = f'{feat_key}_common_{target_name}'
@@ -895,7 +907,7 @@ class DataStore:
             cff = 1 - cff
         else:
             n_clusts = clusters.nunique()
-            cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts+1)))
+            cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts + 1)))
 
         steiner_nodes, steiner_edges = pcst(
             graph=graph, clusters=clusters, seed_frac=seed_frac, cluster_factor=cff, min_nodes=min_nodes,
@@ -954,7 +966,7 @@ class DataStore:
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction > 0:
-            if vals.dtype in [np.float_, np.unint64]:
+            if vals.dtype in [np.float_, np.uint64]:
                 min_v = np.percentile(vals, 100 * clip_fraction)
                 max_v = np.percentile(vals, 100 - 100 * clip_fraction)
                 vals[vals < min_v] = min_v
