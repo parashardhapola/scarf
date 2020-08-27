@@ -8,3 +8,4 @@ logger.setLevel(logging.ERROR)
 from .datastore import *
 from .readers import *
 from .writers import *
+from .meld_assay import *
