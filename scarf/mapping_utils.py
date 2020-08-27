@@ -59,9 +59,8 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
         source_cell_key + '__' + source_feat_key]].values
     s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing)
     print(f"INFO: {(t_idx==-1).sum()} features missing in target data", flush=True)
-    normed_loc = f"{source_assay.name}/normed__{source_cell_key}__{source_feat_key}"
-    norm_params = dict(zip(['log_transform', 'renormalize_subset'],
-                           source_assay.z['/'][normed_loc].attrs['subset_params']))
+    normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
+    norm_params = source_assay.z[normed_loc].attrs['subset_params']
     normed_data = target_assay.normed(target_assay.cells.active_index('I'), t_idx[t_idx != -1], **norm_params)
     loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
     og = create_zarr_dataset(target_assay.z['/'], loc, (1000,), 'float64', (normed_data.shape[0], len(t_idx)))
