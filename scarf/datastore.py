@@ -55,16 +55,17 @@ class DataStore:
             mito_pattern = 'MT-'
         if ribo_pattern is None:
             ribo_pattern = 'RPS|RPL|MRPS|MRPL'
-        assay = self._get_assay('')
+        assay = self._get_assay(self.defaultAssay)
         if type(assay) == RNAassay:
-            assay.add_percent_feature(mito_pattern, 'percentMito', verbose=False)
-            assay.add_percent_feature(ribo_pattern, 'percentRibo', verbose=False)
+            assay.add_percent_feature(mito_pattern, self.defaultAssay + '_percentMito', verbose=False)
+            assay.add_percent_feature(ribo_pattern, self.defaultAssay + '_percentRibo', verbose=False)
         if auto_filter:
+            filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
-                self.plot_cells_dists(cols=['percent*'], all_cells=True)
-            self.auto_filter_cells(attrs=['nCounts', 'nFeatures', 'percentMito', 'percentRibo'])
+                self.plot_cells_dists(cols=[self.defaultAssay + '_percent*'], all_cells=True)
+            self.auto_filter_cells(attrs=[f'{self.defaultAssay}_{x}' for x in filter_attrs])
             if show_qc_plots:
-                self.plot_cells_dists(cols=['percent*'])
+                self.plot_cells_dists(cols=[self.defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
         if 'cellData' not in self._z:
@@ -133,17 +134,20 @@ class DataStore:
         assay = self._get_assay(from_assay)
         return assay.attrs['latest_feat_key']
 
-    def _ini_cell_props(self, min_features: int) -> None:
-        assay = self._get_assay('')
-        if 'nCounts' in self.cells.table.columns and 'nFeatures' in self.cells.table.columns:
+    def _ini_cell_props(self, min_features: int, from_assay: str = None) -> None:
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        assay = self._get_assay(from_assay)
+        nc_name = from_assay + '_nCounts'
+        nf_name = from_assay + '_nFeatures'
+        if nc_name in self.cells.table.columns and nf_name in self.cells.table.columns:
             pass
         else:
             n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: Computing nCounts")
             n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: Computing nFeatures")
-            self.cells.add('nCounts', n_c, overwrite=True)
-            self.cells.add('nFeatures', n_f, overwrite=True)
-            self.cells.update(self.cells.sift(self.cells.fetch('nFeatures'),
-                                              min_features, np.Inf))
+            self.cells.add(nc_name, n_c, overwrite=True)
+            self.cells.add(nf_name, n_f, overwrite=True)
+            self.cells.update(self.cells.sift(self.cells.fetch(nf_name), min_features, np.Inf))
 
     def _col_renamer(self, from_assay: str, col_key: str, suffix: str) -> str:
         if from_assay == self.defaultAssay:
@@ -210,7 +214,7 @@ class DataStore:
                     print(f'INFO: No value provided for parameter `log_transform`. '
                           f'Will use previously used value: {log_transform}', flush=True)
                 else:
-                    log_transform = False
+                    log_transform = True
                     print(f'INFO: No value provided for parameter `log_transform`. '
                           f'Will use default value: {log_transform}', flush=True)
             if renormalize_subset is None:
@@ -261,8 +265,8 @@ class DataStore:
                     print(f'INFO: No value provided for parameter `ann_efc`. '
                           f'Will use previously used value: {ann_efc}', flush=True)
                 else:
-                    ann_efc = 10
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: {ann_efc}',
+                    ann_efc = None  # Will be set after value for k is determined
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: k*2',
                           flush=True)
             if ann_ef is None:
                 if c_ann_ef is not None:
@@ -271,13 +275,15 @@ class DataStore:
                           f'Will use previously used value: {ann_ef}', flush=True)
                 else:
                     ann_ef = None  # Will be set after value for k is determined
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: k*2',
+                          flush=True)
             if ann_m is None:
                 if c_ann_m is not None:
                     ann_m = int(c_ann_m)
                     print(f'INFO: No value provided for parameter `ann_m`. '
                           f'Will use previously used value: {ann_m}', flush=True)
                 else:
-                    ann_m = int(dims * 1.5)
+                    ann_m = min(max(48, int(dims * 1.5)), 64)
                     print(f'INFO: No value provided for parameter `ann_m`. Will use default value: {ann_m}', flush=True)
             if rand_state is None:
                 if c_rand_state is not None:
@@ -289,7 +295,6 @@ class DataStore:
                     print(f'INFO: No value provided for parameter `rand_state`. '
                           f'Will use default value: {rand_state}', flush=True)
         ann_metric = str(ann_metric)
-        ann_efc = int(ann_efc)
         ann_m = int(ann_m)
         rand_state = int(rand_state)
 
@@ -306,6 +311,9 @@ class DataStore:
         if ann_ef is None:
             ann_ef = k * 2
         ann_ef = int(ann_ef)
+        if ann_efc is None:
+            ann_efc = k * 2
+        ann_efc = int(ann_efc)
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
         knn_loc = f"{ann_loc}/knn__{k}"
 
@@ -357,7 +365,8 @@ class DataStore:
                    ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
                    rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
-                   local_connectivity: float = None, bandwidth: float = None):
+                   local_connectivity: float = None, bandwidth: float = None,
+                   update_feat_key: bool = True, return_ann_object: bool = False):
         from .ann import AnnStream
 
         if from_assay is None:
@@ -396,7 +405,7 @@ class DataStore:
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
         data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
-                                          log_transform, renormalize_subset)
+                                          log_transform, renormalize_subset, update_feat_key)
         loadings = None
         fit_kmeans = True
         fit_ann = True
@@ -459,6 +468,8 @@ class DataStore:
         self._z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
         self._z[ann_loc].attrs['latest_knn'] = knn_loc
         self._z[knn_loc].attrs['latest_graph'] = graph_loc
+        if return_ann_object:
+            return ann_obj
         return None
 
     def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
@@ -469,7 +480,7 @@ class DataStore:
         return self._z[knn_loc].attrs['latest_graph']
 
     def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                    min_edge_weight: float = -1, symmetric: bool = True, upper_only: bool = True):
+                    min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -544,15 +555,17 @@ class DataStore:
             Path.unlink(fn)
 
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                 min_edge_weight: float = 0, ini_embed: np.ndarray = None, umap_dims: int = 2,
-                 spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200, tx_n_epochs: int = 100,
-                 random_seed: int = 4444, parallel: bool = False, label='UMAP', **kwargs) -> None:
+                 symmetric_graph: bool = False, graph_upper_only: bool = True, min_edge_weight: float = 0,
+                 ini_embed: np.ndarray = None, umap_dims: int = 2, spread: float = 2.0, min_dist: float = 1,
+                 fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
+                 parallel: bool = False, label='UMAP', **kwargs) -> None:
         from .umap import fit_transform
         if from_assay is None:
             from_assay = self.defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight, symmetric=False)
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
+                                 symmetric=symmetric_graph, upper_only=graph_upper_only)
         if ini_embed is None:
             ini_embed = self._ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
@@ -567,7 +580,8 @@ class DataStore:
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
                        return_clusters: bool = False, force_recalc: bool = False,
-                       label: str = 'cluster') -> Union[None, pd.Series]:
+                       label: str = 'cluster', symmetric_graph: bool = True,
+                       graph_upper_only: bool = True) -> Union[None, pd.Series]:
         import sknetwork as skn
 
         if from_assay is None:
@@ -593,7 +607,7 @@ class DataStore:
         else:
             paris = skn.hierarchy.Paris()
             graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                     symmetric=False)
+                                     symmetric=symmetric_graph, upper_only=graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self._z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -636,39 +650,41 @@ class DataStore:
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
-                    ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = True, ann_metric='l2'):
-        from .mapping_utils import align_common_features, coral
-        from .ann import AnnStream
-        from .writers import dask_to_zarr
+                    ref_mu: bool = False, ref_sigma: bool = True, run_coral: bool = False,
+                    filter_null: bool = False, exclude_missing: bool = False):
+        from .mapping_utils import align_features, coral
+
         source_assay = self._get_assay(from_assay)
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         from_assay = source_assay.name
-        feat_idx = align_common_features(source_assay, target_assay, cell_key, feat_key, target_feat_key)
-        print(f"INFO: {len(feat_idx)} common features between reference and target being used", flush=True)
-        (log_transform, renormalize_subset, reduction_method, dims, _, ann_efc, ann_ef, ann_m, rand_state, k,
-         n_centroids, local_connectivity, bandwidth) = self._set_graph_params(from_assay, cell_key, feat_key)
-        dask_to_zarr(source_assay.normed(source_assay.cells.active_index(cell_key), feat_idx,
-                                         log_transform=log_transform, renormalize_subset=renormalize_subset),
-                     source_assay.z['/'], f"{source_assay.name}/normed__I__{target_feat_key}/data", 1000)
-        source_data = daskarr.from_zarr(source_assay.z[f"normed__I__{target_feat_key}/data"])
+        if target_feat_key == feat_key:
+            raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
+        feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
+                                  target_feat_key, filter_null, exclude_missing)
+        print(f"INFO: {len(feat_idx)} features being used for mapping", flush=True)
+        if np.all(source_assay.feats.active_index(cell_key+'__'+feat_key) == feat_idx):
+            ann_feat_key = feat_key
+        else:
+            ann_feat_key = f'{feat_key}_common_{target_name}'
+            a = np.zeros(source_assay.feats.N).astype(bool)
+            a[feat_idx] = True
+            source_assay.feats.add(cell_key + '__' + ann_feat_key, a, fill_val=False, overwrite=True)
+        ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=ann_feat_key,
+                                  return_ann_object=True, update_feat_key=False)
+        if save_k > ann_obj.k:
+            print(f"WARNING: `save_k` was decreased to {ann_obj.k}", flush=True)
+            save_k = ann_obj.k
         target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
         if run_coral is True:
-            coral(source_data, target_data, source_assay, target_feat_key)
-            source_data = daskarr.from_zarr(source_assay.z[f"normed__I__{target_feat_key}/data_coral"])
-        mu, sigma = np.ndarray([]), np.ndarray([])
-        if reduction_method == 'pca' and run_coral is False:
-            mu = clean_array(calc_computed(source_data.mean(axis=0), 'INFO: Calculating mean of norm. data'))
-            sigma = clean_array(calc_computed(source_data.std(axis=0), 'INFO: Calculating std. dev. of norm. data'), 1)
-        ann_obj = AnnStream(data=source_data, k=save_k, n_cluster=n_centroids, reduction_method=reduction_method,
-                            dims=dims, loadings=np.array([]), mu=mu, sigma=sigma, ann_metric=ann_metric,
-                            ann_efc=ann_efc, ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=None, nthreads=self.nthreads,
-                            rand_state=rand_state, do_ann_fit=True, do_kmeans_fit=False, scale_features=not run_coral)
+            # Reversing coral here to correct target data
+            coral(target_data, ann_obj.data, target_assay, target_feat_key)
+            target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         if ann_obj.method == 'pca':
-            if ref_mu is False or run_coral is True:
+            if ref_mu is False or run_coral:
                 mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
                 ann_obj.mu = clean_array(mu)
-            if ref_sigma is False or run_coral is True:
+            if ref_sigma is False or run_coral:
                 sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
@@ -680,8 +696,6 @@ class DataStore:
         entry_start = 0
         for i in tqdm(target_data.blocks, desc='Mapping'):
             a: np.ndarray = i.compute()
-            if run_coral is True:
-                a = (a - ann_obj.mu) / ann_obj.sigma
             ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
@@ -887,11 +901,13 @@ class DataStore:
         if return_vals:
             return steiner_nodes, steiner_edges
 
-    def plot_cells_dists(self, cols: List[str] = None, all_cells: bool = False, **kwargs):
+    def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, all_cells: bool = False, **kwargs):
         from .plots import plot_qc
         import re
 
-        plot_cols = ['nCounts', 'nFeatures']
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
         if cols is not None:
             if type(cols) != list:
                 raise ValueError("ERROR: 'attrs' argument must be of type list")
