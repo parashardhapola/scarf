@@ -15,14 +15,20 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
     z_dist = create_zarr_dataset(store, 'distances', (chunk_size,), 'f8',
                                  (n_cells, n_neighbors))
     nsample_start = 0
+    tnm = 0  # Number of missed recall
     with threadpool_limits(limits=nthreads):
         for i in ann_obj.iter_blocks(msg='Saving KNN graph'):
             nsample_end = nsample_start + i.shape[0]
-            ki, kv = ann_obj.transform_ann(ann_obj.reducer(i), k=n_neighbors,
+            ki, kv, nm = ann_obj.transform_ann(ann_obj.reducer(i), k=n_neighbors,
                                            self_indices=np.arange(nsample_start, nsample_end))
             z_knn[nsample_start:nsample_end, :] = ki
             z_dist[nsample_start:nsample_end, :] = kv
             nsample_start = nsample_end
+            tnm += nm
+    recall = ann_obj.data.shape[0] - tnm
+    recall = 100 * recall / ann_obj.data.shape[0]
+    recall = "%.2f" % recall
+    print(f"INFO: ANN recall: {recall}%", flush=True)
     return None
 
 
