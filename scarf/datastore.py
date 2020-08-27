@@ -851,11 +851,23 @@ class DataStore:
             Path.unlink(fn)
         return None
 
+    def calc_node_density(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                          min_edge_weight: float = -1, neighbourhood_degree=2):
+        from .pcst import calc_neighbourhood_density
+
+        if from_assay is None:
+            from_assay = self.defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                                 symmetric=False)
+        self.cells.add('node_density', calc_neighbourhood_density(graph, nn=neighbourhood_degree), overwrite=True)
+
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                         cluster_key: str = None, min_edge_weight: float = -1, seed_frac: float = 0.05,
                         dynamic_seed_frac: bool = True, min_nodes: int = 3, rewards: tuple = (3, 0.1),
                         rand_state: int = 4466, return_vals: bool = False):
-        from .pcst import pcst, calc_neighbourhood_density
+        from .pcst import pcst
 
         if from_assay is None:
             from_assay = self.defaultAssay
@@ -873,8 +885,11 @@ class DataStore:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
 
+        if dynamic_seed_frac and 'node_density' not in self.cells.table:
+            print("WARNING: `dynamic_seed_frac` will be ignored because node_density has not been calculated.",
+                  flush=True)
+            dynamic_seed_frac = False
         if dynamic_seed_frac:
-            self.cells.add('node_density', calc_neighbourhood_density(graph, nn=2), overwrite=True)
             cff = self.cells.table[self.cells.table.I].groupby(clust_name)['node_density'].median()
             cff = (cff - cff.min()) / (cff.max() - cff.min())
             cff = 1 - cff
@@ -939,7 +954,7 @@ class DataStore:
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction > 0:
-            if vals.dtype == np.float_:
+            if vals.dtype in [np.float_, np.unint64]:
                 min_v = np.percentile(vals, 100 * clip_fraction)
                 max_v = np.percentile(vals, 100 - 100 * clip_fraction)
                 vals[vals < min_v] = min_v
