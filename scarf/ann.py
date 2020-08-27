@@ -25,7 +25,7 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
                 k = k[:-1]
             fixed_ind[n] = j
             fixed_dist[n] = k
-    return fixed_ind, fixed_dist
+    return fixed_ind, fixed_dist, n_mis
 
 
 def vec_to_bow(x):
