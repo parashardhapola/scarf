@@ -1,12 +1,9 @@
 import dask.array as daskarr
 import numpy as np
 from typing import Tuple
-from .writers import dask_to_zarr
 from .assay import Assay
-from .utils import calc_computed
 
-
-__all__ = ['align_common_features', 'coral']
+__all__ = ['align_features', 'coral']
 
 
 def _cov_diaged(da: daskarr) -> daskarr:
@@ -18,6 +15,7 @@ def _cov_diaged(da: daskarr) -> daskarr:
 
 def _correlation_alignment(s: daskarr, t: daskarr) -> daskarr:
     from scipy.linalg import fractional_matrix_power as fmp
+    from .utils import calc_computed
 
     s_cov = calc_computed(_cov_diaged(s), f"CORAL: Computing source covariance")
     t_cov = calc_computed(_cov_diaged(t), f"CORAL: Computing target covariance")
@@ -27,36 +25,65 @@ def _correlation_alignment(s: daskarr, t: daskarr) -> daskarr:
     return daskarr.dot(s, a_coral)
 
 
-def _add_feats_to_target(s_assay, t_assay, s_feat_ids) -> Tuple[np.ndarray, np.ndarray]:
+def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
+                    exclude_missing: bool) -> Tuple[np.ndarray, np.ndarray]:
     t_idx = t_assay.feats.table.ids.isin(s_feat_ids)
-    t_idx[t_idx] = t_assay.rawData[:, list(t_idx[t_idx].index)][
-                   t_assay.cells.active_index('I'), :].sum(axis=0).compute() != 0
+    if filter_null:
+        if exclude_missing is False:
+            print("WARNING: `filter_null` has not effect because `exclude_missing` is False", flush=True)
+        else:
+            t_idx[t_idx] = t_assay.rawData[:, list(t_idx[t_idx].index)][
+                           t_assay.cells.active_index('I'), :].sum(axis=0).compute() != 0
     t_idx = t_idx[t_idx].index
-
-    s_idx = s_assay.feats.table.ids.isin(t_assay.feats.table.ids.reindex(t_idx).values)
+    if exclude_missing:
+        s_idx = s_assay.feats.table.ids.isin(t_assay.feats.table.ids[t_idx].values)
+    else:
+        s_idx = s_assay.feats.table.ids.isin(s_feat_ids)
     s_idx = s_idx[s_idx].index
-
-    t_idx_map = {v: k for k, v in t_assay.feats.table.ids.reindex(t_idx).to_dict().items()}
-    t_re_idx = np.array([t_idx_map[x] for x in s_assay.feats.table.ids.reindex(s_idx).values])
+    t_idx_map = {v: k for k, v in t_assay.feats.table.ids[t_idx].to_dict().items()}
+    t_re_idx = np.array([t_idx_map[x] if x in t_idx_map else -1 for x in s_assay.feats.table.ids[s_idx].values])
+    if len(s_idx) != len(t_re_idx):
+        raise AssertionError("ERROR: Feature ordering failed. Please report this issue. "
+                             f"This is an unexpected scenario. Source has {len(s_idx)} features while target has "
+                             f"{len(t_re_idx)} features")
     return s_idx.values, t_re_idx
 
 
-def align_common_features(source_assay: Assay, target_assay: Assay, source_cell_key: str,
-                          source_feat_key: str, target_feat_key: str) -> np.ndarray:
+def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: str,
+                   source_feat_key: str, target_feat_key: str, filter_null: bool,
+                   exclude_missing: bool) -> np.ndarray:
+    from .writers import create_zarr_dataset
+    from tqdm import tqdm
+
     source_feat_ids = source_assay.feats.table.ids[source_assay.feats.table[
         source_cell_key + '__' + source_feat_key]].values
-
-    s_idx, t_idx = _add_feats_to_target(source_assay, target_assay, source_feat_ids)
+    s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing)
+    print(f"INFO: {(t_idx==-1).sum()} features missing in target data", flush=True)
     normed_loc = f"{source_assay.name}/normed__{source_cell_key}__{source_feat_key}"
     norm_params = dict(zip(['log_transform', 'renormalize_subset'],
                            source_assay.z['/'][normed_loc].attrs['subset_params']))
-    dask_to_zarr(target_assay.normed(target_assay.cells.active_index('I'), t_idx, **norm_params),
-                 target_assay.z['/'], f"{target_assay.name}/normed__I__{target_feat_key}/data", 1000)
+    normed_data = target_assay.normed(target_assay.cells.active_index('I'), t_idx[t_idx != -1], **norm_params)
+    loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
+    og = create_zarr_dataset(target_assay.z['/'], loc, (1000,), 'float64', (normed_data.shape[0], len(t_idx)))
+    pos_start, pos_end = 0, 0
+    for i in tqdm(normed_data.blocks, total=normed_data.numblocks[0],
+                  desc=f"Writing aligned normed target data to {loc}"):
+        pos_end += i.shape[0]
+        a = np.ones((i.shape[0], len(t_idx)))
+        a[:, np.where(t_idx != -1)[0]] = i.compute()
+        og[pos_start:pos_end, :] = a
+        pos_start = pos_end
     return s_idx
 
 
 def coral(source_data, target_data, assay, feat_key):
-    data = _correlation_alignment((source_data - source_data.mean(axis=0)) / source_data.std(axis=0),
-                                  (target_data - target_data.mean(axis=0)) / target_data.std(axis=0))
-    dask_to_zarr(data, assay.z['/'],
-                 f"{assay.name}/normed__I__{feat_key}/data_coral", 1000)
+    from .writers import dask_to_zarr
+    from .utils import clean_array, calc_computed
+
+    sm = clean_array(calc_computed(source_data.mean(axis=0), 'INFO: (CORAL) Calculating source feature means'))
+    sd = clean_array(calc_computed(source_data.std(axis=0), 'INFO: (CORAL) Calculating source feature stdev'), 1)
+    tm = clean_array(calc_computed(target_data.mean(axis=0), 'INFO: (CORAL) Calculating target feature means'))
+    td = clean_array(calc_computed(target_data.std(axis=0), 'INFO: (CORAL) Calculating target feature stdev'), 1)
+    data = _correlation_alignment((source_data - sm) / sd, (target_data - tm) / td)
+    dask_to_zarr(data, assay.z['/'], f"{assay.name}/normed__I__{feat_key}/data_coral", 1000,
+                 msg="Writing out coral corrected data")
