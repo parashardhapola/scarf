@@ -83,10 +83,12 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
     return None
 
 
-def dask_to_zarr(df, z, loc, chunk_size):
+def dask_to_zarr(df, z, loc, chunk_size, msg: str = None):
+    if msg is None:
+        msg = f"Writing data to {loc}"
     og = create_zarr_dataset(z, loc, chunk_size, 'float64', df.shape)
     pos_start, pos_end = 0, 0
-    for i in tqdm(df.blocks, total=df.numblocks[0], desc=f"Writing data to {loc}"):
+    for i in tqdm(df.blocks, total=df.numblocks[0], desc=msg):
         pos_end += i.shape[0]
         og[pos_start:pos_end, :] = i.compute()
         pos_start = pos_end
