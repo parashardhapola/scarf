@@ -16,6 +16,10 @@ def norm_lib_size(assay, counts: daskarr) -> daskarr:
     return assay.sf * counts / assay.scalar.reshape(-1, 1)
 
 
+def norm_lib_size_log(assay, counts: daskarr) -> daskarr:
+    return np.log1p(assay.sf * counts / assay.scalar.reshape(-1, 1))
+
+
 def norm_clr(assay, counts: daskarr) -> daskarr:
     f = np.exp(np.log1p(counts).sum(axis=0) / len(counts))
     return np.log1p(counts / f)
@@ -81,7 +85,7 @@ class Assay:
         if total.sum() == 0:
             print(f"WARNING: Percentage feature {name} not added because not detected in any cell", flush=True)
             return None
-        self.cells.add(name, 100 * total / self.cells.table['nCounts'], overwrite=True)
+        self.cells.add(name, 100 * total / self.cells.table[self.name+'_nCounts'], overwrite=True)
         self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
                                          **{name: feat_pattern}}
 
@@ -91,7 +95,8 @@ class Assay:
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
-                             location: str, log_transform: bool, renormalize_subset: bool) -> daskarr:
+                             location: str, log_transform: bool, renormalize_subset: bool,
+                             update_feat_key: bool) -> daskarr:
         # Because HVGs and other feature selections have cell key appended in their metadata
         from .writers import dask_to_zarr
 
@@ -106,7 +111,8 @@ class Assay:
                     subset_params == self.z[location].attrs['subset_params']:
                 print(f"INFO: Using existing normalized data with cell key {cell_key} and feat key {feat_key}",
                       flush=True)
-                self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
+                if update_feat_key:
+                    self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
                 return daskarr.from_zarr(self.z[location + '/data'])
             else:
                 # Creating group here to overwrite all children
@@ -118,7 +124,8 @@ class Assay:
         dask_to_zarr(vals, self.z, location + '/data', batch_size)
         self.z[location].attrs['subset_hash'] = subset_hash
         self.z[location].attrs['subset_params'] = subset_params
-        self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
+        if update_feat_key:
+            self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
         return daskarr.from_zarr(self.z[location + '/data'])
 
     def __repr__(self):
@@ -141,16 +148,18 @@ class RNAassay(Assay):
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
+        norm_method_cache = self.normMethod
         if log_transform:
-            counts = np.log1p(counts)
+            self.normMethod = norm_lib_size_log
         if renormalize_subset:
-            print("INFO: Renormalizing normed data", flush=True)
-            a = counts.sum(axis=1).compute()
+            a = calc_computed(counts.sum(axis=1), msg="INFO: Normalizing with feat subset")
             a[a == 0] = 1
             self.scalar = a
         else:
-            self.scalar = self.cells.table['nCounts'].values[cell_idx]
-        return self.normMethod(self, counts)
+            self.scalar = self.cells.table[self.name+'_nCounts'].values[cell_idx]
+        val = self.normMethod(self, counts)
+        self.normMethod = norm_method_cache
+        return val
 
     def set_feature_stats(self, cell_key: str, min_cells: int = 10) -> None:
         feat_key = 'I'  # Here we choose to calculate stats for all the features
@@ -195,7 +204,8 @@ class RNAassay(Assay):
                   min_mean: float = -np.Inf, max_mean: float = np.Inf,
                   n_bins: int = 200, lowess_frac: float = 0.1,
                   blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
-                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', clear_from_table: bool = True,
+                  **plot_kwargs) -> None:
         self.set_feature_stats(cell_key)
         stats_loc = f"summary_stats_{cell_key}"
         c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
@@ -230,9 +240,10 @@ class RNAassay(Assay):
             nzm, vf, nc = [self.feats.fetch(x).astype('float') for x in ['nz_mean', c_var_loc, 'nCells']]
             plot_mean_var(nzm, vf, nc, self.feats.fetch(hvg_key_name), **plot_kwargs)
 
-        for i in slots:
-            self.feats.remove(i)
-        self.feats.remove(c_var_loc)
+        if clear_from_table:
+            for i in slots:
+                self.feats.remove(i)
+            self.feats.remove(c_var_loc)
         return None
 
 
@@ -250,7 +261,7 @@ class ATACassay(Assay):
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
-        self.n_term_per_doc = self.cells.table['nFeatures'].values[cell_idx]
+        self.n_term_per_doc = self.cells.table[self.name+'_nFeatures'].values[cell_idx]
         self.n_docs = len(cell_idx)
         self.n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
         return self.normMethod(self, counts)
