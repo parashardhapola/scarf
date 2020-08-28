@@ -598,6 +598,31 @@ class DataStore:
                            t[:, i], key=cell_key, overwrite=True)
         return None
 
+    def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                              resolution: int = 1, min_edge_weight: float = 0,
+                              symmetric_graph: bool = True, graph_upper_only: bool = True,
+                              label: str = 'leiden_cluster', random_seed: int = 4444) -> None:
+        import leidenalg
+        import igraph
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+
+        adj = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                               symmetric=symmetric_graph, upper_only=graph_upper_only)
+        sources, targets = adj.nonzero()
+        g = igraph.Graph()
+        g.add_vertices(adj.shape[0])
+        g.add_edges(list(zip(sources, targets)))
+        g.es['weight'] = adj[sources, targets].A1
+        part = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition, resolution_parameter=resolution,
+                                        seed=random_seed)
+        self.cells.add(self._col_renamer(from_assay, cell_key, label),
+                       np.array(part.membership) + 1, fill_val=-1, key=cell_key, overwrite=True)
+        return None
+
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                        n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
