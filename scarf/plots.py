@@ -138,13 +138,32 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                  savename: str = None, scatter_kwargs: dict = None):
 
-    def _vals_to_colors(v: pd.Series, na_c: str, cmap):
-        from matplotlib.colors import to_hex
+    def _dtype_is_qual(v):
         if v.dtype.type == np.bool_:
             v = v.astype(np.int_)
-        if v.dtype.type in [np.int_, str]:
+            return v, True
+        else:
+            if np.issubdtype(v.dtype.type, np.integer):
+                if v.nunique() > len(v)/5:
+                    v = v.astype(np.float_)
+                    return v, False
+                else:
+                    return v, True
+            else:
+                if v.dtype.type == str:
+                    return v, True
+                elif np.issubdtype(v.dtype.type, np.floating):
+                    return v, False
+                else:
+                    raise ValueError("ERROR: Unrecognized dtype")
+
+    def _vals_to_colors(v: pd.Series, na_c: str, cmap):
+        from matplotlib.colors import to_hex
+
+        v, is_qual = _dtype_is_qual(v)
+        if is_qual:
             filler_val = '####&&****!@@#!#@$'
-            if v.dtype.type == np.int_:
+            if np.issubdtype(v.dtype.type, np.integer):
                 filler_val = v.max() + 10
             fv = v.fillna(filler_val)
             if cmap is None:
@@ -154,15 +173,13 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             pal = dict(zip(sorted(uni_vals), pal))
             pal[filler_val] = mpl.colors.to_hex(na_c)
             c = [pal[x] for x in fv]
-        elif v.dtype.type in [np.float_, np.uint64]:
+        else:
             v = v.fillna(0)
             if cmap is None:
                 cmap = cm.deep
             pal = plt.get_cmap(cmap)
             mmv = (v - v.min()) / (v.max() - v.min())
             c = [to_hex(pal(x)) for x in mmv]
-        else:
-            raise ValueError('Unknown dtype')
         return pd.Series(c, index=v.index)
 
     def _handle_scatter_df(c: str, na_c: str, s: float, cmap):
@@ -173,9 +190,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             else:
                 d['c'] = _vals_to_colors(d['vc'].copy(), na_c, cmap)
         if 's' in d:
-            dt = d['s'].dtype.type
-            if dt != np.float_ and dt != np.int_:
-                raise TypeError("ERROR: column 's' in dataframe should either be np.float_ or np.int_ type")
+            d['s'], _ = _dtype_is_qual(d['s'])
         else:
             d['s'] = [s for _ in d.index]
         return d
@@ -231,9 +246,10 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         if 'vc' not in df:
             return None
         v = df['vc']
-        if v.dtype.type == np.bool_:
-            v = v.astype(np.int_)
-        if v.dtype.type in [np.int_, str]:
+        if v.nunique() <= 1:
+            return None
+        v, is_qual = _dtype_is_qual(v)
+        if is_qual:
             centers = df[[x, y, 'vc']].groupby('vc').median().T
             for i in centers:
                 if ondata:
@@ -247,9 +263,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                 ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
                           markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
-            if v.nunique() <= 1:
-                pass
-            elif fig is not None:
+            if fig is not None:
                 cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
                 norm = Normalize(vmin=0, vmax=1)
                 if cmap is None:
