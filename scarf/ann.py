@@ -37,7 +37,7 @@ class AnnStream:
                  dims: int, loadings: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
                  nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool,
-                 scale_features: bool = True):
+                 scale_features: bool):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
