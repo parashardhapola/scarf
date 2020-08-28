@@ -47,17 +47,17 @@ class DataStore:
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
-        self.defaultAssay = self._set_default_assay_name(default_assay)
+        self._defaultAssay = self._set_default_assay(default_assay)
         self._load_assays(assay_types, min_cells_per_feature)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
         if auto_filter:
             filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
-                self.plot_cells_dists(cols=[self.defaultAssay + '_percent*'], all_cells=True)
-            self.auto_filter_cells(attrs=[f'{self.defaultAssay}_{x}' for x in filter_attrs])
+                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'], all_cells=True)
+            self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
             if show_qc_plots:
-                self.plot_cells_dists(cols=[self.defaultAssay + '_percent*'])
+                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
         if 'cellData' not in self._z:
@@ -72,29 +72,43 @@ class DataStore:
                 assays.append(i)
         return assays
 
-    def _set_default_assay_name(self, assay_name: str) -> str:
-        if len(self.assayNames) > 1:
-            if assay_name is None:
-                raise ValueError("ERROR: You have more than one assay data. Please provide a name for default assay "
-                                 f"using 'default_assay' parameter. Choose one from: {' '.join(self.assayNames)}\n"
-                                 "Please note that names are case-sensitive.")
-            elif assay_name not in self.assayNames:
+    def _set_default_assay(self, assay_name: str) -> str:
+        if assay_name is None:
+            if 'defaultAssay' in self._z.attrs:
+                assay_name = self._z.attrs['defaultAssay']
+            else:
+                if len(self.assayNames) == 1:
+                    assay_name = self.assayNames[0]
+                    self._z.attrs['defaultAssay'] = assay_name
+                else:
+                    raise ValueError("ERROR: You have more than one assay data. "
+                                     f"Choose one from: {' '.join(self.assayNames)}\n using 'default_assay' parameter. "
+                                     "Please note that names are case-sensitive.")
+        else:
+            if assay_name in self.assayNames:
+                if 'defaultAssay' in self._z.attrs:
+                    print(f"ATTENTION: Default assay changed from {self._z.attrs['defaultAssay']} to {assay_name}")
+                self._z.attrs['defaultAssay'] = assay_name
+            else:
                 raise ValueError(f"ERROR: The provided default assay name: {assay_name} was not found. "
                                  f"Please Choose one from: {' '.join(self.assayNames)}\n"
-                                 "Please note that names are case-sensitive.")
-        else:
-            if self.assayNames[0] != assay_name:
-                print(f"INFO: Default assay name was reset to {self.assayNames[0]}", flush=True)
-                assay_name = self.assayNames[0]
+                                 "Please note that the names are case-sensitive.")
         return assay_name
 
-    def _load_assays(self, predefined_assays: dict, min_cells) -> None:
-        assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay}
+    def set_default_assay(self, assay_name: str):
+        if assay_name in self.assayNames:
+            self._defaultAssay = assay_name
+            self._z.attrs['defaultAssay'] = assay_name
+        else:
+            raise ValueError(f"ERROR: {assay_name} assay was not found.")
+
+    def _load_assays(self, predefined_assays: dict, min_cells: int) -> None:
+        assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
         # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "CAUTION: %s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter."
-        caution_statement = caution_statement + "\nIf you have more than one assay in the dataset then you can set" \
+        caution_statement = caution_statement + "\nIf you have more than one assay in the dataset then you can set " \
                                                 "assay_types={'assay1': 'RNA', 'assay2': 'ADT'} " \
                                                 "Just replace with actual assay names instead of assay1 and assay2"
         if predefined_assays is None:
@@ -119,7 +133,7 @@ class DataStore:
 
     def _get_assay(self, from_assay: str) -> Assay:
         if from_assay is None or from_assay == '':
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         return self.__getattribute__(from_assay)
 
     def _get_latest_feat_key(self, from_assay: str) -> str:
@@ -144,14 +158,14 @@ class DataStore:
                 if mito_pattern is None:
                     mito_pattern = 'MT-'
                 var_name = from_assay + '_percentMito'
-                assay.add_percent_feature(mito_pattern, var_name, verbose=False)
+                assay.add_percent_feature(mito_pattern, var_name)
 
                 if ribo_pattern is None:
                     ribo_pattern = 'RPS|RPL|MRPS|MRPL'
                 var_name = from_assay + '_percentRibo'
-                assay.add_percent_feature(ribo_pattern, var_name, verbose=False)
+                assay.add_percent_feature(ribo_pattern, var_name)
 
-            if from_assay == self.defaultAssay:
+            if from_assay == self._defaultAssay:
                 v = self.cells.fetch(from_assay + '_nFeatures')
                 if min_features > np.median(v):
                     print(f"WARNING: More than of half of the less have less than {min_features} features for assay: "
@@ -159,17 +173,12 @@ class DataStore:
                 else:
                     self.cells.update(self.cells.sift(v, min_features, np.Inf))
 
-    def _col_renamer(self, from_assay: str, col_key: str, suffix: str) -> str:
-        if from_assay == self.defaultAssay:
-            if col_key == 'I':
-                ret_val = suffix
-            else:
-                ret_val = '_'.join(list(map(str, [col_key, suffix])))
+    @staticmethod
+    def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
+        if cell_key == 'I':
+            ret_val = '_'.join(list(map(str, [from_assay, suffix])))
         else:
-            if col_key == 'I':
-                ret_val = '_'.join(list(map(str, [from_assay, suffix])))
-            else:
-                ret_val = '_'.join(list(map(str, [from_assay, col_key, suffix])))
+            ret_val = '_'.join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
     def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int],
@@ -216,8 +225,8 @@ class DataStore:
             if normed_loc in self._z and 'subset_params' in self._z[normed_loc].attrs:
                 # This works in coordination with save_normalized_data
                 subset_params = self._z[normed_loc].attrs['subset_params']
-                c_log_transform, c_renormalize_subset = subset_params['log_transform'], \
-                                                        subset_params['renormalize_subset']
+                c_log_transform, c_renormalize_subset = (subset_params['log_transform'],
+                                                         subset_params['renormalize_subset'])
             else:
                 c_log_transform, c_renormalize_subset = None, None
             if log_transform is None:
@@ -378,11 +387,11 @@ class DataStore:
                    rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
-                   update_feat_key: bool = True, return_ann_object: bool = False):
+                   update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
         from .ann import AnnStream
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
@@ -443,7 +452,8 @@ class DataStore:
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
                             ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=ann_idx_loc, nthreads=self.nthreads,
-                            rand_state=rand_state, do_ann_fit=fit_ann, do_kmeans_fit=fit_kmeans)
+                            rand_state=rand_state, do_ann_fit=fit_ann, do_kmeans_fit=fit_kmeans,
+                            scale_features=feat_scaling)
 
         if loadings is None:
             self._z.create_group(reduction_loc, overwrite=True)
@@ -539,7 +549,7 @@ class DataStore:
         from pathlib import Path
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
@@ -573,7 +583,7 @@ class DataStore:
                  parallel: bool = False, label='UMAP', **kwargs) -> None:
         from .umap import fit_transform
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
@@ -597,7 +607,7 @@ class DataStore:
         import sknetwork as skn
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         if balanced_cut is False:
@@ -631,8 +641,7 @@ class DataStore:
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
             print(f"INFO: {len(set(labels))} clusters found", flush=True)
         else:
-            # n_cluster - 1 because cut_straight possibly has a bug so generates one extra
-            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters - 1) + 1
+            labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
         if return_clusters:
             return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
         else:
@@ -662,8 +671,8 @@ class DataStore:
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
-                    ref_mu: bool = False, ref_sigma: bool = True, run_coral: bool = False,
-                    filter_null: bool = False, exclude_missing: bool = False):
+                    ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = False,
+                    filter_null: bool = False, exclude_missing: bool = False, feat_scaling: bool = True):
         from .mapping_utils import align_features, coral
 
         source_assay = self._get_assay(from_assay)
@@ -682,8 +691,11 @@ class DataStore:
             a = np.zeros(source_assay.feats.N).astype(bool)
             a[feat_idx] = True
             source_assay.feats.add(cell_key + '__' + ann_feat_key, a, fill_val=False, overwrite=True)
+        if run_coral:
+            feat_scaling = False
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=ann_feat_key,
-                                  return_ann_object=True, update_feat_key=False)
+                                  return_ann_object=True, update_feat_key=False,
+                                  feat_scaling=feat_scaling)
         if save_k > ann_obj.k:
             print(f"WARNING: `save_k` was decreased to {ann_obj.k}", flush=True)
             save_k = ann_obj.k
@@ -692,11 +704,11 @@ class DataStore:
             # Reversing coral here to correct target data
             coral(target_data, ann_obj.data, target_assay, target_feat_key)
             target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
-        if ann_obj.method == 'pca':
-            if ref_mu is False or run_coral:
+        if ann_obj.method == 'pca' and run_coral is False:
+            if ref_mu is False:
                 mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
                 ann_obj.mu = clean_array(mu)
-            if ref_sigma is False or run_coral:
+            if ref_sigma is False:
                 sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
@@ -718,7 +730,7 @@ class DataStore:
     def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None,
                           from_assay: str = None, cell_key: str = 'I') -> np.ndarray:
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         store_loc = f"{from_assay}/projections/{target_name}"
         if store_loc not in self._z:
             raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
@@ -727,7 +739,7 @@ class DataStore:
 
         indices = store['indices'][:]
         dists = store['distances'][:]
-        dists = 1 / np.log1p(dists)
+        dists = 1 / (np.log1p(dists) + 1)
         n_cells = indices.shape[0]
 
         if target_groups is not None:
@@ -754,7 +766,7 @@ class DataStore:
         from scipy.sparse import coo_matrix, csr_matrix
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         if sparse_format not in ['csr', 'coo']:
@@ -786,7 +798,7 @@ class DataStore:
         from .umap import fit_transform
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
@@ -794,8 +806,8 @@ class DataStore:
         if ini_embed_with == 'kmeans':
             ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
         else:
-            x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}1'), cell_key)
-            y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}2'), cell_key)
+            x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
+            y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
         pidx = self._z[from_assay].projections[target_name].indices[:, 0]
         ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
@@ -821,15 +833,15 @@ class DataStore:
         from pathlib import Path
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
         if ini_embed_with == 'kmeans':
             ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
         else:
-            x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}1'), cell_key)
-            y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{ini_embed_with}2'), cell_key)
+            x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
+            y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
         pidx = self._z[from_assay].projections[target_name].indices[:, 0]
         ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
@@ -868,7 +880,7 @@ class DataStore:
         from .pcst import calc_neighbourhood_density
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
@@ -882,14 +894,13 @@ class DataStore:
         from .pcst import pcst
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
         if cluster_key is None:
-            cluster_key = 'cluster'
-        clust_name = self._col_renamer(from_assay, cell_key, cluster_key)
-        clusters = pd.Series(self.cells.fetch(clust_name, cell_key))
+            raise ValueError("ERROR: Please provide a value for cluster key")
+        clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
 
         graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
                                  symmetric=False)
@@ -902,7 +913,7 @@ class DataStore:
                   flush=True)
             dynamic_seed_frac = False
         if dynamic_seed_frac:
-            cff = self.cells.table[self.cells.table.I].groupby(clust_name)['node_density'].median()
+            cff = self.cells.table[self.cells.table.I].groupby(cluster_key)['node_density'].median()
             cff = (cff - cff.min()) / (cff.max() - cff.min())
             cff = 1 - cff
         else:
@@ -933,7 +944,7 @@ class DataStore:
         import re
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
         if cols is not None:
             if type(cols) != list:
@@ -974,7 +985,7 @@ class DataStore:
         return vals
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
-                    layout_key: str = 'UMAP', color_by: str = None, subselection_key: str = None,
+                    layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
                     missing_color: str = 'k', colormap=None, point_size: float = 10,
@@ -985,13 +996,15 @@ class DataStore:
                     cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None):
         from .plots import plot_scatter
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_assay is None:
             feat_assay = from_assay
+        if layout_key is None:
+            raise ValueError("Please provide a value for `layout_key` parameter.")
         if clip_fraction >= 0.5:
             raise ValueError("ERROR: clip_fraction cannot be larger than or equal to 0.5")
-        x = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{layout_key}1'), cell_key)
-        y = self.cells.fetch(self._col_renamer(from_assay, cell_key, f'{layout_key}2'), cell_key)
+        x = self.cells.fetch(f'{layout_key}1', cell_key)
+        y = self.cells.fetch(f'{layout_key}2', cell_key)
         if color_by is not None:
             v = self.get_cell_vals(from_assay=feat_assay, cell_key=cell_key, k=color_by,
                                    clip_fraction=clip_fraction)
@@ -1027,7 +1040,7 @@ class DataStore:
         from .plots import plot_scatter
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         t = self._z[from_assay].projections[target_name][layout_key][:]
         ref_n_cells = self.cells.table[cell_key].sum()
         t_n_cells = t.shape[0] - ref_n_cells
@@ -1070,7 +1083,7 @@ class DataStore:
         from .dendrogram import SummarizedTree
 
         if from_assay is None:
-            from_assay = self.defaultAssay
+            from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         clusts = self.cells.fetch(cluster_key)
@@ -1086,11 +1099,10 @@ class DataStore:
         from .plots import plot_heatmap
 
         assay = self._get_assay(from_assay)
+        if group_key is None:
+            raise ValueError("ERROR: Please provide a value for `group_key`")
         if batch_size is None:
             batch_size = min(999, int(1e7 / assay.cells.N)) + 1
-        if group_key is None:
-            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'")
-            group_key = 'cluster'
         if 'markers' not in self._z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
         if group_key not in self._z[assay.name]['markers']:
@@ -1105,7 +1117,7 @@ class DataStore:
         for i in np.array_split(goi, len(goi) // batch_size + 1):
             feat_idx = assay.feats.get_idx_by_ids(i)
             df = pd.DataFrame(assay.normed(feat_idx=feat_idx, log_transform=log_transform).compute(), columns=i)
-            df['cluster'] = assay.cells.fetch('cluster')
+            df['cluster'] = assay.cells.fetch(group_key)
             df = df.groupby('cluster').mean().T
             df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
             cdf.append(df)
