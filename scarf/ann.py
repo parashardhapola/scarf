@@ -34,7 +34,8 @@ def vec_to_bow(x):
 
 class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
-                 dims: int, loadings: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
+                 dims: int, loadings: np.ndarray, use_for_pca: np.ndarray,
+                 mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
                  nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool,
                  scale_features: bool):
@@ -63,7 +64,9 @@ class AnnStream:
             if self.method == 'pca':
                 self.mu, self.sigma = mu, sigma
                 if self.loadings is None or len(self.loadings) == 0:
-                    self._fit_pca(scale_features)
+                    if len(use_for_pca) != self.nCells:
+                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells", flush=True)
+                    self._fit_pca(scale_features, use_for_pca)
                 if scale_features:
                     self.reducer = lambda x: self.transform_pca(self.transform_z(x))
                 else:
@@ -113,16 +116,41 @@ class AnnStream:
             i, d = self.annIdx.knn_query(a, k=k+1)
             return fix_knn_query(i, d, self_indices)
 
-    def _fit_pca(self, scale_features) -> None:
+    def _fit_pca(self, scale_features, use_for_pca) -> None:
         from sklearn.decomposition import IncrementalPCA
-
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
+        do_sample_subset = False if use_for_pca.sum() == self.nCells else True
+        s, e = 0, 0
+        # We store the first block of values here. if such a case arises that we are left with less dims+1 cells to fit
+        # then those cells can be added to end_reservoir for fitting. if there are no such cells then end reservoir is
+        # just by itself after fitting rest of the cells. If may be the case that the first batch itself has less than
+        # dims+1 cells. in that we keep adding cells to carry_over pile until it is big enough.
+        end_reservoir = []
+        # carry_over store cells that can yet not be added to end_reservoir ot be used for fitting pca directly.
+        carry_over = []
         for i in self.iter_blocks(msg='Fitting PCA'):
+            if do_sample_subset:
+                e = s + i.shape[0]
+                i = i[use_for_pca[s:e]]
+                s = e
             if scale_features:
-                self._pca.partial_fit(self.transform_z(i), check_input=False)
-            else:
-                self._pca.partial_fit(i, check_input=False)
+                i = self.transform_z(i)
+            if len(carry_over) > 0:
+                i = np.vstack(carry_over, i)
+                carry_over = []
+            if len(i) < (self.dims + 1):
+                carry_over = i
+                continue
+            if len(end_reservoir) == 0:
+                end_reservoir = i
+                continue
+            self._pca.partial_fit(i, check_input=False)
+        if len(carry_over) > 0:
+            i = np.vstack(end_reservoir, carry_over)
+        else:
+            i = end_reservoir
+        self._pca.partial_fit(i, check_input=False)
         self.loadings = self._pca.components_[:-1, :].T
 
     def _fit_lsi(self) -> None:
