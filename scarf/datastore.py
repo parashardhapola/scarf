@@ -218,7 +218,8 @@ class DataStore:
         return reduction_method
 
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
-                          reduction_method='auto', dims=None, ann_metric=None, ann_efc=None, ann_ef=None, ann_m=None,
+                          reduction_method='auto', dims=None, pca_cell_key=None,
+                          ann_metric=None, ann_efc=None, ann_ef=None, ann_m=None,
                           rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None):
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
@@ -250,18 +251,38 @@ class DataStore:
         log_transform = bool(log_transform)
         renormalize_subset = bool(renormalize_subset)
 
-        if dims is None:
+        if dims is None or pca_cell_key is None:
             if normed_loc in self._z and 'latest_reduction' in self._z[normed_loc].attrs:
                 reduction_loc = self._z[normed_loc].attrs['latest_reduction']
-                dims = int(reduction_loc.rsplit('__', 1)[1])
-                print(f'INFO: No value provided for parameter `dims`. '
-                      f'Will use previously used value: {dims}', flush=True)
+                c_dims, c_pca_cell_key = reduction_loc.rsplit('__', 2)[1:]
             else:
-                dims = 11
-                print(f'INFO: No value provided for parameter `dims`. Will use default value: {dims}', flush=True)
+                c_dims, c_pca_cell_key = None, None
+            if dims is None:
+                if c_dims is not None:
+                    dims = int(c_dims)
+                    print(f'INFO: No value provided for parameter `dims`. '
+                          f'Will use previously used value: {dims}', flush=True)
+                else:
+                    dims = 11
+                    print(f'INFO: No value provided for parameter `dims`. '
+                          f'Will use default value: {dims}', flush=True)
+            if pca_cell_key is None:
+                if c_pca_cell_key is not None:
+                    pca_cell_key = c_pca_cell_key
+                    print(f'INFO: No value provided for parameter `pca_cell_key`. '
+                          f'Will use previously used value: {pca_cell_key}', flush=True)
+                else:
+                    pca_cell_key = cell_key
+                    print(f'INFO: No value provided for parameter `pca_cell_key`. '
+                          f'Will use same value as cell_key: {pca_cell_key}', flush=True)
+            else:
+                if pca_cell_key not in self.cells.table.columns:
+                    raise ValueError(f"ERROR: `pca_use_cell_key` {pca_cell_key} does not exist in cell metadata")
+                if self.cells.table[pca_cell_key].dtype != bool:
+                    raise TypeError("ERROR: Type of `pca_use_cell_key` column in cell metadata should be `bool`")
         dims = int(dims)
         reduction_method = self._choose_reduction_method(self._get_assay(from_assay), reduction_method)
-        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
+        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
 
         if ann_metric is None or ann_efc is None or ann_ef is None or ann_m is None or rand_state is None:
             if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
@@ -287,8 +308,8 @@ class DataStore:
                           f'Will use previously used value: {ann_efc}', flush=True)
                 else:
                     ann_efc = None  # Will be set after value for k is determined
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: k*2',
-                          flush=True)
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value:'
+                          f' min(max(48, int(dims * 1.5)), 64)', flush=True)
             if ann_ef is None:
                 if c_ann_ef is not None:
                     ann_ef = int(c_ann_ef)
@@ -296,8 +317,8 @@ class DataStore:
                           f'Will use previously used value: {ann_ef}', flush=True)
                 else:
                     ann_ef = None  # Will be set after value for k is determined
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: k*2',
-                          flush=True)
+                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: '
+                          f'min(max(48, int(dims * 1.5)), 64)', flush=True)
             if ann_m is None:
                 if c_ann_m is not None:
                     ann_m = int(c_ann_m)
@@ -330,10 +351,10 @@ class DataStore:
                 print(f'INFO: No value provided for parameter `k`. Will use default value: {k}', flush=True)
         k = int(k)
         if ann_ef is None:
-            ann_ef = k * 2
+            ann_ef = min(100, max(k * 3, 50))
         ann_ef = int(ann_ef)
         if ann_efc is None:
-            ann_efc = k * 2
+            ann_efc = min(100, max(k * 3, 50))
         ann_efc = int(ann_efc)
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
         knn_loc = f"{ann_loc}/knn__{k}"
@@ -378,11 +399,11 @@ class DataStore:
         local_connectivity = float(local_connectivity)
         bandwidth = float(bandwidth)
 
-        return (log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m,
-                rand_state, k, n_centroids, local_connectivity, bandwidth)
+        return (log_transform, renormalize_subset, reduction_method, dims, pca_cell_key,
+                ann_metric, ann_efc, ann_ef, ann_m, rand_state, k, n_centroids, local_connectivity, bandwidth)
 
     def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                   reduction_method: str = 'auto', dims: int = None, k: int = None,
+                   pca_cell_key: str = None, reduction_method: str = 'auto', dims: int = None, k: int = None,
                    ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
                    rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
@@ -408,17 +429,13 @@ class DataStore:
                              f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
                              f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
                              f"as `feat_key` means that you will use all the genes for graph creation.")
-
-        (log_transform, renormalize_subset, reduction_method, dims, ann_metric, ann_efc, ann_ef, ann_m, rand_state, k,
-         n_centroids, local_connectivity, bandwidth) = self._set_graph_params(from_assay, cell_key, feat_key,
-                                                                              log_transform, renormalize_subset,
-                                                                              reduction_method, dims, ann_metric,
-                                                                              ann_efc, ann_ef, ann_m,
-                                                                              rand_state, k, n_centroids,
-                                                                              local_connectivity, bandwidth)
-
+        (log_transform, renormalize_subset, reduction_method, dims, pca_cell_key, ann_metric, ann_efc, ann_ef, ann_m,
+         rand_state, k, n_centroids, local_connectivity, bandwidth) = self._set_graph_params(
+            from_assay, cell_key, feat_key, log_transform, renormalize_subset, reduction_method, dims, pca_cell_key,
+            ann_metric, ann_efc, ann_ef, ann_m, rand_state, k, n_centroids, local_connectivity, bandwidth
+        )
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}"
+        reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
         ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
         knn_loc = f"{ann_loc}/knn__{k}"
@@ -431,6 +448,7 @@ class DataStore:
         fit_kmeans = True
         fit_ann = True
         mu, sigma = np.ndarray([]), np.ndarray([])
+        use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
         if reduction_loc in self._z:
             loadings = self._z[reduction_loc]['reduction'][:]
             if reduction_method == 'pca':
@@ -450,7 +468,8 @@ class DataStore:
             fit_kmeans = False
             print(f"INFO: using existing kmeans cluster centers", flush=True)
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
-                            dims=dims, loadings=loadings, mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
+                            dims=dims, loadings=loadings, use_for_pca=use_for_pca,
+                            mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
                             ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=ann_idx_loc, nthreads=self.nthreads,
                             rand_state=rand_state, do_ann_fit=fit_ann, do_kmeans_fit=fit_kmeans,
                             scale_features=feat_scaling)
@@ -901,7 +920,7 @@ class DataStore:
         return None
 
     def calc_node_density(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          min_edge_weight: float = -1, neighbourhood_degree=2):
+                          min_edge_weight: float = -1, neighbourhood_degree=2, label: str = 'node_density'):
         from .pcst import calc_neighbourhood_density
 
         if from_assay is None:
@@ -910,57 +929,52 @@ class DataStore:
             feat_key = self._get_latest_feat_key(from_assay)
         graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
                                  symmetric=False)
-        self.cells.add('node_density', calc_neighbourhood_density(graph, nn=neighbourhood_degree), overwrite=True)
+        density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
+        self.cells.add(self._col_renamer(from_assay, cell_key, label), density,
+                       fill_val=0, key=cell_key, overwrite=True)
 
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                        cluster_key: str = None, min_edge_weight: float = -1, seed_frac: float = 0.05,
+                        cluster_key: str = None, density_key: str = None,
+                        min_edge_weight: float = -1, seed_frac: float = 0.05,
                         dynamic_seed_frac: bool = True, min_nodes: int = 3, rewards: tuple = (3, 0.1),
-                        rand_state: int = 4466, return_vals: bool = False):
+                        rand_state: int = 4466, return_vals: bool = False, label: str = 'sketched'):
         from .pcst import pcst
 
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                 symmetric=False)
+        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr',
+                                 min_edge_weight=min_edge_weight, symmetric=False)
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
-
-        if dynamic_seed_frac and 'node_density' not in self.cells.table:
+        if dynamic_seed_frac and density_key is None:
             print("WARNING: `dynamic_seed_frac` will be ignored because node_density has not been calculated.",
                   flush=True)
             dynamic_seed_frac = False
         if dynamic_seed_frac:
-            cff = self.cells.table[self.cells.table.I].groupby(cluster_key)['node_density'].median()
-            cff = (cff - cff.min()) / (cff.max() - cff.min())
-            cff = 1 - cff
+            if density_key not in self.cells.table:
+                raise ValueError(f"ERROR: {density_key} not found in cell metadata table")
+            else:
+                cff = self.cells.table[self.cells.table.I].groupby(cluster_key)[density_key].median()
+                cff = (cff - cff.min()) / (cff.max() - cff.min())
+                cff = 1 - cff
         else:
             n_clusts = clusters.nunique()
             cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts + 1)))
-
         steiner_nodes, steiner_edges = pcst(
             graph=graph, clusters=clusters, seed_frac=seed_frac, cluster_factor=cff, min_nodes=min_nodes,
             rewards=rewards, pruning_method='strong', rand_state=rand_state)
         a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
         a[steiner_nodes] = True
-        label = 'sketched1'
-        new_key = self._col_renamer(from_assay, cell_key, label)
-        if cell_key.startswith('sketched') or cell_key.startswith(from_assay + '_sketched'):
-            try:
-                label = 'sketched' + str(int(cell_key.split('sketched')[-1]) + 1)
-            except TypeError:
-                label = 'sketched1'
-            else:
-                new_key = self._col_renamer(from_assay, 'I', label)
-        self.cells.add(new_key, a, fill_val=False, key=cell_key, overwrite=True)
-        print(f"INFO: Sketched cells saved with keyname '{label}'")
+
+        key = self._col_renamer(from_assay, cell_key, label)
+        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        print(f"INFO: Sketched cells saved with keyname '{key}'")
         if return_vals:
             return steiner_nodes, steiner_edges
 
