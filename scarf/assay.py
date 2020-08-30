@@ -155,7 +155,7 @@ class RNAassay(Assay):
         if log_transform:
             self.normMethod = norm_lib_size_log
         if renormalize_subset:
-            a = calc_computed(counts.sum(axis=1), msg="INFO: Normalizing with feat subset")
+            a = calc_computed(counts.sum(axis=1), msg="INFO: Normalizing with feature subset")
             a[a == 0] = 1
             self.scalar = a
         else:
@@ -279,7 +279,6 @@ class ATACassay(Assay):
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
                 print(f"INFO: Using cached feature stats for cell_key {cell_key}")
                 return None
-
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
         prevalence = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
