@@ -38,7 +38,7 @@ class DataStore:
         from dask.distributed import Client, LocalCluster
 
         self._fn: str = zarr_loc
-        self._z: zarr.hierarchy = zarr.open(self._fn, 'r+')
+        self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
         if dask_client is None:
             cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
@@ -60,35 +60,35 @@ class DataStore:
                 self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
-        if 'cellData' not in self._z:
+        if 'cellData' not in self.z:
             raise KeyError("ERROR: cellData not found in zarr file")
-        return MetaData(self._z['cellData'])
+        return MetaData(self.z['cellData'])
 
     def _get_assay_names(self) -> List[str]:
         assays = []
-        for i in self._z.group_keys():
-            if 'is_assay' in self._z[i].attrs.keys():
-                sanitize_hierarchy(self._z, i)
+        for i in self.z.group_keys():
+            if 'is_assay' in self.z[i].attrs.keys():
+                sanitize_hierarchy(self.z, i)
                 assays.append(i)
         return assays
 
     def _set_default_assay(self, assay_name: str) -> str:
         if assay_name is None:
-            if 'defaultAssay' in self._z.attrs:
-                assay_name = self._z.attrs['defaultAssay']
+            if 'defaultAssay' in self.z.attrs:
+                assay_name = self.z.attrs['defaultAssay']
             else:
                 if len(self.assayNames) == 1:
                     assay_name = self.assayNames[0]
-                    self._z.attrs['defaultAssay'] = assay_name
+                    self.z.attrs['defaultAssay'] = assay_name
                 else:
                     raise ValueError("ERROR: You have more than one assay data. "
                                      f"Choose one from: {' '.join(self.assayNames)}\n using 'default_assay' parameter. "
                                      "Please note that names are case-sensitive.")
         else:
             if assay_name in self.assayNames:
-                if 'defaultAssay' in self._z.attrs:
-                    print(f"ATTENTION: Default assay changed from {self._z.attrs['defaultAssay']} to {assay_name}")
-                self._z.attrs['defaultAssay'] = assay_name
+                if 'defaultAssay' in self.z.attrs:
+                    print(f"ATTENTION: Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}")
+                self.z.attrs['defaultAssay'] = assay_name
             else:
                 raise ValueError(f"ERROR: The provided default assay name: {assay_name} was not found. "
                                  f"Please Choose one from: {' '.join(self.assayNames)}\n"
@@ -98,7 +98,7 @@ class DataStore:
     def set_default_assay(self, assay_name: str):
         if assay_name in self.assayNames:
             self._defaultAssay = assay_name
-            self._z.attrs['defaultAssay'] = assay_name
+            self.z.attrs['defaultAssay'] = assay_name
         else:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
@@ -128,7 +128,7 @@ class DataStore:
                 else:
                     print(caution_statement % i)
                     assay = Assay
-            setattr(self, i, assay(self._z, i, self.cells, min_cells_per_feature=min_cells))
+            setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells))
         return None
 
     def _get_assay(self, from_assay: str) -> Assay:
@@ -223,9 +223,9 @@ class DataStore:
                           rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None):
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
-            if normed_loc in self._z and 'subset_params' in self._z[normed_loc].attrs:
+            if normed_loc in self.z and 'subset_params' in self.z[normed_loc].attrs:
                 # This works in coordination with save_normalized_data
-                subset_params = self._z[normed_loc].attrs['subset_params']
+                subset_params = self.z[normed_loc].attrs['subset_params']
                 c_log_transform, c_renormalize_subset = (subset_params['log_transform'],
                                                          subset_params['renormalize_subset'])
             else:
@@ -252,8 +252,8 @@ class DataStore:
         renormalize_subset = bool(renormalize_subset)
 
         if dims is None or pca_cell_key is None:
-            if normed_loc in self._z and 'latest_reduction' in self._z[normed_loc].attrs:
-                reduction_loc = self._z[normed_loc].attrs['latest_reduction']
+            if normed_loc in self.z and 'latest_reduction' in self.z[normed_loc].attrs:
+                reduction_loc = self.z[normed_loc].attrs['latest_reduction']
                 c_dims, c_pca_cell_key = reduction_loc.rsplit('__', 2)[1:]
             else:
                 c_dims, c_pca_cell_key = None, None
@@ -285,8 +285,8 @@ class DataStore:
         reduction_loc = f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
 
         if ann_metric is None or ann_efc is None or ann_ef is None or ann_m is None or rand_state is None:
-            if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
-                ann_loc = self._z[reduction_loc].attrs['latest_ann']
+            if reduction_loc in self.z and 'latest_ann' in self.z[reduction_loc].attrs:
+                ann_loc = self.z[reduction_loc].attrs['latest_ann']
                 c_ann_metric, c_ann_efc, c_ann_ef, c_ann_m, c_rand_state = \
                     ann_loc.rsplit('/', 1)[1].split('__')[1:]
             else:
@@ -341,9 +341,9 @@ class DataStore:
         rand_state = int(rand_state)
 
         if k is None:
-            if reduction_loc in self._z and 'latest_ann' in self._z[reduction_loc].attrs:
-                ann_loc = self._z[reduction_loc].attrs['latest_ann']
-                knn_loc = self._z[ann_loc].attrs['latest_knn']
+            if reduction_loc in self.z and 'latest_ann' in self.z[reduction_loc].attrs:
+                ann_loc = self.z[reduction_loc].attrs['latest_ann']
+                knn_loc = self.z[ann_loc].attrs['latest_knn']
                 k = int(knn_loc.rsplit('__', 1)[1])  # depends on param_joiner
                 print(f'INFO: No value provided for parameter `k`. Will use previously used value: {k}', flush=True)
             else:
@@ -360,8 +360,8 @@ class DataStore:
         knn_loc = f"{ann_loc}/knn__{k}"
 
         if n_centroids is None:
-            if reduction_loc in self._z and 'latest_kmeans' in self._z[reduction_loc].attrs:
-                kmeans_loc = self._z[reduction_loc].attrs['latest_kmeans']
+            if reduction_loc in self.z and 'latest_kmeans' in self.z[reduction_loc].attrs:
+                kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
                 n_centroids = int(kmeans_loc.split('/')[-1].split('__')[1])  # depends on param_joiner
                 print(f'INFO: No value provided for parameter `n_centroids`.'
                       f' Will use previously used value: {n_centroids}', flush=True)
@@ -373,8 +373,8 @@ class DataStore:
         n_centroids = int(n_centroids)
 
         if local_connectivity is None or bandwidth is None:
-            if knn_loc in self._z and 'latest_graph' in self._z[knn_loc].attrs:
-                graph_loc = self._z[knn_loc].attrs['latest_graph']
+            if knn_loc in self.z and 'latest_graph' in self.z[knn_loc].attrs:
+                graph_loc = self.z[knn_loc].attrs['latest_graph']
                 c_local_connectivity, c_bandwidth = map(float, graph_loc.rsplit('/')[-1].split('__')[1:])
             else:
                 c_local_connectivity, c_bandwidth = None, None
@@ -449,11 +449,11 @@ class DataStore:
         fit_ann = True
         mu, sigma = np.ndarray([]), np.ndarray([])
         use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
-        if reduction_loc in self._z:
-            loadings = self._z[reduction_loc]['reduction'][:]
+        if reduction_loc in self.z:
+            loadings = self.z[reduction_loc]['reduction'][:]
             if reduction_method == 'pca':
-                mu = self._z[reduction_loc]['mu'][:]
-                sigma = self._z[reduction_loc]['sigma'][:]
+                mu = self.z[reduction_loc]['mu'][:]
+                sigma = self.z[reduction_loc]['sigma'][:]
             print(f"INFO: Using existing loadings for {reduction_method} with {dims} dims", flush=True)
         else:
             if reduction_method == 'pca':
@@ -461,10 +461,10 @@ class DataStore:
                                                'INFO: Calculating mean of norm. data'))
                 sigma = clean_array(calc_computed(data.std(axis=0),
                                                   'INFO: Calculating std. dev. of norm. data'), 1)
-        if ann_loc in self._z:
+        if ann_loc in self.z:
             fit_ann = False
             print(f"INFO: Using existing ANN index", flush=True)
-        if kmeans_loc in self._z:
+        if kmeans_loc in self.z:
             fit_kmeans = False
             print(f"INFO: using existing kmeans cluster centers", flush=True)
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
@@ -475,63 +475,63 @@ class DataStore:
                             scale_features=feat_scaling)
 
         if loadings is None:
-            self._z.create_group(reduction_loc, overwrite=True)
-            g = create_zarr_dataset(self._z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
+            self.z.create_group(reduction_loc, overwrite=True)
+            g = create_zarr_dataset(self.z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
             if reduction_method == 'pca':
-                g = create_zarr_dataset(self._z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
+                g = create_zarr_dataset(self.z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
                 g[:] = mu
-                g = create_zarr_dataset(self._z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
+                g = create_zarr_dataset(self.z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
                 g[:] = sigma
-        if ann_loc not in self._z:
-            self._z.create_group(ann_loc, overwrite=True)
+        if ann_loc not in self.z:
+            self.z.create_group(ann_loc, overwrite=True)
             ann_obj.annIdx.save_index(ann_idx_loc)
         if fit_kmeans:
-            self._z.create_group(kmeans_loc, overwrite=True)
-            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_centers',
+            self.z.create_group(kmeans_loc, overwrite=True)
+            g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_centers',
                                     (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
             g[:, :] = ann_obj.kmeans.cluster_centers_
-            g = create_zarr_dataset(self._z[kmeans_loc], 'cluster_labels', (100000,), 'f8', ann_obj.clusterLabels.shape)
+            g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_labels', (100000,), 'f8', ann_obj.clusterLabels.shape)
             g[:] = ann_obj.clusterLabels
 
-        if knn_loc in self._z and graph_loc in self._z:
+        if knn_loc in self.z and graph_loc in self.z:
             print(f"INFO: KNN graph already exists will not recompute.", flush=True)
         else:
             from .knn_utils import self_query_knn, smoothen_dists
-            if knn_loc not in self._z:
-                self_query_knn(ann_obj, self._z.create_group(knn_loc, overwrite=True), batch_size, self.nthreads)
-            smoothen_dists(self._z.create_group(graph_loc, overwrite=True),
-                           self._z[knn_loc]['indices'], self._z[knn_loc]['distances'],
+            if knn_loc not in self.z:
+                self_query_knn(ann_obj, self.z.create_group(knn_loc, overwrite=True), batch_size, self.nthreads)
+            smoothen_dists(self.z.create_group(graph_loc, overwrite=True),
+                           self.z[knn_loc]['indices'], self.z[knn_loc]['distances'],
                            local_connectivity, bandwidth)
 
-        self._z[normed_loc].attrs['latest_reduction'] = reduction_loc
-        self._z[reduction_loc].attrs['latest_ann'] = ann_loc
-        self._z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
-        self._z[ann_loc].attrs['latest_knn'] = knn_loc
-        self._z[knn_loc].attrs['latest_graph'] = graph_loc
+        self.z[normed_loc].attrs['latest_reduction'] = reduction_loc
+        self.z[reduction_loc].attrs['latest_ann'] = ann_loc
+        self.z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
+        self.z[ann_loc].attrs['latest_knn'] = knn_loc
+        self.z[knn_loc].attrs['latest_graph'] = graph_loc
         if return_ann_object:
             return ann_obj
         return None
 
     def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        reduction_loc = self._z[normed_loc].attrs['latest_reduction']
-        ann_loc = self._z[reduction_loc].attrs['latest_ann']
-        knn_loc = self._z[ann_loc].attrs['latest_knn']
-        return self._z[knn_loc].attrs['latest_graph']
+        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
+        ann_loc = self.z[reduction_loc].attrs['latest_ann']
+        knn_loc = self.z[ann_loc].attrs['latest_knn']
+        return self.z[knn_loc].attrs['latest_graph']
 
     def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                     min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        if graph_loc not in self._z:
+        if graph_loc not in self.z:
             print(f"ERROR: {graph_loc} not found in zarr location {self._fn}. Run `make_graph` for assay {from_assay}")
             return None
         if graph_format not in ['coo', 'csr']:
             raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
-        store = self._z[graph_loc]
-        knn_loc = self._z[graph_loc.rsplit('/', 1)[0]]
+        store = self.z[graph_loc]
+        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
         n_cells = knn_loc['indices'].shape[0]
         # TODO: can we have a progress bar for graph loading. Append to coo matrix?
         graph = coo_matrix((store['weights'][:], (store['edges'][:, 0], store['edges'][:, 1])),
@@ -551,12 +551,12 @@ class DataStore:
     def _ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int):
         from sklearn.decomposition import PCA
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        reduction_loc = self._z[normed_loc].attrs['latest_reduction']
-        kmeans_loc = self._z[reduction_loc].attrs['latest_kmeans']
-        pc = PCA(n_components=n_comps).fit_transform(self._z[kmeans_loc]['cluster_centers'][:])
+        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
+        kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
+        pc = PCA(n_components=n_comps).fit_transform(self.z[kmeans_loc]['cluster_centers'][:])
         for i in range(n_comps):
             pc[:, i] = rescale_array(pc[:, i])
-        clusters = self._z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
+        clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
     def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
@@ -667,8 +667,8 @@ class DataStore:
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = f"{graph_loc}/dendrogram__{min_edge_weight}"
         # tuple are changed to list when saved as zarr attrs
-        if dendrogram_loc in self._z and force_recalc is False:
-            dendrogram = self._z[dendrogram_loc][:]
+        if dendrogram_loc in self.z and force_recalc is False:
+            dendrogram = self.z[dendrogram_loc][:]
             print("INFO: Using existing dendrogram", flush=True)
         else:
             paris = skn.hierarchy.Paris()
@@ -676,10 +676,10 @@ class DataStore:
                                      symmetric=symmetric_graph, upper_only=graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
-            g = create_zarr_dataset(self._z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
+            g = create_zarr_dataset(self.z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
                                     (5000,), 'f8', (graph.shape[0] - 1, 4))
             g[:] = dendrogram
-        self._z[graph_loc].attrs['latest_dendrogram'] = dendrogram_loc
+        self.z[graph_loc].attrs['latest_dendrogram'] = dendrogram_loc
         if balanced_cut:
             from .dendrogram import BalancedCut
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
@@ -700,7 +700,7 @@ class DataStore:
             group_key = 'cluster'
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(assay, group_key, threshold)
-        z = self._z[assay.name]
+        z = self.z[assay.name]
         if 'markers' not in z:
             z.create_group('markers')
         group = z['markers'].create_group(group_key, overwrite=True)
@@ -776,10 +776,10 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         store_loc = f"{from_assay}/projections/{target_name}"
-        if store_loc not in self._z:
+        if store_loc not in self.z:
             raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
                            f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters")
-        store = self._z[store_loc]
+        store = self.z[store_loc]
 
         indices = store['indices'][:]
         dists = store['distances'][:]
@@ -816,10 +816,10 @@ class DataStore:
         if sparse_format not in ['csr', 'coo']:
             raise KeyError("ERROR: `sparse_format` should be either 'coo' or 'csr'")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        edges = self._z[graph_loc].edges[:]
-        weights = self._z[graph_loc].weights[:]
+        edges = self.z[graph_loc].edges[:]
+        weights = self.z[graph_loc].weights[:]
         n_cells = self.cells.table[cell_key].sum()
-        pidx = self._z[from_assay].projections[target_name].indices[:, :use_k]
+        pidx = self.z[from_assay].projections[target_name].indices[:, :use_k]
         ne = []
         nw = []
         for n, i in enumerate(pidx):
@@ -853,12 +853,12 @@ class DataStore:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
-        pidx = self._z[from_assay].projections[target_name].indices[:, 0]
+        pidx = self.z[from_assay].projections[target_name].indices[:, 0]
         ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
         t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, parallel=False)
-        g = create_zarr_dataset(self._z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
+        g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
         g[:] = t
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
@@ -887,7 +887,7 @@ class DataStore:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
-        pidx = self._z[from_assay].projections[target_name].indices[:, 0]
+        pidx = self.z[from_assay].projections[target_name].indices[:, 0]
         ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
         uid = str(uuid4())
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
@@ -908,7 +908,7 @@ class DataStore:
             os.system(cmd)
 
         t = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values
-        g = create_zarr_dataset(self._z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
+        g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
         g[:] = t
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
@@ -1080,7 +1080,7 @@ class DataStore:
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        t = self._z[from_assay].projections[target_name][layout_key][:]
+        t = self.z[from_assay].projections[target_name][layout_key][:]
         ref_n_cells = self.cells.table[cell_key].sum()
         t_n_cells = t.shape[0] - ref_n_cells
         x = t[:, 0]
@@ -1127,8 +1127,8 @@ class DataStore:
             feat_key = self._get_latest_feat_key(from_assay)
         clusts = self.cells.fetch(cluster_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        dendrogram_loc = self._z[graph_loc].attrs['latest_dendrogram']
-        sg = SummarizedTree(self._z[dendrogram_loc][:]).extract_ancestor_tree(clusts)
+        dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
+        sg = SummarizedTree(self.z[dendrogram_loc][:]).extract_ancestor_tree(clusts)
         plot_cluster_hierarchy(sg, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
                                node_size_expand_factor=node_size_expand_factor, cmap=cmap)
 
@@ -1142,11 +1142,11 @@ class DataStore:
             raise ValueError("ERROR: Please provide a value for `group_key`")
         if batch_size is None:
             batch_size = min(999, int(1e7 / assay.cells.N)) + 1
-        if 'markers' not in self._z[assay.name]:
+        if 'markers' not in self.z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
-        if group_key not in self._z[assay.name]['markers']:
+        if group_key not in self.z[assay.name]['markers']:
             raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key`")
-        g = self._z[assay.name]['markers'][group_key]
+        g = self.z[assay.name]['markers'][group_key]
         goi = []
         for i in g.keys():
             if 'names' in g[i]:
