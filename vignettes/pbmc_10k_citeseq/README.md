@@ -15,18 +15,18 @@ cd ../data/
 ```
 
     /media/parashar/d2-1-storage/storage/seq_data/scarf_manuscript/data
-    time: 1.22 ms
+    time: 1.24 ms
 
 
 #### Download data from 10x's website.
 
 
 ```python
-wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
-mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
+# wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
+# mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
 ```
 
-    time: 63.2 ms
+    time: 627 µs
 
 
 #### The first step of the analysis workflow is to convert the file into Zarr format that is support by Scarf. So we read in the data using CrH5Reader (stands for cellranger H5 reader). The reader object allows quick investigation of the file before the format is converted.
@@ -36,7 +36,7 @@ mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
 reader = scarf.CrH5Reader(f'pbmc_10k_rna_prot.h5', 'rna')
 ```
 
-    time: 118 ms
+    time: 129 ms
 
 
 #### We can quickly check the number of cells and features (genes as well ADT features in this case) present in the file
@@ -53,7 +53,7 @@ reader.nCells, reader.nFeatures
 
 
 
-    time: 5.53 ms
+    time: 24.4 ms
 
 
 #### We can also quickly check the different kinds of assays present in the file and the number of features from each of them.
@@ -115,7 +115,7 @@ reader.assayFeats
 
 
 
-    time: 8.41 ms
+    time: 6.04 ms
 
 
 #### nFeature column shows the number of features present in each assay. CrH5Reader will automatically pull this information from `features.tsv` and will rename the 'Gene Expression' assay to 'RNA'. Here it also found another assay: 'Antibody Capture' and named it to 'assay2'. We will rename this to 'ADT'.
@@ -178,7 +178,7 @@ reader.assayFeats
 
 
 
-    time: 43.4 ms
+    time: 86.8 ms
 
 
 #### Convert data to Zarr format that will be later on used by Scarf. For this we use Scarf's CrToZarr class. This class will first quickly ascertain the data to be written and will create a zarr format file for data to be written into. CrToZarr takes two mandatory arguments. The first is the cellranger reader an other is the name of the output file. NOTE: When we say zarr file, we actually mean zarr directory  because unoike HDF5 Zarr hierarchy is organized as a directory structure.
@@ -188,7 +188,7 @@ reader.assayFeats
 writer = scarf.CrToZarr(reader, zarr_fn=f'pbmc_10k_rna_prot.zarr', chunk_size=(1000, 1000))
 ```
 
-    time: 92.3 ms
+    time: 152 ms
 
 
 
@@ -201,7 +201,7 @@ writer.z.tree(expand=True)
     Tree(nodes=(Node(disabled=True, name='/', nodes=(Node(disabled=True, name='ADT', nodes=(Node(disabled=True, ic…
 
 
-    time: 85 ms
+    time: 93.1 ms
 
 
 #### The three top levels here are: 'RNA', 'ADT' and 'cellData'. The top levels are hence composed of two assays and the cellData level which is explained below. And finally, we dump the data into zarr object.
@@ -211,9 +211,9 @@ writer.z.tree(expand=True)
 writer.dump(batch_size=1000)
 ```
 
-    100%|██████████| 8/8 [00:02<00:00,  3.19it/s]
+    100%|██████████| 8/8 [00:02<00:00,  3.13it/s]
 
-    time: 2.52 s
+    time: 2.56 s
 
 
     
@@ -238,20 +238,20 @@ ds = scarf.DataStore('pbmc_10k_rna_prot.zarr', default_assay='RNA')
 
 
     INFO: (RNA) Computing nCells and dropOuts
-    [########################################] | 100% Completed |  1.5s
+    [########################################] | 100% Completed |  1.4s
     INFO: (ADT) Computing nCounts
     [########################################] | 100% Completed |  0.1s
     INFO: (ADT) Computing nFeatures
     [########################################] | 100% Completed |  0.1s
     INFO: (RNA) Computing nCounts
-    [########################################] | 100% Completed |  1.2s
+    [########################################] | 100% Completed |  1.4s
     INFO: (RNA) Computing nFeatures
-    [########################################] | 100% Completed |  1.3s
+    [########################################] | 100% Completed |  1.5s
     Computing percentage of RNA_percentMito
     [########################################] | 100% Completed |  0.1s
     Computing percentage of RNA_percentRibo
-    [########################################] | 100% Completed |  1.4s
-    time: 7.11 s
+    [########################################] | 100% Completed |  1.5s
+    time: 7.51 s
 
 
 #### Scarf uses Zarr format so that data can be stored in rectangular chunks. The raw data is saved in the `counts` level within each assay level in the Zarr hierarchy. It can easily be accessed as a Dask array using `rawData` attribute of the assay. For a standard analysis one would not to interact with the raw data directly. Scarf internally optimizes the use of this Dask array to minimize the memory requirement of all operations.
@@ -343,7 +343,7 @@ ds.RNA.rawData
 
 
 
-    time: 4.12 ms
+    time: 3.33 ms
 
 
 #### We can visualize these per cell statistics in form violin plots
@@ -357,7 +357,7 @@ ds.plot_cells_dists(cols=['percent*'], all_cells=True)
 ![png](output_24_0.png)
 
 
-    time: 1.39 s
+    time: 1.31 s
 
 
 #### We can filter cells based on these cell attributes by providing upper and lower threshold values.
@@ -370,7 +370,7 @@ ds.filter_cells(attrs=['RNA_nCounts', 'RNA_nFeatures', 'RNA_percentMito'], highs
     INFO: 203 cells failed filtering for RNA_nCounts
     INFO: 113 cells failed filtering for RNA_nFeatures
     INFO: 35 cells failed filtering for RNA_percentMito
-    time: 20.3 ms
+    time: 14.3 ms
 
 
 #### Now we visualize the attributes again after filtering the values.
@@ -384,7 +384,7 @@ ds.plot_cells_dists(cols=['percent*'])
 ![png](output_28_0.png)
 
 
-    time: 534 ms
+    time: 627 ms
 
 
 #### Scarf attempts to store most of the data into the disk immediately after it is calculated. Below we can see that the calculated cell attributes can now be found under the cellData level.
@@ -398,7 +398,7 @@ ds.z.tree(expand=True)
     Tree(nodes=(Node(disabled=True, name='/', nodes=(Node(disabled=True, name='ADT', nodes=(Node(disabled=True, ic…
 
 
-    time: 103 ms
+    time: 111 ms
 
 
 #### The data stored under cellData level can easily be accessed using the `cells.table` attribute of the DataStore object.
@@ -580,7 +580,7 @@ ds.cells.table
 
 
 
-    time: 22.8 ms
+    time: 16 ms
 
 
 #### The 'I' column is set to False for cells that were filtered out. NOTE: We strongly discourage directly adding or removing the data from this table as Scarf will not be able to synchronize the changes to the disk. Instead use methods of the cell attribute. Please refer to `add`, `fetch`, `remove` and `update` methods.
@@ -715,7 +715,7 @@ ds.RNA.feats.table
 
 
 
-    time: 15.7 ms
+    time: 16.5 ms
 
 
 #### Now the set step is to identify the highly variable genes in the dataset (RNA assay). This can be done using `mark_hvgs` method of the assay. The parameters govern the min/max variance (corrected) and mean expression threshold for calling genes highly variable. 
@@ -728,11 +728,11 @@ ds.RNA.mark_hvgs(min_cells=20, top_n=2000, n_bins=50)
 ```
 
     INFO: (RNA) Computing nCells
-    [########################################] | 100% Completed |  2.0s
+    [########################################] | 100% Completed |  2.4s
     INFO: (RNA) Computing normed_tot
-    [########################################] | 100% Completed |  2.0s
+    [########################################] | 100% Completed |  2.2s
     INFO: (RNA) Computing sigmas
-    [########################################] | 100% Completed |  2.5s
+    [########################################] | 100% Completed |  2.7s
     INFO: 2000 genes marked as HVGs
 
 
@@ -740,7 +740,7 @@ ds.RNA.mark_hvgs(min_cells=20, top_n=2000, n_bins=50)
 ![png](output_36_1.png)
 
 
-    time: 7.9 s
+    time: 8.69 s
 
 
 #### As a result of running `mark_hvgs`, the feature table now has an extra column `I__hvgs` which contains are True value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to column name (with double underscore delimiter). Since, we used the filtered cells here, so 'I' was prepended.
@@ -886,7 +886,7 @@ ds.RNA.feats.table
 
 
 
-    time: 10.8 ms
+    time: 12.2 ms
 
 
 #### Creating a neighbourhood graph of cells is the most critical step in any Scarf workflow. This step internally involved multiple substeps: 
@@ -917,7 +917,7 @@ ds.make_graph(feat_key='hvgs', k=21, dims=31, n_centroids=100)
     [########################################] | 100% Completed |  1.6s
 
 
-    Writing data to normed__I__hvgs/data: 100%|██████████| 8/8 [00:03<00:00,  2.30it/s]
+    Writing data to normed__I__hvgs/data: 100%|██████████| 8/8 [00:03<00:00,  2.27it/s]
 
     INFO: Calculating mean of norm. data
     [#####################                   ] | 53% Completed |  0.1s
@@ -930,19 +930,19 @@ ds.make_graph(feat_key='hvgs', k=21, dims=31, n_centroids=100)
     [########################################] | 100% Completed |  0.2s
 
 
-    Fitting PCA: 100%|██████████| 8/8 [00:05<00:00,  1.52it/s]
-    Fitting ANN: 100%|██████████| 8/8 [00:00<00:00, 11.89it/s]
-    Fitting kmeans: 100%|██████████| 8/8 [00:00<00:00, 16.28it/s]
-    Estimating seed partitions: 100%|██████████| 8/8 [00:00<00:00, 21.03it/s]
-    Saving KNN graph: 100%|██████████| 8/8 [00:00<00:00, 12.09it/s]
+    Fitting PCA: 100%|██████████| 8/8 [00:05<00:00,  1.50it/s]
+    Fitting ANN: 100%|██████████| 8/8 [00:00<00:00, 12.19it/s]
+    Fitting kmeans: 100%|██████████| 8/8 [00:00<00:00, 18.01it/s]
+    Estimating seed partitions: 100%|██████████| 8/8 [00:00<00:00, 20.52it/s]
+    Saving KNN graph: 100%|██████████| 8/8 [00:00<00:00, 11.24it/s]
 
     INFO: ANN recall: 99.76%
 
 
     
-    Smoothening KNN distances: 100%|██████████| 2/2 [00:02<00:00,  1.07s/it]
+    Smoothening KNN distances: 100%|██████████| 2/2 [00:02<00:00,  1.06s/it]
 
-    time: 19.9 s
+    time: 19.8 s
 
 
     
@@ -959,7 +959,7 @@ ds.RNA.z.tree(expand=True)
     Tree(nodes=(Node(disabled=True, name='RNA', nodes=(Node(disabled=True, icon='table', name='counts (7865, 33538…
 
 
-    time: 126 ms
+    time: 120 ms
 
 
 #### The graph calculated by `make_graph` can be easily loaded using `load_graph` method like below. The graph is loaded as a sparse matrix of cells that were used for creating a graph. Following we show show can the graph be accessed if required, but normally Scarf handles the graph loading internally where required. 
@@ -979,7 +979,7 @@ ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr
 
 
 
-    time: 18.7 ms
+    time: 16.5 ms
 
 
 
@@ -994,7 +994,7 @@ ds._get_latest_graph_loc(from_assay='RNA', cell_key='I', feat_key='hvgs')
 
 
 
-    time: 2.52 ms
+    time: 3.58 ms
 
 
 #### Next we run UMAP on the graph calculated above. Here we will not provide the which assay, cell key or feature key to be used because we want the UMAP to run on default assay with all the filtered cells and with the feature key used to calculate the latest graph. We can also provide the parameters values for the UMAP algorithm here
@@ -1024,7 +1024,7 @@ ds.run_umap(fit_n_epochs=500, min_dist=0.5)
     	completed  70  /  100 epochs
     	completed  80  /  100 epochs
     	completed  90  /  100 epochs
-    time: 34.3 s
+    time: 33.2 s
 
 
 #### The UMAP results are saved in the cell metadata table as seen below in columns: 'RNA_UMAP1' and 'RNA_UMAP2'
@@ -1230,7 +1230,7 @@ ds.cells.table
 
 
 
-    time: 16.7 ms
+    time: 22.6 ms
 
 
 #### `plot_layout` is a versatile method to create a scatter plot using Scarf. Here we can plot the UMAP coordinates of all the filtered cells.
@@ -1244,7 +1244,7 @@ ds.plot_layout(layout_key='RNA_UMAP')
 ![png](output_51_0.png)
 
 
-    time: 158 ms
+    time: 201 ms
 
 
 #### `plot_layout` can be used to easily visualize data from any column of the cell metadata table. Following we visualize the number of genes expressed in each cell
@@ -1258,7 +1258,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', colormap='coolwarm
 ![png](output_53_0.png)
 
 
-    time: 736 ms
+    time: 781 ms
 
 
 #### Identifying clusters of cells is one of the central tenet of single cell approaches. Scarf includes two graph clustering methods and any (or even both) can used used on the dataset. The methods start with the same graph as the UMAP algorithm above to minimize the disparity between the UMAP and clustering results. The two clustering methods are:
@@ -1272,7 +1272,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', colormap='coolwarm
 ds.run_clustering(n_clusters=25)
 ```
 
-    time: 1.03 s
+    time: 1.06 s
 
 
     /home/parashar/miniconda3/lib/python3.7/site-packages/sknetwork/hierarchy/postprocess.py:38: VisibleDeprecationWarning: Creating an ndarray from ragged nested sequences (which is a list-or-tuple of lists-or-tuples-or ndarrays with different lengths or shapes) is deprecated. If you meant to do this, you must specify 'dtype=object' when creating the ndarray
@@ -1494,7 +1494,7 @@ ds.cells.table
 
 
 
-    time: 20.3 ms
+    time: 25.3 ms
 
 
 #### We can visualize the results using the `plot_layout` method again
@@ -1508,7 +1508,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ![png](output_59_0.png)
 
 
-    time: 883 ms
+    time: 889 ms
 
 
 #### Here, we do the same for Leiden clustering
@@ -1523,7 +1523,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 ![png](output_61_0.png)
 
 
-    time: 1.32 s
+    time: 1.31 s
 
 
 #### There has been a lot of discussion over the choice of non-linear dimension reduction for single-cell data. tSNE was initially considered an excellent solution but has gradually lost out to UMAP because the magnitude of relation between the clusters cannot easily be discerned  in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE as were used for UMAP, i.e. first 2 (in case of 2D) PC axis of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in 1M cell vignette, using tSNE can be better at visually accessing the extent of heterogeneity than UMAP. The biggest reason, however to run Scarf's implementation of graph tSNE could be the runtime which can be an order of magnitude faster than UMAP on large datasets.
@@ -1533,7 +1533,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 ds.run_tsne('../scarf/bin/sgtsne', alpha=20, box_h=1)
 ```
 
-    Saving KNN matrix in MTX format: 100%|██████████| 7648/7648 [00:02<00:00, 3231.07it/s]
+    Saving KNN matrix in MTX format: 100%|██████████| 7648/7648 [00:01<00:00, 3927.13it/s]
 
 
     b'Number of vertices: 7648'
@@ -1551,21 +1551,21 @@ ds.run_tsne('../scarf/bin/sgtsne', alpha=20, box_h=1)
     b'm = 7648| n = 7648| nnnz = 273004'
     b'Working with double precision'
     b'Iteration 1: error is 218.674'
-    b'Iteration 50: error is 173.562 (50 iterations in 0.24714 seconds)'
-    b'Iteration 100: error is 165.539 (50 iterations in 0.178458 seconds)'
-    b'Iteration 150: error is 163.621 (50 iterations in 0.179681 seconds)'
-    b'Iteration 200: error is 5.14704 (50 iterations in 0.174195 seconds)'
-    b'Iteration 250: error is 4.23858 (50 iterations in 0.173151 seconds)'
-    b'Iteration 300: error is 3.59097 (50 iterations in 0.205088 seconds)'
-    b'Iteration 350: error is 3.32849 (50 iterations in 0.255213 seconds)'
-    b'Iteration 400: error is 3.17208 (50 iterations in 0.342475 seconds)'
-    b'Iteration 450: error is 3.06505 (50 iterations in 0.351687 seconds)'
-    b'Iteration 499: error is 2.9897 (50 iterations in 0.334377 seconds)'
+    b'Iteration 50: error is 173.562 (50 iterations in 0.2393 seconds)'
+    b'Iteration 100: error is 165.539 (50 iterations in 0.169676 seconds)'
+    b'Iteration 150: error is 163.621 (50 iterations in 0.168936 seconds)'
+    b'Iteration 200: error is 5.14704 (50 iterations in 0.173764 seconds)'
+    b'Iteration 250: error is 4.23858 (50 iterations in 0.169082 seconds)'
+    b'Iteration 300: error is 3.59097 (50 iterations in 0.199871 seconds)'
+    b'Iteration 350: error is 3.32849 (50 iterations in 0.246794 seconds)'
+    b'Iteration 400: error is 3.17208 (50 iterations in 0.339923 seconds)'
+    b'Iteration 450: error is 3.06505 (50 iterations in 0.347554 seconds)'
+    b'Iteration 499: error is 2.9897 (50 iterations in 0.335906 seconds)'
     b'--- Time spent in each module ---'
     b''
-    b'Attractive forces: 0.577663 sec [25.675%] |  Repulsive forces: 1.67225 sec [74.325%]'
-    b'Saving embedding to: /media/parashar/d2-1-storage/storage/seq_data/scarf_manuscript/data/c369c336-7335-4842-a500-01a0d841c3fc_output.txt'
-    time: 5.16 s
+    b'Attractive forces: 0.568221 sec [25.8005%] |  Repulsive forces: 1.63414 sec [74.1995%]'
+    b'Saving embedding to: /media/parashar/d2-1-storage/storage/seq_data/scarf_manuscript/data/58c80179-d638-4320-ba41-f465c604acdf_output.txt'
+    time: 4.69 s
 
 
 
@@ -1577,7 +1577,7 @@ ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_cluster')
 ![png](output_64_0.png)
 
 
-    time: 890 ms
+    time: 873 ms
 
 
 #### We saw 7x speedup compared to UMAP using tSNE with the given parameters. It is harder to compare the distances between the clusters here but easier to visually gauge the size of clusters and intra-cluster heterogeneity.
@@ -1589,14 +1589,14 @@ ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_cluster')
 ds.plot_cluster_tree(cluster_key='RNA_cluster')
 ```
 
-    Constructing graph from dendrogram: 100%|██████████| 7647/7647 [00:00<00:00, 101947.62it/s]
+    Constructing graph from dendrogram: 100%|██████████| 7647/7647 [00:00<00:00, 100132.82it/s]
 
 
 
 ![png](output_67_1.png)
 
 
-    time: 1.54 s
+    time: 1.87 s
 
 
 #### The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As example, one can observe that cluster 1 is closer to cluster 8 than it is to cluster 4, which in turn closest to cluster 17.
@@ -1613,9 +1613,9 @@ ds.plot_cluster_tree(cluster_key='RNA_cluster')
 ds.run_marker_search(group_key='RNA_cluster', threshold=0.2)
 ```
 
-    Finding markers: 100%|██████████| 34/34 [00:12<00:00,  2.66it/s]
+    Finding markers: 100%|██████████| 34/34 [00:13<00:00,  2.59it/s]
 
-    time: 12.9 s
+    time: 13.2 s
 
 
     
@@ -1630,22 +1630,22 @@ ds.plot_marker_heatmap(group_key='RNA_cluster', topn=3)
 
     INFO: Calculating group mean values:   0%|          | 0/2 [00:00<?, ?it/s]
 
+    [########################################] | 100% Completed |  1.0s
+
+
+    INFO: Calculating group mean values:  50%|█████     | 1/2 [00:01<00:01,  1.78s/it]
+
     [########################################] | 100% Completed |  0.9s
 
 
-    INFO: Calculating group mean values:  50%|█████     | 1/2 [00:01<00:01,  1.66s/it]
-
-    [########################################] | 100% Completed |  0.9s
-
-
-    INFO: Calculating group mean values: 100%|██████████| 2/2 [00:03<00:00,  1.71s/it]
+    INFO: Calculating group mean values: 100%|██████████| 2/2 [00:03<00:00,  1.84s/it]
 
 
 
 ![png](output_72_5.png)
 
 
-    time: 5.26 s
+    time: 5.61 s
 
 
 #### We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
@@ -1659,7 +1659,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='PPBP')
 ![png](output_74_0.png)
 
 
-    time: 963 ms
+    time: 946 ms
 
 
 #### UMAP, clustering and marker identification together allow a good understanding of cellular diversity. However, one can run still opt to choose from a plethora of other analysis on the data. For example, identification of cell differentiation trajectories. One of the major challenges to run these analysis could be the size of the data. Scarf performs a topology conserving downsampling of the data based on the cell neighbourhood graph. This downsampling aims to maximize the heterogenity while sampling the cells from the the data. Before the actual subsampling step, two key steps must be performed.
@@ -1675,8 +1675,8 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_b_cluster', legend_onside=Fa
     INFO: Using existing dendrogram
 
 
-    Constructing graph from dendrogram: 100%|██████████| 7647/7647 [00:00<00:00, 78697.42it/s]
-    Identifying nodes to split: 100%|██████████| 7648/7648 [00:00<00:00, 99685.94it/s]
+    Constructing graph from dendrogram: 100%|██████████| 7647/7647 [00:00<00:00, 87836.96it/s]
+    Identifying nodes to split: 100%|██████████| 7648/7648 [00:00<00:00, 91109.82it/s]
 
     INFO: 125 clusters found
 
@@ -1688,7 +1688,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_b_cluster', legend_onside=Fa
 ![png](output_76_4.png)
 
 
-    time: 381 ms
+    time: 380 ms
 
 
 #### So we obtained 307 micro clusters. It is good idea to make sure that small populations are divided into smaller clusters to facilitate comprehensive subsampling of even smaller clusters. The next is to calculate the neighbourhood density of nodes. A degree of a node (i.e. a cell in the graph) is the number of nodes it is connected to, the two  step degree (aka 1 neighbourhood degree)of a cell is the sum of degrees of cells that a cell is connected to. We calculate the two neighbourhood degree of cells to obtain an estimate of how densely connected the cells are in each region of the graph. More densely connected the cells are, the less the heterogeneity across them. These values are saved in the cell metadata table, here as 'RNA_node_density'. We can visualize these values using `plot_layout` method.
@@ -1699,16 +1699,16 @@ ds.calc_node_density(neighbourhood_degree=2)
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_node_density', clip_fraction=0.1, colormap='coolwarm')
 ```
 
-    INFO: Calculating node out degree: 100%|██████████| 7648/7648 [00:01<00:00, 5919.79it/s]
-    INFO: Calculating 1 neighbourhood: 100%|██████████| 7648/7648 [00:01<00:00, 5753.92it/s]
-    INFO: Calculating 2 neighbourhood: 100%|██████████| 7648/7648 [00:01<00:00, 5689.62it/s]
+    INFO: Calculating node out degree: 100%|██████████| 7648/7648 [00:01<00:00, 5399.21it/s]
+    INFO: Calculating 1 neighbourhood: 100%|██████████| 7648/7648 [00:01<00:00, 6011.74it/s]
+    INFO: Calculating 2 neighbourhood: 100%|██████████| 7648/7648 [00:01<00:00, 5883.68it/s]
 
 
 
 ![png](output_78_1.png)
 
 
-    time: 4.74 s
+    time: 4.77 s
 
 
 
@@ -1727,7 +1727,7 @@ ds.cells.table.RNA_b_cluster.value_counts().drop(index=[-1]).plot(kind='hist', b
 ![png](output_79_1.png)
 
 
-    time: 178 ms
+    time: 174 ms
 
 
 #### Now we are ready to perform down-sampling of cells. The extent of down sampling is primarily governed by the number of micro clusters, i.e. atleast 1 cell from each micro-cluster (*seed cells*) will be present in the down sampled data. However, this might not be sufficient to ensure that these will converse the topology, i.e. are connected to each other. Hence, the `run_subsampling` method will run a prize-collecting steiner graph search to ensure that *seed cells* are connected (to the extent that the full graph is connected). In order to do this we need to set a reward on each seed and non-seed cells. This is done using the parameter `rewards` which is provided a tuple with values for seed and non-seed cells. Low reward on seed cells might lead to them being excluded from the subsample (something that we should try to avoid). High reward on non-seed cells will lead to inflation of number of cells in the sample. We also set a value for parameter `seed_frac` which is the fraction of cells that should be randomly sampled from each micro-cluster. This value is dynamically increased to a maximum of double the `seed_frac` value based on the relative mean value of node density for that cluster. Hence, in effect we increase the sampling rate for micro clusters that have lower overall connectivity.
@@ -1743,7 +1743,7 @@ ds.run_subsampling(seed_frac=0.05, rewards=(2, 0), min_nodes=1, min_edge_weight=
     INFO: Downsampling percentage: 16.49%
     INFO: Seed ratio: 2.397
     INFO: Sketched cells saved with keyname 'RNA_sketched'
-    time: 450 ms
+    time: 295 ms
 
 
 #### As a result of subsampling the sub sampled cells are marked True under the cell metadata column `RNA_sketched`. We can visualize these cells using `plot_layout`
@@ -1757,7 +1757,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='
 ![png](output_83_0.png)
 
 
-    time: 804 ms
+    time: 796 ms
 
 
 #### Hereon, we show how to work with non-default assay. Here we have surface protein data present in ADT assay. Let's check out the feature table for this assay.
@@ -1938,7 +1938,7 @@ ds.ADT.feats.table
 
 
 
-    time: 9.55 ms
+    time: 8.46 ms
 
 
 #### We can manually filter out the control antibodies by updating `I` to be False for those features
@@ -2120,7 +2120,7 @@ ds.ADT.feats.table
 
 
 
-    time: 10.3 ms
+    time: 10.8 ms
 
 
 #### Assays named ADT are automatically created as objects of ADTassay class that uses CLR normalization as the default normalization method.
@@ -2133,7 +2133,7 @@ print (ds.ADT.normMethod.__name__)
 
     ADTassay ADT with 14(17) features
     norm_clr
-    time: 50.4 ms
+    time: 37.7 ms
 
 
 #### Now we create a new graph of cells using just the `ADT` data.
@@ -2155,7 +2155,7 @@ ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100, lo
     INFO: No value provided for parameter `bandwidth`. Will use default value: 1.5
 
 
-    Writing data to normed__I__I/data: 100%|██████████| 8/8 [00:00<00:00,  8.77it/s]
+    Writing data to normed__I__I/data: 100%|██████████| 8/8 [00:01<00:00,  6.66it/s]
 
     INFO: Calculating mean of norm. data
     [##                                      ] | 5% Completed |  0.0s
@@ -2168,19 +2168,19 @@ ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100, lo
     [########################################] | 100% Completed |  0.1s
 
 
-    Fitting PCA: 100%|██████████| 8/8 [00:00<00:00, 33.35it/s]
-    Fitting ANN: 100%|██████████| 8/8 [00:00<00:00, 21.05it/s]
-    Fitting kmeans: 100%|██████████| 8/8 [00:00<00:00, 27.32it/s]
-    Estimating seed partitions: 100%|██████████| 8/8 [00:00<00:00, 32.76it/s]
-    Saving KNN graph: 100%|██████████| 8/8 [00:00<00:00, 22.00it/s]
+    Fitting PCA: 100%|██████████| 8/8 [00:00<00:00, 30.54it/s]
+    Fitting ANN: 100%|██████████| 8/8 [00:00<00:00, 21.41it/s]
+    Fitting kmeans: 100%|██████████| 8/8 [00:00<00:00, 27.04it/s]
+    Estimating seed partitions: 100%|██████████| 8/8 [00:00<00:00, 32.30it/s]
+    Saving KNN graph: 100%|██████████| 8/8 [00:00<00:00, 20.26it/s]
 
     INFO: ANN recall: 99.96%
 
 
     
-    Smoothening KNN distances: 100%|██████████| 1/1 [00:00<00:00, 34.46it/s]
+    Smoothening KNN distances: 100%|██████████| 1/1 [00:00<00:00, 31.34it/s]
 
-    time: 2.82 s
+    time: 3.16 s
 
 
     
@@ -2213,7 +2213,7 @@ ds.run_umap(from_assay='ADT', fit_n_epochs=500)
     	completed  70  /  100 epochs
     	completed  80  /  100 epochs
     	completed  90  /  100 epochs
-    time: 24.2 s
+    time: 24.3 s
 
 
 #### One can check concordance between RNA and ADT assays by visualizing the RNA cluster information on ADT data
@@ -2227,7 +2227,7 @@ ds.plot_layout(layout_key='ADT_UMAP', color_by='RNA_cluster')
 ![png](output_95_0.png)
 
 
-    time: 922 ms
+    time: 902 ms
 
 
 #### We can also run the clustering directly on `ADT` graph and visualize it on UMAP
@@ -2246,7 +2246,7 @@ ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_cluster')
 ![png](output_97_1.png)
 
 
-    time: 1.42 s
+    time: 1.12 s
 
 
 #### Or the other way, visualize ADT clusters on RNA UMAP
@@ -2260,7 +2260,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='ADT_cluster')
 ![png](output_99_0.png)
 
 
-    time: 759 ms
+    time: 694 ms
 
 
 #### Individual ADT expression can be visualized in the either UMAP easily
@@ -2279,12 +2279,7 @@ ds.plot_layout(from_assay='ADT', layout_key='RNA_UMAP', color_by='CD3_TotalSeqB'
 ![png](output_101_1.png)
 
 
-    time: 1.96 s
+    time: 1.99 s
 
-
-
-```python
-
-```
 
 ##### End of vignette
