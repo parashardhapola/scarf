@@ -520,8 +520,8 @@ class DataStore:
         knn_loc = self.z[ann_loc].attrs['latest_knn']
         return self.z[knn_loc].attrs['latest_graph']
 
-    def _load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                    min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
+    def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
+                   min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -579,7 +579,7 @@ class DataStore:
             h.write('\n'.join(map(str, ini_emb)))
 
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        export_knn_to_mtx(knn_mtx_fn, self._load_graph(from_assay, cell_key, feat_key, 'csr', symmetric=False))
+        export_knn_to_mtx(knn_mtx_fn, self.load_graph(from_assay, cell_key, feat_key, 'csr', symmetric=False))
 
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
@@ -605,8 +605,8 @@ class DataStore:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
-                                 symmetric=symmetric_graph, upper_only=graph_upper_only)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
+                                symmetric=symmetric_graph, upper_only=graph_upper_only)
         if ini_embed is None:
             ini_embed = self._ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
@@ -629,8 +629,8 @@ class DataStore:
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
 
-        adj = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                               symmetric=symmetric_graph, upper_only=graph_upper_only)
+        adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                              symmetric=symmetric_graph, upper_only=graph_upper_only)
         sources, targets = adj.nonzero()
         g = igraph.Graph()
         g.add_vertices(adj.shape[0])
@@ -672,8 +672,8 @@ class DataStore:
             print("INFO: Using existing dendrogram", flush=True)
         else:
             paris = skn.hierarchy.Paris()
-            graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                     symmetric=symmetric_graph, upper_only=graph_upper_only)
+            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                                    symmetric=symmetric_graph, upper_only=graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self.z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -927,8 +927,8 @@ class DataStore:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                 symmetric=False)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
+                                symmetric=False)
         density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
         self.cells.add(self._col_renamer(from_assay, cell_key, label), density,
                        fill_val=0, key=cell_key, overwrite=True)
@@ -947,8 +947,8 @@ class DataStore:
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-        graph = self._load_graph(from_assay, cell_key, feat_key, 'csr',
-                                 min_edge_weight=min_edge_weight, symmetric=False)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr',
+                                min_edge_weight=min_edge_weight, symmetric=False)
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
