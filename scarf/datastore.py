@@ -692,18 +692,23 @@ class DataStore:
             self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
                            fill_val=-1, key=cell_key, overwrite=True)
 
-    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, threshold: float = 0.25) -> None:
+    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
+                          threshold: float = 0.25) -> None:
+
         from .markers import find_markers_by_rank
 
         if group_key is None:
-            print("INFO: No value provided for group_key. Will autoset `group_key` to 'cluster'", flush=True)
-            group_key = 'cluster'
+            raise ValueError("ERROR: Please provide a value for `group_key`. This should be the name of a column from "
+                             "cell metadata object that has information on how cells should be grouped.")
+        if subset_key is None:
+            subset_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, threshold)
+        markers = find_markers_by_rank(assay, group_key, subset_key, threshold)
         z = self.z[assay.name]
+        slot_name = f"{subset_key}__{group_key}"
         if 'markers' not in z:
             z.create_group('markers')
-        group = z['markers'].create_group(group_key, overwrite=True)
+        group = z['markers'].create_group(slot_name, overwrite=True)
         for i in markers:
             g = group.create_group(i)
             vals = markers[i]
@@ -1132,31 +1137,37 @@ class DataStore:
         plot_cluster_hierarchy(sg, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
                                node_size_expand_factor=node_size_expand_factor, cmap=cmap)
 
-    def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, topn: int = 5,
-                            log_transform: bool = True, vmin: float = -1, vmax: float = 2,
+    def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
+                            topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
                             batch_size: int = None, **heatmap_kwargs):
         from .plots import plot_heatmap
 
         assay = self._get_assay(from_assay)
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key`")
+        if subset_key is None:
+            subset_key = 'I'
         if batch_size is None:
-            batch_size = min(999, int(1e7 / assay.cells.N)) + 1
+            batch_size = min(50, int(1e7 / assay.cells.N)) + 1
         if 'markers' not in self.z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
-        if group_key not in self.z[assay.name]['markers']:
-            raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key`")
-        g = self.z[assay.name]['markers'][group_key]
+        slot_name = f"{subset_key}__{group_key}"
+        if slot_name not in self.z[assay.name]['markers']:
+            raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key` and "
+                           f"{subset_key} as `subset_key`")
+        g = self.z[assay.name]['markers'][slot_name]
         goi = []
         for i in g.keys():
             if 'names' in g[i]:
                 goi.extend(g[i]['names'][:][:topn])
         goi = sorted(set(goi))
+        cell_idx = assay.cells.active_index(subset_key)
         cdf = []
-        for i in np.array_split(goi, len(goi) // batch_size + 1):
+        for i in tqdm(np.array_split(goi, len(goi) // batch_size + 1), desc="INFO: Calculating group mean values"):
             feat_idx = assay.feats.get_idx_by_ids(i)
-            df = pd.DataFrame(assay.normed(feat_idx=feat_idx, log_transform=log_transform).compute(), columns=i)
-            df['cluster'] = assay.cells.fetch(group_key)
+            normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx, log_transform=log_transform)
+            df = pd.DataFrame(calc_computed(normed_data), columns=i)
+            df['cluster'] = assay.cells.fetch(group_key, key=subset_key)
             df = df.groupby('cluster').mean().T
             df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
             cdf.append(df)
