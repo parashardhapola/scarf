@@ -28,3 +28,4 @@ pybedtools
 setuptools
 leidenalg
 python-igraph
+ipython-autotime
