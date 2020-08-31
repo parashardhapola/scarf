@@ -1028,7 +1028,7 @@ class DataStore:
                 vals[vals > max_v] = max_v
         return vals
 
-    def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I', feat_assay: str = None,
+    def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I',
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
@@ -1041,8 +1041,6 @@ class DataStore:
         from .plots import plot_scatter
         if from_assay is None:
             from_assay = self._defaultAssay
-        if feat_assay is None:
-            feat_assay = from_assay
         if layout_key is None:
             raise ValueError("Please provide a value for `layout_key` parameter.")
         if clip_fraction >= 0.5:
@@ -1050,7 +1048,7 @@ class DataStore:
         x = self.cells.fetch(f'{layout_key}1', cell_key)
         y = self.cells.fetch(f'{layout_key}2', cell_key)
         if color_by is not None:
-            v = self.get_cell_vals(from_assay=feat_assay, cell_key=cell_key, k=color_by,
+            v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=color_by,
                                    clip_fraction=clip_fraction)
         else:
             v = np.ones(len(x))
