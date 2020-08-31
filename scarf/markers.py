@@ -1,7 +1,9 @@
+from .assay import Assay
+
 __all__ = ['find_markers_by_rank']
 
 
-def find_markers_by_rank(assay, group_key: str, threshold: float = 0.25) -> dict:
+def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, threshold: float = 0.25) -> dict:
     from numba import jit
     import numpy as np
     import pandas as pd
@@ -18,9 +20,10 @@ def find_markers_by_rank(assay, group_key: str, threshold: float = 0.25) -> dict
     def mean_rank_wrapper(v):
         return calc_mean_rank(v.values)
 
-    indices = assay.cells.fetch(group_key)
+    c_idx = assay.cells.active_index(subset_key)
+    indices = assay.cells.fetch(group_key, subset_key)
     index_set = np.array(sorted(set(indices)))
-    data = assay.normed().T
+    data = assay.normed(cell_idx=c_idx).T
     gene_names = np.split(assay.feats.fetch('ids'), np.cumsum(data.chunks[0]))[:-1]
     results = {x: [] for x in index_set}
     for i, names in tqdm(zip(data.blocks, gene_names), desc='Finding markers', total=data.numblocks[0]):
