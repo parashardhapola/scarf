@@ -932,7 +932,7 @@ ds.make_graph(feat_key='hvgs', k=21, dims=31, n_centroids=100)
 ​    
 ​    Smoothening KNN distances: 100%|██████████| 2/2 [00:02<00:00,  1.05s/it]
 ​    
-    time: 20 s
+​    time: 20 s
 
 
 ​    
@@ -1600,7 +1600,7 @@ ds.plot_cluster_tree(cluster_key='RNA_cluster')
     time: 1.79 s
 
 
-The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As an example, one can observe by looking at the branching pattern that cluster 1 is closer to cluster 8 than it is to cluster 4 since 1 and 8 share parent node but whereas 4 is part of another branch. Cluster 4 is in turn closest to cluster 17. 
+The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As an example, one can observe by looking at the branching pattern that cluster 1 is closer to cluster 8 than it is to cluster 4 since 1 and 8 share parent node whereas 4 is part of another branch. Cluster 4 is in turn closest to cluster 17. 
 
 ### 6) Marker gene identification
 
@@ -2149,7 +2149,7 @@ ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100, lo
 ​    
 ​    Smoothening KNN distances: 100%|██████████| 1/1 [00:00<00:00, 44.80it/s]
 ​    
-    time: 3.12 s
+​    time: 3.12 s
 
 
 ​    
@@ -2232,7 +2232,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='ADT_cluster')
     time: 652 ms
 
 
-Individual ADT expression can be visualized in either UMAP easily.
+Individual ADT expression can be visualized in both UMAPs easily.
 
 
 ```python
