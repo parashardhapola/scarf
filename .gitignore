@@ -5,3 +5,6 @@ data
 build
 scarf.egg-info
 dask-worker-space
+*.ipynb_checkpoints
+*.ipynb
+
