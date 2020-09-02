@@ -14,7 +14,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('../..'))
 
 
 # -- Project information -----------------------------------------------------
@@ -40,6 +40,7 @@ release = ''
 extensions = [
     'nbsphinx',
     'IPython.sphinxext.ipython_console_highlighting',
+    'sphinxcontrib.napoleon',
     'sphinx.ext.autodoc',
     'sphinx.ext.coverage',
     'sphinx.ext.mathjax',
