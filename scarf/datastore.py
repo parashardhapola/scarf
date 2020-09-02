@@ -16,9 +16,13 @@ __all__ = ['DataStore']
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     """
     Test if an assay node in zarr object was created properly
-    :param z: Zarr hierarchy object
-    :param assay_name: string value with name of assay
-    :return: True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
+
+    Args:
+        z: Zarr hierarchy object
+        assay_name: string value with name of assay
+
+    Returns: True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
+
     """
     if assay_name in z:
         if 'counts' not in z[assay_name]:
@@ -31,6 +35,28 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 
 
 class DataStore:
+    """
+    DataStore objects provide primary interface to interact with the data.
+
+    Args:
+        zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                       when DataStore loads a Zarr file for the first time
+        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                               will be filtered out.
+        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                               less than this will be filtered out
+        auto_filter: If True then the auto_filter method will be triggered
+        show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
+                       not have an effect if `auto_filter` is False
+        mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
+        ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+        nthreads: Number of maximum threads to use in all multi-threaded functions
+        dask_client: Dask client object to use instead of creating a new one
+    """
+
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True,
@@ -47,8 +73,8 @@ class DataStore:
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
-        self._defaultAssay = self._set_default_assay(default_assay)
-        self._load_assays(assay_types, min_cells_per_feature)
+        self._defaultAssay = self._load_default_assay(default_assay)
+        self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
         if auto_filter:
@@ -60,11 +86,26 @@ class DataStore:
                 self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
+        """
+        This convenience function loads cellData level from Zarr hierarchy
+
+        Returns:
+            Metadata object
+
+        """
         if 'cellData' not in self.z:
             raise KeyError("ERROR: cellData not found in zarr file")
         return MetaData(self.z['cellData'])
 
     def _get_assay_names(self) -> List[str]:
+        """
+        Load all assay names present in the zarr file. Zarr writers create an 'is_assay' attribute in the assay level
+        and this function looks for presence of those attributes to load assay names.
+
+        Returns:
+            Names of assays present in a Zarr file
+
+        """
         assays = []
         for i in self.z.group_keys():
             if 'is_assay' in self.z[i].attrs.keys():
@@ -72,7 +113,18 @@ class DataStore:
                 assays.append(i)
         return assays
 
-    def _set_default_assay(self, assay_name: str) -> str:
+    def _load_default_assay(self, assay_name: str = None) -> str:
+        """
+        This function sets a given assay name as defaultAssay attribute. If `assay_name` value is None then the
+        top-level directory attributes in the Zarr file are looked up for presence of previously used default assay.
+
+        Args:
+            assay_name: Name of the assay to be considered for setting as default
+
+        Returns:
+            Name of the assay to be set as default assay
+
+        """
         if assay_name is None:
             if 'defaultAssay' in self.z.attrs:
                 assay_name = self.z.attrs['defaultAssay']
@@ -87,7 +139,8 @@ class DataStore:
         else:
             if assay_name in self.assayNames:
                 if 'defaultAssay' in self.z.attrs:
-                    print(f"ATTENTION: Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}")
+                    if assay_name != self.z.attrs['defaultAssay']:
+                        print(f"ATTENTION: Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}")
                 self.z.attrs['defaultAssay'] = assay_name
             else:
                 raise ValueError(f"ERROR: The provided default assay name: {assay_name} was not found. "
@@ -95,14 +148,25 @@ class DataStore:
                                  "Please note that the names are case-sensitive.")
         return assay_name
 
-    def set_default_assay(self, assay_name: str):
-        if assay_name in self.assayNames:
-            self._defaultAssay = assay_name
-            self.z.attrs['defaultAssay'] = assay_name
-        else:
-            raise ValueError(f"ERROR: {assay_name} assay was not found.")
+    def _load_assays(self, min_cells: int, predefined_assays: dict = None) -> None:
+        """
+        This function loads all the assay names present in attribute `assayNames` as Assay objects. An attempt is made
+        to automatically determine the most appropriate Assay class for each assay based on following mapping:
 
-    def _load_assays(self, predefined_assays: dict, min_cells: int) -> None:
+        literal_blocks::
+            {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
+
+        If an assay name does not match any of the keys above then it is assigned as generic assay class. This can be
+        overridden using `predefined_assays` parameter
+
+        Args:
+            predefined_assays: A mapping of assay names to Assay class type to associated with. If
+            min_cells: Minimum number of cells that a feature in each assay must be present to not be discarded (i.e.
+                       receive False value in `I` column)
+
+        Returns:
+        """
+
         assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
         # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "CAUTION: %s was set as a generic Assay with no normalization. If this is unintended " \
@@ -132,15 +196,32 @@ class DataStore:
         return None
 
     def _get_assay(self, from_assay: str) -> Assay:
+        """
+        This is convenience function used internally to quickly obtain the assay object that is linked to a assay name
+
+        Args:
+            from_assay: Name of the assay whose object is to be returned
+
+        Returns:
+
+        """
         if from_assay is None or from_assay == '':
             from_assay = self._defaultAssay
         return self.__getattribute__(from_assay)
 
-    def _get_latest_feat_key(self, from_assay: str) -> str:
-        assay = self._get_assay(from_assay)
-        return assay.attrs['latest_feat_key']
+    def _ini_cell_props(self, min_features: int, mito_pattern: str, ribo_pattern: str) -> None:
+        """
+        This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
+        nFeatures, percentMito and percentRibo. These statistics are then populated into the cell metadata table
 
-    def _ini_cell_props(self, min_features: int, mito_pattern, ribo_pattern) -> None:
+        Args:
+            min_features: Minimum features that a cell must have non-zero value before being filtered out
+            mito_pattern: Regex pattern for identification of mitochondrial genes
+            ribo_pattern: Regex pattern for identification of ribosomal genes
+
+        Returns:
+
+        """
         for from_assay in self.assayNames:
             assay = self._get_assay(from_assay)
 
@@ -175,14 +256,71 @@ class DataStore:
 
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
+        """
+        A convenience function for internal usage that creates naming rule for the metadata columns
+
+        Args:
+            from_assay: name of the assay
+            cell_key: cell key to use
+            suffix: base name for the column
+
+        Returns:
+            column name updated as per the naming rule
+
+        """
         if cell_key == 'I':
             ret_val = '_'.join(list(map(str, [from_assay, suffix])))
         else:
             ret_val = '_'.join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
-    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int],
-                     highs: Iterable[int]) -> None:
+    def get_latest_feat_key(self, from_assay: str) -> str:
+        """
+        Looks up the the value in assay level attributes for key 'latest_feat_key'
+
+        Args:
+            from_assay: Assay whose latest feature is to be returned
+
+        Returns:
+            Name of the latest feature that was used to run `save_normalized_data`
+
+        """
+        assay = self._get_assay(from_assay)
+        return assay.attrs['latest_feat_key']
+
+    def set_default_assay(self, assay_name: str) -> None:
+        """
+        Override default assay
+
+        Args:
+            assay_name: Name of the assay that should be set as default
+
+        Returns:
+
+        Raises:
+            ValueError: if `assay_name` is not found in attribute `assayNames`
+
+        """
+        if assay_name in self.assayNames:
+            self._defaultAssay = assay_name
+            self.z.attrs['defaultAssay'] = assay_name
+        else:
+            raise ValueError(f"ERROR: {assay_name} assay was not found.")
+
+    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int]) -> None:
+        """
+        Filter cells based on the cell metadata column values. Filtering triggers `update` method on  'I' column of
+        cell metadata which uses 'and' operation. This means that cells that are not within the filtering thresholds
+        will have value set as False in 'I' column of cell metadata table
+
+        Args:
+            attrs: Names of columns to be used for filtering
+            lows: Lower bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+            highs: Upper bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+
+        Returns:
+
+        """
         for i, j, k in zip(attrs, lows, highs):
             if i not in self.cells.table.columns:
                 print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
@@ -192,6 +330,20 @@ class DataStore:
             self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
+        """
+        Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
+        determines the threshold values to be used for each column. For each cell metadata column, the function models a
+        normal distribution using the median value and std. dev. of the column and then determines the point estimates
+        of values at `min_p` and `max_p` fraction of densities.
+
+        Args:
+            attrs: column names to be used for filtering
+            min_p: fractional density point to be used for calculating lower bounds of threshold
+            max_p: fractional density point to be used for calculating lower bounds of threshold
+
+        Returns:
+
+        """
         from scipy.stats import norm
 
         for i in attrs:
@@ -204,6 +356,21 @@ class DataStore:
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
+        """
+        This is convenience function to determine the linear dimension reduction method to be used for a given assay.
+        It is uses a predetermine rule to make this determination.
+
+        Args:
+            assay: Assay object
+            reduction_method: name of reduction method to use. It can be one from either: 'pca', 'lsi', 'auto'
+
+        Returns:
+            The name of dimension reduction method to be used. Either 'pca' or 'lsi'
+
+        Raises:
+            ValueError: If `reduction_method` is not one of either 'pca', 'lsi', 'auto'
+
+        """
         reduction_method = reduction_method.lower()
         if reduction_method not in ['pca', 'lsi', 'auto']:
             raise ValueError("ERROR: Please choose either 'pca' or 'lsi' as reduction method")
@@ -220,7 +387,36 @@ class DataStore:
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
                           reduction_method='auto', dims=None, pca_cell_key=None,
                           ann_metric=None, ann_efc=None, ann_ef=None, ann_m=None,
-                          rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None):
+                          rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None) -> tuple:
+        """
+        This function allows determination of values for the paramters of `make_graph` function. This function harbours
+        the default values for each parameter.  If parameter value is None, then before choosing the default, it tries
+        to use the values from latest iteration of the step within the same hierarchy tree.
+        Find details for parameters in the `make_graph` method
+
+        Args:
+            from_assay:
+            cell_key:
+            feat_key:
+            log_transform:
+            renormalize_subset:
+            reduction_method:
+            dims:
+            pca_cell_key:
+            ann_metric:
+            ann_efc:
+            ann_ef:
+            ann_m:
+            rand_state:
+            k:
+            n_centroids:
+            local_connectivity:
+            bandwidth:
+
+        Returns:
+            Finalized values for the all the optional parameters in the same order
+
+        """
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self.z and 'subset_params' in self.z[normed_loc].attrs:
@@ -309,7 +505,7 @@ class DataStore:
                 else:
                     ann_efc = None  # Will be set after value for k is determined
                     print(f'INFO: No value provided for parameter `ann_efc`. Will use default value:'
-                          f' min(max(48, int(dims * 1.5)), 64)', flush=True)
+                          f'min(100, max(k * 3, 50))', flush=True)
             if ann_ef is None:
                 if c_ann_ef is not None:
                     ann_ef = int(c_ann_ef)
@@ -318,7 +514,7 @@ class DataStore:
                 else:
                     ann_ef = None  # Will be set after value for k is determined
                     print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: '
-                          f'min(max(48, int(dims * 1.5)), 64)', flush=True)
+                          f'min(100, max(k * 3, 50))', flush=True)
             if ann_m is None:
                 if c_ann_m is not None:
                     ann_m = int(c_ann_m)
@@ -409,6 +605,80 @@ class DataStore:
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
                    update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
+        """
+        Creates a cell neighbourhood graph. Performs following steps in the process:
+        - Normalizes the data calling the `save_normalized_data` for the assay
+        - instantiates ANNStream class which perform dimension reduction, feature scaling (optional) and fits ANN index
+        - queries ANN index for nearest neighbours and saves the distances and indices of the neighbours
+        - recalculates the distances to bound them into 0 and 1 (check out knn_utils module for details)
+        - saves the indices and distances in sparse graph friendly form
+        - fits a MiniBatch kmeans on the data
+
+        The data for all the steps is saved in the Zarr in the following hierarchy which is organized based on data
+        dependency. Parameter values for each step are incorporated into group names in the hierarchy::
+
+            RNA
+            ├── normed__I__hvgs
+            │   ├── data (7648, 2000) float64                 # Normalized data
+            │   └── reduction__pca__31__I                     # Dimension reduction group
+            │       ├── mu (2000,) float64                    # Means of normalized feature values
+            │       ├── sigma (2000,) float64                 # Std dev. of normalized feature values
+            │       ├── reduction (2000, 31) float64          # PCA loadings matrix
+            │       ├── ann__l2__63__63__48__4466             # ANN group named with ANN parameters
+            │       │   └── knn__21                           # KNN group with value of k in name
+            │       │       ├── distances (7648, 21) float64  # Raw distance matrix for k neighbours
+            │       │       ├── indices (7648, 21) uint64     # Indices for k neighbours
+            │       │       └── graph__1.0__1.5               # sparse graph with continuous form distance values
+            │       │           ├── edges (160608, 2) uint64
+            │       │           └── weights (160608,) float64
+            │       └── kmeans__100__4466                     # Kmeans groups
+            │           ├── cluster_centers (100, 31) float64 # Centroid matrix
+            │           └── cluster_labels (7648,) float64    # Cluster labels for cells
+            ...
+
+
+        The most recent child of each hierarchy node is noted for quick retrieval and in cases where multiple child
+        nodes exist. Parameters starting with `ann` are forwarded to HNSWlib. More details about these parameters can
+        be found here: https://github.com/nmslib/hnswlib/blob/master/ALGO_PARAMS.md
+        
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for graph creation. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            feat_key: Features to use for graph creation. It is a required parameter. We have chosen not to set this
+                      to 'I' by default because this might lead to usage of too many features and may lead to poor
+                      results. The value for `feat_key` should be a column in feature metadata from the `from_assay`
+                      assay and should be boolean type.
+            pca_cell_key: Name of a column from cell metadata table. This column should be boolean type. If no value is
+                          provided then the value is set to same as `cell_key` which means all the cells in the
+                          normalized data will be used for fitting the pca. This parameter, hence, basically provides a
+                          mechanism to subset the normalized data only for PCA fitting step. This parameter can be
+                          useful, for example, the data has cells from multiple replicates which wont merge together, in
+                          which case the `pca_cell_key` can be used to fit PCA on cells from only one of the replicate.
+            reduction_method: Method to use for linear dimension reduction. Could be either 'pca', 'lsi' or 'auto'. In
+                              case of 'auto' `_choose_reduction_method` will be used to determine best reduction type
+                              for the assay.
+            dims: Number of top reduced dimensions to use (Default value: 11)
+            k: Number of nearest neighbours to query for each cell (Default value: 11)
+            ann_metric: Refer to HNSWlib link above (Default value: 'l2')
+            ann_efc: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
+            ann_ef: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
+            ann_m: Refer to HNSWlib link above (Default value: min(max(48, int(dims * 1.5)), 64) )
+            rand_state: Random seed number (Default value: 4466)
+            n_centroids: Number of centroids for Kmeans clustering (Default value: 500)
+            batch_size:
+            log_transform:
+            renormalize_subset:
+            local_connectivity:
+            bandwidth:
+            update_feat_key:
+            return_ann_object:
+            feat_scaling:
+
+        Returns:
+            Either None or `AnnStream` object
+
+        """
         from .ann import AnnStream
 
         if from_assay is None:
@@ -570,7 +840,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
 
         uid = str(uuid4())
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
@@ -604,7 +874,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
                                 symmetric=symmetric_graph, upper_only=graph_upper_only)
         if ini_embed is None:
@@ -627,7 +897,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
 
         adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
                               symmetric=symmetric_graph, upper_only=graph_upper_only)
@@ -653,7 +923,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         if balanced_cut is False:
             if n_clusters is None:
                 raise ValueError("ERROR: Please provide a value for n_clusters parameter. We are working on making "
@@ -694,7 +964,6 @@ class DataStore:
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                           threshold: float = 0.25) -> None:
-
         from .markers import find_markers_by_rank
 
         if group_key is None:
@@ -726,7 +995,7 @@ class DataStore:
 
         source_assay = self._get_assay(from_assay)
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         from_assay = source_assay.name
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
@@ -817,7 +1086,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         if sparse_format not in ['csr', 'coo']:
             raise KeyError("ERROR: `sparse_format` should be either 'coo' or 'csr'")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -830,7 +1099,7 @@ class DataStore:
         for n, i in enumerate(pidx):
             for j in i:
                 ne.append([n_cells + n, j])
-                # TODO:  Better way to weigh the target edges
+                # TODO: Better way to weigh the target edges
                 nw.append(target_weight)
         me = np.vstack([edges, ne]).astype(int)
         mw = np.hstack([weights, nw])
@@ -849,7 +1118,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
 
         graph = self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
         if ini_embed_with == 'kmeans':
@@ -884,7 +1153,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
 
         if ini_embed_with == 'kmeans':
             ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
@@ -931,7 +1200,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
                                 symmetric=False)
         density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
@@ -948,7 +1217,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
@@ -1127,7 +1396,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+            feat_key = self.get_latest_feat_key(from_assay)
         clusts = self.cells.fetch(cluster_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
