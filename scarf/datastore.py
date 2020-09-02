@@ -8,7 +8,7 @@ import dask.array as daskarr
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed, system_call, rescale_array, clean_array
+from .utils import calc_computed, system_call, clean_array
 
 __all__ = ['DataStore']
 
@@ -607,6 +607,7 @@ class DataStore:
                    update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
+
         - Normalizes the data calling the `save_normalized_data` for the assay
         - instantiates ANNStream class which perform dimension reduction, feature scaling (optional) and fits ANN index
         - queries ANN index for nearest neighbours and saves the distances and indices of the neighbours
@@ -636,7 +637,6 @@ class DataStore:
             │           └── cluster_labels (7648,) float64    # Cluster labels for cells
             ...
 
-
         The most recent child of each hierarchy node is noted for quick retrieval and in cases where multiple child
         nodes exist. Parameters starting with `ann` are forwarded to HNSWlib. More details about these parameters can
         be found here: https://github.com/nmslib/hnswlib/blob/master/ALGO_PARAMS.md
@@ -665,15 +665,38 @@ class DataStore:
             ann_ef: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
             ann_m: Refer to HNSWlib link above (Default value: min(max(48, int(dims * 1.5)), 64) )
             rand_state: Random seed number (Default value: 4466)
-            n_centroids: Number of centroids for Kmeans clustering (Default value: 500)
-            batch_size:
-            log_transform:
-            renormalize_subset:
-            local_connectivity:
-            bandwidth:
-            update_feat_key:
-            return_ann_object:
-            feat_scaling:
+            n_centroids: Number of centroids for Kmeans clustering. As a general idication, have a value of 1+ for every
+                         100 cells. Small small (<2000 cells) and very small (<500 cells) use a ballpark number for max
+                         expected number of clusters (Default value: 500). The results of kmeans clustering are only
+                         used to provide initial embedding for UMAP and tSNE. (Default value: 500)
+            batch_size: Number of cells in a batch. This number is guided by number of features being used and the
+                        amount of available free memory. Though the full data is already divided into chunks, however,
+                        if only a fraction of features are being used in the normalized dataset, then the chunk size
+                        can be increased to speed up the computation (i.e. PCA fitting and ANN index building).
+                        (Default value: 1000)
+            log_transform: If True, then the normalized data is log-transformed (only affects RNAassay type assays).
+                           (Default value: True)
+            renormalize_subset: If True, then the data is normalized using only those features that are True in
+                                `feat_key` column rather using total expression of all features in a cell (only affects
+                                RNAassay type assays). (Default value: True)
+            local_connectivity: This parameter is forwarded to `smooth_knn_dist` function from UMAP package. Higher
+                                value will push distribution of edge weights towards terminal values (binary like).
+                                Lower values will accumulate edge weights around the mean produced by `bandwidth`
+                                parameter. (Default value: 1.0)
+            bandwidth: This parameter is forwarded to `smooth_knn_dist` function from UMAP package. Higher value will
+                       push the mean of distribution of graph edge weights towards right.  (Default value: 1.5). Read
+                       more about `smooth_knn_dist` function here:
+                       https://umap-learn.readthedocs.io/en/latest/api.html#umap.umap_.smooth_knn_dist
+            update_feat_key: If True (default) then `latest_feat_key` zarr attribute of the assay will be updated.
+                             Choose False if you are experimenting with a `feat_key` do not want to overide existing
+                             `latest_feat_key` and by extension `latest_graph`.
+            return_ann_object: If True then returns the ANNStream object. This allows one to directly interact with the
+                               PCA transformer and HNSWlib index. Check out ANNStream documentation to know more.
+                               (Default: False)
+            feat_scaling: If True (default) then the feature will be z-scaled otherwise not. It is highly recommended to
+                          keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
+                          when during cross sample mapping using CORAL normalized values are being used. Read more about
+                          this in `run_mapping` method.
 
         Returns:
             Either None or `AnnStream` object
@@ -783,7 +806,19 @@ class DataStore:
             return ann_obj
         return None
 
-    def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str):
+    def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str) -> str:
+        """
+        Convenience function to identify location of latest graph in the Zarr hierarchy.
+
+        Args:
+            from_assay: Name of the assay
+            cell_key: Cell key used to create the graph
+            feat_key: Feature key used to create the graph
+
+        Returns:
+            Path of graph in the Zarr hierarchy
+
+        """
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         reduction_loc = self.z[normed_loc].attrs['latest_reduction']
         ann_loc = self.z[reduction_loc].attrs['latest_ann']
@@ -792,6 +827,23 @@ class DataStore:
 
     def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                    min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
+        """
+        Load the cell neighbourhood as a scipy sparse matrix
+
+        Args:
+            from_assay: Name of the assay/
+            cell_key: Cell key used to create the graph
+            feat_key: Feature key used to create the graph
+            graph_format: Can be either 'csr' or 'coo'.
+            min_edge_weight: Edges with weights less than this value are removed. (Default value: -1)
+            symmetric: If True, makes the graph symmetric by adding it to its transpose. (Default value: False)
+            upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
+                       used when symmetric is True (Default value: True)
+
+        Returns:
+            A scipy sparse matrix representing cell neighbourhood graph.
+
+        """
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -818,8 +870,25 @@ class DataStore:
         else:
             return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
-    def _ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int):
+    def _ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int) -> np.ndarray:
+        """
+        Runs PCA on kmeans cluster centers and ascribes the PC values to individual cells based on their cluster
+        labels. This is used in `run_umap` and `run_tsne` for initial embedding of cells. Uses `rescale_array` to
+        to reduce the magnitude of extreme values.
+
+        Args:
+            from_assay: Name fo the assay for which Kmeans was fit
+            cell_key: Cell key used
+            feat_key: Feature key used
+            n_comps: Number of PC components to use
+
+        Returns:
+            Matrix with n_comps dimensions representing initial embedding of cells.
+
+        """
         from sklearn.decomposition import PCA
+        from .utils import rescale_array
+
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         reduction_loc = self.z[normed_loc].attrs['latest_reduction']
         kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
@@ -833,6 +902,26 @@ class DataStore:
                  tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200,
                  alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.', label: str = 'tSNE',
                  verbose: bool = True) -> None:
+        """
+        
+        Args:
+            sgtsne_loc:
+            from_assay:
+            cell_key:
+            feat_key:
+            tsne_dims:
+            lambda_scale:
+            max_iter:
+            early_iter:
+            alpha:
+            box_h:
+            temp_file_loc:
+            label:
+            verbose:
+
+        Returns:
+
+        """
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
         from pathlib import Path
