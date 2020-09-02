@@ -33,9 +33,6 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
 
 
 def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int = 100000):
-    # bandwidth: Higher value will push the mean of distribution of graph edge weights towards right
-    # local_connectivity: Higher values will create push distribution of edge weights towards terminal values (binary
-    # like) Lower values will accumulate edge weights around the mean produced by bandwidth
     from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 
     n_cells, n_neighbors = z_idx.shape
