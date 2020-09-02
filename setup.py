@@ -7,7 +7,6 @@ def read(fname):
 
 
 if __name__ == "__main__":
-
     CLASSIFIERS = [
         "Development Status :: 4 - Beta",
         "License :: OSI Approved :: BSD License",
@@ -24,7 +23,7 @@ if __name__ == "__main__":
         long_description=read('README.rst'),
         author='Parashar Dhapola',
         author_email='parashar.dhapola@gmail.com',
-        url='https://github.com/karlssonlab/scarf',
+        url='https://github.com/parashardhapola/scarf',
         license='BSD 3-Clause',
         classifiers=CLASSIFIERS,
         keywords=KEYWORDS,
