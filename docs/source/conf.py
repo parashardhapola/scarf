@@ -40,8 +40,9 @@ release = ''
 extensions = [
     'nbsphinx',
     'IPython.sphinxext.ipython_console_highlighting',
-    'sphinxcontrib.napoleon',
     'sphinx.ext.autodoc',
+    'sphinx.ext.napoleon',
+    'sphinx_autodoc_typehints',
     'sphinx.ext.coverage',
     'sphinx.ext.mathjax',
     'sphinx.ext.githubpages',
