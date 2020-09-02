@@ -5,5 +5,5 @@ API
 DataStore
 ---------
 
-.. autoclass:: src.DataStore
+.. autoclass:: scarf.DataStore
     :members:
