@@ -10,8 +10,11 @@ __all__ = ['meld_assay', 'make_bed_from_gff']
 def make_bed_from_gff(gff: str, up_offset: int = 2000,
                       valid_ids: List[str] = None, flavour: str = 'body'):
     """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended"""
-    from pybedtools import BedTool
-    
+    try:
+        from pybedtools import BedTool
+    except ImportError:
+        raise ImportError("pybedtools is not installed. Check out this link to install"
+                          " https://daler.github.io/pybedtools/main.html#install-via-conda")
     out = []
     ignored_genes = 0
     unknown_ids = 0

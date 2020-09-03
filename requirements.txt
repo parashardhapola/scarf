@@ -1,7 +1,5 @@
 logzero
-holoviews
 cmocean
-datashader
 gensim
 sparse
 networkx
@@ -24,8 +22,5 @@ tqdm
 matplotlib
 EoN
 threadpoolctl
-pybedtools
 setuptools
-leidenalg
-python-igraph
 ipython-autotime
