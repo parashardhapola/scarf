@@ -1398,7 +1398,7 @@ class DataStore:
 
         graph = self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
         if ini_embed_with == 'kmeans':
-            ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
+            ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
@@ -1455,7 +1455,7 @@ class DataStore:
             feat_key = self.get_latest_feat_key(from_assay)
 
         if ini_embed_with == 'kmeans':
-            ini_embed = self._ini_embed(from_assay, cell_key, feat_key, 2)
+            ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
