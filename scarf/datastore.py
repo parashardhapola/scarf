@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import List, Iterable, Union
+from typing import List, Iterable, Tuple, Generator
 import pandas as pd
 import zarr
 from tqdm import tqdm
@@ -326,7 +326,7 @@ class DataStore:
                 print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             x = self.cells.sift(self.cells.table[i].values, j, k)
-            print(f"INFO: {len(x) - x.sum()} cells failed filtering for {i}", flush=True)
+            print(f"INFO: {len(x) - x.sum()} cells flagged for filtering out using attribute {i}", flush=True)
             self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
@@ -826,7 +826,7 @@ class DataStore:
         return self.z[knn_loc].attrs['latest_graph']
 
     def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                   min_edge_weight: float = -1, symmetric: bool = False, upper_only: bool = True):
+                   min_edge_weight: float, symmetric: bool, upper_only: bool):
         """
         Load the cell neighbourhood as a scipy sparse matrix
 
@@ -835,10 +835,10 @@ class DataStore:
             cell_key: Cell key used to create the graph
             feat_key: Feature key used to create the graph
             graph_format: Can be either 'csr' or 'coo'.
-            min_edge_weight: Edges with weights less than this value are removed. (Default value: -1)
-            symmetric: If True, makes the graph symmetric by adding it to its transpose. (Default value: False)
+            min_edge_weight: Edges with weights less than this value are removed.
+            symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
-                       used when symmetric is True (Default value: True)
+                       used when symmetric is True
 
         Returns:
             A scipy sparse matrix representing cell neighbourhood graph.
@@ -898,8 +898,8 @@ class DataStore:
         clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
-    def run_tsne(self, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                 symmetric_graph: bool = False, graph_upper_only: bool = True, min_edge_weight: float = -1,
+    def run_tsne(self, *, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                 min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500,
                  early_iter: int = 200, alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.',
                  label: str = 'tSNE', verbose: bool = True) -> None:
@@ -916,9 +916,9 @@ class DataStore:
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
-            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there.
-            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there.
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
+            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
+            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
                        tsne_dims. If not value is provided then the initial embedding is obtained using `get_ini_embed`.
             tsne_dims: Number of tSNE dimensions to compute (Default value: 2)
@@ -948,8 +948,8 @@ class DataStore:
         uid = str(uuid4())
 
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', symmetric=symmetric_graph,
-                                upper_only=graph_upper_only, min_edge_weight=min_edge_weight)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
+                                symmetric_graph, graph_upper_only)
         export_knn_to_mtx(knn_mtx_fn, graph)
 
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
@@ -976,22 +976,23 @@ class DataStore:
             Path.unlink(fn)
 
     def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                 symmetric_graph: bool = False, graph_upper_only: bool = True, min_edge_weight: float = -1,
+                 min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, umap_dims: int = 2, spread: float = 2.0, min_dist: float = 1,
                  fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                  repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
                  random_seed: int = 4444, label='UMAP') -> None:
         """
-        Runs UMAP algorithm using the precomputed cell-neighbourhood graph.
+        Runs UMAP algorithm using the precomputed cell-neighbourhood graph. The calculated UMAP coordinates are saved
+        in the cell metadata table
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
-            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there.
-            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there.
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
+            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
+            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
                        umap_dims. If not value is provided then the initial embedding is obtained using `get_ini_embed`.
             umap_dims: Number of dimensions of UMAP embedding (Default value: 2)
@@ -1032,7 +1033,7 @@ class DataStore:
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
         graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
-                                symmetric=symmetric_graph, upper_only=graph_upper_only)
+                                symmetric_graph, graph_upper_only)
         if ini_embed is None:
             ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
@@ -1046,21 +1047,24 @@ class DataStore:
         return None
 
     def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                              resolution: int = 1, min_edge_weight: float = 0,
+                              resolution: int = 1, min_edge_weight: float = -1,
                               symmetric_graph: bool = True, graph_upper_only: bool = True,
                               label: str = 'leiden_cluster', random_seed: int = 4444) -> None:
         """
+        Executes Leiden graph clustering algorithm on the cell-neighbourhood graph and saves cluster identities in the
+        cell metadata column.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            resolution:
-            min_edge_weight:
-            symmetric_graph:
-            graph_upper_only:
-            label:
-            random_seed:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            resolution: Resolution parameter for `RBConfigurationVertexPartition` configuration
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
+            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
+            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
+            label: base label for cluster identity in the cell metadata column (Default value: 'leiden_cluster')
+            random_seed: (Default value: 4444)
 
         Returns:
 
@@ -1069,7 +1073,8 @@ class DataStore:
             import leidenalg
         except ImportError:
             raise ImportError("ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
-                              "here: https://github.com/vtraag/leidenalg#installation ")
+                              "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
+                              "instead of Leiden clustering using `run_clustering` method")
         import igraph  # python-igraph
 
         if from_assay is None:
@@ -1077,8 +1082,8 @@ class DataStore:
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
 
-        adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                              symmetric=symmetric_graph, upper_only=graph_upper_only)
+        adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
+                              symmetric_graph, graph_upper_only)
         sources, targets = adj.nonzero()
         g = igraph.Graph()
         g.add_vertices(adj.shape[0])
@@ -1091,28 +1096,36 @@ class DataStore:
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                       n_clusters: int = None, min_edge_weight: float = 0, balanced_cut: bool = False,
+                       n_clusters: int = None, min_edge_weight: float = -1, symmetric_graph: bool = True,
+                       graph_upper_only: bool = True, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
-                       return_clusters: bool = False, force_recalc: bool = False,
-                       label: str = 'cluster', symmetric_graph: bool = True,
-                       graph_upper_only: bool = True) -> Union[None, pd.Series]:
+                       force_recalc: bool = False, label: str = 'cluster') -> None:
         """
+        Executes Paris clustering algorithm (https://arxiv.org/pdf/1806.01664.pdf) on the cell-neighbourhood graph.
+        The algorithm captures the multiscale structure of the graph in to an ordinary dendrogram structure. The
+        distances in the dendrogram are are based on probability of sampling node (aka cell) pairs. This methods creates
+        this dendrogram if it doesn't already exits for the graph and induces either a straight cut or balanced cut
+        to obtain clusters of cells.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            n_clusters:
-            min_edge_weight:
-            balanced_cut:
-            max_size:
-            min_size:
-            max_distance_fc:
-            return_clusters:
-            force_recalc:
-            label:
-            symmetric_graph:
-            graph_upper_only:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            n_clusters: Number of desired clusters (required if balanced_cut is False)
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
+            symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
+            graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
+            balanced_cut: If True, then uses the balanced cut algorithm as implemented in ``BalancedCut`` to obtain
+                          clusters (Default value: False)
+            max_size: Same as `max_size` in ``BalancedCut``. The limit for a maximum number of cells in a cluster.
+                      This parameter value is required if `balanced_cut` is True.
+            min_size: Same as `min_size` in ``BalancedCut``. The limit for a minimum number of cells in a cluster.
+                      This parameter value is required if `balanced_cut` is True.
+            max_distance_fc:  Same as `max_distance_fc` in ``BalancedCut``. The threshold of ratio of distance between
+                              two clusters beyond which they will not be merged. (Default value: 2)
+            force_recalc: Forces recalculation of dendrogram even if one already exists for the graph
+            label: Base label for cluster identity in the cell metadata column (Default value: 'cluster')
 
         Returns:
 
@@ -1141,8 +1154,8 @@ class DataStore:
             print("INFO: Using existing dendrogram", flush=True)
         else:
             paris = skn.hierarchy.Paris()
-            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                    symmetric=symmetric_graph, upper_only=graph_upper_only)
+            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
+                                    symmetric_graph, graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self.z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -1155,22 +1168,25 @@ class DataStore:
             print(f"INFO: {len(set(labels))} clusters found", flush=True)
         else:
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
-        if return_clusters:
-            return pd.Series(labels, index=self.cells.table[cell_key].index[self.cells.table[cell_key]])
-        else:
-            self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
-                           fill_val=-1, key=cell_key, overwrite=True)
+        self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
+                       fill_val=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                           threshold: float = 0.25) -> None:
         """
+        Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
+        for further details of how marker features for groups are identified. The results are saved into the Zarr
+        hierarchy under `markers` group.
 
         Args:
-            from_assay:
-            group_key:
-            subset_key:
-            threshold:
-
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
+                       how the cells will be grouped. Usually this would be a column denoting cell clusters.
+            subset_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table.
+            threshold: This value dictates how specific the feature value has to be in a group before it is considered a
+                       marker for that group. The value has to be greater than 0 but less than or equal to 1
+                       (Default value: 0.25)
         Returns:
 
         """
@@ -1200,24 +1216,42 @@ class DataStore:
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
                     ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = False,
-                    filter_null: bool = False, exclude_missing: bool = False, feat_scaling: bool = True):
+                    exclude_missing: bool = False,  filter_null: bool = False, feat_scaling: bool = True) -> None:
         """
+        Projects cells from external assays into the cell-neighbourhood graph using existing PCA loadings and ANN index.
+        For each external cell (target) nearest neighbours are identified and save within the Zarr hierarchy group
+        `projections`.
 
         Args:
-            target_assay:
-            target_name:
-            target_feat_key:
-            from_assay:
-            cell_key:
-            feat_key:
-            save_k:
-            batch_size:
-            ref_mu:
-            ref_sigma:
-            run_coral:
-            filter_null:
-            exclude_missing:
-            feat_scaling:
+            target_assay: Assay object of the target dataset
+            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            target_feat_key: This will used to name wherein the normalized target data will be saved in its own
+                             zarr hierarchy.
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            save_k: Number of nearest numbers to identify for each target cell (Default value: 3)
+            batch_size: Number of cells that will be projected as a batch. This used to decide the chunk size when
+                        normalized data for the target cells is saved to disk.
+            ref_mu: If True (default), Then mean values of features as in the reference are used,
+                    otherwise mean is calculated using target cells. Turning this to False is not recommended.
+            ref_sigma: If True (default), Then standard deviation values of features as present in the reference are
+                       used, otherwise std. dev. is calculated using target cells. Turning this to False is not
+                       recommended.
+            run_coral: If True then CORAL feature rescaling algorithm is used to correct for domain shift in target
+                       cells. Read more about CORAL algorithm in function ``coral``. This algorithm creates a m by m
+                       matrix where m is the number of features being used for mapping; so it is not advised to use this
+                       in a case where a large number of features are being used (>10k for example).
+                       (Default value: False)
+            exclude_missing: If set to True then only those features that are present in both reference and
+                             target are used. If not all reference features from `feat_key` are present in target data
+                             then a new graph will be created for reference and mapping will be done onto that graph.
+                             (Default value: False)
+            filter_null: If True then those features that have a total sum of 0 in the target cells are removed.
+                         This has an affect only when `exclude_missing` is True. (Default value: False)
+            feat_scaling: If False then features from target cells are not scaled. This is automatically set to False
+                          if `run_coral` is True (Default value: True). Setting this to False is not recommended.
 
         Returns:
 
@@ -1276,17 +1310,26 @@ class DataStore:
             entry_start = entry_end
         return None
 
-    def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None,
-                          from_assay: str = None, cell_key: str = 'I') -> np.ndarray:
+    def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None, from_assay: str = None,
+                          cell_key: str = 'I', log_transform: bool = True,
+                          multiplier: float = 1000) -> Generator[Tuple[str, np.ndarray], None, None]:
         """
+        Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
+        The more often a reference cell is found in the nearest neighbour list of the target cells, the higher will be
+        the mapping score for that cell.
 
         Args:
-            target_name:
-            target_groups:
-            from_assay:
-            cell_key:
+            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            target_groups: Group/cluster identity of target cells. This will then be used to calculate mapping score
+                           for each group separately.
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            log_transform: If True (default) then the mapping scores will be log transformed
+            multiplier: A scaling factor for mapping scores. All scores al multiplied this value. This mostly intended
+                        for visualization of mapping scores (Default: 1000)
 
-        Returns:
+        Yields:
+            A tuple of group name and mapping score of reference cells for that target group.
 
         """
         if from_assay is None:
@@ -1299,6 +1342,7 @@ class DataStore:
 
         indices = store['indices'][:]
         dists = store['distances'][:]
+        # TODO: add more robust options for distance calculation here
         dists = 1 / (np.log1p(dists) + 1)
         n_cells = indices.shape[0]
 
@@ -1318,21 +1362,27 @@ class DataStore:
                 if n in coi:
                     for x, y in zip(i, j):
                         ms[x] += y
-            ms = np.log1p(1000 * ms / len(coi))
+            ms = multiplier * ms / len(coi)
+            if log_transform:
+                ms = np.log1p(ms)
             yield group, ms
 
-    def _load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
-                            sparse_format: str = 'coo'):
+    def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
+                           sparse_format: str = 'coo'):
         """
+        This is similar to ``load_graph`` but includes projected cells and their edges.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            target_name:
-            use_k:
-            target_weight:
-            sparse_format:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+                   than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
+                   'save_k'
+            target_weight: A constant uniform weight to be ascribed to each target-reference edge.
+            sparse_format: Format for sparse graph. Can be either 'coo' (default) or 'csr'
 
         Returns:
 
@@ -1396,7 +1446,7 @@ class DataStore:
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
 
-        graph = self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
+        graph = self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
         if ini_embed_with == 'kmeans':
             ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
@@ -1469,7 +1519,7 @@ class DataStore:
         del ini_embed
 
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        export_knn_to_mtx(knn_mtx_fn, self._load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
+        export_knn_to_mtx(knn_mtx_fn, self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
                                                                target_weight, sparse_format='csr'))
 
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
@@ -1513,8 +1563,7 @@ class DataStore:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight=min_edge_weight,
-                                symmetric=False)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight, False, False)
         density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
         self.cells.add(self._col_renamer(from_assay, cell_key, label), density,
                        fill_val=0, key=cell_key, overwrite=True)
@@ -1553,8 +1602,7 @@ class DataStore:
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr',
-                                min_edge_weight=min_edge_weight, symmetric=False)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight, False, False)
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
