@@ -1417,24 +1417,49 @@ class DataStore:
 
     def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                          use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
-                         fit_n_epochs: int = 200, tx_n_epochs: int = 100, random_seed: int = 4444,
-                         ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
+                         fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
+                         repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
+                         random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
         """
 
         Args:
-            target_name:
-            from_assay:
-            cell_key:
-            feat_key:
-            use_k:
-            target_weight:
-            spread:
-            min_dist:
-            fit_n_epochs:
-            tx_n_epochs:
-            random_seed:
-            ini_embed_with:
-            label:
+            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+                   than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
+                   'save_k'
+            target_weight: A constant uniform weight to be ascribed to each target-reference edge.
+            spread: Same as spread in UMAP package.  The effective scale of embedded points. In combination with
+                    ``min_dist`` this determines how clustered/clumped the embedded points are.
+            min_dist: Same as min_dist in UMAP package. The effective minimum distance between embedded points.
+                      Smaller values will result in a more clustered/clumped embedding where nearby points on the
+                      manifold are drawn closer together, while larger values will result on a more even dispersal of
+                      points. The value should be set relative to the ``spread`` value, which determines the scale at
+                      which embedded points will be spread out. (Default value: 1)
+            fit_n_epochs: Same as n_epochs in UMAP package. The number of training epochs to be used in optimizing the
+                          low dimensional embedding. Larger values result in more accurate embeddings.
+                          (Default value: 200)
+            tx_n_epochs: NUmber of epochs during transform (Default value: 100)
+            set_op_mix_ratio: Same as set_op_mix_ratio in UMAP package. Interpolate between (fuzzy) union and
+                              intersection as the set operation used to combine local fuzzy simplicial sets to obtain
+                              a global fuzzy simplicial sets. Both fuzzy set operations use the product t-norm.
+                              The value of this parameter should be between 0.0 and 1.0; a value of 1.0 will use a
+                              pure fuzzy union, while 0.0 will use a pure fuzzy intersection.
+            repulsion_strength: Same as repulsion_strength in UMAP package. Weighting applied to negative samples in
+                                low dimensional embedding optimization. Values higher than one will result in greater
+                                weight being given to negative samples. (Default value: 1.0)
+            initial_alpha: Same as learning_rate in UMAP package. The initial learning rate for the embedding
+                           optimization. (Default value: 1.0)
+            negative_sample_rate: Same as negative_sample_rate in UMAP package. The number of negative samples to
+                                  select per positive sample in the optimization process. Increasing this value will
+                                  result in greater repulsive force being applied, greater optimization cost, but
+                                  slightly more accuracy. (Default value: 5)
+            random_seed: (Default value: 4444)
+            ini_embed_with: either 'kmeans' or a column from cell metatdata to be used as initial embedding coordinates
+            label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
 
         Returns:
 
@@ -1445,7 +1470,6 @@ class DataStore:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
-
         graph = self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
         if ini_embed_with == 'kmeans':
             ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
@@ -1455,9 +1479,11 @@ class DataStore:
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
         pidx = self.z[from_assay].projections[target_name].indices[:, 0]
         ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
-        t = fit_transform(graph, ini_embed, spread=spread, min_dist=min_dist,
+        t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
-                          random_seed=random_seed, parallel=False)
+                          random_seed=random_seed, set_op_mix_ratio=set_op_mix_ratio,
+                          repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
+                          negative_sample_rate=negative_sample_rate)
         g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
         g[:] = t
         label = f"{label}_{target_name}"
