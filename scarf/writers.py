@@ -3,6 +3,10 @@ from typing import Any, Tuple, List
 import numpy as np
 from tqdm import tqdm
 from .readers import CrReader
+from .assay import Assay
+import os
+import pandas as pd
+
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
            'subset_assay_zarr', 'dask_to_zarr']
@@ -93,3 +97,106 @@ def dask_to_zarr(df, z, loc, chunk_size, msg: str = None):
         og[pos_start:pos_end, :] = i.compute()
         pos_start = pos_end
     return None
+
+
+class ZarrMerge:
+
+    def __init__(self, zarr_path: str, assays: List[Assay], names: List[str], merge_assay_name: str,
+                 chunk_size=(1000, 1000),
+                 dtype: str = 'uint32', overwrite: bool = False):
+        self.assays = assays
+        self.names = names
+        self.mergedCells = self._merge_cell_table()
+        self.nCells = self.mergedCells.shape[0]
+        self.featCollection = self._get_feat_ids(assays)
+        self.mergedFeats = self._merge_order_feats()
+        self.nFeats = self.mergedFeats.shape[0]
+        self.featOrder = self._ref_order_feat_idx()
+        self.z = self._use_existing_zarr(zarr_path, merge_assay_name, overwrite)
+        self._ini_cell_data()
+        self.assayGroup = create_zarr_count_assay(
+            self.z['/'], merge_assay_name, chunk_size, self.nCells, list(self.mergedFeats.index),
+            list(self.mergedFeats.names.values), dtype
+        )
+
+    def _merge_cell_table(self):
+        ret_val = []
+        if len(self.assays) != len(set(self.names)):
+            raise ValueError("ERROR: A unique name should be provided for each of the assay")
+        for assay, name in zip(self.assays, self.names):
+            a = assay.cells.table[['names']].copy()
+            a['ids'] = [f"{name}__{x}" for x in assay.cells.table['ids']]
+            ret_val.append(a)
+        return pd.concat(ret_val).reset_index().drop(columns='index')
+
+    @staticmethod
+    def _get_feat_ids(assays):
+        ret_val = []
+        for i in assays:
+            ret_val.append(i.feats.table[['names', 'ids']].set_index('ids')['names'].to_dict())
+        return ret_val
+
+    def _merge_order_feats(self):
+        union_set = {}
+        for ids in self.featCollection:
+            for i in ids:
+                if i not in union_set:
+                    union_set[i] = ids[i]
+        return pd.DataFrame({'idx': range(len(union_set)),
+                             'names': list(union_set.values()),
+                             'ids': list(union_set.keys())}).set_index('ids')
+
+    def _ref_order_feat_idx(self):
+        ret_val = []
+        for ids in self.featCollection:
+            ret_val.append(self.mergedFeats['idx'].reindex(ids).values)
+        return ret_val
+
+    def _use_existing_zarr(self, zarr_path, merge_assay_name, overwrite):
+        try:
+            z = zarr.open(zarr_path, mode='r')
+            if 'cellData' not in z:
+                raise ValueError(
+                    f"ERROR: Zarr file with name {zarr_path} exists but seems corrupted. Either delete the "
+                    "existing file or choose another path")
+            if merge_assay_name in z:
+                if overwrite is False:
+                    raise ValueError(
+                        f"ERROR: Zarr file `{zarr_path}` already contains {merge_assay_name} assay. Choose "
+                        "a different zarr path or a different assay name. Otherwise set overwrite to True")
+            try:
+                if not all(z['cellData']['ids'][:] == self.mergedCells['ids'].values):
+                    raise ValueError(f"ERROR: order of cells does not match the one in exisitng file: {zarr_path}")
+            except KeyError:
+                raise ValueError(f"ERROR: 'cell data' in Zarr file {zarr_path} seems corrupted. Either delete the "
+                                 "existing file or choose another path")
+
+            return zarr.open(zarr_path, mode='r+')
+        except ValueError:
+            # So no zarr file with same name exists. Check if a non zarr folder with the same name exists
+            if os.path.exists(zarr_path):
+                raise ValueError(
+                    f"ERROR: Directory/file with name `{zarr_path}`exists. Either delete it or use another name")
+            # creating a new zarr file
+            return zarr.open(zarr_path, mode='w')
+
+    def _ini_cell_data(self):
+        if 'cellData' not in self.z:
+            g = self.z.create_group('cellData')
+            create_zarr_obj_array(g, 'ids', list(self.mergedCells['ids'].values))
+            create_zarr_obj_array(g, 'names', list(self.mergedCells['names']))
+            create_zarr_obj_array(g, 'I', [True for _ in range(self.mergedCells.shape[0])], 'bool')
+        else:
+            print("INFO: cellData already exists so skipping _ini_cell_data", flush=True)
+
+    def write(self):
+        ncells, nfeats = self.mergedCells.shape[0], self.mergedFeats.shape[0]
+        pos_start, pos_end = 0, 0
+        for assay, feat_order in zip(self.assays, self.featOrder):
+            for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
+                          desc=f"Writing aligned normed target data to "):
+                pos_end += i.shape[0]
+                a = np.ones((i.shape[0], nfeats))
+                a[:, feat_order] = i.compute()
+                self.assayGroup[pos_start:pos_end, :] = a
+                pos_start = pos_end
