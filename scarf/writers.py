@@ -3,13 +3,12 @@ from typing import Any, Tuple, List
 import numpy as np
 from tqdm import tqdm
 from .readers import CrReader
-from .assay import Assay
 import os
 import pandas as pd
-
+# from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr']
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -101,9 +100,8 @@ def dask_to_zarr(df, z, loc, chunk_size, msg: str = None):
 
 class ZarrMerge:
 
-    def __init__(self, zarr_path: str, assays: List[Assay], names: List[str], merge_assay_name: str,
-                 chunk_size=(1000, 1000),
-                 dtype: str = 'uint32', overwrite: bool = False):
+    def __init__(self, zarr_path: str, assays: list, names: List[str], merge_assay_name: str,
+                 chunk_size=(1000, 1000), dtype: str = 'uint32', overwrite: bool = False):
         self.assays = assays
         self.names = names
         self.mergedCells = self._merge_cell_table()
@@ -165,12 +163,11 @@ class ZarrMerge:
                         f"ERROR: Zarr file `{zarr_path}` already contains {merge_assay_name} assay. Choose "
                         "a different zarr path or a different assay name. Otherwise set overwrite to True")
             try:
-                if not all(z['cellData']['ids'][:] == self.mergedCells['ids'].values):
-                    raise ValueError(f"ERROR: order of cells does not match the one in exisitng file: {zarr_path}")
+                if not all(z['cellData']['ids'][:] == np.array(self.mergedCells['ids'].values)):
+                    raise ValueError(f"ERROR: order of cells does not match the one in existing file: {zarr_path}")
             except KeyError:
                 raise ValueError(f"ERROR: 'cell data' in Zarr file {zarr_path} seems corrupted. Either delete the "
                                  "existing file or choose another path")
-
             return zarr.open(zarr_path, mode='r+')
         except ValueError:
             # So no zarr file with same name exists. Check if a non zarr folder with the same name exists
@@ -190,13 +187,12 @@ class ZarrMerge:
             print("INFO: cellData already exists so skipping _ini_cell_data", flush=True)
 
     def write(self):
-        ncells, nfeats = self.mergedCells.shape[0], self.mergedFeats.shape[0]
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
                           desc=f"Writing aligned normed target data to "):
                 pos_end += i.shape[0]
-                a = np.ones((i.shape[0], nfeats))
+                a = np.ones((i.shape[0], self.nFeats))
                 a[:, feat_order] = i.compute()
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end
