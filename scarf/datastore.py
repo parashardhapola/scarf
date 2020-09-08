@@ -768,6 +768,7 @@ class DataStore:
                             scale_features=feat_scaling)
 
         if loadings is None:
+            print(f"INFO: Saving loadings to {reduction_loc} ...", flush=True, end='')
             self.z.create_group(reduction_loc, overwrite=True)
             g = create_zarr_dataset(self.z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
@@ -776,16 +777,21 @@ class DataStore:
                 g[:] = mu
                 g = create_zarr_dataset(self.z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
                 g[:] = sigma
+            print(f" Done", flush=True)
         if ann_loc not in self.z:
+            print(f"INFO: Saving ANN index to {ann_loc} ...", flush=True, end='')
             self.z.create_group(ann_loc, overwrite=True)
             ann_obj.annIdx.save_index(ann_idx_loc)
+            print(f" Done", flush=True)
         if fit_kmeans:
+            print(f"INFO: Saving kmeans clusters to {kmeans_loc} ...", flush=True, end='')
             self.z.create_group(kmeans_loc, overwrite=True)
             g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_centers',
                                     (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
             g[:, :] = ann_obj.kmeans.cluster_centers_
             g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_labels', (100000,), 'f8', ann_obj.clusterLabels.shape)
             g[:] = ann_obj.clusterLabels
+            print(f" Done", flush=True)
 
         if knn_loc in self.z and graph_loc in self.z:
             print(f"INFO: KNN graph already exists will not recompute.", flush=True)
@@ -946,7 +952,6 @@ class DataStore:
             feat_key = self.get_latest_feat_key(from_assay)
 
         uid = str(uuid4())
-
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
         graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
                                 symmetric_graph, graph_upper_only)
@@ -1285,7 +1290,7 @@ class DataStore:
         target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
         if run_coral is True:
             # Reversing coral here to correct target data
-            coral(target_data, ann_obj.data, target_assay, target_feat_key)
+            coral(target_data, ann_obj.data, target_assay, target_feat_key, self.nthreads)
             target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
@@ -1421,6 +1426,8 @@ class DataStore:
                          repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
                          random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
         """
+        Calculates the UMAP embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
+        the same way as the graph as in ``run_umap``
 
         Args:
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
@@ -1458,7 +1465,7 @@ class DataStore:
                                   result in greater repulsive force being applied, greater optimization cost, but
                                   slightly more accuracy. (Default value: 5)
             random_seed: (Default value: 4444)
-            ini_embed_with: either 'kmeans' or a column from cell metatdata to be used as initial embedding coordinates
+            ini_embed_with: either 'kmeans' or a column from cell metadata to be used as initial embedding coordinates
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
 
         Returns:
@@ -1499,24 +1506,33 @@ class DataStore:
                          box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
                          ini_embed_with: str = 'kmeans', label: str = 'tSNE'):
         """
+        Calculates the tSNE embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
+        the same way as the graph as in ``run_tsne``
 
         Args:
-            sgtsne_loc:
-            target_name:
-            from_assay:
-            cell_key:
-            feat_key:
-            use_k:
-            target_weight:
-            lambda_scale:
-            max_iter:
-            early_iter:
-            alpha:
-            box_h:
-            temp_file_loc:
-            verbose:
-            ini_embed_with:
-            label:
+            sgtsne_loc: Location of sgtSNE binary
+            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+                   than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
+                   'save_k'
+            target_weight: A constant uniform weight to be ascribed to each target-reference edge.
+            lambda_scale: λ rescaling parameter (Default value: 1.0)
+            max_iter: Maximum number of iterations (Default value: 500)
+            early_iter: Number of early exaggeration iterations (Default value: 200)
+            alpha: Early exaggeration multiplier (Default value: 10)
+            box_h: Grid side length (accuracy control). Lower values might drastically slow down
+                   the algorithm (Default value: 0.7)
+            temp_file_loc: Location of temporary file. By default these files will be created in the current working
+                           directory. These files are deleted before the method returns.
+            verbose: If True (default) then the full log from SGtSNEpi algorithm is shown.
+            ini_embed_with: Initial embedding coordinates for the cells in cell_key. Should have same number of columns
+                            as tsne_dims. If not value is provided then the initial embedding is obtained using
+                            `get_ini_embed`
+            label: base label for tSNE dimensions in the cell metadata column (Default value: 'tSNE')
 
         Returns:
 
@@ -1543,11 +1559,9 @@ class DataStore:
         with open(ini_emb_fn, 'w') as h:
             h.write('\n'.join(map(str, ini_embed.flatten())))
         del ini_embed
-
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
         export_knn_to_mtx(knn_mtx_fn, self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
-                                                               target_weight, sparse_format='csr'))
-
+                                                              target_weight, sparse_format='csr'))
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
         cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
@@ -1555,7 +1569,6 @@ class DataStore:
             system_call(cmd)
         else:
             os.system(cmd)
-
         t = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values
         g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
         g[:] = t
@@ -1571,14 +1584,21 @@ class DataStore:
     def calc_node_density(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           min_edge_weight: float = -1, neighbourhood_degree=2, label: str = 'node_density'):
         """
+        Calculates the density of each node in the cell-cell neighbourhood graph. If the value of `neighbourhood_degree`
+        is 0 node density is simply in degree of each node in the cell-cell neighbourhood graph (KNN graph) calculated
+        by ``make_graph``. For values greater than 1 node density represents neighbourhood degree. For example, when
+        `neighbourhood_degree` = 1, node density of a node is the sum indegree of all its adjacent nodes i.e. nodes that
+        are at distance of 1. With increasing value of `neighbourhood_degree`, neighbours further away from each node
+        included.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            min_edge_weight:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
             neighbourhood_degree:
-            label:
+            label: base label for saving values into a cell metadata column (Default value: 'node_density')
 
         Returns:
 
@@ -1600,21 +1620,29 @@ class DataStore:
                         dynamic_seed_frac: bool = True, min_nodes: int = 3, rewards: tuple = (3, 0.1),
                         rand_state: int = 4466, return_vals: bool = False, label: str = 'sketched'):
         """
+        Perform sub-sampling (aka sketching) of cells using the cell-cell neighbourhood graph. Sub-sampling required that
+        that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
+        large number of homogeneous and even sized cluster improves sub-sampling results.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            cluster_key:
-            density_key:
-            min_edge_weight:
-            seed_frac:
-            dynamic_seed_frac:
-            min_nodes:
-            rewards:
-            rand_state:
-            return_vals:
-            label:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            cluster_key: Name of the column in cell metadata table where cluster information is stored.
+            density_key: Name of the column in cell metadata table where neighbourhood density values are stored.
+                         Only required if `dynamic_seed_frac` is True.
+            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
+            seed_frac: Fraction of cells to be sampled from each cluster. Should be greater than 0 and less than 1.
+                       (Default value: 0.05)
+            dynamic_seed_frac: if True, then dynamic sampling rate rate will be used. Dynamic sampling takes the mean
+                               node density into account while sampling cells from each cluster (default value: True)
+            min_nodes: Minimum number of nodes to be sampled from each cluster. (Default value: 3)
+            rewards: Reward values for seed and non-seed nodes. A tuple of two values is provided, first for seed nodes
+                     and second for non-seed nodes. (Default value: (3, 0.1))
+            rand_state: A random values to set seed while sampling cells from a cluster randomly.
+            return_vals: If True, then steiner nodes and edges are returned. (Default value: False)
+            label: base label for saving values into a cell metadata column (Default value: 'sketched')
 
         Returns:
 
@@ -1657,6 +1685,54 @@ class DataStore:
         print(f"INFO: Sketched cells saved with keyname '{key}'")
         if return_vals:
             return steiner_nodes, steiner_edges
+
+    def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
+                  random_seed: int = 4466) -> pd.DataFrame:
+        """
+        Merge data from cells to create a bulk profile.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            group_key: Name of the column in cell metadata table to be used for grouping cells.
+            pseudo_reps: Within each group, cells will randomly be split into `pseudo_reps` partitions. Each partition
+                         is considered a pseudo-replicate. (Default value: 3)
+            null_vals: Values to be considered as missing values in the `group_key` column. These values will be
+            random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
+
+        Returns:
+
+        """
+
+        def make_reps(v, n_reps: int, seed: int):
+            v = list(v)
+            np.random.seed(seed)
+            shuffled_idx = np.random.choice(v, len(v), replace=False)
+            rep_idx = np.array_split(shuffled_idx, n_reps)
+            return [sorted(x) for x in rep_idx]
+
+        if pseudo_reps < 1:
+            pseudo_reps = 1
+        if null_vals is None:
+            null_vals = [-1]
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay = self._get_assay(from_assay)
+        if group_key is None:
+            raise ValueError("ERROR: Please provide a value for `group_key` parameter")
+        groups = self.cells.table[group_key]
+
+        vals = {}
+        for g in tqdm(sorted(set(groups))):
+            if g in null_vals:
+                continue
+            rep_indices = make_reps(groups[groups == g].index, pseudo_reps, random_seed)
+            for n, idx in enumerate(rep_indices):
+                vals[f"{g}_Rep{n + 1}"] = assay.rawData[idx].sum(axis=0).compute()
+        vals = pd.DataFrame(vals)
+        vals = vals[(vals.sum(axis=1) != 0)]
+        vals['names'] = assay.feats.table.names.reindex(vals.index).values
+        vals.index = assay.feats.table.ids.reindex(vals.index).values
+        return vals
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, all_cells: bool = False, **kwargs):
         """
@@ -1769,6 +1845,8 @@ class DataStore:
         Returns:
 
         """
+        # TODO: add support for subplots
+
         from .plots import plot_scatter
         if from_assay is None:
             from_assay = self._defaultAssay
