@@ -5,7 +5,7 @@ Scarf
     :maxdepth: 2
 
     install
-    examples
+    vignettes
     faq
     api
     license
