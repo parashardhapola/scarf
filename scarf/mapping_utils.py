@@ -13,19 +13,21 @@ def _cov_diaged(da: daskarr) -> daskarr:
     return a + np.eye(a.shape[0])
 
 
-def _correlation_alignment(s: daskarr, t: daskarr) -> daskarr:
+def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
     from scipy.linalg import fractional_matrix_power as fmp
     from .utils import calc_computed
+    from threadpoolctl import threadpool_limits
 
     s_cov = calc_computed(_cov_diaged(s), f"CORAL: Computing source covariance")
     t_cov = calc_computed(_cov_diaged(t), f"CORAL: Computing target covariance")
     print("INFO: Calculating fractional power of covariance matrices. This might take a while... ", flush=True, end='')
-    a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))
+    with threadpool_limits(limits=nthreads):
+        a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))
     print("Done", flush=True)
     return daskarr.dot(s, a_coral)
 
 
-def coral(source_data, target_data, assay, feat_key):
+def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     from .writers import dask_to_zarr
     from .utils import clean_array, calc_computed
 
@@ -33,7 +35,7 @@ def coral(source_data, target_data, assay, feat_key):
     sd = clean_array(calc_computed(source_data.std(axis=0), 'INFO: (CORAL) Calculating source feature stdev'), 1)
     tm = clean_array(calc_computed(target_data.mean(axis=0), 'INFO: (CORAL) Calculating target feature means'))
     td = clean_array(calc_computed(target_data.std(axis=0), 'INFO: (CORAL) Calculating target feature stdev'), 1)
-    data = _correlation_alignment((source_data - sm) / sd, (target_data - tm) / td)
+    data = _correlation_alignment((source_data - sm) / sd, (target_data - tm) / td, nthreads)
     dask_to_zarr(data, assay.z['/'], f"{assay.name}/normed__I__{feat_key}/data_coral", 1000,
                  msg="Writing out coral corrected data")
 
