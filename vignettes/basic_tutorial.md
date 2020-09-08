@@ -10,14 +10,14 @@ import scarf
 
 
 ```python
-cd ../../../data/
+cd ../../data/
 ```
 
 Download data from 10x's website.
 
 ```python
-wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
-mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
+# !wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
+# !mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
 ```
 
 ### 1) Format conversion
@@ -170,7 +170,7 @@ The graph calculated by `make_graph` can be easily loaded using `load_graph` met
 Because Scarf saves all the intermediate data, it might be the case that a lot of graphs are stored in Zarr hierachy. `load_graph` will load only the latest graph that was computed (for the given assay, cell key and feat key). 
 
 ```python
-ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr')
+ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr', min_edge_weight=-1, symmetric=False, upper_only=False)
 ```
 The location of the latest graph can be accessed by `_get_latest_graph_loc` method. The latest graph location is set using the parameters used in the latest call to `make_graph`. If one needs to set the latest graph to one that was previously calculated then one needs to call `make_graph` with the corresponding parameters.
 
@@ -229,7 +229,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 There has been a lot of discussion over the choice of non-linear dimension reduction for single-cell data. tSNE was initially considered an excellent solution but has gradually lost out to UMAP because the magnitude of relation between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE as were used for UMAP, i.e. the first two (in case of 2D) PC axis of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in the 1M cell vignette, using tSNE can be better at visually accessing the extent of heterogeneity than UMAP. The biggest reason, however to run Scarf's implementation of graph tSNE could be the runtime which can be an order of magnitude faster than UMAP on large datasets.
 
 ```python
-ds.run_tsne('../scarf/bin/sgtsne', alpha=20, box_h=1)
+ds.run_tsne(sgtsne_loc='../scarf/bin/sgtsne', alpha=20, box_h=1)
 ```
 
 ```python
