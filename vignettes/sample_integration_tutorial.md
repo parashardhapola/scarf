@@ -147,7 +147,7 @@ Again, one can clearly see, as an example, that projection from stimulated cell 
 The mapping can be performed both ways. It is highly recommended that users try to map to the cells both ways in order to completely evaluate the similarities and differences between the samples. We repeat the steps above but this time use stimulated PBMCs as reference and control PBMCs as target.
 <!-- #endregion -->
 
-```python jupyter={"outputs_hidden": true}
+```python
 ds_stim.run_mapping(target_assay=ds_ctrl.RNA, target_name='ctrl',
                     target_feat_key='hvgs_stim', save_k=5, run_coral=True)
 ds_stim.run_unified_umap(target_name='ctrl', ini_embed_with='RNA_UMAP', use_k=5, fit_n_epochs=100, tx_n_epochs=10)
@@ -176,7 +176,7 @@ scarf.ZarrMerge('pbmc_kang_merged.zarr', [ds_ctrl.RNA, ds_stim.RNA], ['ctrl', 's
 
 The merged Zarr can then be used like any other Scarf Zarr file and loaded as a DataStore object. Here we run the `scarf_pipeline` that was created in the beginning of this vignette on the merged Zarr file
 
-```python jupyter={"outputs_hidden": true}
+```python
 ds_merged = scarf_pipeline('pbmc_kang_merged.zarr')
 ```
 
@@ -222,12 +222,12 @@ It is quite clear that the cells from two samples are systematically different a
 ### 4) Integration through usage of common HVGs and union HVGs
 
 
-Another approach that is commonly used is supervised selection of features. Using HVGs that were identified independently in each datasets and then merging them can sometimes prove for sample integration.
+Another approach that is commonly used is supervised selection of features. Merging together highly variable genes (HVGs) that were identified independently in each dataset has proven to be useful in certain cases of sample integration.
 
 
 #### Integration using union HVGs
 
-We can consider a gene to be HVG if it was detected as HVG in any one of the two datasets. We start by first extracting the gene id for HVGs from both the samples
+We can consider a gene to be HVG if it was detected as HVG in <ins>any</ins> one of the two datasets. We start by first extracting the gene id for HVGs from both the samples
 
 ```python
 ctrl_hvgs = ds_ctrl.RNA.feats.table.ids[ds_ctrl.RNA.feats.table['I__hvgs']].values
@@ -255,7 +255,7 @@ ds_merged.RNA.feats.table
 
 Rerun the scarf pipeline using `union_hvgs` as `feat_key`. We will make sure that the previous UMAP data is not overwritten and hence will provide a new label to save UMAP coordinates. Please note that the pipeline will attempt to find HVGs again but these will not be used as the pipeline will directly use the column `I__common_hvgs` of features.
 
-```python jupyter={"outputs_hidden": true}
+```python
 ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', feat_key='union_hvgs', umap_label='UMAP_union_hvgs')
 ```
 
