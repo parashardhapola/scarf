@@ -1,18 +1,3 @@
----
-jupyter:
-  jupytext:
-    formats: ipynb,md
-    text_representation:
-      extension: .md
-      format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.5.2
-  kernelspec:
-    display_name: Python 3
-    language: python
-    name: python3
----
-
 ### Data integration strategies available through Scarf
 
 In this vignette we will try to integrate data that was obtained [from Kang et. al.](https://www.nature.com/articles/nbt.4042). The data consists of stimulated (IFN-beta) and unstimulated PBMCs. In the article, the authors highlight how IFN-beta treatment induces gene expression changes resulting in separation of two samples on low dimension embedding plots. We will try to integrate the two datasets such that a equivalent cell types from both the conditions can be compared. This vignette is inspired by Seurat's 'immune_alignment' vignette available [here](https://satijalab.org/seurat/v3.0/immune_alignment.html). It should be noted though that Scarf's strategy of data integration is quite different from Seurat and we <ins>do not</ins> attempt to compare the results obtained through Scarf vs Seurat.
@@ -345,7 +330,7 @@ ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='GNLY', subse
 
 Now let's run a marker search for the differences between the cells from two samples.
 
-```python jupyter={"outputs_hidden": true}
+```python
 ds_merged.run_marker_search(group_key='sample_id')
 ds_merged.plot_marker_heatmap(group_key='sample_id', topn=20, figsize=(3, 8), cmap='coolwarm')
 ```
