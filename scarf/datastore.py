@@ -1392,6 +1392,8 @@ class DataStore:
         Returns:
 
         """
+        # TODO:  allow loading multiple targets
+
         from scipy.sparse import coo_matrix, csr_matrix
 
         if from_assay is None:
@@ -1746,6 +1748,10 @@ class DataStore:
         Returns:
 
         """
+
+        # TODO: allow subselection of cells. This can be useful to check sample or cluster specific distribution of
+        #  values
+
         from .plots import plot_qc
         import re
 
@@ -1846,6 +1852,7 @@ class DataStore:
 
         """
         # TODO: add support for subplots
+        # TODO: add support for different kinds of point markers
 
         from .plots import plot_scatter
         if from_assay is None:
@@ -1961,8 +1968,12 @@ class DataStore:
                             scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          cluster_key: str = 'cluster', width: float = 1.5, lvr_factor: float = 0.5,
-                          min_node_size: float = 20, node_size_expand_factor: float = 2, cmap='tab20'):
+                          cluster_key: str = None, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
+                          node_power: float = 1.2, root_size: float = 100, non_leaf_size: float = 10,
+                          do_label: bool = True, fontsize=10, node_color: str = None,
+                          root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', edgecolors: str = 'k',
+                          edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
+                          savename: str = None, save_format: str = 'svg', fig_dpi=300):
         """
 
         Args:
@@ -1973,25 +1984,48 @@ class DataStore:
             width:
             lvr_factor:
             min_node_size:
-            node_size_expand_factor:
+            node_power:
+            root_size:
+            non_leaf_size:
+            do_label:
+            fontsize:
+            node_color:
+            root_color:
+            non_leaf_color:
             cmap:
+            edgecolors:
+            edgewidth:
+            alpha:
+            figsize:
+            ax:
+            show_fig:
+            savename:
+            save_format:
+            fig_dpi:
 
         Returns:
 
         """
+
         from .plots import plot_cluster_hierarchy
-        from .dendrogram import SummarizedTree
+        from .dendrogram import CoalesceTree, make_digraph
 
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
+        if cluster_key is None:
+            raise ValueError("ERROR: Please provide a value for `cluster_key` parameter")
         clusts = self.cells.fetch(cluster_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
-        sg = SummarizedTree(self.z[dendrogram_loc][:]).extract_ancestor_tree(clusts)
-        plot_cluster_hierarchy(sg, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
-                               node_size_expand_factor=node_size_expand_factor, cmap=cmap)
+        subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
+        plot_cluster_hierarchy(subgraph, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
+                               node_power=node_power, root_size=root_size, non_leaf_size=non_leaf_size,
+                               do_label=do_label, fontsize=fontsize, node_color=node_color,
+                               root_color=root_color, non_leaf_color=non_leaf_color, cmap=cmap, edgecolors=edgecolors,
+                               edgewidth=edgewidth, alpha=alpha, figsize=figsize, ax=ax, show_fig=show_fig,
+                               savename=savename, save_format=save_format, fig_dpi=fig_dpi)
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
