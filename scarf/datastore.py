@@ -9,6 +9,7 @@ from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
 from .utils import calc_computed, system_call, clean_array
+from .logging_utils import logger
 
 __all__ = ['DataStore']
 
@@ -140,7 +141,7 @@ class DataStore:
             if assay_name in self.assayNames:
                 if 'defaultAssay' in self.z.attrs:
                     if assay_name != self.z.attrs['defaultAssay']:
-                        print(f"ATTENTION: Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}")
+                        logger.info(f"Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}")
                 self.z.attrs['defaultAssay'] = assay_name
             else:
                 raise ValueError(f"ERROR: The provided default assay name: {assay_name} was not found. "
@@ -169,7 +170,7 @@ class DataStore:
 
         assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
         # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
-        caution_statement = "CAUTION: %s was set as a generic Assay with no normalization. If this is unintended " \
+        caution_statement = "%s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter."
         caution_statement = caution_statement + "\nIf you have more than one assay in the dataset then you can set " \
@@ -182,15 +183,16 @@ class DataStore:
                 if predefined_assays[i] in assay_types:
                     assay = assay_types[predefined_assays[i]]
                 else:
-                    print(f"WARNING: {predefined_assays[i]} is not a recognized assay type. Has to be one of "
-                          f"{', '.join(list(assay_types.keys()))}\nPLease note that the names are case-sensitive.")
-                    print(caution_statement % i)
+                    logger.warning(f"{predefined_assays[i]} is not a recognized assay type. Has to be one of "
+                                   f"{', '.join(list(assay_types.keys()))}\nPLease note that the names are"
+                                   f" case-sensitive.")
+                    logger.warning(caution_statement % i)
                     assay = Assay
             else:
                 if i in assay_types:
                     assay = assay_types[i]
                 else:
-                    print(caution_statement % i)
+                    logger.warning(caution_statement % i)
                     assay = Assay
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells))
         return None
@@ -249,8 +251,8 @@ class DataStore:
             if from_assay == self._defaultAssay:
                 v = self.cells.fetch(from_assay + '_nFeatures')
                 if min_features > np.median(v):
-                    print(f"WARNING: More than of half of the less have less than {min_features} features for assay: "
-                          f"{from_assay}. Will not remove low quality cells automatically.")
+                    logger.warning(f"More than of half of the less have less than {min_features} features for assay: "
+                                   f"{from_assay}. Will not remove low quality cells automatically.")
                 else:
                     self.cells.update(self.cells.sift(v, min_features, np.Inf))
 
@@ -323,10 +325,10 @@ class DataStore:
         """
         for i, j, k in zip(attrs, lows, highs):
             if i not in self.cells.table.columns:
-                print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
+                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             x = self.cells.sift(self.cells.table[i].values, j, k)
-            print(f"INFO: {len(x) - x.sum()} cells flagged for filtering out using attribute {i}", flush=True)
+            logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
             self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
@@ -348,7 +350,7 @@ class DataStore:
 
         for i in attrs:
             if i not in self.cells.table.columns:
-                print(f"WARNING: {i} not found in cell metadata. Will ignore {i} for filtering")
+                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             a = self.cells.table[i]
             dist = norm(np.median(a), np.std(a))
@@ -377,10 +379,10 @@ class DataStore:
         assay_type = str(assay.__class__).split('.')[-1][:-2]
         if reduction_method == 'auto':
             if assay_type == 'ATACassay':
-                print("INFO: Using LSI for dimension reduction", flush=True)
+                logger.info("Using LSI for dimension reduction")
                 reduction_method = 'lsi'
             else:
-                print("INFO: Using PCA for dimension reduction", flush=True)
+                logger.info("Using PCA for dimension reduction")
                 reduction_method = 'pca'
         return reduction_method
 
@@ -417,6 +419,21 @@ class DataStore:
             Finalized values for the all the optional parameters in the same order
 
         """
+        def log_message(category, name, value, custom_msg=None):
+            msg = f"No value provided for parameter `{name}`. "
+            if category == 'default':
+                msg += f"Will use default value: {value}"
+                logger.info(msg)
+            elif category == 'cached':
+                msg += f"Will use previously used value: {value}"
+                logger.info(msg)
+            else:
+                if custom_msg is None:
+                    return False
+                else:
+                    logger.info(custom_msg)
+            return True
+
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self.z and 'subset_params' in self.z[normed_loc].attrs:
@@ -429,21 +446,17 @@ class DataStore:
             if log_transform is None:
                 if c_log_transform is not None:
                     log_transform = bool(c_log_transform)
-                    print(f'INFO: No value provided for parameter `log_transform`. '
-                          f'Will use previously used value: {log_transform}', flush=True)
+                    log_message('cached', 'log_transform', log_transform)
                 else:
                     log_transform = True
-                    print(f'INFO: No value provided for parameter `log_transform`. '
-                          f'Will use default value: {log_transform}', flush=True)
+                    log_message('default', 'log_transform', log_transform)
             if renormalize_subset is None:
                 if c_renormalize_subset is not None:
                     renormalize_subset = bool(c_renormalize_subset)
-                    print(f'INFO: No value provided for parameter `renormalize_subset`. '
-                          f'Will use previously used value: {renormalize_subset}', flush=True)
+                    log_message('cached', 'renormalize_subset', renormalize_subset)
                 else:
                     renormalize_subset = True
-                    print(f'INFO: No value provided for parameter `renormalize_subset`. '
-                          f'Will use default value: {renormalize_subset}', flush=True)
+                    log_message('default', 'renormalize_subset', renormalize_subset)
         log_transform = bool(log_transform)
         renormalize_subset = bool(renormalize_subset)
 
@@ -456,21 +469,17 @@ class DataStore:
             if dims is None:
                 if c_dims is not None:
                     dims = int(c_dims)
-                    print(f'INFO: No value provided for parameter `dims`. '
-                          f'Will use previously used value: {dims}', flush=True)
+                    log_message('cached', 'dims', dims)
                 else:
                     dims = 11
-                    print(f'INFO: No value provided for parameter `dims`. '
-                          f'Will use default value: {dims}', flush=True)
+                    log_message('default', 'dims', dims)
             if pca_cell_key is None:
                 if c_pca_cell_key is not None:
                     pca_cell_key = c_pca_cell_key
-                    print(f'INFO: No value provided for parameter `pca_cell_key`. '
-                          f'Will use previously used value: {pca_cell_key}', flush=True)
+                    log_message('cached', 'pca_cell_key', pca_cell_key)
                 else:
                     pca_cell_key = cell_key
-                    print(f'INFO: No value provided for parameter `pca_cell_key`. '
-                          f'Will use same value as cell_key: {pca_cell_key}', flush=True)
+                    log_message('default', 'pca_cell_key', pca_cell_key)
             else:
                 if pca_cell_key not in self.cells.table.columns:
                     raise ValueError(f"ERROR: `pca_use_cell_key` {pca_cell_key} does not exist in cell metadata")
@@ -491,47 +500,38 @@ class DataStore:
             if ann_metric is None:
                 if c_ann_metric is not None:
                     ann_metric = c_ann_metric
-                    print(f'INFO: No value provided for parameter `ann_metric`. '
-                          f'Will use previously used value: {ann_metric}', flush=True)
+                    log_message('cached', 'ann_metric', ann_metric)
                 else:
                     ann_metric = 'l2'
-                    print(f'INFO: No value provided for parameter `ann_metric`. '
-                          f'Will use default value: {ann_metric}', flush=True)
+                    log_message('default', 'ann_metric', ann_metric)
             if ann_efc is None:
                 if c_ann_efc is not None:
                     ann_efc = int(c_ann_efc)
-                    print(f'INFO: No value provided for parameter `ann_efc`. '
-                          f'Will use previously used value: {ann_efc}', flush=True)
+                    log_message('cached', 'ann_efc', ann_efc)
                 else:
                     ann_efc = None  # Will be set after value for k is determined
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value:'
-                          f'min(100, max(k * 3, 50))', flush=True)
+                    log_message('default', 'ann_efc', f'min(100, max(k * 3, 50))')
             if ann_ef is None:
                 if c_ann_ef is not None:
                     ann_ef = int(c_ann_ef)
-                    print(f'INFO: No value provided for parameter `ann_ef`. '
-                          f'Will use previously used value: {ann_ef}', flush=True)
+                    log_message('cached', 'ann_ef', ann_ef)
                 else:
                     ann_ef = None  # Will be set after value for k is determined
-                    print(f'INFO: No value provided for parameter `ann_efc`. Will use default value: '
-                          f'min(100, max(k * 3, 50))', flush=True)
+                    log_message('default', 'ann_ef', f'min(100, max(k * 3, 50))')
             if ann_m is None:
                 if c_ann_m is not None:
                     ann_m = int(c_ann_m)
-                    print(f'INFO: No value provided for parameter `ann_m`. '
-                          f'Will use previously used value: {ann_m}', flush=True)
+                    log_message('cached', 'ann_m', ann_m)
                 else:
                     ann_m = min(max(48, int(dims * 1.5)), 64)
-                    print(f'INFO: No value provided for parameter `ann_m`. Will use default value: {ann_m}', flush=True)
+                    log_message('default', 'ann_m', ann_m)
             if rand_state is None:
                 if c_rand_state is not None:
                     rand_state = int(c_rand_state)
-                    print(f'INFO: No value provided for parameter `rand_state`. '
-                          f'Will use previously used value: {rand_state}', flush=True)
+                    log_message('cached', 'rand_state', rand_state)
                 else:
                     rand_state = 4466
-                    print(f'INFO: No value provided for parameter `rand_state`. '
-                          f'Will use default value: {rand_state}', flush=True)
+                    log_message('default', 'rand_state', rand_state)
         ann_metric = str(ann_metric)
         ann_m = int(ann_m)
         rand_state = int(rand_state)
@@ -540,11 +540,11 @@ class DataStore:
             if reduction_loc in self.z and 'latest_ann' in self.z[reduction_loc].attrs:
                 ann_loc = self.z[reduction_loc].attrs['latest_ann']
                 knn_loc = self.z[ann_loc].attrs['latest_knn']
-                k = int(knn_loc.rsplit('__', 1)[1])  # depends on param_joiner
-                print(f'INFO: No value provided for parameter `k`. Will use previously used value: {k}', flush=True)
+                k = int(knn_loc.rsplit('__', 1)[1])
+                log_message('cached', 'k', k)
             else:
                 k = 11
-                print(f'INFO: No value provided for parameter `k`. Will use default value: {k}', flush=True)
+                log_message('default', 'k', k)
         k = int(k)
         if ann_ef is None:
             ann_ef = min(100, max(k * 3, 50))
@@ -559,13 +559,11 @@ class DataStore:
             if reduction_loc in self.z and 'latest_kmeans' in self.z[reduction_loc].attrs:
                 kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
                 n_centroids = int(kmeans_loc.split('/')[-1].split('__')[1])  # depends on param_joiner
-                print(f'INFO: No value provided for parameter `n_centroids`.'
-                      f' Will use previously used value: {n_centroids}', flush=True)
+                log_message('default', 'n_centroids', n_centroids)
             else:
                 # n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
                 n_centroids = 500
-                print(f'INFO: No value provided for parameter `n_centroids`. '
-                      f'Will use default value: {n_centroids}', flush=True)
+                log_message('default', 'n_centroids', n_centroids)
         n_centroids = int(n_centroids)
 
         if local_connectivity is None or bandwidth is None:
@@ -577,21 +575,17 @@ class DataStore:
             if local_connectivity is None:
                 if c_local_connectivity is not None:
                     local_connectivity = c_local_connectivity
-                    print(f'INFO: No value provided for parameter `local_connectivity`. '
-                          f'Will use previously used value: {local_connectivity}', flush=True)
+                    log_message('cached', 'local_connectivity', local_connectivity)
                 else:
                     local_connectivity = 1.0
-                    print(f'INFO: No value provided for parameter `local_connectivity`. '
-                          f'Will use default value: {local_connectivity}', flush=True)
+                    log_message('default', 'local_connectivity', local_connectivity)
             if bandwidth is None:
                 if c_bandwidth is not None:
                     bandwidth = c_bandwidth
-                    print(f'INFO: No value provided for parameter `bandwidth`. '
-                          f'Will use previously used value: {bandwidth}', flush=True)
+                    log_message('cached', 'bandwidth', bandwidth)
                 else:
                     bandwidth = 1.5
-                    print(f'INFO: No value provided for parameter `bandwidth`. Will use default value: {bandwidth}',
-                          flush=True)
+                    log_message('default', 'bandwidth', bandwidth)
         local_connectivity = float(local_connectivity)
         bandwidth = float(bandwidth)
 
@@ -747,7 +741,7 @@ class DataStore:
             if reduction_method == 'pca':
                 mu = self.z[reduction_loc]['mu'][:]
                 sigma = self.z[reduction_loc]['sigma'][:]
-            print(f"INFO: Using existing loadings for {reduction_method} with {dims} dims", flush=True)
+            logger.info(f"Using existing loadings for {reduction_method} with {dims} dims")
         else:
             if reduction_method == 'pca':
                 mu = clean_array(calc_computed(data.mean(axis=0),
@@ -756,10 +750,10 @@ class DataStore:
                                                   'INFO: Calculating std. dev. of norm. data'), 1)
         if ann_loc in self.z:
             fit_ann = False
-            print(f"INFO: Using existing ANN index", flush=True)
+            logger.info(f"Using existing ANN index")
         if kmeans_loc in self.z:
             fit_kmeans = False
-            print(f"INFO: using existing kmeans cluster centers", flush=True)
+            logger.info(f"using existing kmeans cluster centers")
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, use_for_pca=use_for_pca,
                             mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
@@ -768,7 +762,7 @@ class DataStore:
                             scale_features=feat_scaling)
 
         if loadings is None:
-            print(f"INFO: Saving loadings to {reduction_loc} ...", flush=True, end='')
+            logger.info(f"Saving loadings to {reduction_loc}")
             self.z.create_group(reduction_loc, overwrite=True)
             g = create_zarr_dataset(self.z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
             g[:, :] = ann_obj.loadings
@@ -777,24 +771,20 @@ class DataStore:
                 g[:] = mu
                 g = create_zarr_dataset(self.z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
                 g[:] = sigma
-            print(f" Done", flush=True)
         if ann_loc not in self.z:
-            print(f"INFO: Saving ANN index to {ann_loc} ...", flush=True, end='')
+            logger.info(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
             ann_obj.annIdx.save_index(ann_idx_loc)
-            print(f" Done", flush=True)
         if fit_kmeans:
-            print(f"INFO: Saving kmeans clusters to {kmeans_loc} ...", flush=True, end='')
+            logger.info(f"Saving kmeans clusters to {kmeans_loc}")
             self.z.create_group(kmeans_loc, overwrite=True)
             g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_centers',
                                     (1000, 1000), 'f8', ann_obj.kmeans.cluster_centers_.shape)
             g[:, :] = ann_obj.kmeans.cluster_centers_
             g = create_zarr_dataset(self.z[kmeans_loc], 'cluster_labels', (100000,), 'f8', ann_obj.clusterLabels.shape)
             g[:] = ann_obj.clusterLabels
-            print(f" Done", flush=True)
-
         if knn_loc in self.z and graph_loc in self.z:
-            print(f"INFO: KNN graph already exists will not recompute.", flush=True)
+            logger.info(f"KNN graph already exists will not recompute.")
         else:
             from .knn_utils import self_query_knn, smoothen_dists
             if knn_loc not in self.z:
@@ -854,8 +844,8 @@ class DataStore:
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc not in self.z:
-            print(f"ERROR: {graph_loc} not found in zarr location {self._fn}. Run `make_graph` for assay {from_assay}")
-            return None
+            raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
+                             f"Run `make_graph` for assay {from_assay}")
         if graph_format not in ['coo', 'csr']:
             raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
         store = self.z[graph_loc]
@@ -1147,8 +1137,7 @@ class DataStore:
                                  "this parameter free")
         else:
             if n_clusters is not None:
-                print("INFO: Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.",
-                      flush=True)
+                logger.info("Using balanced cut method for cutting dendrogram. `n_clusters` will be ignored.")
             if max_size is None or min_size is None:
                 raise ValueError("ERROR: Please provide value for max_size and min_size")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -1156,7 +1145,7 @@ class DataStore:
         # tuple are changed to list when saved as zarr attrs
         if dendrogram_loc in self.z and force_recalc is False:
             dendrogram = self.z[dendrogram_loc][:]
-            print("INFO: Using existing dendrogram", flush=True)
+            logger.info("Using existing dendrogram")
         else:
             paris = skn.hierarchy.Paris()
             graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
@@ -1170,7 +1159,7 @@ class DataStore:
         if balanced_cut:
             from .dendrogram import BalancedCut
             labels = BalancedCut(dendrogram, max_size, min_size, max_distance_fc).get_clusters()
-            print(f"INFO: {len(set(labels))} clusters found", flush=True)
+            logger.info(f"{len(set(labels))} clusters found")
         else:
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
         self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
@@ -1271,7 +1260,7 @@ class DataStore:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
                                   target_feat_key, filter_null, exclude_missing)
-        print(f"INFO: {len(feat_idx)} features being used for mapping", flush=True)
+        logger.info(f"{len(feat_idx)} features being used for mapping")
         if np.all(source_assay.feats.active_index(cell_key + '__' + feat_key) == feat_idx):
             ann_feat_key = feat_key
         else:
@@ -1285,7 +1274,7 @@ class DataStore:
                                   return_ann_object=True, update_feat_key=False,
                                   feat_scaling=feat_scaling)
         if save_k > ann_obj.k:
-            print(f"WARNING: `save_k` was decreased to {ann_obj.k}", flush=True)
+            logger.warning(f"`save_k` was decreased to {ann_obj.k}")
             save_k = ann_obj.k
         target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
         if run_coral is True:
@@ -1663,8 +1652,7 @@ class DataStore:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
         if dynamic_seed_frac and density_key is None:
-            print("WARNING: `dynamic_seed_frac` will be ignored because node_density has not been calculated.",
-                  flush=True)
+            logger.warning("`dynamic_seed_frac` will be ignored because node_density has not been calculated.")
             dynamic_seed_frac = False
         if dynamic_seed_frac:
             if density_key not in self.cells.table:
@@ -1684,7 +1672,7 @@ class DataStore:
 
         key = self._col_renamer(from_assay, cell_key, label)
         self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
-        print(f"INFO: Sketched cells saved with keyname '{key}'")
+        logger.info(f"Sketched cells saved with keyname '{key}'")
         if return_vals:
             return steiner_nodes, steiner_edges
 
@@ -1766,7 +1754,7 @@ class DataStore:
                 if len(matches) > 0:
                     plot_cols.extend(matches)
                 else:
-                    print(f"WARNING: {i} not found in cell metadata")
+                    logger.warning(f"{i} not found in cell metadata")
         if all_cells:
             plot_qc(self.cells.table[plot_cols], **kwargs)
         else:
@@ -1795,7 +1783,7 @@ class DataStore:
                 raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
             else:
                 if len(feat_idx) > 1:
-                    print(f"WARNING: Plotting mean of {len(feat_idx)} features because {k} is not unique.")
+                    logger.warning(f"Plotting mean of {len(feat_idx)} features because {k} is not unique.")
             vals = assay.normed(cell_idx, feat_idx).mean(axis=1).compute().astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
@@ -1876,8 +1864,7 @@ class DataStore:
         if subselection_key is not None:
             idx = self.cells.fetch(subselection_key, cell_key)
             if idx.dtype != bool:
-                print(f"WARNING: `subselection_key` {subselection_key} is not bool type. Will not sub-select",
-                      flush=True)
+                logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
         return plot_scatter(df, None, None, width, height, default_color, missing_color, colormap, point_size,
