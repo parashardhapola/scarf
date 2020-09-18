@@ -59,7 +59,7 @@ class DataStore:
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
-                 min_features_per_cell: int = 200, min_cells_per_feature: int = 20,
+                 min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
         from dask.distributed import Client, LocalCluster
@@ -81,7 +81,7 @@ class DataStore:
         if auto_filter:
             filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'], all_cells=True)
+                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'], show_all_cells=True)
             self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
             if show_qc_plots:
                 self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
@@ -239,7 +239,7 @@ class DataStore:
 
             if type(assay) == RNAassay:
                 if mito_pattern is None:
-                    mito_pattern = 'MT-'
+                    mito_pattern = 'MT-|mt'
                 var_name = from_assay + '_percentMito'
                 assay.add_percent_feature(mito_pattern, var_name)
 
@@ -1724,27 +1724,41 @@ class DataStore:
         vals.index = assay.feats.table.ids.reindex(vals.index).values
         return vals
 
-    def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, all_cells: bool = False, **kwargs):
+    def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
+                         group_key: str = None, show_all_cells: bool = False,
+                         color: str = 'steelblue', cmap: str = 'tab20',
+                         fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
+                         scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
         """
 
         Args:
             from_assay:
             cols:
-            all_cells:
-            **kwargs:
+            cell_key:
+            group_key:
+            show_all_cells:
+            color:
+            cmap:
+            fig_size:
+            label_size:
+            title_size:
+            scatter_size:
+            max_points:
+            show_on_single_row:
 
         Returns:
 
         """
-
-        # TODO: allow subselection of cells. This can be useful to check sample or cluster specific distribution of
-        #  values
 
         from .plots import plot_qc
         import re
 
         if from_assay is None:
             from_assay = self._defaultAssay
+        if group_key is None:
+            group_key = 'I'
+        if cell_key is None:
+            cell_key = 'I'
         plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
         if cols is not None:
             if type(cols) != list:
@@ -1754,13 +1768,17 @@ class DataStore:
                 if len(matches) > 0:
                     plot_cols.extend(matches)
                 else:
-                    logger.warning(f"{i} not found in cell metadata")
-        if all_cells:
-            plot_qc(self.cells.table[plot_cols], **kwargs)
-        else:
-            if 'color' not in kwargs:
-                kwargs['color'] = 'coral'
-            plot_qc(self.cells.table[self.cells.table.I][plot_cols], **kwargs)
+                    print(f"{i} not found in cell metadata")
+        plot_cols.append(group_key)
+        df = self.cells.table[plot_cols]
+        df = df.rename(mapper={group_key: 'groups'}, axis=1)
+        if show_all_cells is False:
+            df = df[self.cells.table[cell_key]]
+            df['groups'] = self.cells.fetch(group_key, key=cell_key)
+            if df['groups'].nunique() == 1:
+                color = 'coral'
+        plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
+                scatter_size=scatter_size, max_points=max_points, show_on_single_row=show_on_single_row)
         return None
 
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
