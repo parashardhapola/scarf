@@ -44,28 +44,52 @@ def plot_graph_qc(g):
     plt.show()
 
 
-def plot_qc(data: pd.DataFrame, color: str = 'steelblue',
-            fig_size: tuple = None, label_size: float = 10.0, title_size: float = 8.0,
-            scatter_size: float = 1.0, n_rows: int = 1, max_points: int = 10000):
-    n_plots = data.shape[1]
-    n_rows = max(n_rows, 1)
-    n_cols = max(n_plots//n_rows, 1)
+def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
+            fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
+            scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
+    n_plots = data.shape[1] - 1
+    n_groups = data['groups'].nunique()
+    if n_groups > 5:
+        print (f"ATTENTION: Too many groups in the plot. If you think that plot is too wide then consider turning "
+               f"`show_on_single_row` parameter to True", )
+    if show_on_single_row is True:
+        n_rows = 1
+        n_cols = n_plots
+    else:
+        n_rows = n_plots
+        n_cols = 1
     if fig_size is None:
-        fig_size = (1+3*n_cols, 1+2.5*n_rows)
+        figwidth = min(15, n_groups+(2*n_cols))
+        figheight = 1+2.5*n_rows
+        fig_size = (figwidth, figheight)
     fig = plt.figure(figsize=fig_size)
+    grouped = data.groupby('groups')
     for i in range(n_plots):
-        val = data[data.columns[i]].values
+        if data.columns[i] == 'groups':
+            continue
+        vals = {'g': [], 'v': []}
+        for j in sorted(data['groups'].unique()):
+            val = grouped.get_group(j)[data.columns[i]].values
+            vals['g'].extend([j for _ in range(len(val))])
+            vals['v'].extend(list(val))
+        vals = pd.DataFrame(vals)
         ax = fig.add_subplot(n_rows, n_cols, i+1)
-        sns.violinplot(val, ax=ax, linewidth=1, orient='v', alpha=0.6,
-                       inner=None, cut=0, color=color)
-        val_dots = val
-        if len(val_dots) > max_points:
-            val_dots = data[data.columns[i]].sample(n=max_points).values
-        sns.stripplot(val_dots, jitter=0.4, ax=ax, orient='v',
+        if n_groups == 1:
+            sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
+                           inner=None, cut=0, palette=cmap)
+        else:
+            sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
+                           inner=None, cut=0, color=color)
+        if len(vals) > max_points:
+            vals = vals.sample(n=max_points).values
+        sns.stripplot(x='g', y='v', data=vals, jitter=0.4, ax=ax, orient='v',
                       s=scatter_size, color='k', alpha=0.4)
         ax.set_ylabel(data.columns[i], fontsize=label_size)
-        ax.set_title('Min: %.1f, Max: %.1f, Median: %.1f' % (
-                    val.min(), val.max(), int(np.median(val))), fontsize=title_size)
+        ax.set_xlabel('')
+        if n_groups == 1:
+            ax.set_xticklabels([])
+        if data['groups'].nunique() == 1:
+            ax.set_title('Median: %.1f' % (int(np.median(vals['v']))), fontsize=title_size)
         clean_axis(ax)
     plt.tight_layout()
     plt.show()
