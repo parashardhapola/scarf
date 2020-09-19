@@ -4,6 +4,7 @@ This workflow is meant to familiarize users with Scarf API and how data is inter
 
 ```python
 %load_ext autotime
+%config InlineBackend.figure_format = 'retina'
 
 import scarf
 ```
@@ -84,7 +85,7 @@ ds.RNA.rawData
 We can visualize the per cell statistics in violin plots before we start filtering cells out
 
 ```python
-ds.plot_cells_dists(cols=['percent*'], all_cells=True)
+ds.plot_cells_dists(cols=['percent*'], show_all_cells=True)
 ```
 
 
@@ -284,6 +285,7 @@ The first step is the micro-clustering of the cells. Micro-clustering is perform
 ```python
 ds.run_clustering(balanced_cut=True, min_size=20, max_size=100, label='b_cluster')
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_b_cluster', legend_onside=False, legend_ondata=False)
+ds.plot_cluster_tree(cluster_key='RNA_b_cluster', width=1, do_label=False)
 ```
 
 So we obtained 125 micro clusters. It is good idea to make sure that small populations are divided into smaller clusters to facilitate comprehensive downsampling of even smaller clusters. The next is to calculate the neighbourhood density of nodes. A degree of a node (i.e. a cell in the graph) is the number of nodes it is connected to, the two step degree (aka 1 neighbourhood degree)of a cell is the sum of degrees of cells that a cell is connected to. We calculate the two neighbourhood degree of cells to obtain an estimate of how densely connected the cells are in each region of the graph. The more densely connected the cells are, the less the heterogeneity across them. These values are saved in the cell metadata table, here as 'RNA_node_density'. We can visualize these values using `plot_layout` method.
