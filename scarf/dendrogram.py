@@ -1,14 +1,8 @@
 import numpy as np
-import logzero
-from logzero import logger
-import logging
 from typing import List, Dict
 from tqdm import tqdm
 import networkx as nx
-
-formatter = logging.Formatter('(%(asctime)s) [%(levelname)s]: %(message)s', "%H:%M:%S")
-logzero.formatter(formatter)
-logzero.loglevel(logging.INFO)
+from .logging_utils import logger
 
 __all__ = ['BalancedCut', 'CoalesceTree', 'make_digraph']
 
