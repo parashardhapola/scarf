@@ -19,7 +19,7 @@ def calc_neighbourhood_density(g, nn: int):
     for n in range(nn):
         nd = np.zeros(g.shape[0])
         for i in tqdm(range(g.shape[0]), desc=f"INFO: Calculating {n+1} neighbourhood"):
-            for j, k in zip(g[i].indices, g[i].data):
+            for j, _ in zip(g[i].indices, g[i].data):
                 nd[i] += d[j]
         d = nd.copy()
     return d
