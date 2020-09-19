@@ -14,7 +14,8 @@ ENV PATH=/root/miniconda3/bin:$PATH
 
 # Installing numpy and pybind11 beforehand because sometimes thery dont't install so well from requirements.txt
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir numpy pybind11
+RUN pip install --no-cache-dir -U numpy pybind11
+RUN pip instal --no-cache-dir -U dask[array] dask[distributed]
 
 # Installing pcst_fast here because I still haven't figured out how to install a git repo from requirements.txt
 RUN pip install git+https://github.com/fraenkel-lab/pcst_fast.git
@@ -24,7 +25,11 @@ RUN pip install jupyterlab ipython-autotime
 #RUN conda install nodejs
 
 # For compiling docs
-RUN pip install Sphinx sphinx-autodoc-typehints nbsphinx
+RUN pip install Sphinx sphinx-autodoc-typehints nbsphinx sphinx_rtd_theme
+
+# For building vignettes
+RUN conda install -y nodejs
+RUN pip install jupytext
 
 # Setting up git for deve purposes. For example pushing commits or making pull requests.
 # You can change this to your github credentials.
