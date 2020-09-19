@@ -1,9 +1,8 @@
-logzero
+loguru
 cmocean
 gensim
 sparse
 networkx
-pcst_fast
 hnswlib
 numpy
 numba
@@ -23,4 +22,3 @@ matplotlib
 EoN
 threadpoolctl
 setuptools
-ipython-autotime
