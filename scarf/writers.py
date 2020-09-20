@@ -72,6 +72,51 @@ class CrToZarr:
             s = e
 
 
+class AnndataToZarr:
+    def __init__(self, h5ad, zarr_fn: str, assay_locations: list = None, assay_names: list = None,
+                 chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        self.h5ad = h5ad
+        self.fn = zarr_fn
+        self.chunkSizes = chunk_size
+        if assay_locations is None:
+            print ("INFO: no value provided for assay locations. Will use default value: ['X']")
+            self.assayLocations = ['X']
+        else:
+            self.assayLocations = assay_locations
+        if assay_names is None:
+            print ("INFO: no value provided for assay names. Will use default value: ['RNA']")
+            self.assayNames = ['RNA']
+        else:
+            self.assayNames = assay_names
+        if len( self.assayLocations) != len(self.assayNames):
+            raise ValueError("ERROR: Number of entries in parameters `assay_locations` and "
+                             "`assay_names` should be equal")
+        self.z = zarr.open(self.fn, mode='w')
+        self._ini_cell_data()
+        for i in self.assayNames:
+            create_zarr_count_assay(self.z, i, chunk_size, self.h5ad.nCells,
+                                    self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
+
+    def _ini_cell_data(self):
+        g = self.z.create_group('cellData')
+        create_zarr_obj_array(g, 'ids', self.h5ad.cell_names())
+        create_zarr_obj_array(g, 'names', self.h5ad.cell_names())
+        create_zarr_obj_array(g, 'I', [True for _ in range(self.h5ad.nCells)], 'bool')
+        for i,j in self.h5ad.get_cell_columns():
+            create_zarr_obj_array(g, i, j, j.dtype)
+
+    def dump(self, batch_size: int = 1000) -> None:
+        for assay_name, assay_loc in zip(self.assayNames, self.assayLocations):
+            store = self.z["%s/counts" % assay_name]
+            s, e, = 0, 0
+            n_chunks = self.h5ad.nCells//batch_size + 1
+            for a in tqdm(self.h5ad.consume(batch_size, data_loc=assay_loc), total=n_chunks):
+                e += a.shape[0]
+                a = a.todense()
+                store[s:e] = a
+                s = e
+
+
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       cells_idx: np.ndarray, feat_idx: np.ndarray,
                       chunk_size: tuple):
