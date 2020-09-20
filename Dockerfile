@@ -3,6 +3,9 @@ FROM ubuntu:20.04
 RUN apt update -y && apt autoremove -y && apt clean -y && apt autoclean -y
 RUN apt install -y wget build-essential git nano
 
+#Installing dependencies for sgtsne
+RUN apt install -y libmetis-dev libtbb-dev libfftw3-dev lib32gcc-7-dev libflann-dev libcilkrts5
+
 # Installing lastest Miniconda3
 RUN wget -O miniconda_inst "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" && \
 	bash miniconda_inst -b && \
@@ -38,7 +41,7 @@ RUN git config --global user.email parashar.dhapola@gmail.com
 
 # Install Scarf directly from github repo. Comment this out if you want to install from pypi manually
 # using `pip install scarf`. Alternatively you can also fork the repo and provide your username in link below.
-RUN pip install git+https://github.com/parashardhapola/scarf.git
+# RUN pip install git+https://github.com/parashardhapola/scarf.git
 
 RUN mkdir workspace && \
     echo "jupyter lab --port 9734 --ip=0.0.0.0 --allow-root --no-browser" > /workspace/launch_jupyter.sh
