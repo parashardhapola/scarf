@@ -155,7 +155,7 @@ class DataStore:
         to automatically determine the most appropriate Assay class for each assay based on following mapping:
 
         literal_blocks::
-            {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
+            {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay, 'URNA': RNAassay}
 
         If an assay name does not match any of the keys above then it is assigned as generic assay class. This can be
         overridden using `predefined_assays` parameter
@@ -168,7 +168,7 @@ class DataStore:
         Returns:
         """
 
-        assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay}
+        assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay, 'URNA': RNAassay}
         # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "%s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
