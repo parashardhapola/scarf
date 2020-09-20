@@ -1608,7 +1608,8 @@ class DataStore:
     def run_subsampling(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                         cluster_key: str = None, density_key: str = None,
                         min_edge_weight: float = -1, seed_frac: float = 0.05,
-                        dynamic_seed_frac: bool = True, min_nodes: int = 3, rewards: tuple = (3, 0.1),
+                        dynamic_seed_frac: bool = True, dynamic_frac_multiplier: float = 2,
+                        min_nodes: int = 3, rewards: tuple = (3, 0.1),
                         rand_state: int = 4466, return_vals: bool = False, label: str = 'sketched'):
         """
         Perform sub-sampling (aka sketching) of cells using the cell-cell neighbourhood graph. Sub-sampling required that
@@ -1628,6 +1629,7 @@ class DataStore:
                        (Default value: 0.05)
             dynamic_seed_frac: if True, then dynamic sampling rate rate will be used. Dynamic sampling takes the mean
                                node density into account while sampling cells from each cluster (default value: True)
+            dynamic_frac_multiplier: A scalar value used an multiplier to increase the dynamic sampling rate
             min_nodes: Minimum number of nodes to be sampled from each cluster. (Default value: 3)
             rewards: Reward values for seed and non-seed nodes. A tuple of two values is provided, first for seed nodes
                      and second for non-seed nodes. (Default value: (3, 0.1))
@@ -1661,6 +1663,7 @@ class DataStore:
                 cff = self.cells.table[self.cells.table.I].groupby(cluster_key)[density_key].median()
                 cff = (cff - cff.min()) / (cff.max() - cff.min())
                 cff = 1 - cff
+                cff = dynamic_frac_multiplier * cff
         else:
             n_clusts = clusters.nunique()
             cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts + 1)))
