@@ -79,7 +79,7 @@ class AnndataToZarr:
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
         if assay_locations is None:
-            print ("INFO: no value provided for assay locations. Will use default value: ['X']")
+            print("INFO: no value provided for assay locations. Will use default value: ['X']")
             self.assayLocations = ['X']
         else:
             self.assayLocations = assay_locations
@@ -88,7 +88,7 @@ class AnndataToZarr:
             self.assayNames = ['RNA']
         else:
             self.assayNames = assay_names
-        if len( self.assayLocations) != len(self.assayNames):
+        if len(self.assayLocations) != len(self.assayNames):
             raise ValueError("ERROR: Number of entries in parameters `assay_locations` and "
                              "`assay_names` should be equal")
         self.z = zarr.open(self.fn, mode='w')
@@ -102,7 +102,8 @@ class AnndataToZarr:
         create_zarr_obj_array(g, 'ids', self.h5ad.cell_names())
         create_zarr_obj_array(g, 'names', self.h5ad.cell_names())
         create_zarr_obj_array(g, 'I', [True for _ in range(self.h5ad.nCells)], 'bool')
-        for i,j in self.h5ad.get_cell_columns():
+        for i, j in self.h5ad.get_cell_columns():
+            # TODO: use `_categories` under `uns` slot to the values rather than indices
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
