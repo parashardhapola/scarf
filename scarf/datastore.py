@@ -1727,6 +1727,21 @@ class DataStore:
         vals.index = assay.feats.table.ids.reindex(vals.index).values
         return vals
 
+    def to_anndata(self, from_assay: str = None, cell_key: str = 'I'):
+        try:
+            from anndata import AnnData
+        except ImportError:
+            logger.error("Package anndata is not installed because its an optional dependency. "
+                         "Install via `pip install anndata` or `conda install anndata -c conda-forge`")
+            return None
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay = self._get_assay(from_assay)
+
+        obs = self.cells.table[self.cells.table[cell_key]].reset_index(drop=True).set_index('ids')
+        var = assay.feats.table.set_index('names').rename(columns={'ids': 'gene_ids'})
+        return AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
+
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, show_all_cells: bool = False,
                          color: str = 'steelblue', cmap: str = 'tab20',
