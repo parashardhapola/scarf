@@ -1727,7 +1727,18 @@ class DataStore:
         vals.index = assay.feats.table.ids.reindex(vals.index).values
         return vals
 
-    def to_anndata(self, from_assay: str = None, cell_key: str = 'I'):
+    def to_anndata(self, from_assay: str = None, cell_key: str = 'I', layers: dict = None):
+        """
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Name of column from cell metadata that has boolean values. This is used to subset cells
+            layers: A mapping of layer names to assay names. Ex. {'spliced': 'RNA', 'unspliced': 'URNA'}. The raw data
+                    from the assays will be stored as sparse arrays in the corresponding layer in anndata.
+
+        Returns: anndata object
+
+        """
         try:
             from anndata import AnnData
         except ImportError:
@@ -1737,10 +1748,13 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
-
         obs = self.cells.table[self.cells.table[cell_key]].reset_index(drop=True).set_index('ids')
         var = assay.feats.table.set_index('names').rename(columns={'ids': 'gene_ids'})
-        return AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
+        adata = AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
+        if layers is not None:
+            for layer, assay_name in layers.items():
+                adata.layers[layer] = self._get_assay(assay_name).to_raw_sparse(cell_key)
+        return adata
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, show_all_cells: bool = False,
