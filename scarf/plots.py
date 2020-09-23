@@ -44,28 +44,52 @@ def plot_graph_qc(g):
     plt.show()
 
 
-def plot_qc(data: pd.DataFrame, color: str = 'steelblue',
-            fig_size: tuple = None, label_size: float = 10.0, title_size: float = 8.0,
-            scatter_size: float = 1.0, n_rows: int = 1, max_points: int = 10000):
-    n_plots = data.shape[1]
-    n_rows = max(n_rows, 1)
-    n_cols = max(n_plots//n_rows, 1)
+def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
+            fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
+            scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
+    n_plots = data.shape[1] - 1
+    n_groups = data['groups'].nunique()
+    if n_groups > 5:
+        print (f"ATTENTION: Too many groups in the plot. If you think that plot is too wide then consider turning "
+               f"`show_on_single_row` parameter to True", )
+    if show_on_single_row is True:
+        n_rows = 1
+        n_cols = n_plots
+    else:
+        n_rows = n_plots
+        n_cols = 1
     if fig_size is None:
-        fig_size = (1+3*n_cols, 1+2.5*n_rows)
+        figwidth = min(15, n_groups+(2*n_cols))
+        figheight = 1+2.5*n_rows
+        fig_size = (figwidth, figheight)
     fig = plt.figure(figsize=fig_size)
+    grouped = data.groupby('groups')
     for i in range(n_plots):
-        val = data[data.columns[i]].values
+        if data.columns[i] == 'groups':
+            continue
+        vals = {'g': [], 'v': []}
+        for j in sorted(data['groups'].unique()):
+            val = grouped.get_group(j)[data.columns[i]].values
+            vals['g'].extend([j for _ in range(len(val))])
+            vals['v'].extend(list(val))
+        vals = pd.DataFrame(vals)
         ax = fig.add_subplot(n_rows, n_cols, i+1)
-        sns.violinplot(val, ax=ax, linewidth=1, orient='v', alpha=0.6,
-                       inner=None, cut=0, color=color)
-        val_dots = val
-        if len(val_dots) > max_points:
-            val_dots = data[data.columns[i]].sample(n=max_points).values
-        sns.stripplot(val_dots, jitter=0.4, ax=ax, orient='v',
+        if n_groups == 1:
+            sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
+                           inner=None, cut=0, palette=cmap)
+        else:
+            sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
+                           inner=None, cut=0, color=color)
+        if len(vals) > max_points:
+            vals = vals.sample(n=max_points).values
+        sns.stripplot(x='g', y='v', data=vals, jitter=0.4, ax=ax, orient='v',
                       s=scatter_size, color='k', alpha=0.4)
         ax.set_ylabel(data.columns[i], fontsize=label_size)
-        ax.set_title('Min: %.1f, Max: %.1f, Median: %.1f' % (
-                    val.min(), val.max(), int(np.median(val))), fontsize=title_size)
+        ax.set_xlabel('')
+        if n_groups == 1:
+            ax.set_xticklabels([])
+        if data['groups'].nunique() == 1:
+            ax.set_title('Median: %.1f' % (int(np.median(vals['v']))), fontsize=title_size)
         clean_axis(ax)
     plt.tight_layout()
     plt.show()
@@ -100,8 +124,12 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
     return None
 
 
-def plot_cluster_hierarchy(sg, clusts, width: float, lvr_factor: float,
-                           min_node_size: float, node_size_expand_factor: float, cmap):
+def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
+                           node_power: float = 1.2, root_size: float = 100, non_leaf_size: float = 10,
+                           do_label: bool = True, fontsize=10, node_color: str = None,
+                           root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', edgecolors: str = 'k',
+                           edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
+                           savename: str = None, save_format: str = 'svg',  fig_dpi=300):
     import networkx as nx
     import EoN
     import math
@@ -111,22 +139,37 @@ def plot_cluster_hierarchy(sg, clusts, width: float, lvr_factor: float,
     nc = []
     ns = []
     for i in sg.nodes():
-        v = sg.nodes[i]['partition_id']
-        if v != -1:
-            nc.append(cmap[v - 1])
-            ns.append(cs[v] * node_size_expand_factor + min_node_size)
+        if 'partition_id' in sg.nodes[i]:
+            v = sg.nodes[i]['partition_id']
+            if node_color is None:
+                nc.append(cmap[v - 1])
+            else:
+                nc.append(node_color)
+            ns.append((cs[v] ** node_power) + min_node_size)
         else:
-            nc.append('#000000')
-            ns.append(min_node_size)
+            if sg.nodes[i]['nleaves'] == len(clusts):
+                nc.append(root_color)
+                ns.append(root_size)
+            else:
+                nc.append(non_leaf_color)
+                ns.append(non_leaf_size)
     pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor)
     new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
-    nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc)
-    for i in sg.nodes():
-        v = sg.nodes[i]['partition_id']
-        if v != -1:
-            plt.text(new_pos[i][0], new_pos[i][1], v)
-    plt.show()
-    return None
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+    nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc, ax=ax, edgecolors=edgecolors, alpha=alpha,
+            linewidths=edgewidth)
+    if do_label:
+        for i in sg.nodes():
+            if 'partition_id' in sg.nodes[i]:
+                v = sg.nodes[i]['partition_id']
+                ax.text(new_pos[i][0], new_pos[i][1], v, fontsize=fontsize)
+    if savename:
+        plt.savefig(savename+'.'+save_format, dpi=fig_dpi)
+    if show_fig:
+        plt.show()
+    else:
+        return ax
 
 
 def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,

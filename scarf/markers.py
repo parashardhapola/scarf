@@ -11,6 +11,7 @@ def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, threshol
 
     @jit()
     def calc_mean_rank(v):
+        #  TODO: fix for non-numeric index set
         n_indices = index_set.shape[0]
         r = np.ones(n_indices)
         for x in range(n_indices):

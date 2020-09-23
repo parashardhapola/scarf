@@ -15,11 +15,12 @@ def calc_degree(g):
 
 
 def calc_neighbourhood_density(g, nn: int):
+    # TODO: speed up using numba
     d = calc_degree(g)
     for n in range(nn):
         nd = np.zeros(g.shape[0])
         for i in tqdm(range(g.shape[0]), desc=f"INFO: Calculating {n+1} neighbourhood"):
-            for j, k in zip(g[i].indices, g[i].data):
+            for j, _ in zip(g[i].indices, g[i].data):
                 nd[i] += d[j]
         d = nd.copy()
     return d
@@ -31,7 +32,7 @@ def get_seed_nodes(clusts: pd.Series, frac: float, cff: pd.Series,
     for i in clusts.unique():
         c = clusts[clusts == i]
         if len(c) > min_nodes:
-            s = c.sample(frac=frac+frac*cff[i], random_state=rand_num).index
+            s = c.sample(frac=min(1, frac+frac*cff[i]), random_state=rand_num).index
             if len(s) < min_nodes:
                 s = c.sample(n=min_nodes, random_state=rand_num).index
         else:

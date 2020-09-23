@@ -1,37 +1,104 @@
 import numpy as np
-import logzero
-from logzero import logger
-import logging
 from typing import List, Dict
 from tqdm import tqdm
+import networkx as nx
+from .logging_utils import logger
 
-formatter = logging.Formatter('(%(asctime)s) [%(levelname)s]: %(message)s', "%H:%M:%S")
-logzero.formatter(formatter)
-logzero.loglevel(logging.INFO)
-
-__all__ = ['BalancedCut', 'SummarizedTree']
+__all__ = ['BalancedCut', 'CoalesceTree', 'make_digraph']
 
 
-def make_digraph(d: np.ndarray):
+def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
     """
     Convert dendrogram into directed graph
     """
-    import networkx as nx
 
     g = nx.DiGraph()
     n = d.shape[0] + 1  # Dendrogram contains one less sample
+    if clust_info is not None:
+        if len(clust_info) != d.shape[0]+1:
+            raise ValueError("ERROR: cluster information doesn't match number of leaves in dendrogram")
+    else:
+        clust_info = np.ones(d.shape[0]+1)*-1
     for i in tqdm(d, desc='Constructing graph from dendrogram'):
         v = i[2]  # Distance between clusters
         i = i.astype(int)
         g.add_node(n, nleaves=i[3], dist=v)
         if i[0] <= d.shape[0]:
-            g.add_node(i[0], nleaves=0, dist=v)
+            g.add_node(i[0], nleaves=0, dist=v, cluster=clust_info[i[0]])
         if i[1] <= d.shape[0]:
-            g.add_node(i[1], nleaves=0, dist=v)
+            g.add_node(i[1], nleaves=0, dist=v, cluster=clust_info[i[1]])
         g.add_edge(n, i[0])
         g.add_edge(n, i[1])
         n += 1
+    if g.number_of_edges() != d.shape[0] * 2:
+        print('WARNING: Number of edges in directed graph not twice the dendrogram shape', flush=True)
     return g
+
+
+def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
+
+    def calc_steps_to_top(g: nx.DiGraph, c: np.ndarray):
+        import pandas as pd
+        s = {}
+        for i in range(len(c)):
+            s[i] = 0
+            q = [i]
+            while len(q) > 0:
+                for j in g.predecessors(q.pop(0)):
+                    s[i] += 1
+                    q.append(j)
+        return pd.Series(s).sort_values()
+
+    def iter_predecessors(g: nx.DiGraph, v):
+        q = [v]
+        while len(q) > 0:
+            for i in g.predecessors(q.pop(0)):
+                yield i
+                q.append(i)
+
+    def aggregate_leaves(g: nx.DiGraph, v):
+        q = [v]
+        l = []
+        while len(q) > 0:
+            for i in g.successors(q.pop(0)):
+                if g.nodes[i]['nleaves'] == 0:
+                    l.append(i)
+                else:
+                    q.append(i)
+        return l
+
+    def get_holding_nodes(g: nx.DiGraph, c):
+        hn = {}
+        s = calc_steps_to_top(g, c)
+        for i in set(c):
+            l = set(np.where(c == i)[0])
+            nl = len(l)
+            for j in iter_predecessors(g, s.reindex(l).idxmin()):
+                if g.nodes[j]['nleaves'] >= nl:
+                    l2 = aggregate_leaves(g, j)
+                    if len(l.intersection(l2)) == nl:
+                        hn[j] = i
+                        break
+        return hn
+
+    def aggregate_predecessors(g: nx.DiGraph, v):
+        p = []
+        for i in iter_predecessors(g, v):
+            p.append(i)
+        return p
+
+    def make_subgraph(g: nx.DiGraph, vs):
+
+        sn = list(vs.keys())
+        for i in vs:
+            sn.extend(aggregate_predecessors(g, i))
+        sn = list(set(sn))
+        sg = nx.DiGraph(nx.subgraph(g, sn))
+        for i in vs:
+            sg.nodes[i]['partition_id'] = vs[i]
+        return sg
+
+    return make_subgraph(graph, get_holding_nodes(graph, clusters))
 
 
 class BalancedCut:
@@ -199,59 +266,3 @@ class BalancedCut:
         #
         # res = [9, 5, 5, 1, 1, 1, 1, 7, 7, 7, 3, 3, 3, 3, 3, 4, 4, 4, 2, 2, 2, 8,
         #        8, 8, 6, 6, 6, 6, 6, 6]
-
-
-class SummarizedTree:
-    def __init__(self, dendrogram: np.ndarray):
-        self.g = make_digraph(dendrogram)
-        self.root = len(self.g.nodes()) - 1
-
-    def _find_common_ancestor(self, leaves):
-        q = [self.root]
-        candidates = []
-        nl = len(leaves)
-        while len(q) > 0:
-            for i in self.g.successors(q.pop(0)):
-                q.append(i)
-                if self.g.nodes[i]['nleaves'] == nl:
-                    candidates.append(i)
-        for c in candidates:
-            q = [c]
-            l = []
-            while len(q) > 0:
-                for i in self.g.successors(q.pop(0)):
-                    if self.g.nodes[i]['nleaves'] == 0:
-                        l.append(i)
-                    else:
-                        q.append(i)
-            l = np.array(sorted(l))
-            if all(leaves == l):
-                return c
-        return False
-
-    def extract_ancestor_tree(self, ids: np.ndarray):
-        import networkx as nx
-
-        sn = {}
-        for i in sorted(set(ids)):
-            idx = np.where(ids == i)[0]
-            ca = self._find_common_ancestor(idx)
-            if ca is False:
-                print(f'WARNING: No stop node found for {i}')
-            else:
-                sn[ca] = i
-        q = [self.root]
-        o = [self.root]
-        while len(q) > 0:
-            for i in self.g.successors(q.pop(0)):
-                if self.g.nodes[i]['nleaves'] != 0:
-                    if i not in sn:
-                        q.append(i)
-                    o.append(i)
-        g = nx.DiGraph(nx.subgraph(self.g, o))
-        for i in g.nodes():
-            if i in sn:
-                g.nodes[i]['partition_id'] = sn[i]
-            else:
-                g.nodes[i]['partition_id'] = -1
-        return g

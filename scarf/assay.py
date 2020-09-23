@@ -4,6 +4,7 @@ import zarr
 from .metadata import MetaData
 from .utils import calc_computed
 from .writers import create_zarr_dataset
+from scipy.sparse import csr_matrix, vstack
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -53,6 +54,19 @@ class Assay:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
         return self.normMethod(self, counts)
+
+    def to_raw_sparse(self, cell_key):
+        from tqdm import tqdm
+
+        sm = None
+        for i in tqdm(self.rawData[self.cells.active_index(cell_key), :].blocks, total=self.rawData.numblocks[0],
+                      desc="INFO: Converting raw data from {self.name} assay into CSR format"):
+            s = csr_matrix(i.compute())
+            if sm is None:
+                sm = s
+            else:
+                sm = vstack([sm, s])
+        return sm
 
     def _ini_feature_props(self, min_cells: int) -> None:
         if 'nCells' in self.feats.table.columns and 'dropOuts' in self.feats.table.columns:

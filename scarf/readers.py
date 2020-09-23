@@ -5,9 +5,9 @@ import pandas as pd
 import os
 import sparse
 from typing import IO
+import h5py
 
-
-__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader']
+__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader']
 
 
 def get_file_handle(fn: str) -> IO:
@@ -127,8 +127,6 @@ class CrReader(ABC):
 
 class CrH5Reader(CrReader):
     def __init__(self, h5_fn, file_type: str = None):
-        import h5py
-
         self.h5obj = h5py.File(h5_fn, mode='r')
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -220,3 +218,101 @@ class CrDirReader(CrReader):
             else:
                 dfs.append(df)
         yield self.to_sparse(np.vstack(dfs))
+
+
+class H5adReader:
+    def __init__(self, h5ad_fn):
+        self.h5 = h5py.File(h5ad_fn)
+        self.useObs, self.nCells = self._get_n_cells()
+        self.useVar, self.nFeats = self._get_n_feats()
+
+    def _get_n_cells(self):
+        x_len = self.h5['X']['indptr'].shape[0] - 1
+        if type(self.h5['obs']) != h5py.Dataset:
+            print("WARNING: `obs` slot in H5 file is not of Dataset type. "
+                  "Due to this no information in `obs` can be used")
+            return False, x_len
+        obs_len = self.h5['obs'].shape[0]
+        if x_len != obs_len:
+            print("WARNING: The number of cells in the `X` slot not same as in `obs`. "
+                  "Due to this no information in `obs` can be used")
+            return False, x_len
+        return True, obs_len
+
+    def _get_max_index(self, steps=1e6):
+        s = 0
+        n_inds = self.h5['X']['indices'].shape[0]
+        steps = int(steps)
+        max_val = 0
+        for e in range(steps, n_inds + steps, steps):
+            e = int(e)
+            if e > n_inds:
+                e = n_inds - 1
+            mv = self.h5['X']['indices'][s:e].max()
+            if mv > max_val:
+                max_val = mv
+            s = e
+        return max_val + 1
+
+    def _get_n_feats(self):
+        x_len = self._get_max_index()
+        if type(self.h5['var']) != h5py.Dataset:
+            print("WARNING: `var` slot in H5 file is not of Dataset type. "
+                  "Due to this no information in `var` can be used")
+            return False, x_len
+        var_len = self.h5['var'].shape[0]
+        if x_len != var_len:
+            print("WARNING: The max index of features in the `X/indices` slot not same as in `var`. "
+                  "Due to this no information in `var` can be used")
+            return False, x_len
+        return True, var_len
+
+    def cell_names(self):
+        if self.useObs:
+            return self.h5['obs']['index']
+        else:
+            return [f'cell_{x}' for x in range(self.nCells)]
+
+    def feat_names(self):
+        if self.useVar:
+            return self.h5['var']['index']
+        else:
+            return [f'feature_{x}' for x in range(self.nFeats)]
+
+    def feat_ids(self):
+        if self.useVar:
+            names = self.feat_names()
+            if len(names) == len(set(names)):
+                return names
+        return [f'feature_{x}' for x in range(self.nFeats)]
+
+    def get_cell_columns(self):
+        if self.useObs is True:
+            for i in self.h5['obs'].dtype.names:
+                if i == 'index':
+                    continue
+                yield i, self.h5['obs'][i]
+
+    def get_feat_columns(self):
+        if self.useVar is True:
+            for i in self.h5['var'].dtype.names:
+                if i == 'index':
+                    continue
+                yield i, self.h5['var'][i]
+
+    def consume(self, batch_size: int, data_loc: str = 'X'):
+        grp = self.h5[data_loc]
+        s = 0
+        for ind_n in range(0, self.nCells, batch_size):
+            i = grp['indptr'][ind_n:ind_n + batch_size]
+            e = i[-1]
+            if s != 0:
+                idx = np.array([s] + list(i))
+                idx = idx - idx[0]
+            else:
+                idx = np.array(i)
+            n = idx.shape[0] - 1
+            nidx = np.repeat(range(n), np.diff(idx).astype('int32'))
+            yield sparse.COO([nidx, grp['indices'][s: e]], grp['data'][s: e],
+                             shape=(n, self.nFeats))
+            s = e

@@ -1,11 +1,8 @@
-logzero
-holoviews
+loguru
 cmocean
-datashader
 gensim
 sparse
 networkx
-pcst_fast
 hnswlib
 numpy
 numba
@@ -24,8 +21,4 @@ tqdm
 matplotlib
 EoN
 threadpoolctl
-pybedtools
 setuptools
-leidenalg
-python-igraph
-ipython-autotime
