@@ -149,7 +149,7 @@ class DataStore:
                                  "Please note that the names are case-sensitive.")
         return assay_name
 
-    def _load_assays(self, min_cells: int, predefined_assays: dict = None) -> None:
+    def _load_assays(self, min_cells: int, custom_assay_types: dict = None) -> None:
         """
         This function loads all the assay names present in attribute `assayNames` as Assay objects. An attempt is made
         to automatically determine the most appropriate Assay class for each assay based on following mapping:
@@ -168,7 +168,8 @@ class DataStore:
         Returns:
         """
 
-        assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay, 'URNA': RNAassay}
+        preset_assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay,
+                              'GeneActivity': RNAassay, 'URNA': RNAassay, 'Assay': Assay}
         # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "%s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
@@ -176,25 +177,36 @@ class DataStore:
         caution_statement = caution_statement + "\nIf you have more than one assay in the dataset then you can set " \
                                                 "assay_types={'assay1': 'RNA', 'assay2': 'ADT'} " \
                                                 "Just replace with actual assay names instead of assay1 and assay2"
-        if predefined_assays is None:
-            predefined_assays = {}
+        if 'assayTypes' not in self.z.attrs:
+            self.z.attrs['assayTypes'] = {}
+        z_attrs = self.z.attrs['assayTypes']
+        if custom_assay_types is None:
+            custom_assay_types = {}
         for i in self.assayNames:
-            if i in predefined_assays:
-                if predefined_assays[i] in assay_types:
-                    assay = assay_types[predefined_assays[i]]
+            if i in custom_assay_types:
+                if custom_assay_types[i] in preset_assay_types:
+                    assay = preset_assay_types[custom_assay_types[i]]
+                    z_attrs[i] = custom_assay_types[i]
                 else:
-                    logger.warning(f"{predefined_assays[i]} is not a recognized assay type. Has to be one of "
-                                   f"{', '.join(list(assay_types.keys()))}\nPLease note that the names are"
+                    logger.warning(f"{custom_assay_types[i]} is not a recognized assay type. Has to be one of "
+                                   f"{', '.join(list(preset_assay_types.keys()))}\nPLease note that the names are"
                                    f" case-sensitive.")
                     logger.warning(caution_statement % i)
                     assay = Assay
+                    z_attrs[i] = 'Assay'
+            elif i in z_attrs:
+                assay = preset_assay_types[z_attrs[i]]
             else:
-                if i in assay_types:
-                    assay = assay_types[i]
+                if i in preset_assay_types:
+                    assay = preset_assay_types[i]
+                    z_attrs[i] = i
                 else:
                     logger.warning(caution_statement % i)
                     assay = Assay
+                    z_attrs[i] = 'Assay'
+            logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells))
+        self.z.attrs['assayTypes'] = z_attrs
         return None
 
     def _get_assay(self, from_assay: str) -> Assay:
