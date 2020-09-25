@@ -79,12 +79,12 @@ class AnndataToZarr:
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
         if assay_locations is None:
-            print("INFO: no value provided for assay locations. Will use default value: ['X']")
+            print(f"INFO: no value provided for assay locations. Will use default value: ['X']")
             self.assayLocations = ['X']
         else:
             self.assayLocations = assay_locations
         if assay_names is None:
-            print ("INFO: no value provided for assay names. Will use default value: ['RNA']")
+            print(f"INFO: no value provided for assay names. Will use default value: ['RNA']")
             self.assayNames = ['RNA']
         else:
             self.assayNames = assay_names
@@ -230,13 +230,13 @@ class ZarrMerge:
             create_zarr_obj_array(g, 'names', list(self.mergedCells['names']))
             create_zarr_obj_array(g, 'I', [True for _ in range(self.mergedCells.shape[0])], 'bool')
         else:
-            print("INFO: cellData already exists so skipping _ini_cell_data", flush=True)
+            print(f"INFO: cellData already exists so skipping _ini_cell_data", flush=True)
 
     def write(self):
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
-                          desc=f"Writing aligned normed target data to "):
+                          desc=f"Writing aligned normed target data"):
                 pos_end += i.shape[0]
                 a = np.ones((i.shape[0], self.nFeats))
                 a[:, feat_order] = i.compute()
