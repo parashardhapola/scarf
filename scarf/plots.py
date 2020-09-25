@@ -212,9 +212,15 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             if cmap is None:
                 cmap = 'tab20'
             uni_vals = [x for x in fv.unique() if x != filler_val]
-            pal = sns.color_palette(cmap, n_colors=len(uni_vals)).as_hex()
-            pal = dict(zip(sorted(uni_vals), pal))
-            pal[filler_val] = mpl.colors.to_hex(na_c)
+            if type(cmap) is str:
+                pal = sns.color_palette(cmap, n_colors=len(uni_vals)).as_hex()
+                pal = dict(zip(sorted(uni_vals), pal))
+                pal[filler_val] = mpl.colors.to_hex(na_c)
+            elif type(cmap) is dict:
+                pal = dict(cmap)
+            else:
+                raise ValueError("ERROR: colormap needs to be either a str representing matplotlib color or "
+                                 "a dictionary mapping `colorby` values to a hex of RGB values")
             c = [pal[x] for x in fv]
         else:
             v = v.fillna(0)
