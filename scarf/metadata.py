@@ -128,11 +128,11 @@ class MetaData:
         If the array has same shape as the table then the input array is added straightaway.
         It is assumed that the input array is in same order as table rows.
         """
-        a = np.empty(self.N)
+        a = np.empty(self.N).astype(type(v[0]))
         k = self.table[key].values
         a[k] = v
         a[~k] = fill_val
-        return a.astype(type(v[0]))
+        return a
 
     # def _reset(self) -> None:
     #     """
