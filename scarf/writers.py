@@ -8,7 +8,7 @@ import pandas as pd
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'AnndataToZarr']
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'AnndataToZarr', 'MtxToZarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -69,6 +69,59 @@ class CrToZarr:
             a = a.todense()
             for j in range(len(stores)):
                 stores[j][s:e] = a[:, spidx[j][0]:spidx[j][1]]
+            s = e
+
+
+class MtxToZarr:
+    def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        self.cr = cr
+        self.fn = zarr_fn
+        self.chunkSizes = chunk_size
+        self.z = zarr.open(self.fn, mode='w')
+        self._ini_cell_data()
+        for assay_name in set(self.cr.assayFeats.columns):
+            create_zarr_count_assay(self.z, assay_name, chunk_size, self.cr.nCells,
+                                    self.cr.feature_ids(assay_name), self.cr.feature_names(assay_name), dtype)
+
+    def _ini_cell_data(self):
+        g = self.z.create_group('cellData')
+        create_zarr_obj_array(g, 'ids', self.cr.cell_names())
+        create_zarr_obj_array(g, 'names', self.cr.cell_names())
+        create_zarr_obj_array(g, 'I', [True for _ in range(self.cr.nCells)], 'bool')
+
+    def _prep_assay_ranges(self):
+        ret_val = {}
+        for assay in set(self.cr.assayFeats.columns):
+            temp = []
+            if len(self.cr.assayFeats[assay].shape) == 2:
+                for i in self.cr.assayFeats[assay].values[1:3].T:
+                    temp.append([i[0], i[1]])
+            else:
+                idx = self.cr.assayFeats[assay]
+                temp = [[idx.start, idx.end]]
+            ret_val[assay] = temp
+        return ret_val
+
+    def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
+        stores = {x: self.z["%s/counts" % x] for x in set(self.cr.assayFeats.columns)}
+        assay_ranges = self._prep_assay_ranges()
+        s, e, = 0, 0
+        n_chunks = self.cr.nCells // batch_size + 1
+        for a in tqdm(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
+            e += a.shape[0]
+            a = a.todense()
+            b = {x: [] for x in stores.keys()}
+            for store_name in stores.keys():
+                ar = assay_ranges[store_name]
+                temp = []
+                for i in ar:
+                    temp.append(a[:, i[0]:i[1]])
+                if len(temp) > 1:
+                    b[store_name] = np.hstack(temp)
+                else:
+                    b[store_name] = temp[0]
+            for store_name in stores.keys():
+                stores[store_name][s:e] = b[store_name]
             s = e
 
 
