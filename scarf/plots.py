@@ -81,7 +81,7 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
             sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
                            inner=None, cut=0, color=color)
         if len(vals) > max_points:
-            vals = vals.sample(n=max_points).values
+            vals = vals.sample(n=max_points)
         sns.stripplot(x='g', y='v', data=vals, jitter=0.4, ax=ax, orient='v',
                       s=scatter_size, color='k', alpha=0.4)
         ax.set_ylabel(data.columns[i], fontsize=label_size)
