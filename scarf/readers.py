@@ -7,7 +7,7 @@ import sparse
 from typing import IO
 import h5py
 
-__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader']
+__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader']
 
 
 def get_file_handle(fn: str) -> IO:
@@ -205,6 +205,75 @@ class CrDirReader(CrReader):
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
         stream = pd.read_csv(self.matFn, skiprows=3, sep=' ',
+                             header=None, chunksize=lines_in_mem)
+        start = 1
+        dfs = []
+        for df in stream:
+            if df.iloc[-1, 1] - start >= batch_size:
+                idx = df[1] < batch_size + start
+                dfs.append(df[idx])
+                yield self.to_sparse(np.vstack(dfs))
+                dfs = [df[~idx]]
+                start += batch_size
+            else:
+                dfs.append(df)
+        yield self.to_sparse(np.vstack(dfs))
+
+
+class MtxDirReader(CrReader):
+    def __init__(self, loc, file_type: str = None):
+        self.loc: str = loc.rstrip('/') + '/'
+        self.matFn = None
+        super().__init__(self._handle_version(), file_type)
+
+    def _handle_version(self):
+        if os.path.isfile(self.loc + 'features.tsv.gz'):
+            self.matFn = self.loc + 'matrix.mtx.gz'
+            grps = {'feature_ids': ('features.tsv.gz', 0),
+                    'feature_names': ('features.tsv.gz', 1),
+                    'feature_types': ('features.tsv.gz', 2),
+                    'cell_names': ('barcodes.tsv.gz', 0)}
+        elif os.path.isfile(self.loc + 'genes.tsv'):
+            self.matFn = self.loc + 'matrix.mtx'
+            grps = {'feature_ids': ('genes.tsv', 0),
+                    'feature_names': ('genes.tsv', 1),
+                    'feature_types': None,
+                    'cell_names': ('barcodes.tsv', 0)}
+        else:
+            raise IOError("ERROR: Couldn't find files")
+        return grps
+
+    def _read_dataset(self, key: Optional[str] = None):
+        try:
+            vals = [x.split('\t')[self.grpNames[key][1]] for x in
+                    read_file(self.loc + self.grpNames[key][0])]
+        except IndexError:
+            vals = None
+        return vals
+
+    def to_sparse(self, a):
+        idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
+        return sparse.COO([a[:, 1] - a[0, 1], a[:, 0] - 1], a[:, 2], shape=(len(idx) + 1, self.nFeatures))
+
+    def _subset_by_assay(self, v, assay) -> List:
+        if assay is None:
+            return v
+        elif assay not in self.assayFeats:
+            raise ValueError("ERROR: Assay ID %s is not valid" % assay)
+        if len(self.assayFeats[assay].shape) == 2:
+            ret_val = []
+            for i in self.assayFeats[assay].values[1:3].T:
+                ret_val.extend(list(v[i[0]: i[1]]))
+            return ret_val
+        elif len(self.assayFeats[assay].shape) == 1:
+            idx = self.assayFeats[assay]
+            return v[idx.start: idx.end]
+        else:
+            raise ValueError("ERROR: assay feats is 3D. Something went really wrong. Create a github issue")
+
+    def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
+            Generator[List[np.ndarray], None, None]:
+        stream = pd.read_csv(self.matFn, skiprows=3, sep='\t',
                              header=None, chunksize=lines_in_mem)
         start = 1
         dfs = []
