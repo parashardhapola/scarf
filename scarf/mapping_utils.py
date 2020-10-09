@@ -76,15 +76,18 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
     print(f"INFO: {(t_idx==-1).sum()} features missing in target data", flush=True)
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
     norm_params = source_assay.z[normed_loc].attrs['subset_params']
-    normed_data = target_assay.normed(target_assay.cells.active_index('I'), t_idx[t_idx != -1], **norm_params)
+    # FIXME: this generates a lot of out of order chunks
+    sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))
+    normed_data = target_assay.normed(target_assay.cells.active_index('I'), sorted_t_idx, **norm_params)
     loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
     og = create_zarr_dataset(target_assay.z['/'], loc, (1000,), 'float64', (normed_data.shape[0], len(t_idx)))
     pos_start, pos_end = 0, 0
+    unsorter_idx = np.argsort(np.argsort(t_idx[t_idx != -1]))
     for i in tqdm(normed_data.blocks, total=normed_data.numblocks[0],
                   desc=f"Writing aligned normed target data to {loc}"):
         pos_end += i.shape[0]
         a = np.ones((i.shape[0], len(t_idx)))
-        a[:, np.where(t_idx != -1)[0]] = i.compute()
+        a[:, np.where(t_idx != -1)[0]] = i.compute()[:, unsorter_idx]
         og[pos_start:pos_end, :] = a
         pos_start = pos_end
     return s_idx
