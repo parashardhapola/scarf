@@ -134,12 +134,12 @@ class MetaData:
         a[~k] = fill_val
         return a
 
-    # def _reset(self) -> None:
-    #     """
-    #     Set all rows to active
-    #     """
-    #     self.active = np.array([True for _ in range(self.N)]).astype(bool)
-    #     # TODO: also remove all the columns except three
+    def reset(self) -> None:
+        """
+        Set all rows to active
+        """
+        self.table['I'] = np.array([True for _ in range(self.N)]).astype(bool)
+        self._zgrp['I'] = self.table['I'].values
 
     def _make_data_table(self) -> pd.DataFrame:
         keys = ['I', 'ids', 'names']
