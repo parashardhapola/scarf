@@ -67,10 +67,10 @@ class DataStore:
         self._fn: str = zarr_loc
         self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
-        if dask_client is None:
-            cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads)
-            self.daskClient = Client(cluster)
         self.daskClient = dask_client
+        if dask_client is None:
+            cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads, dashboard_address=None)
+            self.daskClient = Client(cluster)
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
@@ -2145,3 +2145,8 @@ class DataStore:
     def __repr__(self):
         x = ' '.join(self.assayNames)
         return f"DataStore with {self.cells.N} cells containing {len(self.assayNames)} assays: {x}"
+
+    def __del__(self):
+        # Disabling because it creates issues
+        # self.daskClient.close()
+        pass
