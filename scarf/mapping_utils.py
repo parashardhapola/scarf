@@ -76,7 +76,6 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
     print(f"INFO: {(t_idx==-1).sum()} features missing in target data", flush=True)
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
     norm_params = source_assay.z[normed_loc].attrs['subset_params']
-    # FIXME: this generates a lot of out of order chunks
     sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))
     normed_data = target_assay.normed(target_assay.cells.active_index('I'), sorted_t_idx, **norm_params)
     loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
