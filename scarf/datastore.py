@@ -1780,7 +1780,7 @@ class DataStore:
             cols:
             cell_key:
             group_key:
-            show_all_cells:
+            show_all_cells: Deprecated
             color:
             cmap:
             fig_size:
@@ -1796,13 +1796,10 @@ class DataStore:
 
         from .plots import plot_qc
         import re
+        print('Deprecation Warning: `show_all_cells` is no longer used.', flush=True)
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        if group_key is None:
-            group_key = 'I'
-        if cell_key is None:
-            cell_key = 'I'
         plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
         if cols is not None:
             if type(cols) != list:
@@ -1813,14 +1810,17 @@ class DataStore:
                     plot_cols.extend(matches)
                 else:
                     print(f"{i} not found in cell metadata")
-        plot_cols.append(group_key)
-        df = self.cells.table[plot_cols]
-        df = df.rename(mapper={group_key: 'groups'}, axis=1)
-        if show_all_cells is False:
+        df = self.cells.table[plot_cols].copy()
+        if group_key is not None:
+            df['groups'] = self.cells.table[group_key].copy()
+        else:
+            df['groups'] = np.zeros(len(df))
+        if cell_key is not None:
+            if self.cells.table[cell_key].dtype != bool:
+                raise ValueError("ERROR: Cell key must be a boolean type column in cell metadata")
             df = df[self.cells.table[cell_key]]
-            df['groups'] = self.cells.fetch(group_key, key=cell_key)
-            if df['groups'].nunique() == 1:
-                color = 'coral'
+        if df['groups'].nunique() == 1:
+            color = 'coral'
         plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
                 scatter_size=scatter_size, max_points=max_points, show_on_single_row=show_on_single_row)
         return None
