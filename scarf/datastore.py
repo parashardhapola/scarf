@@ -1318,7 +1318,8 @@ class DataStore:
 
     def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None, from_assay: str = None,
                           cell_key: str = 'I', log_transform: bool = True,
-                          multiplier: float = 1000) -> Generator[Tuple[str, np.ndarray], None, None]:
+                          multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) ->  \
+            Generator[Tuple[str, np.ndarray], None, None]:
         """
         Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
         The more often a reference cell is found in the nearest neighbour list of the target cells, the higher will be
@@ -1333,6 +1334,10 @@ class DataStore:
             log_transform: If True (default) then the mapping scores will be log transformed
             multiplier: A scaling factor for mapping scores. All scores al multiplied this value. This mostly intended
                         for visualization of mapping scores (Default: 1000)
+            weighted: Use distance weights when calculating mapping scores (default: True). If False then the actual
+                      distances between the reference and target cells are ignored.
+            fixed_weight: Used when `weighted` is False. This is the value that is added to mapping score of each
+                          reference cell for every projected target cell. Can be any value >0.
 
         Yields:
             A tuple of group name and mapping score of reference cells for that target group.
@@ -1367,7 +1372,10 @@ class DataStore:
             for n, i, j in zip(range(len(indices)), indices, dists):
                 if n in coi:
                     for x, y in zip(i, j):
-                        ms[x] += y
+                        if weighted:
+                            ms[x] += y
+                        else:
+                            ms[x] += fixed_weight
             ms = multiplier * ms / len(coi)
             if log_transform:
                 ms = np.log1p(ms)
@@ -1866,7 +1874,7 @@ class DataStore:
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None):
+                    cspacing: float = 1, savename: str = None, ax=None, fig=None, scatter_kwargs: dict = None):
         """
 
         Args:
@@ -1929,7 +1937,7 @@ class DataStore:
                 logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
-        return plot_scatter(df, None, None, width, height, default_color, missing_color, colormap, point_size,
+        return plot_scatter(df, ax, fig, width, height, default_color, missing_color, colormap, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
                             legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
                             scatter_kwargs)
