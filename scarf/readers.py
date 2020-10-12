@@ -233,14 +233,26 @@ class MtxDirReader(CrReader):
                     'feature_names': ('features.tsv.gz', 1),
                     'feature_types': ('features.tsv.gz', 2),
                     'cell_names': ('barcodes.tsv.gz', 0)}
+        elif os.path.isfile(self.loc + 'features.tsv.gz'): # sometimes somebody might have gunziped these files...
+            self.matFn = self.loc + 'matrix.mtx'
+            grps = {'feature_ids': ('features.tsv', 0),
+                    'feature_names': ('features.tsv', 1),
+                    'feature_types': None,
+                    'cell_names': ('barcodes.tsv', 0)}
         elif os.path.isfile(self.loc + 'genes.tsv'):
             self.matFn = self.loc + 'matrix.mtx'
             grps = {'feature_ids': ('genes.tsv', 0),
                     'feature_names': ('genes.tsv', 1),
                     'feature_types': None,
                     'cell_names': ('barcodes.tsv', 0)}
+        elif os.path.isfile(self.loc + 'genes.tsv.gz'):
+            self.matFn = self.loc + 'matrix.mtx.gz'
+            grps = {'feature_ids': ('genes.tsv.gz', 0),
+                    'feature_names': ('genes.tsv.gz', 1),
+                    'feature_types': ('genes.tsv.gz', 2),
+                    'cell_names': ('barcodes.tsv.gz', 0)}
         else:
-            raise IOError("ERROR: Couldn't find files")
+            raise IOError("ERROR: Couldn't find the expeced matrix files matrix.mtx, barcodes.tsv and/or genes.tsv/features.tsv")
         return grps
 
     def _read_dataset(self, key: Optional[str] = None):
