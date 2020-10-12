@@ -2084,7 +2084,7 @@ class DataStore:
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
-                            batch_size: int = None, **heatmap_kwargs):
+                            **heatmap_kwargs):
         """
 
         Args:
@@ -2095,7 +2095,6 @@ class DataStore:
             log_transform:
             vmin:
             vmax:
-            batch_size:
             **heatmap_kwargs:
 
         Returns:
@@ -2108,8 +2107,6 @@ class DataStore:
             raise ValueError("ERROR: Please provide a value for `group_key`")
         if subset_key is None:
             subset_key = 'I'
-        if batch_size is None:
-            batch_size = min(50, int(1e7 / assay.cells.N)) + 1
         if 'markers' not in self.z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
         slot_name = f"{subset_key}__{group_key}"
@@ -2122,23 +2119,24 @@ class DataStore:
             if 'names' in g[i]:
                 goi.extend(g[i]['names'][:][:topn])
         goi = sorted(set(goi))
-        cell_idx = assay.cells.active_index(subset_key)
-        cdf = []
-        for i in tqdm(np.array_split(goi, len(goi) // batch_size + 1), desc="INFO: Calculating group mean values"):
-            feat_idx = assay.feats.get_idx_by_ids(i)
-            normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx, log_transform=log_transform)
-            df = pd.DataFrame(show_progress(normed_data, None, self.nthreads), columns=i)
-            df['cluster'] = assay.cells.fetch(group_key, key=subset_key)
-            df = df.groupby('cluster').mean().T
-            df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
-            cdf.append(df)
-        cdf = pd.concat(cdf, axis=0)
+        cell_idx = np.array(assay.cells.active_index(subset_key))
+        feat_idx = np.array(assay.feats.get_idx_by_ids(goi))
+        feat_argsort = np.argsort(feat_idx)
+        normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
+        nc = normed_data.chunks[0]
+        normed_data = normed_data.to_dask_dataframe()
+        groups = daskarr.from_array(assay.cells.fetch(group_key, subset_key), chunks=nc).to_dask_dataframe()
+        df = controlled_compute(normed_data.groupby(groups).mean(), 4)
+        df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
+        df.columns = goi[feat_argsort]
+        df = df.T
+        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
         # noinspection PyTypeChecker
-        cdf[cdf < vmin] = vmin
+        df[df < vmin] = vmin
         # noinspection PyTypeChecker
-        cdf[cdf > vmax] = vmax
-        cdf.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(cdf.index)['names'].values
-        plot_heatmap(cdf, **heatmap_kwargs)
+        df[df > vmax] = vmax
+        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
+        plot_heatmap(df, **heatmap_kwargs)
 
     def __repr__(self):
         x = ' '.join(self.assayNames)
