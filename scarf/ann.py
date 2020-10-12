@@ -2,6 +2,7 @@ from tqdm import tqdm
 import numpy as np
 from scipy import sparse
 from threadpoolctl import threadpool_limits
+from .utils import controlled_compute
 
 __all__ = ['AnnStream']
 
@@ -92,7 +93,7 @@ class AnnStream:
 
     def iter_blocks(self, msg: str = '') -> np.ndarray:
         for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
-            yield i.compute()
+            yield controlled_compute(i, self.nthreads)
 
     def transform_z(self, a: np.ndarray) -> np.ndarray:
         return (a - self.mu) / self.sigma
@@ -156,8 +157,8 @@ class AnnStream:
     def _fit_lsi(self) -> None:
         from gensim.models import LsiModel
 
-        self._lsiModel = LsiModel(vec_to_bow(self.data.blocks[0].compute()), num_topics=self.dims,
-                                  chunksize=self.data.chunksize[0])
+        self._lsiModel = LsiModel(vec_to_bow(controlled_compute(self.data.blocks[0], self.nthreads)),
+                                  num_topics=self.dims, chunksize=self.data.chunksize[0])
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
             if n == 0:
                 continue

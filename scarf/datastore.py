@@ -8,7 +8,7 @@ import dask.array as daskarr
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import show_progress, system_call, clean_array
+from .utils import show_progress, system_call, clean_array, controlled_compute
 from .logging_utils import logger
 
 __all__ = ['DataStore']
@@ -199,7 +199,7 @@ class DataStore:
                     assay = Assay
                     z_attrs[i] = 'Assay'
             logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
-            setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells))
+            setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
         self.z.attrs['assayTypes'] = z_attrs
         return None
 
@@ -235,12 +235,14 @@ class DataStore:
 
             var_name = from_assay + '_nCounts'
             if var_name not in self.cells.table.columns:
-                n_c = show_progress(assay.rawData.sum(axis=1), f"INFO: ({from_assay}) Computing nCounts")
+                n_c = show_progress(assay.rawData.sum(axis=1),
+                                    f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c, overwrite=True)
 
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
-                n_f = show_progress((assay.rawData > 0).sum(axis=1), f"INFO: ({from_assay}) Computing nFeatures")
+                n_f = show_progress((assay.rawData > 0).sum(axis=1),
+                                    f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
                 self.cells.add(var_name, n_f, overwrite=True)
 
             if type(assay) == RNAassay:
@@ -751,9 +753,9 @@ class DataStore:
         else:
             if reduction_method == 'pca':
                 mu = clean_array(show_progress(data.mean(axis=0),
-                                               'INFO: Calculating mean of norm. data'))
+                                               'INFO: Calculating mean of norm. data', self.nthreads))
                 sigma = clean_array(show_progress(data.std(axis=0),
-                                                  'INFO: Calculating std. dev. of norm. data'), 1)
+                                                  'INFO: Calculating std. dev. of norm. data', self.nthreads), 1)
         if ann_loc in self.z:
             fit_ann = False
             logger.info(f"Using existing ANN index")
@@ -1198,7 +1200,7 @@ class DataStore:
         if subset_key is None:
             subset_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, subset_key, threshold)
+        markers = find_markers_by_rank(assay, group_key, subset_key, self.nthreads, threshold)
         z = self.z[assay.name]
         slot_name = f"{subset_key}__{group_key}"
         if 'markers' not in z:
@@ -1265,7 +1267,7 @@ class DataStore:
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
-                                  target_feat_key, filter_null, exclude_missing)
+                                  target_feat_key, filter_null, exclude_missing, self.nthreads)
         logger.info(f"{len(feat_idx)} features being used for mapping")
         if np.all(source_assay.feats.active_index(cell_key + '__' + feat_key) == feat_idx):
             ann_feat_key = feat_key
@@ -1289,10 +1291,12 @@ class DataStore:
             target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
-                mu = show_progress(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
+                mu = show_progress(target_data.mean(axis=0),
+                                   'INFO: Calculating mean of target norm. data', self.nthreads)
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
-                sigma = show_progress(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
+                sigma = show_progress(target_data.std(axis=0),
+                                      'INFO: Calculating std. dev. of target norm. data', self.nthreads)
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
@@ -1302,7 +1306,7 @@ class DataStore:
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         entry_start = 0
         for i in tqdm(target_data.blocks, desc='Mapping'):
-            a: np.ndarray = i.compute()
+            a: np.ndarray = controlled_compute(i, self.nthreads)
             ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
@@ -1734,7 +1738,7 @@ class DataStore:
                 continue
             rep_indices = make_reps(groups[groups == g].index, pseudo_reps, random_seed)
             for n, idx in enumerate(rep_indices):
-                vals[f"{g}_Rep{n + 1}"] = assay.rawData[idx].sum(axis=0).compute()
+                vals[f"{g}_Rep{n + 1}"] = controlled_compute(assay.rawData[idx].sum(axis=0), self.nthreads)
         vals = pd.DataFrame(vals)
         vals = vals[(vals.sum(axis=1) != 0)]
         vals['names'] = assay.feats.table.names.reindex(vals.index).values
@@ -1848,7 +1852,7 @@ class DataStore:
             else:
                 if len(feat_idx) > 1:
                     logger.warning(f"Plotting mean of {len(feat_idx)} features because {k} is not unique.")
-            vals = assay.normed(cell_idx, feat_idx).mean(axis=1).compute().astype(np.float_)
+            vals = controlled_compute(assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads).astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction > 0:
@@ -2123,7 +2127,7 @@ class DataStore:
         for i in tqdm(np.array_split(goi, len(goi) // batch_size + 1), desc="INFO: Calculating group mean values"):
             feat_idx = assay.feats.get_idx_by_ids(i)
             normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx, log_transform=log_transform)
-            df = pd.DataFrame(show_progress(normed_data), columns=i)
+            df = pd.DataFrame(show_progress(normed_data, None, self.nthreads), columns=i)
             df['cluster'] = assay.cells.fetch(group_key, key=subset_key)
             df = df.groupby('cluster').mean().T
             df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
