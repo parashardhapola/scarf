@@ -40,7 +40,7 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     td = clean_array(show_progress(target_data.std(axis=0),
                                    'INFO: (CORAL) Calculating target feature stdev', nthreads), 1)
     data = _correlation_alignment((source_data - sm) / sd, (target_data - tm) / td, nthreads)
-    dask_to_zarr(data, assay.z['/'], f"{assay.name}/normed__I__{feat_key}/data_coral", 1000,
+    dask_to_zarr(data, assay.z['/'], f"{assay.name}/normed__I__{feat_key}/data_coral", 1000, nthreads,
                  msg="Writing out coral corrected data")
 
 
