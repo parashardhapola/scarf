@@ -61,16 +61,23 @@ def clean_array(x, fill_val: int = 0):
     return x
 
 
-def show_progress(arr, msg: str = None, tpw: int = 2):
-    from dask.diagnostics import ProgressBar
+def controlled_compute(arr, nthreads):
+    from multiprocessing.pool import ThreadPool
     import dask
+
+    with dask.config.set(schedular='threads', pool=ThreadPool(nthreads)):
+        res = arr.compute()
+    return res
+
+
+def show_progress(arr, msg: str = None, nthreads: int = 1):
+    from dask.diagnostics import ProgressBar
 
     if msg is not None:
         print(msg, flush=True)
     pbar = ProgressBar()
     pbar.register()
-    with dask.config.set(processes=False, n_workers=1, threads_per_worker=tpw, dashboard_address=None):
-        res = arr.compute()
+    res = controlled_compute(arr, nthreads)
     pbar.unregister()
     return res
 
@@ -89,15 +96,15 @@ def show_progress(arr, msg: str = None, tpw: int = 2):
 #     return wrapper
 
 
-def calc_computed(a, msg: str = None):
-    from dask.distributed import progress
-
-    if msg is not None:
-        print(msg, flush=True)
-    a = a.persist()
-    progress(a, notebook=False)
-    print(flush=True)
-    return a.compute()
+# def calc_computed(a, msg: str = None):
+#     from dask.distributed import progress
+#
+#     if msg is not None:
+#         print(msg, flush=True)
+#     a = a.persist()
+#     progress(a, notebook=False)
+#     print(flush=True)
+#     return a.compute()
 
 
 def system_call(command):

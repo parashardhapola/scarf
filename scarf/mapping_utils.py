@@ -2,6 +2,7 @@ import dask.array as daskarr
 import numpy as np
 from typing import Tuple
 from .assay import Assay
+from .utils import controlled_compute, show_progress
 
 __all__ = ['align_features', 'coral']
 
@@ -15,11 +16,10 @@ def _cov_diaged(da: daskarr) -> daskarr:
 
 def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
     from scipy.linalg import fractional_matrix_power as fmp
-    from .utils import show_progress
     from threadpoolctl import threadpool_limits
 
-    s_cov = show_progress(_cov_diaged(s), f"CORAL: Computing source covariance")
-    t_cov = show_progress(_cov_diaged(t), f"CORAL: Computing target covariance")
+    s_cov = show_progress(_cov_diaged(s), f"CORAL: Computing source covariance", nthreads)
+    t_cov = show_progress(_cov_diaged(t), f"CORAL: Computing target covariance", nthreads)
     print("INFO: Calculating fractional power of covariance matrices. This might take a while... ", flush=True, end='')
     with threadpool_limits(limits=nthreads):
         a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))
@@ -29,26 +29,31 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
 
 def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     from .writers import dask_to_zarr
-    from .utils import clean_array, show_progress
+    from .utils import clean_array
 
-    sm = clean_array(show_progress(source_data.mean(axis=0), 'INFO: (CORAL) Calculating source feature means'))
-    sd = clean_array(show_progress(source_data.std(axis=0), 'INFO: (CORAL) Calculating source feature stdev'), 1)
-    tm = clean_array(show_progress(target_data.mean(axis=0), 'INFO: (CORAL) Calculating target feature means'))
-    td = clean_array(show_progress(target_data.std(axis=0), 'INFO: (CORAL) Calculating target feature stdev'), 1)
+    sm = clean_array(show_progress(source_data.mean(axis=0),
+                                   'INFO: (CORAL) Calculating source feature means', nthreads))
+    sd = clean_array(show_progress(source_data.std(axis=0),
+                                   'INFO: (CORAL) Calculating source feature stdev', nthreads), 1)
+    tm = clean_array(show_progress(target_data.mean(axis=0),
+                                   'INFO: (CORAL) Calculating target feature means', nthreads))
+    td = clean_array(show_progress(target_data.std(axis=0),
+                                   'INFO: (CORAL) Calculating target feature stdev', nthreads), 1)
     data = _correlation_alignment((source_data - sm) / sd, (target_data - tm) / td, nthreads)
     dask_to_zarr(data, assay.z['/'], f"{assay.name}/normed__I__{feat_key}/data_coral", 1000,
                  msg="Writing out coral corrected data")
 
 
 def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
-                    exclude_missing: bool) -> Tuple[np.ndarray, np.ndarray]:
+                    exclude_missing: bool, nthreads: int) -> Tuple[np.ndarray, np.ndarray]:
     t_idx = t_assay.feats.table.ids.isin(s_feat_ids)
     if filter_null:
         if exclude_missing is False:
             print("WARNING: `filter_null` has not effect because `exclude_missing` is False", flush=True)
         else:
-            t_idx[t_idx] = t_assay.rawData[:, list(t_idx[t_idx].index)][
-                           t_assay.cells.active_index('I'), :].sum(axis=0).compute() != 0
+            t_idx[t_idx] = controlled_compute(
+                t_assay.rawData[:, list(t_idx[t_idx].index)][t_assay.cells.active_index('I'), :].sum(axis=0),
+                nthreads) != 0
     t_idx = t_idx[t_idx].index
     if exclude_missing:
         s_idx = s_assay.feats.table.ids.isin(t_assay.feats.table.ids[t_idx].values)
@@ -66,14 +71,14 @@ def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
 
 def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: str,
                    source_feat_key: str, target_feat_key: str, filter_null: bool,
-                   exclude_missing: bool) -> np.ndarray:
+                   exclude_missing: bool, nthreads: int) -> np.ndarray:
     from .writers import create_zarr_dataset
     from tqdm import tqdm
 
     source_feat_ids = source_assay.feats.table.ids[source_assay.feats.table[
         source_cell_key + '__' + source_feat_key]].values
-    s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing)
-    print(f"INFO: {(t_idx==-1).sum()} features missing in target data", flush=True)
+    s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing, nthreads)
+    print(f"INFO: {(t_idx == -1).sum()} features missing in target data", flush=True)
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
     norm_params = source_assay.z[normed_loc].attrs['subset_params']
     sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))
@@ -86,7 +91,7 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
                   desc=f"Writing aligned normed target data to {loc}"):
         pos_end += i.shape[0]
         a = np.ones((i.shape[0], len(t_idx)))
-        a[:, np.where(t_idx != -1)[0]] = i.compute()[:, unsorter_idx]
+        a[:, np.where(t_idx != -1)[0]] = controlled_compute(i, nthreads)[:, unsorter_idx]
         og[pos_start:pos_end, :] = a
         pos_start = pos_end
     return s_idx

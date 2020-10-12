@@ -3,6 +3,7 @@ from typing import List
 import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
+from .utils import controlled_compute
 
 __all__ = ['meld_assay', 'make_bed_from_gff']
 
@@ -117,10 +118,10 @@ def _convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
     return idx
 
 
-def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) -> None:
+def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict, nthreads: int) -> None:
     c_pos_start = 0
     for a in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
-        a = a.compute()
+        a = controlled_compute(a, nthreads)
         b = np.zeros((a.shape[0], len(feat_order)))
         c_pos_end = c_pos_start + a.shape[0]
         for n, i in enumerate(feat_order):
@@ -131,11 +132,11 @@ def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict) 
     return None
 
 
-def meld_assay(assay, reference_bed, out_name: str, peaks_col: str = 'ids'):
+def meld_assay(assay, reference_bed, out_name: str, nthreads: int, peaks_col: str = 'ids'):
     peaks_bed = _create_bed_from_coord_ids(assay.feats.table[peaks_col].values)
     cross_idx_map = _convert_ids_to_idx(assay.feats.table[peaks_col], _get_merging_map(peaks_bed, reference_bed))
     feat_ids = [x[3] for x in reference_bed]
     feat_names = [x[4] for x in reference_bed]
     g = create_zarr_count_assay(z=assay.z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
                                 n_cells=assay.rawData.shape[0], feat_ids=feat_ids, feat_names=feat_names)
-    _create_counts_mat(assay=assay, out_store=g, feat_order=feat_ids, cross_idx_map=cross_idx_map)
+    _create_counts_mat(assay=assay, out_store=g, feat_order=feat_ids, cross_idx_map=cross_idx_map, nthreads=nthreads)
