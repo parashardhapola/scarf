@@ -306,7 +306,7 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    def __init__(self, h5ad_fn, cell_names_key: str=None, feature_names_key: str =None):
+    def __init__(self, h5ad_fn, cell_names_key: str = '_index', feature_names_key: str = '_index'):
         """
 
         Args:
@@ -316,11 +316,7 @@ class H5adReader:
         """
         self.h5 = h5py.File(h5ad_fn)
         self.cellNamesKey = cell_names_key
-        if self.cellNamesKey is None:
-            self.cellNamesKey = 'index'
         self.featNamesKey = feature_names_key
-        if self.featNamesKey is None:
-            self.featNamesKey = 'index'
         self.useObs, self.nCells = self._get_n_cells()
         self.useVar, self.nFeats = self._get_n_feats()
 
