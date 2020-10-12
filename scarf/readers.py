@@ -310,7 +310,8 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    def __init__(self, h5ad_fn, cell_names_key: str = '_index', feature_names_key: str = '_index'):
+    def __init__(self, h5ad_fn, cell_names_key: str = '_index', feature_names_key: str = '_index',
+                 data_key: str = 'X'):
         """
 
         Args:
@@ -318,89 +319,119 @@ class H5adReader:
             cell_names_key: Key in `obs` group that contains unique cell names. By default the index will be used.
             feature_names_key: Key in `var` group that contains unique feature names. By default the index will be used.
         """
-        self.h5 = h5py.File(h5ad_fn)
-        self.cellNamesKey = cell_names_key
-        self.featNamesKey = feature_names_key
-        self.useObs, self.nCells = self._get_n_cells()
-        self.useVar, self.nFeats = self._get_n_feats()
+
+        self.h5 = h5py.File(h5ad_fn, mode='r')
+        if data_key not in self.h5:
+            raise KeyError(f"ERROR: {data_key} group not found in the H5ad file")
+        self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
+        self.dataKey = data_key
+        self.nCells, self.nFeats = self._get_n_cells(), self._get_n_feats()
+        self.cellNamesKey = self._fix_name_key('obs', cell_names_key)
+        self.featNamesKey = self._fix_name_key('var', feature_names_key)
+
+    def _validate_group(self, group):
+        if group not in self.h5:
+            print(f"WARNING: `{group}` group not found in the H5ad file", flush=True)
+            ret_val = 0
+        elif type(self.h5[group]) == h5py.Dataset:
+            ret_val = 1
+        elif type(self.h5[group]) == h5py.Group:
+            ret_val = 2
+        else:
+            print(f"WARNING: `{group}` slot in H5ad file is not of Dataset or Group type. "
+                  f"Due to this, no information in `{group}` can be used", flush=True)
+            ret_val = 0
+        if ret_val == 2:
+            if len(self.h5[group].keys()) == 0:
+                print(f"WARNING: `{group}` slot in H5ad file is empty.", flush=True)
+                ret_val = 0
+            elif len(set([self.h5[group][x].shape[0] for x in self.h5[group].keys()])) > 1:
+                print(f"WARNING: `{group}` slot in H5ad file has unequal sized child groups "
+                      f"Due to this, no information in `{group}` can be used", flush=True)
+                ret_val = 0
+        return ret_val
+
+    def _fix_name_key(self, group, key):
+        if self.useGroup[group] > 0:
+            if key not in self.h5[group]:
+                if key.startswith('_'):
+                    temp_key = key[1:]
+                    if temp_key in self.h5[group]:
+                        return temp_key
+        return key
 
     def _get_n_cells(self):
-        x_len = self.h5['X']['indptr'].shape[0] - 1
-        if type(self.h5['obs']) != h5py.Dataset:
-            print("WARNING: `obs` slot in H5 file is not of Dataset type. "
-                  "Due to this no information in `obs` can be used")
-            return False, x_len
-        obs_len = self.h5['obs'].shape[0]
-        if x_len != obs_len:
-            print("WARNING: The number of cells in the `X` slot not same as in `obs`. "
-                  "Due to this no information in `obs` can be used")
-            return False, x_len
-        return True, obs_len
-
-    def _get_max_index(self, steps=1e6):
-        s = 0
-        n_inds = self.h5['X']['indices'].shape[0]
-        steps = int(steps)
-        max_val = 0
-        for e in range(steps, n_inds + steps, steps):
-            e = int(e)
-            if e > n_inds:
-                e = n_inds - 1
-            mv = self.h5['X']['indices'][s:e].max()
-            if mv > max_val:
-                max_val = mv
-            s = e
-        return max_val + 1
+        if self.useGroup['obs'] == 0:
+            if 'shape' in self.h5[self.dataKey]:
+                return self.h5[self.dataKey]['shape'][0]
+            else:
+                raise KeyError(f"ERROR: `obs` not found and `shape` key is missing in the {self.dataKey} group. "
+                               f"Aborting read process. ")
+        elif self.useGroup['obs'] == 1:
+            return self.h5['obs'].shape[0]
+        else:
+            return self.h5['obs'][list(self.h5['obs'].keys())[0]].shape[0]
 
     def _get_n_feats(self):
-        x_len = self._get_max_index()
-        if type(self.h5['var']) != h5py.Dataset:
-            print("WARNING: `var` slot in H5 file is not of Dataset type. "
-                  "Due to this no information in `var` can be used")
-            return False, x_len
-        var_len = self.h5['var'].shape[0]
-        if x_len != var_len:
-            print("WARNING: The max index of features in the `X/indices` slot not same as in `var`. "
-                  "Due to this no information in `var` can be used")
-            return False, x_len
-        return True, var_len
+        if self.useGroup['var'] == 0:
+            if 'shape' in self.h5[self.dataKey]:
+                return self.h5[self.dataKey]['shape'][1]
+            else:
+                raise KeyError(f"ERROR: `var` not found and `shape` key is missing in the {self.dataKey} group. "
+                               f"Aborting read process.")
+        elif self.useGroup['var'] == 1:
+            return self.h5['var'].shape[0]
+        else:
+            return self.h5['var'][list(self.h5['var'].keys())[0]].shape[0]
 
     def cell_names(self):
-        if self.useObs:
-            return self.h5['obs'][self.cellNamesKey]
-        else:
-            print(f"WARNING: Could not find cell names key: {self.cellNamesKey} in obs. Will use a numbered sequence as"
-                  f" cell names")
-            return [f'cell_{x}' for x in range(self.nCells)]
+        if self.useGroup['obs'] > 0 and self.cellNamesKey in self.h5['obs']:
+            if self.useGroup['obs'] == 1:
+                return self.h5['obs'][self.cellNamesKey]
+            else:
+                return self.h5['obs'][self.cellNamesKey][:]
+        print(f"WARNING: Could not find cells names key: {self.cellNamesKey} in `obs`.", flush=True)
+        return np.array([f'cell_{x}' for x in range(self.nCells)])
 
     def feat_names(self):
-        if self.useVar:
-            return self.h5['var'][self.featNamesKey]
-        else:
-            print(f"WARNING: Could not find feature names key: {self.featNamesKey} in var. Will use a numbered sequence"
-                  f" as feature names")
-            return [f'feature_{x}' for x in range(self.nFeats)]
+        if self.useGroup['var'] > 0 and self.featNamesKey in self.h5['var']:
+            if self.useGroup['var'] == 1:
+                return self.h5['var'][self.featNamesKey]
+            else:
+                return self.h5['var'][self.featNamesKey][:]
+        print(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.", flush=True)
+        return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
     def feat_ids(self):
-        if self.useVar:
+        if self.useGroup['var'] > 0:
             names = self.feat_names()
             if len(names) == len(set(names)):
                 return names
-        return [f'feature_{x}' for x in range(self.nFeats)]
+        return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
     def get_cell_columns(self):
-        if self.useObs is True:
+        if self.useGroup['obs'] == 1:
             for i in self.h5['obs'].dtype.names:
                 if i == self.cellNamesKey:
                     continue
                 yield i, self.h5['obs'][i]
+        if self.useGroup['obs'] == 2:
+            for i in self.h5['obs'].keys():
+                if i == self.cellNamesKey:
+                    continue
+                yield i, self.h5['obs'][i][:]
 
     def get_feat_columns(self):
-        if self.useVar is True:
+        if self.useGroup['var'] == 1:
             for i in self.h5['var'].dtype.names:
                 if i == self.featNamesKey:
                     continue
                 yield i, self.h5['var'][i]
+        if self.useGroup['var'] == 2:
+            for i in self.h5['var'].keys():
+                if i == self.featNamesKey:
+                    continue
+                yield i, self.h5['var'][i][:]
 
     def consume(self, batch_size: int, data_loc: str = 'X'):
         grp = self.h5[data_loc]

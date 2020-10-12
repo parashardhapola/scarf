@@ -147,9 +147,12 @@ class H5adToZarr:
                              "`assay_names` should be equal")
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
-        for i in self.assayNames:
-            create_zarr_count_assay(self.z, i, chunk_size, self.h5ad.nCells,
+        for assay_name in self.assayNames:
+            create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
                                     self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
+            for i, j in self.h5ad.get_feat_columns():
+                if i not in self.z[assay_name]['featureData']:
+                    create_zarr_obj_array(self.z[assay_name]['featureData'], i, j, j.dtype)
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
