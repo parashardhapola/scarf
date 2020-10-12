@@ -427,6 +427,7 @@ class DataStore:
             Finalized values for the all the optional parameters in the same order
 
         """
+
         def log_message(category, name, value, custom_msg=None):
             msg = f"No value provided for parameter `{name}`. "
             if category == 'default':
@@ -1218,7 +1219,7 @@ class DataStore:
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
                     ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = False,
-                    exclude_missing: bool = False,  filter_null: bool = False, feat_scaling: bool = True) -> None:
+                    exclude_missing: bool = False, filter_null: bool = False, feat_scaling: bool = True) -> None:
         """
         Projects cells from external assays into the cell-neighbourhood graph using existing PCA loadings and ANN index.
         For each external cell (target) nearest neighbours are identified and save within the Zarr hierarchy group
@@ -1316,7 +1317,7 @@ class DataStore:
 
     def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None, from_assay: str = None,
                           cell_key: str = 'I', log_transform: bool = True,
-                          multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) ->  \
+                          multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) -> \
             Generator[Tuple[str, np.ndarray], None, None]:
         """
         Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
@@ -2118,7 +2119,7 @@ class DataStore:
         for i in g.keys():
             if 'names' in g[i]:
                 goi.extend(g[i]['names'][:][:topn])
-        goi = sorted(set(goi))
+        goi = np.array(sorted(set(goi)))
         cell_idx = np.array(assay.cells.active_index(subset_key))
         feat_idx = np.array(assay.feats.get_idx_by_ids(goi))
         feat_argsort = np.argsort(feat_idx)
@@ -2135,12 +2136,24 @@ class DataStore:
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
         df[df > vmax] = vmax
-        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
         plot_heatmap(df, **heatmap_kwargs)
 
     def __repr__(self):
-        x = ' '.join(self.assayNames)
-        return f"DataStore with {self.cells.N} cells containing {len(self.assayNames)} assays: {x}"
+        res = f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with" \
+              f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
+        res = res + f"\n\tCell metadata:"
+        tabs = '\t\t'
+        res += '\n' + tabs + ''.join(
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.table.columns, start=1)])
+        res = res.rstrip('\n\t')[:-2]
+        for i in self.assayNames:
+            assay = self._get_assay(i)
+            res += f"\n\t{i} assay has {assay.feats.active_index('I').shape[0]} ({assay.feats.N}) " \
+                   f"features and following metadata:"
+            res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
+                                          enumerate(assay.feats.table.columns, start=1)])
+            res = res.rstrip('\n\t')[:-2]
+        return res
 
     def __del__(self):
         # Disabling because it creates issues
