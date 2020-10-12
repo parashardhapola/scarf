@@ -306,8 +306,21 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    def __init__(self, h5ad_fn):
+    def __init__(self, h5ad_fn, cell_names_key: str=None, feature_names_key: str =None):
+        """
+
+        Args:
+            h5ad_fn: Path to H5AD file
+            cell_names_key: Key in `obs` group that contains unique cell names. By default the index will be used.
+            feature_names_key: Key in `var` group that contains unique feature names. By default the index will be used.
+        """
         self.h5 = h5py.File(h5ad_fn)
+        self.cellNamesKey = cell_names_key
+        if self.cellNamesKey is None:
+            self.cellNamesKey = 'index'
+        self.featNamesKey = feature_names_key
+        if self.featNamesKey is None:
+            self.featNamesKey = 'index'
         self.useObs, self.nCells = self._get_n_cells()
         self.useVar, self.nFeats = self._get_n_feats()
 
@@ -354,14 +367,18 @@ class H5adReader:
 
     def cell_names(self):
         if self.useObs:
-            return self.h5['obs']['index']
+            return self.h5['obs'][self.cellNamesKey]
         else:
+            print(f"WARNING: Could not find cell names key: {self.cellNamesKey} in obs. Will use a numbered sequence as"
+                  f" cell names")
             return [f'cell_{x}' for x in range(self.nCells)]
 
     def feat_names(self):
         if self.useVar:
-            return self.h5['var']['index']
+            return self.h5['var'][self.featNamesKey]
         else:
+            print(f"WARNING: Could not find feature names key: {self.featNamesKey} in var. Will use a numbered sequence"
+                  f" as feature names")
             return [f'feature_{x}' for x in range(self.nFeats)]
 
     def feat_ids(self):
@@ -374,14 +391,14 @@ class H5adReader:
     def get_cell_columns(self):
         if self.useObs is True:
             for i in self.h5['obs'].dtype.names:
-                if i == 'index':
+                if i == self.cellNamesKey:
                     continue
                 yield i, self.h5['obs'][i]
 
     def get_feat_columns(self):
         if self.useVar is True:
             for i in self.h5['var'].dtype.names:
-                if i == 'index':
+                if i == self.featNamesKey:
                     continue
                 yield i, self.h5['var'][i]
 
