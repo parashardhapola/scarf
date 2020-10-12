@@ -10,15 +10,12 @@ import scarf
 ```
 
 
-```python
-cd ../../data/
-```
-
 Download data from 10x's website.
 
 ```python
-# !wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
-# !mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 pbmc_10k_rna_prot.h5
+!mkdir -p data
+!wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
+!mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 ./data/pbmc_10k_rna_prot.h5
 ```
 
 ### 1) Format conversion
@@ -26,7 +23,7 @@ Download data from 10x's website.
 The first step of the analysis workflow is to convert the file into Zarr format that is support by Scarf. So we read in the data using CrH5Reader (stands for cellranger H5 reader). The reader object allows quick investigation of the file before the format is converted.
 
 ```python
-reader = scarf.CrH5Reader(f'pbmc_10k_rna_prot.h5', 'rna')
+reader = scarf.CrH5Reader(f'./data/pbmc_10k_rna_prot.h5', 'rna')
 ```
 
 We can quickly check the number of cells and features (genes as well ADT features in this case) present in the file.
@@ -53,7 +50,7 @@ NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HD
 </div>
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn=f'pbmc_10k_rna_prot.zarr', chunk_size=(1000, 1000))
+writer = scarf.CrToZarr(reader, zarr_fn=f'./data/pbmc_10k_rna_prot.zarr', chunk_size=(1000, 1000))
 ```
 
 We can inspect the Zarr hierarchy of the output file.
@@ -72,7 +69,7 @@ writer.dump(batch_size=1000)
 The next step is to create a Scarf DataStore object. This object will be the primary way to interact with the data and all its constituent assays. The first time a Zarr file is loaded, we need to set the default assay. Here we set the 'RNA' assay as the default assay. When a Zarr file is loaded, scarf checks if some per cell statistics have been calculated. If not then nFeatures (no. of features per cell) and nCounts (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate % mitochondrial and ribosomal content per cell.
 
 ```python
-ds = scarf.DataStore('pbmc_10k_rna_prot.zarr', default_assay='RNA')
+ds = scarf.DataStore('./data/pbmc_10k_rna_prot.zarr', default_assay='RNA')
 ```
 
 Scarf uses Zarr format so that data can be stored in rectangular chunks. The raw data is saved in the `counts` level within each assay level in the Zarr hierarchy. It can easily be accessed as a Dask array using `rawData` attribute of the assay. For a standard analysis one would not to interact with the raw data directly. Scarf internally optimizes the use of this Dask array to minimize the memory requirement of all operations.
@@ -85,7 +82,7 @@ ds.RNA.rawData
 We can visualize the per cell statistics in violin plots before we start filtering cells out
 
 ```python
-ds.plot_cells_dists(cols=['percent*'], show_all_cells=True)
+ds.plot_cells_dists(cols=['percent*'])
 ```
 
 
@@ -157,7 +154,7 @@ Creating a neighbourhood graph of cells is the most critical step in any Scarf w
 - Fitting MiniBatch Kmeans (The kmeans centers are used later for UMAP initialization)
 
 ```python
-ds.make_graph(feat_key='hvgs', k=21, dims=31, n_centroids=100)
+ds.make_graph(feat_key='hvgs', k=21, dims=30, n_centroids=100)
 ```
 
 All the results of `make_graph` are saved under 'normed\__{cell key}__{feature key}'. in this case since we did not provide a cell key, it takes default value of `I` which means all the filtered cells and feature key (`feat_key`) was set to `hvgs`. The directory is organized such that all the intermediate data is also saved. The intermediate data is organized in a hierarchy which triggers recomputation when upstream changes are detected. The parameter values are also saved in hierarchy level names. For example, 'reduction_pca_31_I' means that PCA linear dimension reduction with 31 PC axes was used and the PCA was fit across all the cells that have True value in column 'I'. 
@@ -230,7 +227,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 There has been a lot of discussion over the choice of non-linear dimension reduction for single-cell data. tSNE was initially considered an excellent solution but has gradually lost out to UMAP because the magnitude of relation between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE as were used for UMAP, i.e. the first two (in case of 2D) PC axis of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in the 1M cell vignette, using tSNE can be better at visually accessing the extent of heterogeneity than UMAP. The biggest reason, however to run Scarf's implementation of graph tSNE could be the runtime which can be an order of magnitude faster than UMAP on large datasets.
 
 ```python
-ds.run_tsne(sgtsne_loc='../scarf/bin/sgtsne', alpha=20, box_h=1)
+ds.run_tsne(sgtsne_loc='../bin/sgtsne', alpha=20, box_h=1)
 ```
 
 ```python
@@ -266,7 +263,7 @@ Using `plot_marker_heatmap` we can also plot a heatmap with top marker genes fro
 
 
 ```python
-ds.plot_marker_heatmap(group_key='RNA_cluster', topn=3)
+ds.plot_marker_heatmap(group_key='RNA_cluster', topn=5)
 ```
 
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
@@ -288,7 +285,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_b_cluster', legend_onside=Fa
 ds.plot_cluster_tree(cluster_key='RNA_b_cluster', width=1, do_label=False)
 ```
 
-So we obtained 125 micro clusters. It is good idea to make sure that small populations are divided into smaller clusters to facilitate comprehensive downsampling of even smaller clusters. The next is to calculate the neighbourhood density of nodes. A degree of a node (i.e. a cell in the graph) is the number of nodes it is connected to, the two step degree (aka 1 neighbourhood degree)of a cell is the sum of degrees of cells that a cell is connected to. We calculate the two neighbourhood degree of cells to obtain an estimate of how densely connected the cells are in each region of the graph. The more densely connected the cells are, the less the heterogeneity across them. These values are saved in the cell metadata table, here as 'RNA_node_density'. We can visualize these values using `plot_layout` method.
+It is good idea to make sure that small populations are divided into smaller clusters to facilitate comprehensive downsampling of even smaller clusters. The next is to calculate the neighbourhood density of nodes. A degree of a node (i.e. a cell in the graph) is the number of nodes it is connected to, the two step degree (aka 1 neighbourhood degree)of a cell is the sum of degrees of cells that a cell is connected to. We calculate the two neighbourhood degree of cells to obtain an estimate of how densely connected the cells are in each region of the graph. The more densely connected the cells are, the less the heterogeneity across them. These values are saved in the cell metadata table, here as 'RNA_node_density'. We can visualize these values using `plot_layout` method.
 
 ```python
 ds.calc_node_density(neighbourhood_degree=2)
