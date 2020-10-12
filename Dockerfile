@@ -36,8 +36,8 @@ RUN pip install jupytext
 
 # Setting up git for deve purposes. For example pushing commits or making pull requests.
 # You can change this to your github credentials.
-RUN git config --global user.name "parashardhapola"
-RUN git config --global user.email parashar.dhapola@gmail.com
+# RUN git config --global user.name "parashardhapola"
+# RUN git config --global user.email parashar.dhapola@gmail.com
 
 # Install Scarf directly from github repo. Comment this out if you want to install from pypi manually
 # using `pip install scarf`. Alternatively you can also fork the repo and provide your username in link below.
