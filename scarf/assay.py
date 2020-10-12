@@ -2,7 +2,7 @@ import numpy as np
 import dask.array as daskarr
 import zarr
 from .metadata import MetaData
-from .utils import calc_computed
+from .utils import show_progress
 from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 
@@ -72,7 +72,7 @@ class Assay:
         if 'nCells' in self.feats.table.columns and 'dropOuts' in self.feats.table.columns:
             pass
         else:
-            ncells = calc_computed((self.rawData > 0).sum(axis=0),
+            ncells = show_progress((self.rawData > 0).sum(axis=0),
                                    f"INFO: ({self.name}) Computing nCells and dropOuts")
             self.feats.add('nCells', ncells, overwrite=True)
             self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
@@ -99,7 +99,7 @@ class Assay:
             print(f"WARNING: No matches found for pattern {feat_pattern}."
                   f" Will not add/update percentage feature", flush=True)
             return None
-        total = calc_computed(self.rawData[:, feat_idx].sum(axis=1),
+        total = show_progress(self.rawData[:, feat_idx].sum(axis=1),
                               f"Computing percentage of {name}")
         if total.sum() == 0:
             print(f"WARNING: Percentage feature {name} not added because not detected in any cell", flush=True)
@@ -169,7 +169,7 @@ class RNAassay(Assay):
         if log_transform:
             self.normMethod = norm_lib_size_log
         if renormalize_subset:
-            a = calc_computed(counts.sum(axis=1), msg="INFO: Normalizing with feature subset")
+            a = show_progress(counts.sum(axis=1), msg="INFO: Normalizing with feature subset")
             a[a == 0] = 1
             self.scalar = a
         else:
@@ -191,11 +191,11 @@ class RNAassay(Assay):
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
 
-        n_cells = calc_computed((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
+        n_cells = show_progress((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
                                 f"INFO: ({self.name}) Computing nCells")
-        tot = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
+        tot = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
                             f"INFO: ({self.name}) Computing normed_tot")
-        sigmas = calc_computed(self.normed(cell_idx, feat_idx).var(axis=0),
+        sigmas = show_progress(self.normed(cell_idx, feat_idx).var(axis=0),
                                f"INFO: ({self.name}) Computing sigmas")
         idx = n_cells > min_cells
         self.feats.update(idx, key=feat_key)
@@ -295,7 +295,7 @@ class ATACassay(Assay):
                 return None
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
-        prevalence = calc_computed(self.normed(cell_idx, feat_idx).sum(axis=0),
+        prevalence = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"INFO: ({self.name}) Calculating peak prevalence across cells")
         group = self.z.create_group(stats_loc, overwrite=True)
         g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)

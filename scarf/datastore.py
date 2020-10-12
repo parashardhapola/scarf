@@ -8,7 +8,7 @@ import dask.array as daskarr
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed, system_call, clean_array
+from .utils import show_progress, system_call, clean_array
 from .logging_utils import logger
 
 __all__ = ['DataStore']
@@ -55,22 +55,16 @@ class DataStore:
         mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
         ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
-        dask_client: Dask client object to use instead of creating a new one
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True,
-                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
-        from dask.distributed import Client, LocalCluster
+                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
 
         self._fn: str = zarr_loc
         self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
-        self.daskClient = dask_client
-        if dask_client is None:
-            cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads, dashboard_address=None)
-            self.daskClient = Client(cluster)
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
@@ -161,9 +155,9 @@ class DataStore:
         overridden using `predefined_assays` parameter
 
         Args:
-            predefined_assays: A mapping of assay names to Assay class type to associated with. If
             min_cells: Minimum number of cells that a feature in each assay must be present to not be discarded (i.e.
                        receive False value in `I` column)
+            custom_assay_types: A mapping of assay names to Assay class type to associated with.
 
         Returns:
         """
@@ -241,12 +235,12 @@ class DataStore:
 
             var_name = from_assay + '_nCounts'
             if var_name not in self.cells.table.columns:
-                n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: ({from_assay}) Computing nCounts")
+                n_c = show_progress(assay.rawData.sum(axis=1), f"INFO: ({from_assay}) Computing nCounts")
                 self.cells.add(var_name, n_c, overwrite=True)
 
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
-                n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: ({from_assay}) Computing nFeatures")
+                n_f = show_progress((assay.rawData > 0).sum(axis=1), f"INFO: ({from_assay}) Computing nFeatures")
                 self.cells.add(var_name, n_f, overwrite=True)
 
             if type(assay) == RNAassay:
@@ -756,9 +750,9 @@ class DataStore:
             logger.info(f"Using existing loadings for {reduction_method} with {dims} dims")
         else:
             if reduction_method == 'pca':
-                mu = clean_array(calc_computed(data.mean(axis=0),
+                mu = clean_array(show_progress(data.mean(axis=0),
                                                'INFO: Calculating mean of norm. data'))
-                sigma = clean_array(calc_computed(data.std(axis=0),
+                sigma = clean_array(show_progress(data.std(axis=0),
                                                   'INFO: Calculating std. dev. of norm. data'), 1)
         if ann_loc in self.z:
             fit_ann = False
@@ -1295,10 +1289,10 @@ class DataStore:
             target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
-                mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
+                mu = show_progress(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
-                sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
+                sigma = show_progress(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
@@ -2129,7 +2123,7 @@ class DataStore:
         for i in tqdm(np.array_split(goi, len(goi) // batch_size + 1), desc="INFO: Calculating group mean values"):
             feat_idx = assay.feats.get_idx_by_ids(i)
             normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx, log_transform=log_transform)
-            df = pd.DataFrame(calc_computed(normed_data), columns=i)
+            df = pd.DataFrame(show_progress(normed_data), columns=i)
             df['cluster'] = assay.cells.fetch(group_key, key=subset_key)
             df = df.groupby('cluster').mean().T
             df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)

@@ -1,11 +1,9 @@
 import numpy as np
-from typing import Callable
 import pandas as pd
 
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
     from statsmodels.nonparametric.smoothers_lowess import lowess
-    import pandas as pd
 
     stats = pd.DataFrame({'a': a, 'b': b}).apply(np.log)
     bin_edges = np.histogram(stats.a, bins=n_bins)[1]
@@ -63,18 +61,32 @@ def clean_array(x, fill_val: int = 0):
     return x
 
 
-def show_progress(func: Callable):
+def show_progress(arr, msg: str = None, tpw: int = 2):
     from dask.diagnostics import ProgressBar
-    import functools
+    import dask
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        pbar = ProgressBar()
-        pbar.register()
-        ret_val = func(*args, **kwargs)
-        pbar.unregister()
-        return ret_val
-    return wrapper
+    if msg is not None:
+        print(msg, flush=True)
+    pbar = ProgressBar()
+    pbar.register()
+    with dask.config.set(processes=False, n_workers=1, threads_per_worker=tpw, dashboard_address=None):
+        res = arr.compute()
+    pbar.unregister()
+    return res
+
+
+# def show_progress(func: Callable):
+#     from dask.diagnostics import ProgressBar
+#     import functools
+#
+#     @functools.wraps(func)
+#     def wrapper(*args, **kwargs):
+#         pbar = ProgressBar()
+#         pbar.register()
+#         ret_val = func(*args, **kwargs)
+#         pbar.unregister()
+#         return ret_val
+#     return wrapper
 
 
 def calc_computed(a, msg: str = None):
