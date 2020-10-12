@@ -256,7 +256,11 @@ class MtxDirReader(CrReader):
                     'feature_types': ('genes.tsv.gz', 2),
                     'cell_names': ('barcodes.tsv.gz', 0)}
         else:
-            raise IOError("ERROR: Couldn't find the expeced matrix files matrix.mtx, barcodes.tsv and/or genes.tsv/features.tsv")
+            raise IOError("ERROR: Couldn't find either of these expected combinations of files:\n"
+                          "\t- matrix.mtx, barcodes.tsv and genes.tsv\n"
+                          "\t- matrix.mtx.gz, barcodes.tsv.gz and features.tsv.gz\n"
+                          "Please make sure that you have not compressed or uncompressed the Cellranger output files "
+                          "manually")
         return grps
 
     def _read_dataset(self, key: Optional[str] = None):
