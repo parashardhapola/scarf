@@ -187,7 +187,11 @@ class CrDirReader(CrReader):
                     'feature_types': None,
                     'cell_names': ('barcodes.tsv', 0)}
         else:
-            raise IOError("ERROR: Couldn't find files")
+            raise IOError("ERROR: Couldn't find either of these expected combinations of files:\n"
+                          "\t- matrix.mtx, barcodes.tsv and genes.tsv\n"
+                          "\t- matrix.mtx.gz, barcodes.tsv.gz and features.tsv.gz\n"
+                          "Please make sure that you have not compressed or uncompressed the Cellranger output files "
+                          "manually")
         return grps
 
     def _read_dataset(self, key: Optional[str] = None):
