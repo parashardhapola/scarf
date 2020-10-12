@@ -2,13 +2,13 @@ import zarr
 from typing import Any, Tuple, List
 import numpy as np
 from tqdm import tqdm
-from .readers import CrReader
+from .readers import CrReader, H5adReader
 import os
 import pandas as pd
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'AnndataToZarr', 'MtxToZarr']
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -125,8 +125,8 @@ class MtxToZarr:
             s = e
 
 
-class AnndataToZarr:
-    def __init__(self, h5ad, zarr_fn: str, assay_locations: list = None, assay_names: list = None,
+class H5adToZarr:
+    def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_locations: list = None, assay_names: list = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
         self.h5ad = h5ad
         self.fn = zarr_fn
