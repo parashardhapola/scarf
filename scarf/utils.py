@@ -113,9 +113,3 @@ def system_call(command):
             print(output.strip())
     process.poll()
     return None
-
-
-def load_zarr_table(zgrp) -> pd.DataFrame:
-    keys = ['I', 'ids', 'names']
-    keys = keys + [x for x in zgrp.keys() if x not in keys]
-    return pd.DataFrame({x: zgrp[x][:] for x in keys})
