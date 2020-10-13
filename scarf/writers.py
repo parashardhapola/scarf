@@ -1,5 +1,5 @@
 import zarr
-from typing import Any, Tuple, List
+from typing import Any, Tuple, List, Union
 import numpy as np
 from tqdm import tqdm
 from .readers import CrReader, H5adReader
@@ -30,7 +30,8 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
 
 
 def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
-                            feat_ids: List[str], feat_names: List[str], dtype: str = 'uint32') -> zarr.hierarchy:
+                            feat_ids: Union[np.ndarray, List[str]], feat_names: Union[np.ndarray, List[str]],
+                            dtype: str = 'uint32') -> zarr.hierarchy:
     g = z.create_group(assay_name, overwrite=True)
     g.attrs['is_assay'] = True
     g.attrs['misc'] = {}
@@ -127,32 +128,24 @@ class MtxToZarr:
 
 
 class H5adToZarr:
-    def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_locations: list = None, assay_names: list = None,
+    def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
         self.h5ad = h5ad
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
-        if assay_locations is None:
-            print(f"INFO: no value provided for assay locations. Will use default value: ['X']")
-            self.assayLocations = ['X']
+        if assay_name is None:
+            print(f"INFO: no value provided for assay names. Will use default value: 'RNA'")
+            self.assayName = 'RNA'
         else:
-            self.assayLocations = assay_locations
-        if assay_names is None:
-            print(f"INFO: no value provided for assay names. Will use default value: ['RNA']")
-            self.assayNames = ['RNA']
-        else:
-            self.assayNames = assay_names
-        if len(self.assayLocations) != len(self.assayNames):
-            raise ValueError("ERROR: Number of entries in parameters `assay_locations` and "
-                             "`assay_names` should be equal")
+            self.assayName = assay_name
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
-        for assay_name in self.assayNames:
-            create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
-                                    self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
-            for i, j in self.h5ad.get_feat_columns():
-                if i not in self.z[assay_name]['featureData']:
-                    create_zarr_obj_array(self.z[assay_name]['featureData'], i, j, j.dtype)
+
+        create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
+                                self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
+        for i, j in self.h5ad.get_feat_columns():
+            if i not in self.z[assay_name]['featureData']:
+                create_zarr_obj_array(self.z[assay_name]['featureData'], i, j, j.dtype)
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
@@ -164,15 +157,14 @@ class H5adToZarr:
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
-        for assay_name, assay_loc in zip(self.assayNames, self.assayLocations):
-            store = self.z["%s/counts" % assay_name]
-            s, e, = 0, 0
-            n_chunks = self.h5ad.nCells//batch_size + 1
-            for a in tqdm(self.h5ad.consume(batch_size, data_loc=assay_loc), total=n_chunks):
-                e += a.shape[0]
-                a = a.todense()
-                store[s:e] = a
-                s = e
+        store = self.z["%s/counts" % self.assayName]
+        s, e, = 0, 0
+        n_chunks = self.h5ad.nCells//batch_size + 1
+        for a in tqdm(self.h5ad.consume(batch_size), total=n_chunks):
+            e += a.shape[0]
+            a = a.todense()
+            store[s:e] = a
+            s = e
 
 
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
