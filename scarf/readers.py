@@ -321,13 +321,23 @@ class H5adReader:
         """
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
-        if data_key not in self.h5:
-            raise KeyError(f"ERROR: {data_key} group not found in the H5ad file")
-        self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
         self.dataKey = data_key
+        self._validate_data_group()
+        self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
         self.nCells, self.nFeats = self._get_n_cells(), self._get_n_feats()
         self.cellNamesKey = self._fix_name_key('obs', cell_names_key)
         self.featNamesKey = self._fix_name_key('var', feature_names_key)
+
+    def _validate_data_group(self):
+        if self.dataKey not in self.h5:
+            raise KeyError(f"ERROR: {self.dataKey} group not found in the H5ad file")
+        if type(self.h5[self.dataKey]) != h5py.Group:
+            raise ValueError(f"ERROR: {self.dataKey} is not a group. This might mean that {data_key} slot does not "
+                             f"contain a sparse matrix or you provided an incorrect group name.")
+        for i in ['data', 'indices', 'indptr']:
+            if i not in self.h5[self.dataKey]:
+                raise KeyError(f"{i} not found in {self.dataKey} group. {self.dataKey} group in H5ad must contain "
+                               f"three datasets: `data`, `indices` and `indptr`")
 
     def _validate_group(self, group):
         if group not in self.h5:
@@ -345,10 +355,9 @@ class H5adReader:
             if len(self.h5[group].keys()) == 0:
                 print(f"WARNING: `{group}` slot in H5ad file is empty.", flush=True)
                 ret_val = 0
-            elif len(set([self.h5[group][x].shape[0] for x in self.h5[group].keys()])) > 1:
-                print(f"WARNING: `{group}` slot in H5ad file has unequal sized child groups "
-                      f"Due to this, no information in `{group}` can be used", flush=True)
-                ret_val = 0
+            elif len(set([self.h5[group][x].shape[0] for x in self.h5[group].keys() if
+                          type(self.h5[group][x]) == h5py.Dataset])) > 1:
+                print(f"WARNING: `{group}` slot in H5ad file has unequal sized child groups", flush=True)
         return ret_val
 
     def _fix_name_key(self, group, key):
@@ -366,7 +375,7 @@ class H5adReader:
                 return self.h5[self.dataKey]['shape'][0]
             else:
                 raise KeyError(f"ERROR: `obs` not found and `shape` key is missing in the {self.dataKey} group. "
-                               f"Aborting read process. ")
+                               f"Aborting read process.")
         elif self.useGroup['obs'] == 1:
             return self.h5['obs'].shape[0]
         else:
@@ -419,7 +428,8 @@ class H5adReader:
             for i in self.h5['obs'].keys():
                 if i == self.cellNamesKey:
                     continue
-                yield i, self.h5['obs'][i][:]
+                if type(self.h5['obs'][i]) == h5py.Dataset:
+                    yield i, self.h5['obs'][i][:]
 
     def get_feat_columns(self):
         if self.useGroup['var'] == 1:
@@ -431,7 +441,8 @@ class H5adReader:
             for i in self.h5['var'].keys():
                 if i == self.featNamesKey:
                     continue
-                yield i, self.h5['var'][i][:]
+                if type(self.h5['var'][i]) == h5py.Dataset:
+                    yield i, self.h5['var'][i][:]
 
     def consume(self, batch_size: int, data_loc: str = 'X'):
         grp = self.h5[data_loc]
