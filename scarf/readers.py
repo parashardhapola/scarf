@@ -237,7 +237,7 @@ class MtxDirReader(CrReader):
                     'feature_names': ('features.tsv.gz', 1),
                     'feature_types': ('features.tsv.gz', 2),
                     'cell_names': ('barcodes.tsv.gz', 0)}
-        elif os.path.isfile(self.loc + 'features.tsv.gz'): # sometimes somebody might have gunziped these files...
+        elif os.path.isfile(self.loc + 'features.tsv.gz'):  # sometimes somebody might have gunziped these files...
             self.matFn = self.loc + 'matrix.mtx'
             grps = {'feature_ids': ('features.tsv', 0),
                     'feature_names': ('features.tsv', 1),
@@ -310,7 +310,7 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    def __init__(self, h5ad_fn, cell_names_key: str = '_index', feature_names_key: str = '_index',
+    def __init__(self, h5ad_fn: str, cell_names_key: str = '_index', feature_names_key: str = '_index',
                  data_key: str = 'X'):
         """
 
@@ -329,7 +329,7 @@ class H5adReader:
         self.cellNamesKey = self._fix_name_key('obs', cell_names_key)
         self.featNamesKey = self._fix_name_key('var', feature_names_key)
 
-    def _validate_data_group(self):
+    def _validate_data_group(self) -> bool:
         if self.dataKey not in self.h5:
             raise KeyError(f"ERROR: {self.dataKey} group not found in the H5ad file")
         if type(self.h5[self.dataKey]) != h5py.Group:
@@ -339,8 +339,9 @@ class H5adReader:
             if i not in self.h5[self.dataKey]:
                 raise KeyError(f"{i} not found in {self.dataKey} group. {self.dataKey} group in H5ad must contain "
                                f"three datasets: `data`, `indices` and `indptr`")
+        return True
 
-    def _validate_group(self, group):
+    def _validate_group(self, group: str) -> int:
         if group not in self.h5:
             print(f"WARNING: `{group}` group not found in the H5ad file", flush=True)
             ret_val = 0
@@ -361,7 +362,7 @@ class H5adReader:
                 print(f"WARNING: `{group}` slot in H5ad file has unequal sized child groups", flush=True)
         return ret_val
 
-    def _fix_name_key(self, group, key):
+    def _fix_name_key(self, group: str, key: str) -> str:
         if self.useGroup[group] > 0:
             if key not in self.h5[group]:
                 if key.startswith('_'):
@@ -370,7 +371,7 @@ class H5adReader:
                         return temp_key
         return key
 
-    def _get_n_cells(self):
+    def _get_n_cells(self) -> int:
         if self.useGroup['obs'] == 0:
             if 'shape' in self.h5[self.dataKey]:
                 return self.h5[self.dataKey]['shape'][0]
@@ -382,7 +383,7 @@ class H5adReader:
         else:
             return self.h5['obs'][list(self.h5['obs'].keys())[0]].shape[0]
 
-    def _get_n_feats(self):
+    def _get_n_feats(self) -> int:
         if self.useGroup['var'] == 0:
             if 'shape' in self.h5[self.dataKey]:
                 return self.h5[self.dataKey]['shape'][1]
@@ -394,7 +395,7 @@ class H5adReader:
         else:
             return self.h5['var'][list(self.h5['var'].keys())[0]].shape[0]
 
-    def cell_names(self):
+    def cell_names(self) -> np.ndarray:
         if self.useGroup['obs'] > 0 and self.cellNamesKey in self.h5['obs']:
             if self.useGroup['obs'] == 1:
                 return self.h5['obs'][self.cellNamesKey]
@@ -403,7 +404,7 @@ class H5adReader:
         print(f"WARNING: Could not find cells names key: {self.cellNamesKey} in `obs`.", flush=True)
         return np.array([f'cell_{x}' for x in range(self.nCells)])
 
-    def feat_names(self):
+    def feat_names(self) -> np.ndarray:
         if self.useGroup['var'] > 0 and self.featNamesKey in self.h5['var']:
             if self.useGroup['var'] == 1:
                 return self.h5['var'][self.featNamesKey]
@@ -412,14 +413,14 @@ class H5adReader:
         print(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.", flush=True)
         return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
-    def feat_ids(self):
+    def feat_ids(self) -> np.ndarray:
         if self.useGroup['var'] > 0:
             names = self.feat_names()
             if len(names) == len(set(names)):
                 return names
         return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
-    def get_cell_columns(self):
+    def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.useGroup['obs'] == 1:
             for i in self.h5['obs'].dtype.names:
                 if i == self.cellNamesKey:
@@ -432,7 +433,7 @@ class H5adReader:
                 if type(self.h5['obs'][i]) == h5py.Dataset:
                     yield i, self.h5['obs'][i][:]
 
-    def get_feat_columns(self):
+    def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.useGroup['var'] == 1:
             for i in self.h5['var'].dtype.names:
                 if i == self.featNamesKey:
@@ -445,8 +446,8 @@ class H5adReader:
                 if type(self.h5['var'][i]) == h5py.Dataset:
                     yield i, self.h5['var'][i][:]
 
-    def consume(self, batch_size: int, data_loc: str = 'X'):
-        grp = self.h5[data_loc]
+    def consume(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
+        grp = self.h5[self.dataKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = grp['indptr'][ind_n:ind_n + batch_size]
