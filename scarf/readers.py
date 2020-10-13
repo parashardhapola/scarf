@@ -318,6 +318,7 @@ class H5adReader:
             h5ad_fn: Path to H5AD file
             cell_names_key: Key in `obs` group that contains unique cell names. By default the index will be used.
             feature_names_key: Key in `var` group that contains unique feature names. By default the index will be used.
+            data_key: Group where in the sparse matrix resides (default: 'X')
         """
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
@@ -332,7 +333,7 @@ class H5adReader:
         if self.dataKey not in self.h5:
             raise KeyError(f"ERROR: {self.dataKey} group not found in the H5ad file")
         if type(self.h5[self.dataKey]) != h5py.Group:
-            raise ValueError(f"ERROR: {self.dataKey} is not a group. This might mean that {data_key} slot does not "
+            raise ValueError(f"ERROR: {self.dataKey} is not a group. This might mean that {self.dataKey} slot does not "
                              f"contain a sparse matrix or you provided an incorrect group name.")
         for i in ['data', 'indices', 'indptr']:
             if i not in self.h5[self.dataKey]:
