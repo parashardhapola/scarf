@@ -8,7 +8,7 @@ import dask.array as daskarr
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import calc_computed, system_call, clean_array
+from .utils import show_progress, system_call, clean_array, controlled_compute
 from .logging_utils import logger
 
 __all__ = ['DataStore']
@@ -55,22 +55,16 @@ class DataStore:
         mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
         ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
-        dask_client: Dask client object to use instead of creating a new one
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
                  auto_filter: bool = False, show_qc_plots: bool = True,
-                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, dask_client=None):
-        from dask.distributed import Client, LocalCluster
+                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
 
         self._fn: str = zarr_loc
         self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
-        self.daskClient = dask_client
-        if dask_client is None:
-            cluster = LocalCluster(processes=False, n_workers=1, threads_per_worker=nthreads, dashboard_address=None)
-            self.daskClient = Client(cluster)
         # The order is critical here:
         self.cells = self._load_cells()
         self.assayNames = self._get_assay_names()
@@ -161,9 +155,9 @@ class DataStore:
         overridden using `predefined_assays` parameter
 
         Args:
-            predefined_assays: A mapping of assay names to Assay class type to associated with. If
             min_cells: Minimum number of cells that a feature in each assay must be present to not be discarded (i.e.
                        receive False value in `I` column)
+            custom_assay_types: A mapping of assay names to Assay class type to associated with.
 
         Returns:
         """
@@ -205,7 +199,7 @@ class DataStore:
                     assay = Assay
                     z_attrs[i] = 'Assay'
             logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
-            setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells))
+            setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
         self.z.attrs['assayTypes'] = z_attrs
         return None
 
@@ -241,12 +235,14 @@ class DataStore:
 
             var_name = from_assay + '_nCounts'
             if var_name not in self.cells.table.columns:
-                n_c = calc_computed(assay.rawData.sum(axis=1), f"INFO: ({from_assay}) Computing nCounts")
+                n_c = show_progress(assay.rawData.sum(axis=1),
+                                    f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c, overwrite=True)
 
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
-                n_f = calc_computed((assay.rawData > 0).sum(axis=1), f"INFO: ({from_assay}) Computing nFeatures")
+                n_f = show_progress((assay.rawData > 0).sum(axis=1),
+                                    f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
                 self.cells.add(var_name, n_f, overwrite=True)
 
             if type(assay) == RNAassay:
@@ -431,6 +427,7 @@ class DataStore:
             Finalized values for the all the optional parameters in the same order
 
         """
+
         def log_message(category, name, value, custom_msg=None):
             msg = f"No value provided for parameter `{name}`. "
             if category == 'default':
@@ -756,10 +753,10 @@ class DataStore:
             logger.info(f"Using existing loadings for {reduction_method} with {dims} dims")
         else:
             if reduction_method == 'pca':
-                mu = clean_array(calc_computed(data.mean(axis=0),
-                                               'INFO: Calculating mean of norm. data'))
-                sigma = clean_array(calc_computed(data.std(axis=0),
-                                                  'INFO: Calculating std. dev. of norm. data'), 1)
+                mu = clean_array(show_progress(data.mean(axis=0),
+                                               'INFO: Calculating mean of norm. data', self.nthreads))
+                sigma = clean_array(show_progress(data.std(axis=0),
+                                                  'INFO: Calculating std. dev. of norm. data', self.nthreads), 1)
         if ann_loc in self.z:
             fit_ann = False
             logger.info(f"Using existing ANN index")
@@ -1204,7 +1201,7 @@ class DataStore:
         if subset_key is None:
             subset_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, subset_key, threshold)
+        markers = find_markers_by_rank(assay, group_key, subset_key, self.nthreads, threshold)
         z = self.z[assay.name]
         slot_name = f"{subset_key}__{group_key}"
         if 'markers' not in z:
@@ -1222,7 +1219,7 @@ class DataStore:
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
                     ref_mu: bool = True, ref_sigma: bool = True, run_coral: bool = False,
-                    exclude_missing: bool = False,  filter_null: bool = False, feat_scaling: bool = True) -> None:
+                    exclude_missing: bool = False, filter_null: bool = False, feat_scaling: bool = True) -> None:
         """
         Projects cells from external assays into the cell-neighbourhood graph using existing PCA loadings and ANN index.
         For each external cell (target) nearest neighbours are identified and save within the Zarr hierarchy group
@@ -1271,7 +1268,7 @@ class DataStore:
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
-                                  target_feat_key, filter_null, exclude_missing)
+                                  target_feat_key, filter_null, exclude_missing, self.nthreads)
         logger.info(f"{len(feat_idx)} features being used for mapping")
         if np.all(source_assay.feats.active_index(cell_key + '__' + feat_key) == feat_idx):
             ann_feat_key = feat_key
@@ -1295,10 +1292,12 @@ class DataStore:
             target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
-                mu = calc_computed(target_data.mean(axis=0), 'INFO: Calculating mean of target norm. data')
+                mu = show_progress(target_data.mean(axis=0),
+                                   'INFO: Calculating mean of target norm. data', self.nthreads)
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
-                sigma = calc_computed(target_data.std(axis=0), 'INFO: Calculating std. dev. of target norm. data')
+                sigma = show_progress(target_data.std(axis=0),
+                                      'INFO: Calculating std. dev. of target norm. data', self.nthreads)
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
@@ -1308,7 +1307,7 @@ class DataStore:
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         entry_start = 0
         for i in tqdm(target_data.blocks, desc='Mapping'):
-            a: np.ndarray = i.compute()
+            a: np.ndarray = controlled_compute(i, self.nthreads)
             ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
             zi[entry_start:entry_end, :] = ki
@@ -1318,7 +1317,7 @@ class DataStore:
 
     def get_mapping_score(self, *, target_name: str, target_groups: np.ndarray = None, from_assay: str = None,
                           cell_key: str = 'I', log_transform: bool = True,
-                          multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) ->  \
+                          multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) -> \
             Generator[Tuple[str, np.ndarray], None, None]:
         """
         Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
@@ -1740,7 +1739,7 @@ class DataStore:
                 continue
             rep_indices = make_reps(groups[groups == g].index, pseudo_reps, random_seed)
             for n, idx in enumerate(rep_indices):
-                vals[f"{g}_Rep{n + 1}"] = assay.rawData[idx].sum(axis=0).compute()
+                vals[f"{g}_Rep{n + 1}"] = controlled_compute(assay.rawData[idx].sum(axis=0), self.nthreads)
         vals = pd.DataFrame(vals)
         vals = vals[(vals.sum(axis=1) != 0)]
         vals['names'] = assay.feats.table.names.reindex(vals.index).values
@@ -1854,7 +1853,7 @@ class DataStore:
             else:
                 if len(feat_idx) > 1:
                     logger.warning(f"Plotting mean of {len(feat_idx)} features because {k} is not unique.")
-            vals = assay.normed(cell_idx, feat_idx).mean(axis=1).compute().astype(np.float_)
+            vals = controlled_compute(assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads).astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction > 0:
@@ -2086,7 +2085,7 @@ class DataStore:
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
-                            batch_size: int = None, **heatmap_kwargs):
+                            **heatmap_kwargs):
         """
 
         Args:
@@ -2097,7 +2096,6 @@ class DataStore:
             log_transform:
             vmin:
             vmax:
-            batch_size:
             **heatmap_kwargs:
 
         Returns:
@@ -2110,8 +2108,6 @@ class DataStore:
             raise ValueError("ERROR: Please provide a value for `group_key`")
         if subset_key is None:
             subset_key = 'I'
-        if batch_size is None:
-            batch_size = min(50, int(1e7 / assay.cells.N)) + 1
         if 'markers' not in self.z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
         slot_name = f"{subset_key}__{group_key}"
@@ -2123,28 +2119,41 @@ class DataStore:
         for i in g.keys():
             if 'names' in g[i]:
                 goi.extend(g[i]['names'][:][:topn])
-        goi = sorted(set(goi))
-        cell_idx = assay.cells.active_index(subset_key)
-        cdf = []
-        for i in tqdm(np.array_split(goi, len(goi) // batch_size + 1), desc="INFO: Calculating group mean values"):
-            feat_idx = assay.feats.get_idx_by_ids(i)
-            normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx, log_transform=log_transform)
-            df = pd.DataFrame(calc_computed(normed_data), columns=i)
-            df['cluster'] = assay.cells.fetch(group_key, key=subset_key)
-            df = df.groupby('cluster').mean().T
-            df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
-            cdf.append(df)
-        cdf = pd.concat(cdf, axis=0)
+        goi = np.array(sorted(set(goi)))
+        cell_idx = np.array(assay.cells.active_index(subset_key))
+        feat_idx = np.array(assay.feats.get_idx_by_ids(goi))
+        feat_argsort = np.argsort(feat_idx)
+        normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
+        nc = normed_data.chunks[0]
+        normed_data = normed_data.to_dask_dataframe()
+        groups = daskarr.from_array(assay.cells.fetch(group_key, subset_key), chunks=nc).to_dask_dataframe()
+        df = controlled_compute(normed_data.groupby(groups).mean(), 4)
+        df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
+        df.columns = goi[feat_argsort]
+        df = df.T
+        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
         # noinspection PyTypeChecker
-        cdf[cdf < vmin] = vmin
+        df[df < vmin] = vmin
         # noinspection PyTypeChecker
-        cdf[cdf > vmax] = vmax
-        cdf.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(cdf.index)['names'].values
-        plot_heatmap(cdf, **heatmap_kwargs)
+        df[df > vmax] = vmax
+        plot_heatmap(df, **heatmap_kwargs)
 
     def __repr__(self):
-        x = ' '.join(self.assayNames)
-        return f"DataStore with {self.cells.N} cells containing {len(self.assayNames)} assays: {x}"
+        res = f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with" \
+              f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
+        res = res + f"\n\tCell metadata:"
+        tabs = '\t\t'
+        res += '\n' + tabs + ''.join(
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.table.columns, start=1)])
+        res = res.rstrip('\n\t')[:-2]
+        for i in self.assayNames:
+            assay = self._get_assay(i)
+            res += f"\n\t{i} assay has {assay.feats.active_index('I').shape[0]} ({assay.feats.N}) " \
+                   f"features and following metadata:"
+            res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
+                                          enumerate(assay.feats.table.columns, start=1)])
+            res = res.rstrip('\n\t')[:-2]
+        return res
 
     def __del__(self):
         # Disabling because it creates issues

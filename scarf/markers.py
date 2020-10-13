@@ -1,9 +1,10 @@
 from .assay import Assay
+from .utils import controlled_compute
 
 __all__ = ['find_markers_by_rank']
 
 
-def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, threshold: float = 0.25) -> dict:
+def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, nthreads: int, threshold: float = 0.25) -> dict:
     from numba import jit
     import numpy as np
     import pandas as pd
@@ -28,7 +29,7 @@ def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, threshol
     gene_names = np.split(assay.feats.fetch('ids'), np.cumsum(data.chunks[0]))[:-1]
     results = {x: [] for x in index_set}
     for i, names in tqdm(zip(data.blocks, gene_names), desc='Finding markers', total=data.numblocks[0]):
-        val = pd.DataFrame(i.compute(), index=names).T.rank(method='dense').astype(int)
+        val = pd.DataFrame(controlled_compute(i, nthreads), index=names).T.rank(method='dense').astype(int)
         res = val.apply(mean_rank_wrapper)
         res = res.T[(res < threshold).sum() != len(index_set)].T
         res.index = index_set

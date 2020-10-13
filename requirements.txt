@@ -1,10 +1,10 @@
+numpy
 loguru
 cmocean
 gensim
 sparse
 networkx
 hnswlib
-numpy
 numba
 dask
 pandas

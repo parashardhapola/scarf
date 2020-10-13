@@ -5,6 +5,7 @@ from tqdm import tqdm
 from .readers import CrReader, H5adReader
 import os
 import pandas as pd
+from .utils import controlled_compute
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
@@ -146,9 +147,12 @@ class H5adToZarr:
                              "`assay_names` should be equal")
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
-        for i in self.assayNames:
-            create_zarr_count_assay(self.z, i, chunk_size, self.h5ad.nCells,
+        for assay_name in self.assayNames:
+            create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
                                     self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
+            for i, j in self.h5ad.get_feat_columns():
+                if i not in self.z[assay_name]['featureData']:
+                    create_zarr_obj_array(self.z[assay_name]['featureData'], i, j, j.dtype)
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
@@ -185,14 +189,14 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
     return None
 
 
-def dask_to_zarr(df, z, loc, chunk_size, msg: str = None):
+def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
     if msg is None:
         msg = f"Writing data to {loc}"
     og = create_zarr_dataset(z, loc, chunk_size, 'float64', df.shape)
     pos_start, pos_end = 0, 0
     for i in tqdm(df.blocks, total=df.numblocks[0], desc=msg):
         pos_end += i.shape[0]
-        og[pos_start:pos_end, :] = i.compute()
+        og[pos_start:pos_end, :] = controlled_compute(i, nthreads)
         pos_start = pos_end
     return None
 
@@ -285,13 +289,13 @@ class ZarrMerge:
         else:
             print(f"INFO: cellData already exists so skipping _ini_cell_data", flush=True)
 
-    def write(self):
+    def write(self, nthreads=2):
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
                           desc=f"Writing aligned normed target data"):
                 pos_end += i.shape[0]
                 a = np.ones((i.shape[0], self.nFeats))
-                a[:, feat_order] = i.compute()
+                a[:, feat_order] = controlled_compute(i, nthreads)
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end

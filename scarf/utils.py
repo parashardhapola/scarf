@@ -1,11 +1,9 @@
 import numpy as np
-from typing import Callable
 import pandas as pd
 
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
     from statsmodels.nonparametric.smoothers_lowess import lowess
-    import pandas as pd
 
     stats = pd.DataFrame({'a': a, 'b': b}).apply(np.log)
     bin_edges = np.histogram(stats.a, bins=n_bins)[1]
@@ -63,29 +61,50 @@ def clean_array(x, fill_val: int = 0):
     return x
 
 
-def show_progress(func: Callable):
+def controlled_compute(arr, nthreads):
+    from multiprocessing.pool import ThreadPool
+    import dask
+
+    with dask.config.set(schedular='threads', pool=ThreadPool(nthreads)):
+        res = arr.compute()
+    return res
+
+
+def show_progress(arr, msg: str = None, nthreads: int = 1):
     from dask.diagnostics import ProgressBar
-    import functools
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        pbar = ProgressBar()
-        pbar.register()
-        ret_val = func(*args, **kwargs)
-        pbar.unregister()
-        return ret_val
-    return wrapper
-
-
-def calc_computed(a, msg: str = None):
-    from dask.distributed import progress
 
     if msg is not None:
         print(msg, flush=True)
-    a = a.persist()
-    progress(a, notebook=False)
-    print(flush=True)
-    return a.compute()
+    pbar = ProgressBar()
+    pbar.register()
+    res = controlled_compute(arr, nthreads)
+    pbar.unregister()
+    return res
+
+
+# def show_progress(func: Callable):
+#     from dask.diagnostics import ProgressBar
+#     import functools
+#
+#     @functools.wraps(func)
+#     def wrapper(*args, **kwargs):
+#         pbar = ProgressBar()
+#         pbar.register()
+#         ret_val = func(*args, **kwargs)
+#         pbar.unregister()
+#         return ret_val
+#     return wrapper
+
+
+# def calc_computed(a, msg: str = None):
+#     from dask.distributed import progress
+#
+#     if msg is not None:
+#         print(msg, flush=True)
+#     a = a.persist()
+#     progress(a, notebook=False)
+#     print(flush=True)
+#     return a.compute()
 
 
 def system_call(command):
@@ -101,9 +120,3 @@ def system_call(command):
             print(output.strip())
     process.poll()
     return None
-
-
-def load_zarr_table(zgrp) -> pd.DataFrame:
-    keys = ['I', 'ids', 'names']
-    keys = keys + [x for x in zgrp.keys() if x not in keys]
-    return pd.DataFrame({x: zgrp[x][:] for x in keys})
