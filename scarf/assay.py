@@ -157,6 +157,8 @@ class RNAassay(Assay):
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
+        # FIXME: Raise a warning and decrease this to lower value if the median value of nCounts is low.
+        # See the connected FIXME in mapping
         self.sf = 10000
         self.scalar = None
 

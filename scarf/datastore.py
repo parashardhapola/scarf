@@ -1267,6 +1267,8 @@ class DataStore:
         from_assay = source_assay.name
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
+        # FIXME: make sure RNAassay `sf` is same as reference. This raises the design issue if `sf` should be made a
+        #  norm parameter
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
                                   target_feat_key, filter_null, exclude_missing, self.nthreads)
         logger.info(f"{len(feat_idx)} features being used for mapping")
@@ -1482,6 +1484,8 @@ class DataStore:
 
         """
         from .umap import fit_transform
+
+        # TODO: add support for multiple targets
 
         if from_assay is None:
             from_assay = self._defaultAssay

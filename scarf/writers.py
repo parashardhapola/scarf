@@ -130,6 +130,7 @@ class MtxToZarr:
 class H5adToZarr:
     def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
         self.h5ad = h5ad
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -140,7 +141,6 @@ class H5adToZarr:
             self.assayName = assay_name
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
-
         create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
                                 self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
         for i, j in self.h5ad.get_feat_columns():
