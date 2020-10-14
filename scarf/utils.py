@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
-
+from random import seed
+from random import random
+import math
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
     from statsmodels.nonparametric.smoothers_lowess import lowess
@@ -27,6 +29,44 @@ def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
         for idx in indices:
             fixed_var[idx] = np.e ** (stats.b[idx] - bcf)
     return np.array([fixed_var[x] for x in range(len(a))])
+
+def resample_array(a: np.ndarray, target=1000 ) -> np.ndarray:
+    """
+    Performs a resampling of the data leading to EXACTLY <target> reads.
+    In short it divides the result = array by array /sum(array) * target.
+
+    All fractions can either be set to 1 or 0 and a random number check is used to decide that.
+    If the fraction is set to 1 the difference between fraction and random value is stored. 
+    The same is true for the case the expression is lost (0).
+
+    If the total sum(result) is not eual to target the respective ids from the before stored 0 and 1 cases are sorted by
+    difference and the tests with the least difference are revered in outcome until the sum(result) equals the target.
+    """
+
+    results = a/np.sum(a) * target
+    li = [[-1,0]] * len(results)
+
+    for i in range(0, len(results)):
+        frac, total = math.modf( results[i] )
+        results[i] = int(total)
+        li[i]=[i, frac]
+
+    #print ( "sum of results:" + str(sum(results)) )
+
+    def takeSecond(elem):
+        return elem[1]
+    li.sort(key=takeSecond, reverse=True)
+
+    #print ( "less by:" + str(int(target-sum(results))) )
+
+    for i in range(0, int(target-sum(results))):
+        #print ( "add 1 to results["+str(li[i][0])+"] ("+str(li[i][1])+") value before == "+ str(results[li[i][0]]) )
+        results[li[i][0]] = results[li[i][0]] +1.0
+
+    return results
+
+
+
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:

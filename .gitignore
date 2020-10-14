@@ -8,3 +8,4 @@ dask-worker-space
 *.ipynb_checkpoints
 *.ipynb
 .env
+testData/TestZarr
