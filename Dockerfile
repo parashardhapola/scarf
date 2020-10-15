@@ -18,7 +18,7 @@ ENV PATH=/root/miniconda3/bin:$PATH
 # Installing numpy and pybind11 beforehand because sometimes thery dont't install so well from requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -U numpy pybind11
-RUN pip instal --no-cache-dir -U dask[array] dask[distributed]
+RUN pip instal --no-cache-dir -U dask[array]
 
 # Installing pcst_fast here because I still haven't figured out how to install a git repo from requirements.txt
 RUN pip install git+https://github.com/fraenkel-lab/pcst_fast.git
