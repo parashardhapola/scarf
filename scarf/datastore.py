@@ -1914,6 +1914,7 @@ class DataStore:
         """
         # TODO: add support for subplots
         # TODO: add support for different kinds of point markers
+        # TODO: add support for cell zorder randomization
 
         from .plots import plot_scatter
         if from_assay is None:
