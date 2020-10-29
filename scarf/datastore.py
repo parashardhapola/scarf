@@ -1617,7 +1617,24 @@ class DataStore:
         Returns:
 
         """
-        from .pcst import calc_neighbourhood_density
+        def calc_degree(g):
+            d = np.zeros(g.shape[0])
+            for i in tqdm(range(g.shape[0]), desc="INFO: Calculating node out degree"):
+                for j, k in zip(g[i].indices, g[i].data):
+                    d[j] += k
+            return d
+
+
+        def calc_neighbourhood_density(g, nn: int):
+            # TODO: speed up using numba
+            d = calc_degree(g)
+            for n in range(nn):
+                nd = np.zeros(g.shape[0])
+                for i in tqdm(range(g.shape[0]), desc=f"INFO: Calculating {n+1} neighbourhood"):
+                    for j, _ in zip(g[i].indices, g[i].data):
+                        nd[i] += d[j]
+                d = nd.copy()
+            return d
 
         if from_assay is None:
             from_assay = self._defaultAssay

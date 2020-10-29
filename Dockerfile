@@ -1,6 +1,6 @@
 FROM ubuntu:20.04
 
-RUN apt update -y && apt autoremove -y && apt clean -y && apt autoclean -y
+RUN apt update -y && apt autoremove -y && apt clean -y && apt autoclean -y && apt upgrade -y
 RUN apt install -y wget build-essential git nano
 
 #Installing dependencies for sgtsne
@@ -11,6 +11,10 @@ RUN wget -O miniconda_inst "https://repo.anaconda.com/miniconda/Miniconda3-lates
 	bash miniconda_inst -b && \
 	rm miniconda_inst
 
+# The following is dine to make sure that tzdata package doesnt prompt for timzone in during installation
+ENV TZ=Europe/Stockholm
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # Exporting PATH and also saving it in bashrc for next session
 RUN echo "export PATH=$PATH:/root/miniconda3/bin" >> /root/.bashrc
 ENV PATH=/root/miniconda3/bin:$PATH
@@ -18,7 +22,7 @@ ENV PATH=/root/miniconda3/bin:$PATH
 # Installing numpy and pybind11 beforehand because sometimes thery dont't install so well from requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -U numpy pybind11
-RUN pip instal --no-cache-dir -U dask[array]
+RUN pip install --no-cache-dir -U dask[array] dask[dataframe]
 
 # This for interactive programming purposes
 RUN pip install jupyterlab ipython-autotime
@@ -31,18 +35,11 @@ RUN pip install Sphinx sphinx-autodoc-typehints nbsphinx sphinx_rtd_theme
 RUN conda install -y nodejs
 RUN pip install jupytext
 
-# Setting up git for deve purposes. For example pushing commits or making pull requests.
-# You can change this to your github credentials.
-# RUN git config --global user.name "parashardhapola"
-# RUN git config --global user.email parashar.dhapola@gmail.com
-
-# Install Scarf directly from github repo. Comment this out if you want to install from pypi manually
-# using `pip install scarf`. Alternatively you can also fork the repo and provide your username in link below.
-# RUN pip install git+https://github.com/parashardhapola/scarf.git
+# RUN pip install scarf
 
 RUN mkdir workspace && \
-    echo "jupyter lab --port 9734 --ip=0.0.0.0 --allow-root --no-browser" > /workspace/launch_jupyter.sh
+    echo "jupyter lab --port 9734 --ip=0.0.0.0 --allow-root --no-browser" > launch_jupyter.sh
 
 # If you want to launch jupyter manually then feel free to comment this out.
 CMD cd workspace && \
-	bash launch_jupyter.sh
+	bash ../launch_jupyter.sh

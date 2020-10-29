@@ -17,7 +17,7 @@ if __name__ == "__main__":
     ]
     keywords = ['store']
     version = open('VERSION').readline().rstrip('\n')
-    install_requires = ['pybind11'] + [x.strip() for x in open('requirements.txt')] + ['dask[array]']
+    install_requires = ['pybind11'] + [x.strip() for x in open('requirements.txt')] + ['dask[array]', 'dask[dataframe]']
     dependency_links = ['https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7']
     setup(
         name='scarf',
