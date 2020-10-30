@@ -116,10 +116,11 @@ class CrReader(ABC):
 
     def feature_types(self) -> List[str]:
         if self.grpNames['feature_types'] is not None:
-            return self._read_dataset('feature_types')
-        else:
-            default_name = list(self.autoNames.keys())[0]
-            return [default_name for _ in range(self.nFeatures)]
+            ret_val = self._read_dataset('feature_types')
+            if ret_val is not None:
+                return ret_val
+        default_name = list(self.autoNames.keys())[0]
+        return [default_name for _ in range(self.nFeatures)]
 
     def cell_names(self) -> List[str]:
         return self._read_dataset('cell_names')
@@ -199,6 +200,8 @@ class CrDirReader(CrReader):
             vals = [x.split('\t')[self.grpNames[key][1]] for x in
                     read_file(self.loc + self.grpNames[key][0])]
         except IndexError:
+            print(f"WARNING: {key} extraction failed from {self.grpNames[key][0]} "
+                  f"in column {self.grpNames[key][1]}", flush=True)
             vals = None
         return vals
 
