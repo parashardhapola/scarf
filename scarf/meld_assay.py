@@ -1,5 +1,5 @@
 from tqdm import tqdm
-from typing import List
+from typing import List, Dict
 import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
@@ -78,12 +78,14 @@ def make_bed_from_gff(gff: str, up_offset: int = 2000,
     return BedTool('\n'.join(out), from_string=True)
 
 
-def _create_bed_from_coord_ids(ids: List[str]):
+def _create_bed_from_coord_ids(ids: List[str], invalid_ids: Dict[str, None]):
     """convert list of 'chr:start-end' format strings to pybedtools object"""
     from pybedtools import BedTool
 
     out = []
     for i in ids:
+        if i in invalid_ids:
+            continue
         j = i.split(':')
         o = [j[0], j[1].split('-')[0], j[1].split('-')[1], i]
         out.append('\t'.join(o))
@@ -132,9 +134,14 @@ def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict, 
     return None
 
 
-def meld_assay(assay, reference_bed, out_name: str, nthreads: int, peaks_col: str = 'ids'):
-    peaks_bed = _create_bed_from_coord_ids(assay.feats.table[peaks_col].values)
-    cross_idx_map = _convert_ids_to_idx(assay.feats.table[peaks_col], _get_merging_map(peaks_bed, reference_bed))
+def meld_assay(assay, reference_bed, out_name: str, nthreads: int, peaks_col: str = 'ids', ignore_ids: List[str] = None):
+    if ignore_ids is None:
+        ignore_ids = {}
+    else:
+        ignore_ids = {x: None for x in ignore_ids}
+    peaks_bed = _create_bed_from_coord_ids(assay.feats.table[peaks_col].values, invalid_ids=ignore_ids)
+    cross_idx_map = _convert_ids_to_idx(assay.feats.table[peaks_col],
+                                        _get_merging_map(peaks_bed, reference_bed))
     feat_ids = [x[3] for x in reference_bed]
     feat_names = [x[4] for x in reference_bed]
     g = create_zarr_count_assay(z=assay.z['/'], assay_name=out_name, chunk_size=assay.rawData.chunksize,
