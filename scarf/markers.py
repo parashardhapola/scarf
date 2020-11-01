@@ -13,10 +13,9 @@ def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, nthreads
     @jit()
     def calc_mean_rank(v):
         #  TODO: fix for non-numeric index set
-        n_indices = index_set.shape[0]
         r = np.ones(n_indices)
         for x in range(n_indices):
-            r[x] = v[indices == index_set[x]].mean()
+            r[x] = v[int_index_set == x].mean()
         return r / r.sum()
 
     def mean_rank_wrapper(v):
@@ -25,13 +24,17 @@ def find_markers_by_rank(assay: Assay, group_key: str, subset_key: str, nthreads
     c_idx = assay.cells.active_index(subset_key)
     indices = assay.cells.fetch(group_key, subset_key)
     index_set = np.array(sorted(set(indices)))
+    n_indices = len(index_set)
+    idx_map = dict(zip(index_set, range(n_indices)))
+    int_index_set = np.array([idx_map[x] for x in index_set])
+
     data = assay.normed(cell_idx=c_idx).T
     gene_names = np.split(assay.feats.fetch('ids'), np.cumsum(data.chunks[0]))[:-1]
     results = {x: [] for x in index_set}
     for i, names in tqdm(zip(data.blocks, gene_names), desc='Finding markers', total=data.numblocks[0]):
         val = pd.DataFrame(controlled_compute(i, nthreads), index=names).T.rank(method='dense').astype(int)
         res = val.apply(mean_rank_wrapper)
-        res = res.T[(res < threshold).sum() != len(index_set)].T
+        res = res.T[(res < threshold).sum() != n_indices].T
         res.index = index_set
         # The following line was commented out to return results as gene IDs rather than gene names
         # res.columns = assay.feats.table.names[assay.feats.table.ids.isin(res.columns)].values
