@@ -248,6 +248,11 @@ class RNAassay(Assay):
             idx = self.feats.multi_sift(
                 ['normed_n', 'nz_mean'], [min_cells, min_mean], [np.Inf, max_mean])
             idx = idx & self.feats.table['I'] & bl
+            n_valid_feats = idx.sum()
+            if top_n > n_valid_feats:
+                print(f"WARNING: Number of valid features are less then value"
+                      f"of parameter `top_n`: {top_n}. Restting `top_n` to {n_valid_feats}", flush=True)
+                topn = n_valid_feats - 1
             min_var = self.feats.table[idx][c_var_loc].sort_values(ascending=False).values[top_n]
         hvgs = self.feats.multi_sift(
             ['normed_n', 'nz_mean', c_var_loc], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
