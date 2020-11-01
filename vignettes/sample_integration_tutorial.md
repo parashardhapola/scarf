@@ -1,3 +1,19 @@
+---
+jupyter:
+  jupytext:
+    cell_metadata_filter: -all
+    formats: ipynb,md
+    text_representation:
+      extension: .md
+      format_name: markdown
+      format_version: '1.2'
+      jupytext_version: 1.6.0
+  kernelspec:
+    display_name: Python 3
+    language: python
+    name: python3
+---
+
 ### Data integration strategies available through Scarf
 
 In this vignette we will try to integrate data that was obtained [from Kang et. al.](https://www.nature.com/articles/nbt.4042). The data consists of stimulated (IFN-beta) and unstimulated PBMCs. In the article, the authors highlight how IFN-beta treatment induces gene expression changes resulting in separation of two samples on low dimension embedding plots. We will try to integrate the two datasets such that a equivalent cell types from both the conditions can be compared.  
@@ -16,8 +32,6 @@ The notebook is divided into a couple of different sections. First we show how t
 
 This vignette is inspired by Seurat's 'immune_alignment' vignette available [here](https://satijalab.org/seurat/v3.0/immune_alignment.html). It should be noted though that Scarf's strategy of data integration is quite different from Seurat and we <ins>do not</ins> attempt to compare the results obtained through Scarf vs Seurat.
 
-The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `control` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
-
 
 Import Scarf. We also run autotime Ipython magic command that will help track the runtime duration of each jupyter notebook cell.
 
@@ -31,6 +45,25 @@ Change directory to the location where `kang_stim_pbmc` is located.
 
 ```python
 cd ./data
+```
+
+The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `ctrl` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
+
+```python
+!mkdir -p kang_stim_pbmc/ctrl/ kang_stim_pbmc/stim/
+!wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/GSE96583_batch2.genes.tsv.gz
+!cp GSE96583_batch2.genes.tsv.gz kang_stim_pbmc/ctrl/features.tsv.gz
+!mv GSE96583_batch2.genes.tsv.gz kang_stim_pbmc/stim/features.tsv.gz
+
+!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/GSM2560248_2.1.mtx.gz
+!mv GSM2560248_2.1.mtx.gz kang_stim_pbmc/ctrl/matrix.mtx.gz
+!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/GSM2560248_barcodes.tsv.gz
+!mv GSM2560248_barcodes.tsv.gz kang_stim_pbmc/ctrl/barcodes.tsv.gz
+
+!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/GSM2560249_2.2.mtx.gz
+!mv GSM2560249_2.2.mtx.gz kang_stim_pbmc/stim/matrix.mtx.gz
+!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/GSM2560249_barcodes.tsv.gz
+!mv GSM2560249_barcodes.tsv.gz kang_stim_pbmc/stim/barcodes.tsv.gz
 ```
 
 Since multiple datasets will be handled in this vignette, we created a function ``scarf_pipeline`` that contains the basic steps of Scarf workflow: loading a Zarr file, marking HVGs, creation of cell-cell neighbourhood graph, clustering and UMAP embedding of the data. For further information on these steps please check the [basic tutorial vignette](./basic_tutorial.md). Here we have designed the pipeline in a way that will allow us to update required parameters easily for pedagogic purposes.
@@ -55,12 +88,8 @@ We start by creating DataStore objects for both control and stimulated cells.
 ### <a name="chapter1"></a>1) Independent analysis of the two samples
 
 ```python
-reader = scarf.CrDirReader('kang_stim_pbmc/stim/', 'rna')
-```
-
-```python
 # Control PBMC data
-ds_ctrl = scarf_pipeline('pbmc_kang_control.zarr', 'kang_stim_pbmc/control')
+ds_ctrl = scarf_pipeline('pbmc_kang_control.zarr', 'kang_stim_pbmc/ctrl')
 
 # Interferon beta stimulated PBMC data
 ds_stim = scarf_pipeline('pbmc_kang_stimulated.zarr', 'kang_stim_pbmc/stim')
@@ -348,10 +377,6 @@ ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='GNLY', subse
 ```
 
 Now let's run a marker search for the differences between the cells from two samples.
-
-```python
-ds_merged.cells.table['sample_id']
-```
 
 ```python
 ds_merged.run_marker_search(group_key='sample_id')
