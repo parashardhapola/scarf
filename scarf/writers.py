@@ -141,11 +141,11 @@ class H5adToZarr:
             self.assayName = assay_name
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
-        create_zarr_count_assay(self.z, assay_name, chunk_size, self.h5ad.nCells,
+        create_zarr_count_assay(self.z, self.assayName, chunk_size, self.h5ad.nCells,
                                 self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
         for i, j in self.h5ad.get_feat_columns():
-            if i not in self.z[assay_name]['featureData']:
-                create_zarr_obj_array(self.z[assay_name]['featureData'], i, j, j.dtype)
+            if i not in self.z[self.assayName]['featureData']:
+                create_zarr_obj_array(self.z[self.assayName]['featureData'], i, j, j.dtype)
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
@@ -153,7 +153,6 @@ class H5adToZarr:
         create_zarr_obj_array(g, 'names', self.h5ad.cell_names())
         create_zarr_obj_array(g, 'I', [True for _ in range(self.h5ad.nCells)], 'bool')
         for i, j in self.h5ad.get_cell_columns():
-            # TODO: use `_categories` under `uns` slot to the values rather than indices
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:

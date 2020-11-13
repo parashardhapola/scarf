@@ -314,7 +314,7 @@ class MtxDirReader(CrReader):
 
 class H5adReader:
     def __init__(self, h5ad_fn: str, cell_names_key: str = '_index', feature_names_key: str = '_index',
-                 data_key: str = 'X'):
+                 data_key: str = 'X', category_names_key: bool = '__categories'):
         """
 
         Args:
@@ -322,15 +322,18 @@ class H5adReader:
             cell_names_key: Key in `obs` group that contains unique cell names. By default the index will be used.
             feature_names_key: Key in `var` group that contains unique feature names. By default the index will be used.
             data_key: Group where in the sparse matrix resides (default: 'X')
+            category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
+                                corresponding index value within this group.
         """
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
         self.dataKey = data_key
         self._validate_data_group()
         self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
-        self.nCells, self.nFeats = self._get_n_cells(), self._get_n_feats()
+        self.nCells, self.nFeats = self._get_n('obs'), self._get_n('var')
         self.cellNamesKey = self._fix_name_key('obs', cell_names_key)
         self.featNamesKey = self._fix_name_key('var', feature_names_key)
+        self.catNamesKey = category_names_key
 
     def _validate_data_group(self) -> bool:
         if self.dataKey not in self.h5:
@@ -374,29 +377,21 @@ class H5adReader:
                         return temp_key
         return key
 
-    def _get_n_cells(self) -> int:
-        if self.useGroup['obs'] == 0:
+    def _get_n(self, group: str) -> int:
+        if self.useGroup[group] == 0:
             if 'shape' in self.h5[self.dataKey]:
                 return self.h5[self.dataKey]['shape'][0]
             else:
-                raise KeyError(f"ERROR: `obs` not found and `shape` key is missing in the {self.dataKey} group. "
+                raise KeyError(f"ERROR: `{group}` not found and `shape` key is missing in the {self.dataKey} group. "
                                f"Aborting read process.")
-        elif self.useGroup['obs'] == 1:
-            return self.h5['obs'].shape[0]
+        elif self.useGroup[group] == 1:
+            return self.h5[group].shape[0]
         else:
-            return self.h5['obs'][list(self.h5['obs'].keys())[0]].shape[0]
-
-    def _get_n_feats(self) -> int:
-        if self.useGroup['var'] == 0:
-            if 'shape' in self.h5[self.dataKey]:
-                return self.h5[self.dataKey]['shape'][1]
-            else:
-                raise KeyError(f"ERROR: `var` not found and `shape` key is missing in the {self.dataKey} group. "
-                               f"Aborting read process.")
-        elif self.useGroup['var'] == 1:
-            return self.h5['var'].shape[0]
-        else:
-            return self.h5['var'][list(self.h5['var'].keys())[0]].shape[0]
+            for i in self.h5[group].keys():
+                if type(self.h5[group][i]) == h5py.Dataset:
+                    return self.h5[group][i].shape[0]
+            raise KeyError(f"ERROR: `{group}` key doesn't contain any child node of Dataset type."
+                           f"Aborting because unexpected H5ad format.")
 
     def cell_names(self) -> np.ndarray:
         if self.useGroup['obs'] > 0 and self.cellNamesKey in self.h5['obs']:
@@ -423,31 +418,39 @@ class H5adReader:
                 return names
         return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
+    def _replace_category_values(self, v: np.ndarray, key: str, group: str):
+        if self.catNamesKey is not None:
+            if self.catNamesKey in self.h5[group]:
+                cat_g = self.h5[group][self.catNamesKey]
+                if type(cat_g) == h5py.Group:
+                    if key in cat_g:
+                        c = cat_g[key][:]
+                        try:
+                            return np.array([c[x] for x in v])
+                        except (IndexError, TypeError):
+                            return v
+        return v
+
+    def _get_col_data(self, group: str, group_name_key: str) -> Generator[Tuple[str, np.ndarray], None, None]:
+        if self.useGroup[group] == 1:
+            for i in self.h5[group].dtype.names:
+                if i == group_name_key:
+                    continue
+                yield i, self._replace_category_values(self.h5[group][i][:], i, group)
+        if self.useGroup[group] == 2:
+            for i in self.h5[group].keys():
+                if i == group_name_key:
+                    continue
+                if type(self.h5[group][i]) == h5py.Dataset:
+                    yield i, self._replace_category_values(self.h5[group][i][:], i, group)
+
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        if self.useGroup['obs'] == 1:
-            for i in self.h5['obs'].dtype.names:
-                if i == self.cellNamesKey:
-                    continue
-                yield i, self.h5['obs'][i]
-        if self.useGroup['obs'] == 2:
-            for i in self.h5['obs'].keys():
-                if i == self.cellNamesKey:
-                    continue
-                if type(self.h5['obs'][i]) == h5py.Dataset:
-                    yield i, self.h5['obs'][i][:]
+        for i, j in self._get_col_data('obs', self.cellNamesKey):
+            yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        if self.useGroup['var'] == 1:
-            for i in self.h5['var'].dtype.names:
-                if i == self.featNamesKey:
-                    continue
-                yield i, self.h5['var'][i]
-        if self.useGroup['var'] == 2:
-            for i in self.h5['var'].keys():
-                if i == self.featNamesKey:
-                    continue
-                if type(self.h5['var'][i]) == h5py.Dataset:
-                    yield i, self.h5['var'][i][:]
+        for i, j in self._get_col_data('var', self.featNamesKey):
+            yield i, j
 
     def consume(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
         grp = self.h5[self.dataKey]
