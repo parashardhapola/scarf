@@ -3,6 +3,7 @@ import numpy as np
 from scipy import sparse
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute
+from numpy.linalg import LinAlgError
 
 __all__ = ['AnnStream']
 
@@ -146,12 +147,18 @@ class AnnStream:
             if len(end_reservoir) == 0:
                 end_reservoir = i
                 continue
-            self._pca.partial_fit(i, check_input=False)
+            try:
+                self._pca.partial_fit(i, check_input=False)
+            except LinAlgError:
+                carry_over = i
         if len(carry_over) > 0:
             i = np.vstack(end_reservoir, carry_over)
         else:
             i = end_reservoir
-        self._pca.partial_fit(i, check_input=False)
+        try:
+            self._pca.partial_fit(i, check_input=False)
+        except LinAlgError:
+            print("WARNING: {i.shape[0]} samples were not used in PCA fitting due to LinAlgError", flush=True)
         self.loadings = self._pca.components_[:-1, :].T
 
     def _fit_lsi(self) -> None:
