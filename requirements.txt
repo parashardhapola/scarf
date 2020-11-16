@@ -22,3 +22,5 @@ matplotlib
 EoN
 threadpoolctl
 setuptools
+holoviews
+datashader

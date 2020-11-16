@@ -347,39 +347,106 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         return ax
 
 
-# def shade_scatter(df, fig_size: float = 7, width_px: int = 1000, height_px: int = 1000,
-#                   x_sampling: float = 0.2, y_sampling: float = 0.2,
-#                   spread_px: int = 1, min_alpha: int = 10, cmap=None, color_key: dict = None,
-#                   labels_kwargs: dict = None, legends_kwargs: dict = None, savename: str = None):
-#     from holoviews.plotting import mpl as hmpl
-#     from holoviews.operation.datashader import datashade, dynspread
-#     import holoviews as hv
-#     import datashader as dsh
-#     from IPython.display import display
-#
-#     x, y, v = df.columns
-#     points = hv.Points(df, kdims=[x, y], vdims=v)
-#     cmap, color_key = scatter_make_cmap(df, cmap, color_key)
-#     if color_key is None:
-#         if df[v].nunique() == 1:
-#             agg = dsh.count(v)
-#         else:
-#             df[v] = (df[v] - df[v].min()) / (df[v].max() - df[v].min())
-#             agg = dsh.mean(v)
-#     else:
-#         agg = dsh.count_cat(v)
-#     shader = datashade(points, aggregator=agg, cmap=cmap, color_key=color_key,
-#                        height=height_px, width=width_px,
-#                        x_sampling=x_sampling, y_sampling=y_sampling, min_alpha=min_alpha)
-#     shader = dynspread(shader, max_px=spread_px)
-#     renderer = hmpl.MPLRenderer.instance()
-#     fig = renderer.get_plot(shader.opts(fig_inches=(fig_size, fig_size))).state
-#     ax = fig.gca()
-#     if labels_kwargs is None:
-#         labels_kwargs = {}
-#     scatter_ax_labels(ax, df, **labels_kwargs)
-#     if legends_kwargs is None:
-#         legends_kwargs = {}
-#     scatter_ax_legends(fig, ax, df, color_key, cmap, **legends_kwargs)
-#     scatter_ax_cleanup(ax)
-#     display(fig)
+def shade_scatter(df, width: float = 6, height: float = 6,
+                  width_px: int = 1000, height_px: int = 1000,
+                  x_sampling: float = 0.2, y_sampling: float = 0.2, spread_px: int = 1, min_alpha: int = 10,
+                  default_color: str = 'steelblue', missing_color: str = 'k', colormap=None,
+                  ax_label_size: float = 12, frame_offset: float = 0.05,
+                  spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
+                  legend_ondata: bool = True, legend_onside: bool = True,
+                  legend_size: float = 12, legends_per_col: int = 20,
+                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
+                  savename: str = None):
+
+    from holoviews.plotting import mpl as hmpl
+    from holoviews.operation.datashader import datashade, dynspread
+    import holoviews as hv
+    import datashader as dsh
+    from IPython.display import display
+
+    def _dtype_is_qual(v):
+        if v.dtype.type == np.bool_:
+            v = v.astype(np.int_)
+            return v, True
+        else:
+            if np.issubdtype(v.dtype.type, np.integer):
+                if v.nunique() > len(v)/5:
+                    v = v.astype(np.float_)
+                    return v, False
+                else:
+                    return v, True
+            else:
+                if v.dtype.type == str:
+                    return v, True
+                elif np.issubdtype(v.dtype.type, np.floating):
+                    return v, False
+                else:
+                    raise ValueError("ERROR: Unrecognized dtype")
+
+    def _vals_to_colors(v: pd.Series, na_c: str, cmap):
+        from matplotlib.colors import to_hex
+
+        v, is_qual = _dtype_is_qual(v)
+        if is_qual:
+            filler_val = '####&&****!@@#!#@$'
+            if np.issubdtype(v.dtype.type, np.integer):
+                filler_val = v.max() + 10
+            fv = v.fillna(filler_val)
+            if cmap is None:
+                cmap = 'tab20'
+            uni_vals = [x for x in fv.unique() if x != filler_val]
+            if type(cmap) is str:
+                pal = sns.color_palette(cmap, n_colors=len(uni_vals)).as_hex()
+                pal = dict(zip(sorted(uni_vals), pal))
+                pal[filler_val] = mpl.colors.to_hex(na_c)
+            elif type(cmap) is dict:
+                pal = dict(cmap)
+            else:
+                raise ValueError("ERROR: colormap needs to be either a str representing matplotlib color or "
+                                 "a dictionary mapping `colorby` values to a hex of RGB values")
+            c = [pal[x] for x in fv]
+        else:
+            v = v.fillna(0)
+            if cmap is None:
+                cmap = cm.deep
+            pal = plt.get_cmap(cmap)
+            mmv = (v - v.min()) / (v.max() - v.min())
+            c = [to_hex(pal(x)) for x in mmv]
+        return pd.Series(c, index=v.index)
+
+    def _handle_scatter_df(c: str, na_c: str, cmap):
+        d = df.convert_dtypes()
+        if 'c' not in d:
+            if 'vc' not in d:
+                d['c'] = [c for _ in d.index]
+            else:
+                d['c'] = _vals_to_colors(d['vc'].copy(), na_c, cmap)
+        return d
+
+    dim1, dim2 = df.columns[:2]
+    df = _handle_scatter_df(c=default_color, na_c=missing_color, cmap=colormap)
+    points = hv.Points(df, kdims=[dim1, dim2], vdims='vc')
+    v = df['vc'].copy()
+    if _dtype_is_qual(v):
+        color_key = {}
+        for i in set(v):
+            color_key[i] = df['c'][v == i].values[0]
+    else:
+        color_key = None
+    if color_key is None:
+        if df['vc'].nunique() == 1:
+            agg = dsh.count(v)
+        else:
+            v = (v - v.min()) / (v.max() - v.min())
+            agg = dsh.mean(v)
+    else:
+        agg = dsh.count_cat(v)
+    shader = datashade(points, aggregator=agg, cmap=colormap, color_key=color_key,
+                       height=height_px, width=width_px,
+                       x_sampling=x_sampling, y_sampling=y_sampling, min_alpha=min_alpha)
+    shader = dynspread(shader, max_px=spread_px)
+    renderer = hmpl.MPLRenderer.instance()
+    fig = renderer.get_plot(shader.opts(fig_inches=(height, width))).state
+    ax = fig.gca()
+    display(fig)
+    return ax
