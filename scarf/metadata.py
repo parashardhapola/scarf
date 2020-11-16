@@ -40,7 +40,7 @@ class MetaData:
         """
         Add new column
         """
-        if k in ['I', 'ids', 'names']:
+        if k in ['I', 'ids']:
             raise ValueError(f"ERROR: {k} is a protected name in MetaData class."
                              "Please choose any other name")
         if k in self.table.columns and overwrite is False:
