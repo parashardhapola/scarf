@@ -150,6 +150,7 @@ class AnnStream:
             try:
                 self._pca.partial_fit(i, check_input=False)
             except LinAlgError:
+                # Add retry counter to make memory consumption doesn't escalate
                 carry_over = i
         if len(carry_over) > 0:
             i = np.vstack(end_reservoir, carry_over)
