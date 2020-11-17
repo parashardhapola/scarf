@@ -112,7 +112,7 @@ Now we visualize the attributes again after filtering the values.
 
 
 ```python
-ds.plot_cells_dists(cols=['percent*'])
+ds.plot_cells_dists(cols=['percent*'], cell_key='I')
 ```
 
 
@@ -222,10 +222,10 @@ Identifying clusters of cells is one of the central tenets of single cell approa
 - **Paris**: This is the default clustering algorithm that scales very well to millions of cells (yielding results in less than 10 mins for a million cells)
 - **Leiden**: Leiden is a widely used graph clustering algorithm in single-cell genomics and provides very good results but is slower to run larger datasets.
 
-In this vignette we demonstrate clustering using Paris, the default algorithm. Paris is hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
+Paris is the default algorithm in Scarf due to its low memory consumption and high scalability. Paris is hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
 
 ```python
-ds.run_clustering(n_clusters=25)
+ds.run_clustering(n_clusters=20)
 ```
 
 The results of clustering algorithm are saved in the cell metadata table. In this case, they have been saved under 'RNA_cluster' column.
@@ -239,6 +239,16 @@ We can visualize the results using the `plot_layout` method again
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
 
+
+Leiden clustering, however, can give more accurate results for smaller datasets. 
+
+```python
+ds.run_leiden_clustering(resolution=2)
+```
+
+```python
+ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
+```
 
 There has been a lot of discussion over the choice of non-linear dimension reduction for single-cell data. tSNE was initially considered an excellent solution but has gradually lost out to UMAP because the magnitude of relation between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE as were used for UMAP, i.e. the first two (in case of 2D) PC axis of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in the 1M cell vignette, using tSNE can be better at visually accessing the extent of heterogeneity than UMAP. The biggest reason, however to run Scarf's implementation of graph tSNE could be the runtime which can be an order of magnitude faster than UMAP on large datasets.
 
