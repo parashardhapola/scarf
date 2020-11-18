@@ -443,6 +443,18 @@ class DataStore:
                     logger.info(custom_msg)
             return True
 
+        default_values = {
+            'log_transform': True,
+            'renormalize_subset': True,
+            'dims': 11,
+            'ann_metric': 'l2',
+            'rand_state': 4466,
+            'k': 11,
+            'n_centroids': 1000,
+            'local_connectivity': 1.0,
+            'bandwidth': 1.5
+        }
+
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self.z and 'subset_params' in self.z[normed_loc].attrs:
@@ -457,14 +469,14 @@ class DataStore:
                     log_transform = bool(c_log_transform)
                     log_message('cached', 'log_transform', log_transform)
                 else:
-                    log_transform = True
+                    log_transform = default_values['log_transform']
                     log_message('default', 'log_transform', log_transform)
             if renormalize_subset is None:
                 if c_renormalize_subset is not None:
                     renormalize_subset = bool(c_renormalize_subset)
                     log_message('cached', 'renormalize_subset', renormalize_subset)
                 else:
-                    renormalize_subset = True
+                    renormalize_subset = default_values['renormalize_subset']
                     log_message('default', 'renormalize_subset', renormalize_subset)
         log_transform = bool(log_transform)
         renormalize_subset = bool(renormalize_subset)
@@ -480,7 +492,7 @@ class DataStore:
                     dims = int(c_dims)
                     log_message('cached', 'dims', dims)
                 else:
-                    dims = 11
+                    dims = default_values['dims']
                     log_message('default', 'dims', dims)
             if pca_cell_key is None:
                 if c_pca_cell_key is not None:
@@ -511,7 +523,7 @@ class DataStore:
                     ann_metric = c_ann_metric
                     log_message('cached', 'ann_metric', ann_metric)
                 else:
-                    ann_metric = 'l2'
+                    ann_metric = default_values['ann_metric']
                     log_message('default', 'ann_metric', ann_metric)
             if ann_efc is None:
                 if c_ann_efc is not None:
@@ -539,7 +551,7 @@ class DataStore:
                     rand_state = int(c_rand_state)
                     log_message('cached', 'rand_state', rand_state)
                 else:
-                    rand_state = 4466
+                    rand_state = default_values['rand_state']
                     log_message('default', 'rand_state', rand_state)
         ann_metric = str(ann_metric)
         ann_m = int(ann_m)
@@ -552,7 +564,7 @@ class DataStore:
                 k = int(knn_loc.rsplit('__', 1)[1])
                 log_message('cached', 'k', k)
             else:
-                k = 11
+                k = default_values['k']
                 log_message('default', 'k', k)
         k = int(k)
         if ann_ef is None:
@@ -571,7 +583,7 @@ class DataStore:
                 log_message('default', 'n_centroids', n_centroids)
             else:
                 # n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
-                n_centroids = 500
+                n_centroids = default_values['n_centroids']
                 log_message('default', 'n_centroids', n_centroids)
         n_centroids = int(n_centroids)
 
@@ -586,14 +598,14 @@ class DataStore:
                     local_connectivity = c_local_connectivity
                     log_message('cached', 'local_connectivity', local_connectivity)
                 else:
-                    local_connectivity = 1.0
+                    local_connectivity = default_values['local_connectivity']
                     log_message('default', 'local_connectivity', local_connectivity)
             if bandwidth is None:
                 if c_bandwidth is not None:
                     bandwidth = c_bandwidth
                     log_message('cached', 'bandwidth', bandwidth)
                 else:
-                    bandwidth = 1.5
+                    bandwidth = default_values['bandwidth']
                     log_message('default', 'bandwidth', bandwidth)
         local_connectivity = float(local_connectivity)
         bandwidth = float(bandwidth)
