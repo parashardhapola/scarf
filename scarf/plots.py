@@ -207,7 +207,7 @@ def _scatter_make_colors(v: pd.Series, cmap, color_key: dict, mask_color: str, m
             if cmap is None:
                 return cm.deep, None
             else:
-                return cmap, None
+                return get_cmap(cmap), None
         else:
             if cmap is None:
                 cmap = 'tab20'
@@ -292,7 +292,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  savename: str = None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
 
     from matplotlib.colors import to_hex
-    
+
     def _handle_scatter_kwargs(sk):
         if sk is None:
             sk = {}
@@ -321,7 +321,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             df['c'] = [default_color for _ in v]
         else:
             v = v.copy().fillna(0)
-            pal = plt.get_cmap(color_map)
+            pal = color_map
             mmv = (v - v.min()) / (v.max() - v.min())
             df['c'] = [to_hex(pal(x)) for x in mmv]
     if 's' not in df:
