@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import List, Iterable, Tuple, Generator
+from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
 import zarr
 from tqdm import tqdm
@@ -1190,7 +1190,7 @@ class DataStore:
         self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
                        fill_val=-1, key=cell_key, overwrite=True)
 
-    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
+    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                           threshold: float = 0.25) -> None:
         """
         Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
@@ -1201,7 +1201,7 @@ class DataStore:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
-            subset_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table.
             threshold: This value dictates how specific the feature value has to be in a group before it is considered a
                        marker for that group. The value has to be greater than 0 but less than or equal to 1
@@ -1214,12 +1214,12 @@ class DataStore:
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key`. This should be the name of a column from "
                              "cell metadata object that has information on how cells should be grouped.")
-        if subset_key is None:
-            subset_key = 'I'
+        if cell_key is None:
+            cell_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, subset_key, self.nthreads, threshold)
+        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold)
         z = self.z[assay.name]
-        slot_name = f"{subset_key}__{group_key}"
+        slot_name = f"{cell_key}__{group_key}"
         if 'markers' not in z:
             z.create_group('markers')
         group = z['markers'].create_group(slot_name, overwrite=True)
@@ -1231,6 +1231,52 @@ class DataStore:
                 g_s = create_zarr_dataset(g, 'scores', (10000,), float, vals.values.shape)
                 g_s[:] = vals.values
         return None
+
+
+    def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
+                    group_id: Union[str, int] = None) -> pd.DataFrame:
+        """
+        Returns a table of markers features obtained through `run_maker_search` for a given group. The table
+        contains names of marker features and feature ids are used as table index.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table.
+            group_key: Required parameter. This has to be a column name from cell metadata table.
+                       Usually this would be a column denoting cell clusters. Please use the same value as used
+                       when ran `run_marker_search`
+            group_id: This is one of the value in `group_key` column of cell metadata.
+                      Results are returned for this group
+
+        Returns:
+            Pandas dataframe with marker feature names and scores
+
+        """
+        
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if group_key is None:
+            raise ValueError(f"ERROR: Please provide a value for group_key. "
+                             f"This should be same as used for `run_marker_search`")
+        assay = self._get_assay(from_assay)
+        try:
+            g = assay.z['markers'][f"{cell_key}__{group_key}"]
+        except KeyError:
+            raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
+                           "`run_marker_search` method with same value of `cell_key` and `group_key`")
+        if group_id is None:
+             raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
+                              f"{list(g.keys())}")
+        df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
+                           index=['ids', 'score']).T.set_index('ids')
+        id_idx = assay.feats.get_idx_by_ids(df.index)
+        if len(id_idx) != df.shape[0]:
+            logger.warning("Internal error in fetching names of the features IDs")
+            return df
+        df['names'] = assay.feats.table['names'][id_idx].values
+        return df
+
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
