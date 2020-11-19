@@ -237,7 +237,7 @@ class DataStore:
             if var_name not in self.cells.table.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
-                self.cells.add(var_name, n_c, overwrite=True)
+                self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
                     if min(n_c) < assay.sf:
@@ -247,7 +247,7 @@ class DataStore:
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
-                self.cells.add(var_name, n_f, overwrite=True)
+                self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
                 if mito_pattern is None:
