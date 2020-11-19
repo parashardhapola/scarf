@@ -164,7 +164,6 @@ class DataStore:
 
         preset_assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay,
                               'GeneActivity': RNAassay, 'URNA': RNAassay, 'Assay': Assay}
-        # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "%s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter."
@@ -188,6 +187,7 @@ class DataStore:
                     logger.warning(caution_statement % i)
                     assay = Assay
                     z_attrs[i] = 'Assay'
+                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             elif i in z_attrs:
                 assay = preset_assay_types[z_attrs[i]]
             else:
@@ -198,7 +198,7 @@ class DataStore:
                     logger.warning(caution_statement % i)
                     assay = Assay
                     z_attrs[i] = 'Assay'
-            logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
         self.z.attrs['assayTypes'] = z_attrs
         return None
@@ -238,7 +238,11 @@ class DataStore:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c, overwrite=True)
-
+                 if type(assay) == RNAassay:
+                     min_nc = min(n_c)
+                     if min(n_c) < assay.sf:
+                         logger.warning(f"Minimum cell count ({min_nc}) is lower than "
+                                        f"size factor multiplier ({assay.sf})")
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
@@ -1734,8 +1738,7 @@ class DataStore:
         return adata
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
-                         group_key: str = None, show_all_cells: bool = False,
-                         color: str = 'steelblue', cmap: str = 'tab20',
+                         group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
                          scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
         """
@@ -1761,7 +1764,7 @@ class DataStore:
 
         from .plots import plot_qc
         import re
-        print('Deprecation Warning: `show_all_cells` is no longer used.', flush=True)
+        
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1774,7 +1777,7 @@ class DataStore:
                 if len(matches) > 0:
                     plot_cols.extend(matches)
                 else:
-                    print(f"{i} not found in cell metadata")
+                    logger.warning(f"{i} not found in cell metadata")
         df = self.cells.table[plot_cols].copy()
         if group_key is not None:
             df['groups'] = self.cells.table[group_key].copy()
