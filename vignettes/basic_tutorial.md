@@ -142,6 +142,12 @@ NOTE: We strongly discourage directly adding or removing the data from this tabl
 ```python
 ds.RNA.feats.table
 ```
+The feature selection step is performed on normalized data. The default normalization method for `RNAassay` type data is library size normalization wherein the count values are divided by sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 10000; however, if the total counts in a cell are less than this values than on mutliplication with this scalar factors the values will be 'scaled up' which is not a desired behaviour. In the filtering step above, we set the `low` thresolhd for `RNA_nCounts` at 1000 and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay
+
+```python
+ds.RNA.sf = 1000
+```
+
 Now the next step is to identify the highly variable genes in the dataset (RNA assay). This can be done using `mark_hvgs` method of the assay. The parameters govern the min/max variance (corrected) and mean expression threshold for calling genes highly variable. 
 
 The variance is corrected by first dividing genes into bins based on their mean expression values. Gene with minimum variance is selected from each bin and a Lowess curve to the mean-variance trend of these genes. `mark_hvgs` will by default run on the default assay
@@ -214,7 +220,7 @@ ds.plot_layout(layout_key='RNA_UMAP')
 `plot_layout` can be used to easily visualize data from any column of the cell metadata table. Following we visualize the number of genes expressed in each cell
 
 ```python
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', colormap='coolwarm')
+ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', cmap='coolwarm')
 ```
 
 
@@ -282,20 +288,20 @@ Now we can identify the genes that are differentially expressed between the clus
 This method does not perform any statistical test of significance and uses 'specificity score' as a measure of importance of each gene for a cluster.
 
 ```python
-ds.run_marker_search(group_key='RNA_cluster', threshold=0.2)
+ds.run_marker_search(group_key='RNA_cluster', threshold=0.25)
 ```
 
 Using `plot_marker_heatmap` we can also plot a heatmap with top marker genes from each cluster. The method will calculate the mean expression value for each gene from each cluster.
 
 
 ```python
-ds.plot_marker_heatmap(group_key='RNA_cluster', topn=5)
+ds.plot_marker_heatmap(group_key='RNA_cluster', topn=3)
 ```
 
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
 
 ```python
-ds.plot_layout(layout_key='RNA_UMAP', color_by='PPBP')
+ds.plot_layout(layout_key='RNA_UMAP', color_by='CD79A')
 ```
 
 
