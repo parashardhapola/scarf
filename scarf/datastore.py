@@ -238,11 +238,11 @@ class DataStore:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c, overwrite=True)
-                 if type(assay) == RNAassay:
-                     min_nc = min(n_c)
-                     if min(n_c) < assay.sf:
-                         logger.warning(f"Minimum cell count ({min_nc}) is lower than "
-                                        f"size factor multiplier ({assay.sf})")
+                if type(assay) == RNAassay:
+                    min_nc = min(n_c)
+                    if min(n_c) < assay.sf:
+                        logger.warning(f"Minimum cell count ({min_nc}) is lower than "
+                                       f"size factor multiplier ({assay.sf})")
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),

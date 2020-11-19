@@ -190,7 +190,13 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str):
     if mask_vals is None:
         mask_vals = []
     mask_vals += [np.NaN]
+    iscat = False
+    if v.dtype.name == 'category':
+        iscat = True
+        v = v.astype(object)
     v[v.isin(mask_vals)] = mask_name
+    if iscat:
+        v = v.astype('category')
     return v
 
 
@@ -300,8 +306,8 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         return sk
     
     dim1, dim2, vc = df.columns[:3]
-    v = _scatter_fix_type(df[vc].copy(), force_ints_as_cats)
-    v = _scatter_fix_mask(v, mask_values, mask_name)
+    v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
+    v = _scatter_fix_type(v, force_ints_as_cats)
     df[vc] = v
     color_map, color_key = _scatter_make_colors(v, color_map, color_key,
                                                 mask_color, mask_name)
@@ -315,8 +321,8 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             pal = plt.get_cmap(cmap)
             mmv = (v - v.min()) / (v.max() - v.min())
             df['c'] = [to_hex(pal(x)) for x in mmv]
-    if 's' not in d:
-        d['s'] = [point_size for _ in d.index]
+    if 's' not in df:
+        df['s'] = [point_size for _ in df.index]
     scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
     if in_ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(width, height))
@@ -355,8 +361,8 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
     from IPython.display import display
         
     dim1, dim2, vc = df.columns[:3]
-    v = _scatter_fix_type(df[vc].copy(), force_ints_as_cats)
-    v = _scatter_fix_mask(v, mask_values, mask_name)
+    v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
+    v = _scatter_fix_type(v, force_ints_as_cats)
     df[vc] = v
     color_map, color_key = _scatter_make_colors(v, color_map, color_key,
                                                 mask_color, mask_name)
