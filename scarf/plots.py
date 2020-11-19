@@ -289,7 +289,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  legend_ondata: bool = True, legend_onside: bool = True,
                  legend_size: float = 12, legends_per_col: int = 20,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                 savename: str = None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
+                 savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
 
     from matplotlib.colors import to_hex
 
@@ -339,7 +339,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                      legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     if in_ax is None:
         if savename:
-            plt.savefig(savename, dpi=300)
+            plt.savefig(savename, dpi=dpi)
         plt.show()
     else:
         return ax
@@ -347,7 +347,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
 
 
 def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
-                  spread_px: int = 1, min_alpha: int = 10,
+                  spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10, 
                   color_map=None, color_key: dict = None,
                   mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
                   ax_label_size: float = 12, frame_offset: float = 0.05,
@@ -355,7 +355,7 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
                   legend_ondata: bool = True, legend_onside: bool = True,
                   legend_size: float = 12, legends_per_col: int = 20,
                   marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                  savename: str = None, force_ints_as_cats: bool = True):
+                  savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True):
     
     from holoviews.plotting import mpl as hmpl
     from holoviews.operation.datashader import datashade, dynspread
@@ -381,7 +381,7 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
     shader = datashade(points, aggregator=agg, cmap=color_map, color_key=color_key,
                        height=pixels, width=pixels,
                        x_sampling=sampling, y_sampling=sampling, min_alpha=min_alpha)
-    shader = dynspread(shader, threshold=0.2, max_px=spread_px)
+    shader = dynspread(shader, threshold=spread_threshold, max_px=spread_px)
     renderer = hmpl.MPLRenderer.instance()
     fig = renderer.get_plot(shader.opts(fig_inches=(figsize, figsize))).state
     ax = fig.gca()
@@ -389,4 +389,6 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
     _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
     _scatter_legends(df, ax, fig, color_map, color_key, legend_ondata, legend_onside,
                      legend_size, legends_per_col, marker_scale, lspacing, cspacing)
+    if savename:
+        fig.savefig(savename, dpi=dpi)
     display(fig)

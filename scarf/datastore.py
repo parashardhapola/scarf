@@ -1232,7 +1232,6 @@ class DataStore:
                 g_s[:] = vals.values
         return None
 
-
     def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
                     group_id: Union[str, int] = None) -> pd.DataFrame:
         """
@@ -1253,7 +1252,7 @@ class DataStore:
             Pandas dataframe with marker feature names and scores
 
         """
-        
+
         if from_assay is None:
             from_assay = self._defaultAssay
         if group_key is None:
@@ -1276,7 +1275,6 @@ class DataStore:
             return df
         df['names'] = assay.feats.table['names'][id_idx].values
         return df
-
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
@@ -1877,51 +1875,78 @@ class DataStore:
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
                     cmap=None, color_key: dict = None,  mask_values: list = None,
                     mask_name: str = 'NA', mask_color: str = 'k',  point_size: float = 10,
+                    do_shading: bool = False, shade_npixels: int = 1000, shade_sampling: float = 0.1, 
+                    shade_min_alpha: int = 10, spread_pixels: int = 1, spread_threshold: float = 0.2, 
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, ax=None, fig=None, force_ints_as_cats: bool = True,
+                    cspacing: float = 1, savename: str = None, save_dpi: int = 300, 
+                    ax=None, fig=None, force_ints_as_cats: bool = True,
                     scatter_kwargs: dict = None):
         """
+        Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
+        the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
+        rasterized image is `do_shading` is True. This can be useful when large number of cells are
+        present to quickly render the plot and avoid over-plotting.
 
         Args:
-            from_assay:
-            cell_key:
-            layout_key:
-            color_by:
-            subselection_key:
-            size_vals:
-            clip_fraction:
-            width:
-            height:
-            default_color:
-            missing_color:
-            colormap:
-            point_size:
-            ax_label_size:
-            frame_offset:
-            spine_width:
-            spine_color:
-            displayed_sides:
-            legend_ondata:
-            legend_onside:
-            legend_size:
-            legends_per_col:
-            marker_scale:
-            lspacing:
-            cspacing:
-            savename:
-            scatter_kwargs:
+            from_assay (str, optional): [description]. Defaults to deafult_assy attribute.
+            cell_key (str, optional): [description]. Defaults to 'I'.
+            layout_key (str): [description].
+            color_by (str, optional): [description]. Defaults to None.
+            subselection_key (str, optional): [description]. Defaults to None.
+            size_vals ([type], optional): [description]. Defaults to None.
+            clip_fraction (float, optional): [description]. Defaults to 0.01.
+            width (float, optional): [description]. Defaults to 6.
+            height (float, optional): [description]. Defaults to 6.
+            default_color (str, optional): [description]. Defaults to 'steelblue'.
+            cmap ([type], optional): [description]. Defaults to None.
+            color_key (dict, optional): [description]. Defaults to None.
+            mask_values (list, optional): [description]. Defaults to None.
+            mask_name (str, optional): [description]. Defaults to 'NA'.
+            mask_color (str, optional): [description]. Defaults to 'k'.
+            point_size (float, optional): [description]. Defaults to 10.
+            do_shading (bool, optional): [description]. Defaults to False.
+            shade_npixels (int, optional): [description]. Defaults to 1000.
+            shade_sampling (float, optional): [description]. Defaults to 0.1.
+            shade_min_alpha (int, optional): [description]. Defaults to 10.
+            spread_pixels (int, optional): [description]. Defaults to 1.
+            spread_threshold (float, optional): [description]. Defaults to 0.2.
+            ax_label_size (float, optional): [description]. Defaults to 12.
+            frame_offset (float, optional): [description]. Defaults to 0.05.
+            spine_width (float, optional): [description]. Defaults to 0.5.
+            spine_color (str, optional): [description]. Defaults to 'k'.
+            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
+            legend_ondata (bool, optional): [description]. Defaults to True.
+            legend_onside (bool, optional): [description]. Defaults to True.
+            legend_size (float, optional): [description]. Defaults to 12.
+            legends_per_col (int, optional): [description]. Defaults to 20.
+            marker_scale (float, optional): [description]. Defaults to 70.
+            lspacing (float, optional): [description]. Defaults to 0.1.
+            cspacing (float, optional): [description]. Defaults to 1.
+            savename (str, optional): [description]. Defaults to None.
+            save_dpi (int, optional): [description]. Defaults to 300.
+            ax ([type], optional): [description]. Defaults to None.
+            fig ([type], optional): [description]. Defaults to None.
+            force_ints_as_cats (bool, optional): [description]. Defaults to True.
+            scatter_kwargs (dict, optional): [description]. Defaults to None.
+
+        Raises:
+            ValueError: [description]
+            ValueError: [description]
+            ValueError: [description]
 
         Returns:
-
+            [type]: [description]
         """
+        
         # TODO: add support for subplots
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
 
-        from .plots import plot_scatter
+        from .plots import plot_scatter, shade_scatter
+
         if from_assay is None:
             from_assay = self._defaultAssay
         if layout_key is None:
@@ -1947,11 +1972,18 @@ class DataStore:
                 logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
-        return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
-                            mask_values, mask_name, mask_color, point_size,
-                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
-                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
-                            force_ints_as_cats, scatter_kwargs)
+        if do_shading:
+            return shade_scatter(df, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
+                                 shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
+                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats)
+        else:
+            return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
+                                mask_values, mask_name, mask_color, point_size,
+                                ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                                legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                                lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                             layout_key: str = 'UMAP', show_target_only: bool = False,
