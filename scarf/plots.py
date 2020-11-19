@@ -172,77 +172,117 @@ def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5
         return ax
 
 
+def _scatter_fix_type(v: pd.Series, ints_as_cats: bool):
+        vt = v.dtype
+        if v.nunique() == 1:
+            return v.astype(np.float_)
+        if vt in [np.bool_, str, object] or vt.name == 'category':
+            return v.astype(np.int_).astype('category')
+        elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
+            if v.nunique() > 100:
+                print ("Warning: too many categories. set force_ints_as_cats to false")
+            return v.astype(np.int_).astype('category')
+        else:
+            return v.astype(np.float_)
+
+
+def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str):
+    if mask_vals is None:
+        mask_vals = []
+    mask_vals += [np.NaN]
+    v[v.isin(mask_vals)] = mask_name
+    return v
+
+
+def _scatter_make_colors(v: pd.Series, cmap, color_key: dict, mask_color: str, mask_name: str):
+        from matplotlib.cm import get_cmap
+        if v.dtype.name != 'category':
+            if cmap is None:
+                return cm.deep, None
+            else:
+                return cmap, None
+        else:
+            if cmap is None:
+                cmap = 'tab20'
+        na_idx = v == mask_name
+        uv = v[~na_idx].unique()
+        pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
+        ck = dict(zip(sorted(uv), pal))
+        if na_idx.sum() > 0:
+            ck[masked_name] = mpl.colors.to_hex(mask_color)
+        return None, ck
+
+
+def _scatter_cleanup(ax, sw: float, sc: str, ds: tuple) -> None:
+    for i in ['bottom', 'left', 'top', 'right']:
+        spine = ax.spines[i]
+        if i in ds:
+            spine.set_visible(True)
+            spine.set_linewidth(sw)
+            spine.set_edgecolor(sc)
+        else:
+            spine.set_visible(False)
+    ax.figure.patch.set_alpha(0)
+    ax.patch.set_alpha(0)
+    ax.set_aspect('auto')
+    return None
+
+
+def _scatter_label_axis(df, ax, fs: float, fo: float):
+    x, y = df.columns[:2]
+    ax.set_xlabel(x, fontsize=fs)
+    ax.set_ylabel(y, fontsize=fs)
+    vmin, vmax = df[x].min(), df[x].max()
+    ax.set_xlim((vmin - abs(vmin * fo), vmax + abs(vmax * fo)))
+    vmin, vmax = df[y].min(), df[y].max()
+    ax.set_ylim((vmin - abs(vmin * fo), vmax + abs(vmax * fo)))
+    ax.set_xticks([])
+    ax.set_yticks([])
+    return None
+
+
+def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize: float,
+             n_per_col: int, scale: float, ls: float, cs: float) -> None:
+        from matplotlib.colors import Normalize
+        from matplotlib.colorbar import ColorbarBase
+
+        x, y, vc = df.columns[:3]
+        v = df[vc]
+        if v.nunique() <= 1:
+            return None
+        if v.dtype.name == 'category':
+            centers = df[[x, y, vc]].groupby(vc).median().T
+            for i in centers:
+                if ondata:
+                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize)
+                if onside:
+                    ax.scatter([float(centers[i][x])], [float(centers[i][y])],
+                               c=ck[i], label=i, alpha=1, s=0.01)
+            if onside:
+                n_cols = max(1, int(v.nunique() / n_per_col))
+                ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
+                          markerscale=scale, labelspacing=ls, columnspacing=cs)
+        else:
+            if fig is not None:
+                cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
+                norm = Normalize(vmin=v.min(), vmax=v.max())
+                cb = ColorbarBase(cbaxes, cmap=cmap, norm=norm, orientation='horizontal')
+                cb.set_label(vc, fontsize=fontsize)
+                cb.ax.xaxis.set_label_position('top')
+            else:
+                print("WARNING: Not plotting the colorbar because fig object was not passed")
+        return None
+
+
 def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
-                 default_color: str = 'steelblue', missing_color: str = 'k', colormap=None,
+                 default_color: str = 'steelblue', color_map=None, color_key: dict = None,
+                 mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
                  point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
                  spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                  legend_ondata: bool = True, legend_onside: bool = True,
                  legend_size: float = 12, legends_per_col: int = 20,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                 savename: str = None, scatter_kwargs: dict = None):
-
-    def _dtype_is_qual(v):
-        if v.dtype.type == np.bool_:
-            v = v.astype(np.int_)
-            return v, True
-        else:
-            if np.issubdtype(v.dtype.type, np.integer):
-                if v.nunique() > len(v)/5:
-                    v = v.astype(np.float_)
-                    return v, False
-                else:
-                    return v, True
-            else:
-                if v.dtype.type == str:
-                    return v, True
-                elif np.issubdtype(v.dtype.type, np.floating):
-                    return v, False
-                else:
-                    raise ValueError("ERROR: Unrecognized dtype")
-
-    def _vals_to_colors(v: pd.Series, na_c: str, cmap):
-        from matplotlib.colors import to_hex
-
-        v, is_qual = _dtype_is_qual(v)
-        if is_qual:
-            filler_val = '####&&****!@@#!#@$'
-            if np.issubdtype(v.dtype.type, np.integer):
-                filler_val = v.max() + 10
-            fv = v.fillna(filler_val)
-            if cmap is None:
-                cmap = 'tab20'
-            uni_vals = [x for x in fv.unique() if x != filler_val]
-            if type(cmap) is str:
-                pal = sns.color_palette(cmap, n_colors=len(uni_vals)).as_hex()
-                pal = dict(zip(sorted(uni_vals), pal))
-                pal[filler_val] = mpl.colors.to_hex(na_c)
-            elif type(cmap) is dict:
-                pal = dict(cmap)
-            else:
-                raise ValueError("ERROR: colormap needs to be either a str representing matplotlib color or "
-                                 "a dictionary mapping `colorby` values to a hex of RGB values")
-            c = [pal[x] for x in fv]
-        else:
-            v = v.fillna(0)
-            if cmap is None:
-                cmap = cm.deep
-            pal = plt.get_cmap(cmap)
-            mmv = (v - v.min()) / (v.max() - v.min())
-            c = [to_hex(pal(x)) for x in mmv]
-        return pd.Series(c, index=v.index)
-
-    def _handle_scatter_df(c: str, na_c: str, s: float, cmap):
-        d = df.convert_dtypes()
-        if 'c' not in d:
-            if 'vc' not in d:
-                d['c'] = [c for _ in d.index]
-            else:
-                d['c'] = _vals_to_colors(d['vc'].copy(), na_c, cmap)
-        if 's' in d:
-            d['s'], _ = _dtype_is_qual(d['s'])
-        else:
-            d['s'] = [s for _ in d.index]
-        return d
+                 savename: str = None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
 
     def _handle_scatter_kwargs(sk):
         if sk is None:
@@ -258,87 +298,36 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         if 'edgecolors' not in sk:
             sk['edgecolors'] = 'k'
         return sk
-
-    def _label_axis(fs: float, fo: float):
-        x, y = df.columns[:2]
-        ax.set_xlabel(x, fontsize=fs)
-        ax.set_ylabel(y, fontsize=fs)
-        vmin, vmax = df[x].min(), df[x].max()
-        ax.set_xlim((vmin - abs(vmin * fo), vmax + abs(vmax * fo)))
-        vmin, vmax = df[y].min(), df[y].max()
-        ax.set_ylim((vmin - abs(vmin * fo), vmax + abs(vmax * fo)))
-        ax.set_xticks([])
-        ax.set_yticks([])
-        return None
-
-    def _cleanup(sw: float, sc: str, ds: tuple) -> None:
-        for i in ['bottom', 'left', 'top', 'right']:
-            spine = ax.spines[i]
-            if i in ds:
-                spine.set_visible(True)
-                spine.set_linewidth(sw)
-                spine.set_edgecolor(sc)
-            else:
-                spine.set_visible(False)
-        ax.figure.patch.set_alpha(0)
-        ax.patch.set_alpha(0)
-        ax.set_aspect('auto')
-        return None
-
-    def _legends(cmap, ondata: bool, onside: bool, fontsize: float,
-                 n_per_col: int, scale: float, ls: float, cs: float) -> None:
-        from matplotlib.colors import Normalize
-        from matplotlib.colorbar import ColorbarBase
-        from matplotlib.cm import get_cmap
-
-        x, y = df.columns[:2]
-        if 'vc' not in df:
-            return None
-        v = df['vc']
-        if v.nunique() <= 1:
-            return None
-        v, is_qual = _dtype_is_qual(v)
-        if is_qual:
-            centers = df[[x, y, 'vc']].groupby('vc').median().T
-            for i in centers:
-                if ondata:
-                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize)
-                if onside:
-                    ax.scatter([float(centers[i][x])], [float(centers[i][y])],
-                               c=df['c'][v == i].values[0],
-                               label=i, alpha=1, s=0.01)
-            if onside:
-                n_cols = max(1, int(v.nunique() / n_per_col))
-                ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
-                          markerscale=scale, labelspacing=ls, columnspacing=cs)
+    
+    dim1, dim2, vc = df.columns[:3]
+    v = _scatter_fix_type(df[vc].copy(), force_ints_as_cats)
+    v = _scatter_fix_mask(v, mask_values, mask_name)
+    df[vc] = v
+    color_map, color_key = _scatter_make_colors(v, color_map, color_key,
+                                                mask_color, mask_name)
+    if v.dtype.name == 'category':
+        df['c'] = [color_key[x] for x in v]
+    else:
+        if v.nunique() == 1:
+            df['c'] = [default_color for _ in v]
         else:
-            if fig is not None:
-                cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
-                norm = Normalize(vmin=0, vmax=1)
-                if cmap is None:
-                    cmap = cm.deep
-                else:
-                    cmap = get_cmap(cmap)
-                cb = ColorbarBase(cbaxes, cmap=cmap, norm=norm, orientation='horizontal')
-                cb.set_label('Relative values', fontsize=fontsize)
-                cb.ax.xaxis.set_label_position('top')
-            else:
-                print("WARNING: Not plotting the colorbar because fig object was not passed")
-        return None
-
-    dim1, dim2 = df.columns[:2]
+            v = v.copy().fillna(0)
+            pal = plt.get_cmap(cmap)
+            mmv = (v - v.min()) / (v.max() - v.min())
+            df['c'] = [to_hex(pal(x)) for x in mmv]
+    if 's' not in d:
+        d['s'] = [point_size for _ in d.index]
+    scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
     if in_ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(width, height))
     else:
         ax = in_ax
-    df = _handle_scatter_df(c=default_color, na_c=missing_color, s=point_size, cmap=colormap)
-    scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
     ax.scatter(df[dim1].values, df[dim2].values, c=df['c'].values, s=df['s'].values,
                rasterized=True, **scatter_kwargs)
-    _label_axis(ax_label_size, frame_offset)
-    _cleanup(spine_width, spine_color, displayed_sides)
-    _legends(colormap, legend_ondata, legend_onside,
-             legend_size, legends_per_col, marker_scale, lspacing, cspacing)
+    _scatter_label_axis(df, ax, ax_label_size, frame_offset)
+    _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+    _scatter_legends(df, ax, fig, color_map, color_key, legend_ondata, legend_onside,
+                     legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     if in_ax is None:
         if savename:
             plt.savefig(savename, dpi=300)
@@ -347,106 +336,48 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         return ax
 
 
-def shade_scatter(df, width: float = 6, height: float = 6,
-                  width_px: int = 1000, height_px: int = 1000,
-                  x_sampling: float = 0.2, y_sampling: float = 0.2, spread_px: int = 1, min_alpha: int = 10,
-                  default_color: str = 'steelblue', missing_color: str = 'k', colormap=None,
+
+def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
+                  spread_px: int = 1, min_alpha: int = 10,
+                  color_map=None, color_key: dict = None,
+                  mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
                   ax_label_size: float = 12, frame_offset: float = 0.05,
                   spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                   legend_ondata: bool = True, legend_onside: bool = True,
                   legend_size: float = 12, legends_per_col: int = 20,
                   marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                  savename: str = None):
-
+                  savename: str = None, force_ints_as_cats: bool = True):
+    
     from holoviews.plotting import mpl as hmpl
     from holoviews.operation.datashader import datashade, dynspread
     import holoviews as hv
     import datashader as dsh
     from IPython.display import display
-
-    def _dtype_is_qual(v):
-        if v.dtype.type == np.bool_:
-            v = v.astype(np.int_)
-            return v, True
-        else:
-            if np.issubdtype(v.dtype.type, np.integer):
-                if v.nunique() > len(v)/5:
-                    v = v.astype(np.float_)
-                    return v, False
-                else:
-                    return v, True
-            else:
-                if v.dtype.type == str:
-                    return v, True
-                elif np.issubdtype(v.dtype.type, np.floating):
-                    return v, False
-                else:
-                    raise ValueError("ERROR: Unrecognized dtype")
-
-    def _vals_to_colors(v: pd.Series, na_c: str, cmap):
-        from matplotlib.colors import to_hex
-
-        v, is_qual = _dtype_is_qual(v)
-        if is_qual:
-            filler_val = '####&&****!@@#!#@$'
-            if np.issubdtype(v.dtype.type, np.integer):
-                filler_val = v.max() + 10
-            fv = v.fillna(filler_val)
-            if cmap is None:
-                cmap = 'tab20'
-            uni_vals = [x for x in fv.unique() if x != filler_val]
-            if type(cmap) is str:
-                pal = sns.color_palette(cmap, n_colors=len(uni_vals)).as_hex()
-                pal = dict(zip(sorted(uni_vals), pal))
-                pal[filler_val] = mpl.colors.to_hex(na_c)
-            elif type(cmap) is dict:
-                pal = dict(cmap)
-            else:
-                raise ValueError("ERROR: colormap needs to be either a str representing matplotlib color or "
-                                 "a dictionary mapping `colorby` values to a hex of RGB values")
-            c = [pal[x] for x in fv]
-        else:
-            v = v.fillna(0)
-            if cmap is None:
-                cmap = cm.deep
-            pal = plt.get_cmap(cmap)
-            mmv = (v - v.min()) / (v.max() - v.min())
-            c = [to_hex(pal(x)) for x in mmv]
-        return pd.Series(c, index=v.index)
-
-    def _handle_scatter_df(c: str, na_c: str, cmap):
-        d = df.convert_dtypes()
-        if 'c' not in d:
-            if 'vc' not in d:
-                d['c'] = [c for _ in d.index]
-            else:
-                d['c'] = _vals_to_colors(d['vc'].copy(), na_c, cmap)
-        return d
-
-    dim1, dim2 = df.columns[:2]
-    df = _handle_scatter_df(c=default_color, na_c=missing_color, cmap=colormap)
-    points = hv.Points(df, kdims=[dim1, dim2], vdims='vc')
-    v = df['vc'].copy()
-    if _dtype_is_qual(v):
-        color_key = {}
-        for i in set(v):
-            color_key[i] = df['c'][v == i].values[0]
+        
+    dim1, dim2, vc = df.columns[:3]
+    v = _scatter_fix_type(df[vc].copy(), force_ints_as_cats)
+    v = _scatter_fix_mask(v, mask_values, mask_name)
+    df[vc] = v
+    color_map, color_key = _scatter_make_colors(v, color_map, color_key,
+                                                mask_color, mask_name)
+    if v.dtype.name == 'category':
+        agg = dsh.count_cat(vc)
     else:
-        color_key = None
-    if color_key is None:
-        if df['vc'].nunique() == 1:
-            agg = dsh.count(v)
+        if v.nunique() == 1:
+            agg = dsh.count(vc)
         else:
-            v = (v - v.min()) / (v.max() - v.min())
-            agg = dsh.mean(v)
-    else:
-        agg = dsh.count_cat(v)
-    shader = datashade(points, aggregator=agg, cmap=colormap, color_key=color_key,
-                       height=height_px, width=width_px,
-                       x_sampling=x_sampling, y_sampling=y_sampling, min_alpha=min_alpha)
-    shader = dynspread(shader, max_px=spread_px)
+            agg = dsh.mean(vc)
+    
+    points = hv.Points(df, kdims=[dim1, dim2], vdims=vc)
+    shader = datashade(points, aggregator=agg, cmap=color_map, color_key=color_key,
+                       height=pixels, width=pixels,
+                       x_sampling=sampling, y_sampling=sampling, min_alpha=min_alpha)
+    shader = dynspread(shader, threshold=0.2, max_px=spread_px)
     renderer = hmpl.MPLRenderer.instance()
-    fig = renderer.get_plot(shader.opts(fig_inches=(height, width))).state
+    fig = renderer.get_plot(shader.opts(fig_inches=(figsize, figsize))).state
     ax = fig.gca()
+    _scatter_label_axis(df, ax, ax_label_size, frame_offset)
+    _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+    _scatter_legends(df, ax, fig, color_map, color_key, legend_ondata, legend_onside,
+                     legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     display(fig)
-    return ax

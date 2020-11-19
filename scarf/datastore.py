@@ -1829,12 +1829,14 @@ class DataStore:
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
-                    missing_color: str = 'k', colormap=None, point_size: float = 10,
+                    cmap=None, color_key: dict = None,  mask_values: list = None,
+                    mask_name: str = 'NA', mask_color: str = 'k',  point_size: float = 10,
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, ax=None, fig=None, scatter_kwargs: dict = None):
+                    cspacing: float = 1, savename: str = None, ax=None, fig=None, force_ints_as_cats: bool = True,
+                    scatter_kwargs: dict = None):
         """
 
         Args:
@@ -1886,8 +1888,9 @@ class DataStore:
             v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=color_by,
                                    clip_fraction=clip_fraction)
         else:
+            color_by = 'vc'
             v = np.ones(len(x))
-        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'vc': v})
+        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, color_by: v})
         if size_vals is not None:
             if len(size_vals) != len(x):
                 raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
@@ -1898,10 +1901,11 @@ class DataStore:
                 logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
-        return plot_scatter(df, ax, fig, width, height, default_color, missing_color, colormap, point_size,
+        return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
+                            mask_values, mask_name, mask_color, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
                             legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
-                            scatter_kwargs)
+                            force_ints_as_cats, scatter_kwargs)
 
     def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                             layout_key: str = 'UMAP', show_target_only: bool = False,
