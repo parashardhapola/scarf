@@ -1987,47 +1987,62 @@ class DataStore:
 
     def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                             layout_key: str = 'UMAP', show_target_only: bool = False,
-                            ref_color: str = 'coral', target_color='k', width: float = 6,
-                            height: float = 6, colormap=None, point_size: float = 10,
-                            ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
-                            spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
-                            legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
+                            ref_name: str = 'reference', target_groups: list = None,
+                            width: float = 6, height: float = 6, cmap=None, color_key: dict = None,
+                            mask_color: str = 'k', point_size: float = 10, ax_label_size: float = 12,
+                            frame_offset: float = 0.05, spine_width: float = 0.5, spine_color: str = 'k',
+                            displayed_sides: tuple = ('bottom', 'left'),
+                            legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
                             legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                            cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None,
+                            cspacing: float = 1, savename: str = None, save_dpi: int = 300,
+                            ax=None, fig=None, force_ints_as_cats: bool = True,  scatter_kwargs: dict = None,
                             shuffle_zorder: bool = True):
         """
+        [summary]
 
         Args:
-            target_name:
-            from_assay:
-            cell_key:
-            layout_key:
-            show_target_only:
-            ref_color:
-            target_color:
-            width:
-            height:
-            colormap:
-            point_size:
-            ax_label_size:
-            frame_offset:
-            spine_width:
-            spine_color:
-            displayed_sides:
-            legend_ondata:
-            legend_onside:
-            legend_size:
-            legends_per_col:
-            marker_scale:
-            lspacing:
-            cspacing:
-            savename:
-            scatter_kwargs:
-            shuffle_zorder:
+            target_name (str): [description]
+            from_assay (str, optional): [description]. Defaults to None.
+            cell_key (str, optional): [description]. Defaults to 'I'.
+            layout_key (str, optional): [description]. Defaults to 'UMAP'.
+            show_target_only (bool, optional): [description]. Defaults to False.
+            ref_name (str, optional): [description]. Defaults to 'reference'.
+            target_groups (list, optional): [description]. Defaults to None.
+            width (float, optional): [description]. Defaults to 6.
+            height (float, optional): [description]. Defaults to 6.
+            cmap ([type], optional): [description]. Defaults to None.
+            color_key (dict, optional): [description]. Defaults to None.
+            mask_color (str, optional): [description]. Defaults to 'k'.
+            point_size (float, optional): [description]. Defaults to 10.
+            ax_label_size (float, optional): [description]. Defaults to 12.
+            frame_offset (float, optional): [description]. Defaults to 0.05.
+            spine_width (float, optional): [description]. Defaults to 0.5.
+            spine_color (str, optional): [description]. Defaults to 'k'.
+            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
+            legend_ondata (bool, optional): [description]. Defaults to True.
+            legend_onside (bool, optional): [description]. Defaults to True.
+            legend_size (float, optional): [description]. Defaults to 12.
+            legends_per_col (int, optional): [description]. Defaults to 20.
+            marker_scale (float, optional): [description]. Defaults to 70.
+            lspacing (float, optional): [description]. Defaults to 0.1.
+            cspacing (float, optional): [description]. Defaults to 1.
+            savename (str, optional): [description]. Defaults to None.
+            save_dpi (int, optional): [description]. Defaults to 300.
+            ax ([type], optional): [description]. Defaults to None.
+            fig ([type], optional): [description]. Defaults to None.
+            force_ints_as_cats (bool, optional): [description]. Defaults to True.
+            scatter_kwargs (dict, optional): [description]. Defaults to None.
+            shuffle_zorder (bool, optional): [description]. Defaults to True.
+
+        Raises:
+            KeyError: [description]
+            ValueError: [description]
+            ValueError: [description]
 
         Returns:
-
+            [type]: [description]
         """
+
         from .plots import plot_scatter
 
         if from_assay is None:
@@ -2038,34 +2053,37 @@ class DataStore:
         x = t[:, 0]
         y = t[:, 1]
         df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
-        missing_color = target_color
-
-        if type(ref_color) is not str and type(target_color) is not str:
-            raise ValueError('ERROR: Please provide a fixed colour for one of either ref_color or target_color')
-        if type(ref_color) is str and type(target_color) is str:
-            c = np.hstack([np.ones(ref_n_cells), np.ones(t_n_cells) + 1]).astype(object)
-            c[c == 1] = ref_color
-            c[c == 2] = target_color
-            df['c'] = c
-        else:
-            if type(ref_color) is not str:
-                if len(ref_color) != ref_n_cells:
-                    raise ValueError("ERROR: Number of values in `ref_color` should be same as no. of ref cells")
-                df['vc'] = np.hstack([ref_color, [np.nan for _ in range(t_n_cells)]])
+        if target_groups is None:
+            if color_key is not None:
+                if ref_name not in color_key or target_name not in color_key:
+                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
+                                   f"'{target_name}' which are values for paramters `ref_name` and "
+                                   f"`target_name` respectively.")
             else:
-                if len(target_color) != t_n_cells:
-                    raise ValueError("ERROR: Number of values in `target_color` should be same as no. of target cells")
-                df['vc'] = np.hstack([[np.nan for _ in range(ref_n_cells)], target_color])
-                missing_color = ref_color
-                ref_color = missing_color
+                color_key = {ref_name: 'coral', target_name: 'k'}
+            target_groups = np.array([target_name for _ in range(t_n_cells)]).astype(object)
+            mask_values = None
+            mask_name = 'NA'
+        else:
+            color_key = None
+            mask_values = [ref_name]
+            mask_name = ref_name
+            target_groups = np.array(target_groups).astype(object)
+        if len(target_groups) != t_n_cells:
+            raise ValueError("ERROR: Number of values in `target_groups` should be same as no. of target cells")
+        # Turning array to object forces np.NaN to 'nan'
+        if any(target_groups == 'nan'):
+            raise ValueError("ERROR: `target_groups` cannot contain nan values")            
+        df['vc'] = np.hstack([[ref_name for x in range(ref_n_cells)], target_groups]).astype(object)
         if show_target_only:
             df = df[ref_n_cells:]
         if shuffle_zorder:
             df = df.sample(frac=1)
-        return plot_scatter(df, None, None, width, height, ref_color, missing_color, colormap, point_size,
-                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
-                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
-                            scatter_kwargs)
+        return plot_scatter(df, ax, fig, width, height, mask_color, cmap, color_key,
+                            mask_values, mask_name, mask_color, point_size,
+                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                            legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = None, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
