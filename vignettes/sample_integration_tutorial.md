@@ -157,7 +157,7 @@ One can clearly see that the target cells have integrated more or less evenly th
 ``plot_unified_layout`` can also be used to visualize target cells only. Here we colour the target cells based on the cluster information in independent analysis of stimulated cells.
 
 ```python
-ds_ctrl.plot_unified_layout(target_name='stim', show_target_only=True, target_color=ds_stim.cells.fetch('RNA_cluster'))
+ds_ctrl.plot_unified_layout(target_name='stim', show_target_only=True, target_groups=ds_stim.cells.fetch('RNA_cluster'))
 ```
 
 Quite clearly, the target cells are <ins>not</ins> located randomly on the unified UMAP but mostly are aggregated based on their own cluster information. This allows for a quick visual inspection of cell types. For example, cluster 3 from control PBMCs is likely the same cell type as cluster 5 from the stimulated PBMCs.
@@ -195,7 +195,7 @@ ds_stim.plot_unified_layout(target_name='ctrl')
 ```
 
 ```python
-ds_stim.plot_unified_layout(target_name='ctrl', show_target_only=True, target_color=ds_ctrl.cells.fetch('RNA_cluster'))
+ds_stim.plot_unified_layout(target_name='ctrl', show_target_only=True, target_groups=ds_ctrl.cells.fetch('RNA_cluster'))
 ```
 
 ### <a name="chapter3"></a>3) Integration through merging of Zarr files.
@@ -239,7 +239,7 @@ ds_merged.cells.table
 Let's visualize the UMAP of this merged dataset and colour the cells by `sample_id` column created above.
 
 ```python
-ds_merged.plot_layout(layout_key='RNA_UMAP', color_by='sample_id', colormap='RdBu')
+ds_merged.plot_layout(layout_key='RNA_UMAP', color_by='sample_id', cmap='RdBu')
 ```
 
 We can also visualize the cells from two samples separately using `subselection_key` in `plot_layout`.
@@ -295,7 +295,7 @@ ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', feat_key='union_hvgs', umap_
 Plot the UMAP layout for the graph generated using union HVGs.
 
 ```python
-ds_merged.plot_layout(layout_key='RNA_UMAP_union_hvgs', color_by='sample_id', colormap='RdBu')
+ds_merged.plot_layout(layout_key='RNA_UMAP_union_hvgs', color_by='sample_id', cmap='RdBu')
 ```
 
 We can clearly see that using union HVGs has led to an improved merging between the two datasets. This is most likely due to the inclusion of cell type discriminatory genes.
@@ -322,7 +322,7 @@ ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', feat_key='common_hvgs', umap
 Now we plot the UMAP embedding obtained for graph generated using only the common HVGs between the two samples.
 
 ```python
-ds_merged.plot_layout(layout_key='RNA_UMAP_common_hvgs', color_by='sample_id', colormap='RdBu')
+ds_merged.plot_layout(layout_key='RNA_UMAP_common_hvgs', color_by='sample_id', cmap='RdBu')
 ```
 
 We clearly see here that using the intersection of genes has improved the overlap of clusters that were already integrating well. However we still see strong sample wise separation of cells.
@@ -340,7 +340,7 @@ ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', pca_cell_key='sample_ctrl', 
 Visualization of UMAP embeddings
 
 ```python
-ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='sample_id', colormap='RdBu')
+ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='sample_id', cmap='RdBu')
 ```
 
 This approach successfully integrates the cells from the two samples. We will now investigate the difference between these clusters, as well as the difference between the two samples i.e. gene expression changes induced by interferon beta. Next we visualize the clusters in this integrated UMAP.
