@@ -172,12 +172,15 @@ def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5
         return ax
 
 
-def _scatter_fix_type(v: pd.Series, ints_as_cats: bool):
+def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
         vt = v.dtype
         if v.nunique() == 1:
-            return v.astype(np.float_)
-        if vt in [np.bool_, str, object] or vt.name == 'category':
+            return pd.Series(np.ones(len(v)), index=v.index).astype(np.float_)
+        if vt in [np.bool_]:
+            # converting first to int to handle bool
             return v.astype(np.int_).astype('category')
+        if vt in [str, object] or vt.name == 'category':
+            return v.astype('category')
         elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
             if v.nunique() > 100:
                 print ("Warning: too many categories. set force_ints_as_cats to false")
@@ -186,7 +189,7 @@ def _scatter_fix_type(v: pd.Series, ints_as_cats: bool):
             return v.astype(np.float_)
 
 
-def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str):
+def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Series:
     if mask_vals is None:
         mask_vals = []
     mask_vals += [np.NaN]
@@ -213,11 +216,20 @@ def _scatter_make_colors(v: pd.Series, cmap, color_key: dict, mask_color: str, m
                 cmap = 'tab20'
         na_idx = v == mask_name
         uv = v[~na_idx].unique()
-        pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
-        ck = dict(zip(sorted(uv), pal))
-        if na_idx.sum() > 0:
-            ck[masked_name] = mpl.colors.to_hex(mask_color)
-        return None, ck
+        if color_key is not None:
+            for i in uv:
+                if i not in color_key:
+                    raise KeyError(f"ERROR: key {i} missing in `color_key`")
+            if na_idx.sum() > 0:
+                if mask_name not in color_key:
+                    color_key[mask_name] = mpl.colors.to_hex(mask_color)
+            return None, color_key
+        else:
+            pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
+            color_key = dict(zip(sorted(uv), pal))
+            if na_idx.sum() > 0:
+                color_key[mask_name] = mpl.colors.to_hex(mask_color)
+            return None, color_key
 
 
 def _scatter_cleanup(ax, sw: float, sc: str, ds: tuple) -> None:
@@ -343,7 +355,6 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         plt.show()
     else:
         return ax
-
 
 
 def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
