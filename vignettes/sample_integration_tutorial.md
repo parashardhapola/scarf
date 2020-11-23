@@ -74,7 +74,7 @@ def scarf_pipeline(zarr_fn, in_dir=None, pca_cell_key='I', umap_label='UMAP', fe
         print (in_dir)
         reader = scarf.CrDirReader(in_dir, 'rna')
         scarf.CrToZarr(reader, zarr_fn=zarr_fn, chunk_size=(2000, 2000)).dump(batch_size=4000)
-    ds = scarf.DataStore(zarr_fn, auto_filter=False, nthreads=4)
+    ds = scarf.DataStore(zarr_fn, auto_filter=True, nthreads=4)
     ds.RNA.mark_hvgs(min_cells=20, top_n=2000)
     ds.make_graph(feat_key=feat_key, k=21, dims=21, n_centroids=100, log_transform=True, renormalize_subset=True, pca_cell_key=pca_cell_key)
     ds.run_clustering(n_clusters=n_cluster, min_edge_weight=0.1)
