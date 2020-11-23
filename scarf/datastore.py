@@ -75,7 +75,7 @@ class DataStore:
         if auto_filter:
             filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'], show_all_cells=True)
+                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
             self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
             if show_qc_plots:
                 self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
@@ -1442,6 +1442,32 @@ class DataStore:
                 ms = np.log1p(ms)
             yield group, ms
 
+    def get_target_classes(self, *, idx, dists, refc, cutoff, restrict_to=None, na_val='NA'):
+        preds = []
+        weights = 1 - (dists / dists.max(axis=1).reshape(-1, 1))
+        for n in range(idx.shape[0]):
+            if restrict_to is not None:
+                if n not in restrict_to:
+                    continue
+            wd = {}
+            for i,j in zip(idx[n, :-1], weights[n, :-1]):
+                k = refc[i]
+                if k not in wd:
+                    wd[k] = 0
+                wd[k] += j
+            temp = na_val
+            s = weights[n, :-1].sum()
+            for i,j in wd.items():
+                if j/s > cutoff:
+                    if temp == na_val:
+                        temp = i
+                    else:
+                        temp = na_val
+                        break
+            preds.append(temp)        
+        return pd.Series(preds)
+
+
     def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
                            sparse_format: str = 'coo'):
         """
@@ -1792,7 +1818,6 @@ class DataStore:
             cols:
             cell_key:
             group_key:
-            show_all_cells: Deprecated
             color:
             cmap:
             fig_size:
