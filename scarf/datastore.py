@@ -1442,23 +1442,58 @@ class DataStore:
                 ms = np.log1p(ms)
             yield group, ms
 
-    def get_target_classes(self, *, idx, dists, refc, cutoff, restrict_to=None, na_val='NA'):
+    def get_target_classes(self, *, target_name: str, from_assay: str = None,
+                           cell_key: str = 'I', reference_class_group: str = None, threshold_fraction: int = 1,
+                           target_subset: list = None, na_val='NA') -> pd.Series:
+        """
+        Perform classification of target cells using a reference group
+
+        :param target_name:
+        :param from_assay:
+        :param cell_key:
+        :param reference_class_group:
+        :param threshold_fraction:
+        :param target_subset:
+        :param na_val:
+        :return:
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        store_loc = f"{from_assay}/projections/{target_name}"
+        if store_loc not in self.z:
+            raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
+                           f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters")
+        if reference_class_group is None:
+            raise ValueError("ERROR: A value is required for the parameter `reference_class_group`. "
+                             "This can be any cell metadata column. Please choose the value that contains cluster or "
+                             "group information")
+        ref_groups = self.cells.fetch(reference_class_group, key=cell_key)
+        if threshold_fraction < 0 or threshold_fraction > 1:
+            raise ValueError("ERROR: `threshold_fraction` should have a value between 0 and 1")
+        if target_subset is not None:
+            if type(target_subset) != list:
+                raise TypeError("ERROR:  `target_subset` should be <list> type")
+            target_subset = {x: None for x in target_subset}
+
+        store = self.z[store_loc]
+        indices = store['indices'][:]
+        dists = store['distances'][:]
         preds = []
         weights = 1 - (dists / dists.max(axis=1).reshape(-1, 1))
-        for n in range(idx.shape[0]):
-            if restrict_to is not None:
-                if n not in restrict_to:
-                    continue
+        for n in range(indices.shape[0]):
+            if target_subset is not None and n not in target_subset:
+                continue
             wd = {}
-            for i,j in zip(idx[n, :-1], weights[n, :-1]):
-                k = refc[i]
+            for i, j in zip(indices[n, :-1], weights[n, :-1]):
+                k = ref_groups[i]
                 if k not in wd:
                     wd[k] = 0
                 wd[k] += j
             temp = na_val
             s = weights[n, :-1].sum()
-            for i,j in wd.items():
-                if j/s > cutoff:
+            for i, j in wd.items():
+                if j/s > threshold_fraction:
                     if temp == na_val:
                         temp = i
                     else:
@@ -1466,7 +1501,6 @@ class DataStore:
                         break
             preds.append(temp)        
         return pd.Series(preds)
-
 
     def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
                            sparse_format: str = 'coo'):
@@ -1519,7 +1553,7 @@ class DataStore:
             return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
 
     def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                         use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
+                         use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                          repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
                          random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
