@@ -923,7 +923,7 @@ class DataStore:
         clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
-    def run_tsne(self, *, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_tsne(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500,
                  early_iter: int = 200, alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.',
@@ -936,7 +936,6 @@ class DataStore:
         http://t-sne-pi.cs.duke.edu/
 
         Args:
-            sgtsne_loc: Location of sgtSNE binary
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
@@ -991,7 +990,7 @@ class DataStore:
                                      f"{(graph.shape[0], tsne_dims)}")
             h.write('\n'.join(map(str, ini_embed)))
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
-        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
+        cmd = f"sgtsne -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
         if verbose:
             system_call(cmd)
