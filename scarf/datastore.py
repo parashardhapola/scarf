@@ -339,6 +339,10 @@ class DataStore:
             if i not in self.cells.table.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
+            if j is None:
+                j = -np.Inf
+            if k is None:
+                k = np.Inf
             x = self.cells.sift(self.cells.table[i].values, j, k)
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
             self.cells.update(x)
