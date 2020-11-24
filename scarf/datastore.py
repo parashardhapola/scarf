@@ -960,6 +960,11 @@ class DataStore:
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
         from pathlib import Path
+        import sys
+
+        if sys.platform not in ['posix', 'linux', 'linux']:
+            logger.error(f"{sys.platform} operating system is currently not supported.")
+            return None
 
         if from_assay is None:
             from_assay = self._defaultAssay
