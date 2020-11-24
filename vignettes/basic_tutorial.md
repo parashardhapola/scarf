@@ -26,12 +26,14 @@ import scarf
 ```
 
 
-Download data from 10x's website.
+```python
+cd ~
+```
+
+Download data from 10x's website using `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
-!mkdir -p data
-!wget http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5
-!mv pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5 ./data/pbmc_10k_rna_prot.h5
+scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
 ```
 
 ### 1) Format conversion
@@ -39,7 +41,7 @@ Download data from 10x's website.
 The first step of the analysis workflow is to convert the file into Zarr format that is support by Scarf. So we read in the data using CrH5Reader (stands for cellranger H5 reader). The reader object allows quick investigation of the file before the format is converted.
 
 ```python
-reader = scarf.CrH5Reader(f'./data/pbmc_10k_rna_prot.h5', 'rna')
+reader = scarf.CrH5Reader('scarf_data/tenx_10k_pbmc_citeseq/data.h5', 'rna')
 ```
 
 We can quickly check the number of cells and features (genes as well ADT features in this case) present in the file.
@@ -66,7 +68,8 @@ NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HD
 </div>
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn=f'./data/pbmc_10k_rna_prot.zarr', chunk_size=(1000, 1000))
+writer = scarf.CrToZarr(reader, zarr_fn='scarf_data/tenx_10k_pbmc_citeseq/data.zarr',
+                        chunk_size=(1000, 1000))
 ```
 
 We can inspect the Zarr hierarchy of the output file.
@@ -85,7 +88,7 @@ writer.dump(batch_size=1000)
 The next step is to create a Scarf DataStore object. This object will be the primary way to interact with the data and all its constituent assays. The first time a Zarr file is loaded, we need to set the default assay. Here we set the 'RNA' assay as the default assay. When a Zarr file is loaded, scarf checks if some per cell statistics have been calculated. If not then nFeatures (no. of features per cell) and nCounts (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate % mitochondrial and ribosomal content per cell.
 
 ```python
-ds = scarf.DataStore('./data/pbmc_10k_rna_prot.zarr', default_assay='RNA')
+ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr', default_assay='RNA')
 ```
 
 Scarf uses Zarr format so that data can be stored in rectangular chunks. The raw data is saved in the `counts` level within each assay level in the Zarr hierarchy. It can easily be accessed as a Dask array using `rawData` attribute of the assay. For a standard analysis one would not to interact with the raw data directly. Scarf internally optimizes the use of this Dask array to minimize the memory requirement of all operations.
@@ -190,7 +193,8 @@ The graph calculated by `make_graph` can be easily loaded using `load_graph` met
 Because Scarf saves all the intermediate data, it might be the case that a lot of graphs are stored in Zarr hierachy. `load_graph` will load only the latest graph that was computed (for the given assay, cell key and feat key). 
 
 ```python
-ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr', min_edge_weight=-1, symmetric=False, upper_only=False)
+ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr',
+              min_edge_weight=-1, symmetric=False, upper_only=False)
 ```
 The location of the latest graph can be accessed by `_get_latest_graph_loc` method. The latest graph location is set using the parameters used in the latest call to `make_graph`. If one needs to set the latest graph to one that was previously calculated then one needs to call `make_graph` with the corresponding parameters.
 
@@ -259,11 +263,15 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 There has been a lot of discussion over the choice of non-linear dimension reduction for single-cell data. tSNE was initially considered an excellent solution but has gradually lost out to UMAP because the magnitude of relation between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE as were used for UMAP, i.e. the first two (in case of 2D) PC axis of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in the 1M cell vignette, using tSNE can be better at visually accessing the extent of heterogeneity than UMAP. The biggest reason, however to run Scarf's implementation of graph tSNE could be the runtime which can be an order of magnitude faster than UMAP on large datasets.
 
 ```python
-ds.run_tsne(sgtsne_loc='../bin/sgtsne', alpha=20, box_h=1)
+ds.run_tsne(alpha=20, box_h=1)
 ```
 
 ```python
-ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_cluster')
+# Here we run plot_layout under exception catching because if you are not on Linux then the `run_tnse` would have failed.
+try:
+    ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_cluster')
+except KeyError:
+    print ("RNA_tSNE1' not found in MetaData")
 ```
 
 

@@ -41,42 +41,34 @@ Import Scarf. We also run autotime Ipython magic command that will help track th
 import scarf
 ```
 
-Change directory to the location where `kang_stim_pbmc` is located.
-
 ```python
-cd ./data
+cd ~
 ```
 
 The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `ctrl` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
 
 ```python
-!mkdir -p kang_stim_pbmc/ctrl/ kang_stim_pbmc/stim/
-!wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/GSE96583_batch2.genes.tsv.gz
-!cp GSE96583_batch2.genes.tsv.gz kang_stim_pbmc/ctrl/features.tsv.gz
-!mv GSE96583_batch2.genes.tsv.gz kang_stim_pbmc/stim/features.tsv.gz
-
-!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/GSM2560248_2.1.mtx.gz
-!mv GSM2560248_2.1.mtx.gz kang_stim_pbmc/ctrl/matrix.mtx.gz
-!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/GSM2560248_barcodes.tsv.gz
-!mv GSM2560248_barcodes.tsv.gz kang_stim_pbmc/ctrl/barcodes.tsv.gz
-
-!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/GSM2560249_2.2.mtx.gz
-!mv GSM2560249_2.2.mtx.gz kang_stim_pbmc/stim/matrix.mtx.gz
-!wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/GSM2560249_barcodes.tsv.gz
-!mv GSM2560249_barcodes.tsv.gz kang_stim_pbmc/stim/barcodes.tsv.gz
+scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
+scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
 ```
 
 Since multiple datasets will be handled in this vignette, we created a function ``scarf_pipeline`` that contains the basic steps of Scarf workflow: loading a Zarr file, marking HVGs, creation of cell-cell neighbourhood graph, clustering and UMAP embedding of the data. For further information on these steps please check the [basic tutorial vignette](./basic_tutorial.md). Here we have designed the pipeline in a way that will allow us to update required parameters easily for pedagogic purposes.
 
 ```python
-def scarf_pipeline(zarr_fn, in_dir=None, pca_cell_key='I', umap_label='UMAP', feat_key='hvgs', n_cluster=20):
+def scarf_pipeline(in_dir=None, zarr_fn=None, pca_cell_key='I',
+                   umap_label='UMAP', feat_key='hvgs', n_cluster=20):
     if in_dir is not None:
-        print (in_dir)
+        zarr_fn = in_dir + '/data.zarr'
         reader = scarf.CrDirReader(in_dir, 'rna')
         scarf.CrToZarr(reader, zarr_fn=zarr_fn, chunk_size=(2000, 2000)).dump(batch_size=4000)
+    if zarr_fn is None:
+        raise ValueError("Please provide a Zarr file")
     ds = scarf.DataStore(zarr_fn, auto_filter=True, nthreads=4)
+    ds.filter_cells(attrs=['RNA_nCounts'], highs=[None], lows=[1000])
+    ds.RNA.sf = 1000
     ds.RNA.mark_hvgs(min_cells=20, top_n=2000)
-    ds.make_graph(feat_key=feat_key, k=21, dims=21, n_centroids=100, log_transform=True, renormalize_subset=True, pca_cell_key=pca_cell_key)
+    ds.make_graph(feat_key=feat_key, k=21, dims=21, n_centroids=100,
+                  log_transform=True, renormalize_subset=True, pca_cell_key=pca_cell_key)
     ds.run_clustering(n_clusters=n_cluster, min_edge_weight=0.1)
     ds.run_umap(fit_n_epochs=250, min_dist=0.5, label=umap_label)
     return ds
@@ -89,10 +81,10 @@ We start by creating DataStore objects for both control and stimulated cells.
 
 ```python
 # Control PBMC data
-ds_ctrl = scarf_pipeline('pbmc_kang_control.zarr', 'kang_stim_pbmc/ctrl')
+ds_ctrl = scarf_pipeline(in_dir='scarf_data/kang_ctrl_pbmc_rnaseq')
 
 # Interferon beta stimulated PBMC data
-ds_stim = scarf_pipeline('pbmc_kang_stimulated.zarr', 'kang_stim_pbmc/stim')
+ds_stim = scarf_pipeline(in_dir='scarf_data/kang_stim_pbmc_rnaseq')
 ```
 
 Let's visualize the UMAP embedding of control PBMCs along with clustering information.
@@ -137,7 +129,8 @@ ds_ctrl.run_mapping(target_assay=ds_stim.RNA, target_name='stim',
 We can now extend the cell-cell neighbourhood graph of reference cells (control PMBCs) by including the target cells (stimulated PBMCs) based on their nearest reference cells. A 'unified' UMAP embedding of this extended graph can then be generated to visualize the reference and target cells together. To encourage similarity between UMAP of control only cells and this 'unified' UMAP, we use the UMAP coordinates of only control cells for initialization of UMAP. ``run_unified_umap`` will take the name of the target cells to be included in the extended graph.
 
 ```python
-ds_ctrl.run_unified_umap(target_name='stim', ini_embed_with='RNA_UMAP', use_k=5, fit_n_epochs=100, tx_n_epochs=10)
+ds_ctrl.run_unified_umap(target_name='stim', ini_embed_with='RNA_UMAP', target_weight=1,
+                         use_k=5, fit_n_epochs=100, tx_n_epochs=10)
 ```
 
 We fist visualize the unified UMAP embedding of control cells. These embeddings were automatically saved in cell metadata columns starting with `RNA_UMAP_stim`. When compared to independent control PMBC UMAP, this UMAP looks strikingly similar. This mostly due to the fact that independent control PMBC UMAP coordinates were used for initialization, but also because the inclusion of target cells in the UMAP did not have a major impact.
@@ -157,7 +150,8 @@ One can clearly see that the target cells have integrated more or less evenly th
 ``plot_unified_layout`` can also be used to visualize target cells only. Here we colour the target cells based on the cluster information in independent analysis of stimulated cells.
 
 ```python
-ds_ctrl.plot_unified_layout(target_name='stim', show_target_only=True, target_groups=ds_stim.cells.fetch('RNA_cluster'))
+ds_ctrl.plot_unified_layout(target_name='stim', show_target_only=True,
+                            target_groups=ds_stim.cells.fetch('RNA_cluster'))
 ```
 
 Quite clearly, the target cells are <ins>not</ins> located randomly on the unified UMAP but mostly are aggregated based on their own cluster information. This allows for a quick visual inspection of cell types. For example, cluster 3 from control PBMCs is likely the same cell type as cluster 5 from the stimulated PBMCs.
@@ -167,10 +161,13 @@ As an alternative to unified UMAPs, we can use `mapping scores` to perform cross
 ```python
 # Here we will generate plots for target clusters 5, 7 and 8 for sake of brevity
 
-for g, ms in ds_ctrl.get_mapping_score(target_name='stim', target_groups=ds_stim.cells.fetch('RNA_cluster'), log_transform=False):
-    if g in [5, 7, 8]:
+for g, ms in ds_ctrl.get_mapping_score(target_name='stim',
+                                       target_groups=ds_stim.cells.fetch('RNA_cluster'),
+                                       log_transform=False):
+    if g in [1, 7, 4]:
         print (f"Target cluster {g}")
-        ds_ctrl.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', size_vals=ms*10, height=4, width=4, legend_onside=False)
+        ds_ctrl.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster',
+                            size_vals=ms*10, height=4, width=4, legend_onside=False)
 ```
 
 <!-- #region -->
@@ -183,7 +180,8 @@ The mapping can be performed both ways. It is highly recommended that users try 
 ```python
 ds_stim.run_mapping(target_assay=ds_ctrl.RNA, target_name='ctrl',
                     target_feat_key='hvgs_stim', save_k=5, run_coral=True)
-ds_stim.run_unified_umap(target_name='ctrl', ini_embed_with='RNA_UMAP', use_k=5, fit_n_epochs=100, tx_n_epochs=10)
+ds_stim.run_unified_umap(target_name='ctrl', ini_embed_with='RNA_UMAP', use_k=5,
+                         target_weight=1, fit_n_epochs=100, tx_n_epochs=10)
 ```
 
 ```python
@@ -204,13 +202,14 @@ ds_stim.plot_unified_layout(target_name='ctrl', show_target_only=True, target_gr
 One method for integrating two or more datasets is to simply merge the Zarr files and process all the cells as if they were one sample. ``ZarrMerge`` class is used to merge two or more assays from different DataStores into a single Zarr file.
 
 ```python
-scarf.ZarrMerge('pbmc_kang_merged.zarr', [ds_ctrl.RNA, ds_stim.RNA], ['ctrl', 'stim'], 'RNA', overwrite=True).write()
+scarf.ZarrMerge('scarf_data/kang_merged_pbmc_rnaseq.zarr',
+                [ds_ctrl.RNA, ds_stim.RNA], ['ctrl', 'stim'], 'RNA', overwrite=True).write()
 ```
 
 The merged Zarr can then be used like any other Scarf Zarr file and loaded as a DataStore object. Here we run the `scarf_pipeline` that was created in the beginning of this vignette on the merged Zarr file.
 
 ```python
-ds_merged = scarf_pipeline('pbmc_kang_merged.zarr')
+ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr')
 ```
 
 One can see that in the cell metadata table, the names of samples are prepended to cell ids.
@@ -222,14 +221,17 @@ ds_merged.cells.table
 We can extract these sample names and cell ids and add them as a separate column.
 
 ```python
-ds_merged.cells.add(k='sample_id', v=[x.split('__')[0] for x in ds_merged.cells.table.ids.values], overwrite=True)
+ds_merged.cells.add(k='sample_id', v=[x.split('__')[0] for x 
+                                      in ds_merged.cells.table.ids.values], overwrite=True)
 ```
 
 Additionally, we can create two more columns that essentially have same information as the `sample_id` column but are in boolean format. One column for control cells and other for stimulated cells such that the values will be True in respective columns if a cell belong to that sample otherwise False. Having sample information organized this way will make the steps below more convenient for us.
 
 ```python
 for i in ['ctrl', 'stim']:
-    ds_merged.cells.add(k=f'sample_{i}', v=ds_merged.cells.table['sample_id'].isin([i]).values, overwrite=True)
+    ds_merged.cells.add(k=f'sample_{i}',
+                        v=ds_merged.cells.table['sample_id'].isin([i]).values,
+                        overwrite=True)
 ```
 
 ```python
@@ -289,7 +291,8 @@ ds_merged.RNA.feats.table
 Next we rerun the scarf pipeline using `union_hvgs` as `feat_key`. We will make sure that the previous UMAP data is not overwritten and hence will provide a new label to save UMAP coordinates. Please note that the pipeline will attempt to find HVGs again but these will not be used as the pipeline will directly use the column `I__common_hvgs` of features.
 
 ```python
-ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', feat_key='union_hvgs', umap_label='UMAP_union_hvgs')
+ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr',
+                           feat_key='union_hvgs', umap_label='UMAP_union_hvgs')
 ```
 
 Plot the UMAP layout for the graph generated using union HVGs.
@@ -315,8 +318,10 @@ We now follow similar steps as for union HVGs and run the pipeline using `common
 
 ```python
 common_hvgs_idx = ds_merged.RNA.feats.get_idx_by_ids(common_hvgs)
-ds_merged.RNA.feats.add(k='I__common_hvgs', v=ds_merged.RNA.feats.idx_to_bool(common_hvgs_idx), overwrite=True)
-ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', feat_key='common_hvgs', umap_label='UMAP_common_hvgs')
+ds_merged.RNA.feats.add(k='I__common_hvgs',
+                        v=ds_merged.RNA.feats.idx_to_bool(common_hvgs_idx), overwrite=True)
+ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr',
+                           feat_key='common_hvgs', umap_label='UMAP_common_hvgs')
 ```
 
 Now we plot the UMAP embedding obtained for graph generated using only the common HVGs between the two samples.
@@ -334,7 +339,8 @@ We clearly see here that using the intersection of genes has improved the overla
 An alternate strategy to HVG selection is to use all the HVGs that were found in the merged data but rather than training PCA on all the cells, we train PCA on only one of the samples. Training PCA on just one sample will decrease the variance of sample specific genes and hence they will be included in later PCs and hence will have decreased effect on distance calculation between cells. Once the PCA is trained on cells from one of the samples, all the cells (from both samples) are projected onto PCA space as usual. We will provide `pca_cell_key` to our pipeline as argument, which then is used in ``make_graph``method.
 
 ```python
-ds_merged = scarf_pipeline('pbmc_kang_merged.zarr', pca_cell_key='sample_ctrl', umap_label='UMAP_ctrl_trained', n_cluster=10)
+ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr',
+                           pca_cell_key='sample_ctrl', umap_label='UMAP_ctrl_trained', n_cluster=10)
 ```
 
 Visualization of UMAP embeddings
