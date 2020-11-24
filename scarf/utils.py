@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-__all__ = ['fetch_dataset']
+__all__ = ['fetch_dataset', 'show_progress', 'system_call', 'clean_array', 'controlled_compute']
 
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
