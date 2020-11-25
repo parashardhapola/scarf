@@ -1723,56 +1723,7 @@ class DataStore:
             Path.unlink(fn)
         return None
 
-    def calc_node_density(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          min_edge_weight: float = -1, neighbourhood_degree=2, label: str = 'node_density'):
-        """
-        Calculates the density of each node in the cell-cell neighbourhood graph. If the value of `neighbourhood_degree`
-        is 0 node density is simply in degree of each node in the cell-cell neighbourhood graph (KNN graph) calculated
-        by ``make_graph``. For values greater than 1 node density represents neighbourhood degree. For example, when
-        `neighbourhood_degree` = 1, node density of a node is the sum indegree of all its adjacent nodes i.e. nodes that
-        are at distance of 1. With increasing value of `neighbourhood_degree`, neighbours further away from each node
-        included.
-
-        Args:
-            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
-                       used feature for the given assay will be used.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
-            neighbourhood_degree:
-            label: base label for saving values into a cell metadata column (Default value: 'node_density')
-
-        Returns:
-
-        """
-        def calc_degree(g):
-            d = np.zeros(g.shape[0])
-            for i in tqdm(range(g.shape[0]), desc="INFO: Calculating node out degree"):
-                for j, k in zip(g[i].indices, g[i].data):
-                    d[j] += k
-            return d
-
-        def calc_neighbourhood_density(g, nn: int):
-            # TODO: speed up using numba
-            d = calc_degree(g)
-            for n in range(nn):
-                nd = np.zeros(g.shape[0])
-                for i in tqdm(range(g.shape[0]), desc=f"INFO: Calculating {n+1} neighbourhood"):
-                    for j, _ in zip(g[i].indices, g[i].data):
-                        nd[i] += d[j]
-                d = nd.copy()
-            return d
-
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight, False, False)
-        density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
-        self.cells.add(self._col_renamer(from_assay, cell_key, label), density,
-                       fill_val=0, key=cell_key, overwrite=True)
-
-    def run_topacedo(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                      cluster_key: str = None, density_key: str = None,
                      min_edge_weight: float = -1, seed_frac: float = 0.05,
                      dynamic_seed_frac: bool = True, dynamic_frac_multiplier: float = 2,
