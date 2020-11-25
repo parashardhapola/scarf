@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import List, Iterable, Tuple, Generator
+from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
 import zarr
 from tqdm import tqdm
@@ -75,7 +75,7 @@ class DataStore:
         if auto_filter:
             filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'], show_all_cells=True)
+                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
             self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
             if show_qc_plots:
                 self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
@@ -164,7 +164,6 @@ class DataStore:
 
         preset_assay_types = {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay,
                               'GeneActivity': RNAassay, 'URNA': RNAassay, 'Assay': Assay}
-        # print_options = '\n'.join(["{'%s': '" + x + "'}" for x in assay_types])
         caution_statement = "%s was set as a generic Assay with no normalization. If this is unintended " \
                             "then please make sure that you provide a correct assay type for this assay using " \
                             "'assay_types' parameter."
@@ -188,6 +187,7 @@ class DataStore:
                     logger.warning(caution_statement % i)
                     assay = Assay
                     z_attrs[i] = 'Assay'
+                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             elif i in z_attrs:
                 assay = preset_assay_types[z_attrs[i]]
             else:
@@ -198,7 +198,7 @@ class DataStore:
                     logger.warning(caution_statement % i)
                     assay = Assay
                     z_attrs[i] = 'Assay'
-            logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
         self.z.attrs['assayTypes'] = z_attrs
         return None
@@ -237,13 +237,17 @@ class DataStore:
             if var_name not in self.cells.table.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
-                self.cells.add(var_name, n_c, overwrite=True)
-
+                self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
+                if type(assay) == RNAassay:
+                    min_nc = min(n_c)
+                    if min(n_c) < assay.sf:
+                        logger.warning(f"Minimum cell count ({min_nc}) is lower than "
+                                       f"size factor multiplier ({assay.sf})")
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
                                     f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
-                self.cells.add(var_name, n_f, overwrite=True)
+                self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
                 if mito_pattern is None:
@@ -335,6 +339,10 @@ class DataStore:
             if i not in self.cells.table.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
+            if j is None:
+                j = -np.Inf
+            if k is None:
+                k = np.Inf
             x = self.cells.sift(self.cells.table[i].values, j, k)
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
             self.cells.update(x)
@@ -443,6 +451,18 @@ class DataStore:
                     logger.info(custom_msg)
             return True
 
+        default_values = {
+            'log_transform': True,
+            'renormalize_subset': True,
+            'dims': 11,
+            'ann_metric': 'l2',
+            'rand_state': 4466,
+            'k': 11,
+            'n_centroids': 1000,
+            'local_connectivity': 1.0,
+            'bandwidth': 1.5
+        }
+
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         if log_transform is None or renormalize_subset is None:
             if normed_loc in self.z and 'subset_params' in self.z[normed_loc].attrs:
@@ -457,14 +477,14 @@ class DataStore:
                     log_transform = bool(c_log_transform)
                     log_message('cached', 'log_transform', log_transform)
                 else:
-                    log_transform = True
+                    log_transform = default_values['log_transform']
                     log_message('default', 'log_transform', log_transform)
             if renormalize_subset is None:
                 if c_renormalize_subset is not None:
                     renormalize_subset = bool(c_renormalize_subset)
                     log_message('cached', 'renormalize_subset', renormalize_subset)
                 else:
-                    renormalize_subset = True
+                    renormalize_subset = default_values['renormalize_subset']
                     log_message('default', 'renormalize_subset', renormalize_subset)
         log_transform = bool(log_transform)
         renormalize_subset = bool(renormalize_subset)
@@ -480,7 +500,7 @@ class DataStore:
                     dims = int(c_dims)
                     log_message('cached', 'dims', dims)
                 else:
-                    dims = 11
+                    dims = default_values['dims']
                     log_message('default', 'dims', dims)
             if pca_cell_key is None:
                 if c_pca_cell_key is not None:
@@ -511,7 +531,7 @@ class DataStore:
                     ann_metric = c_ann_metric
                     log_message('cached', 'ann_metric', ann_metric)
                 else:
-                    ann_metric = 'l2'
+                    ann_metric = default_values['ann_metric']
                     log_message('default', 'ann_metric', ann_metric)
             if ann_efc is None:
                 if c_ann_efc is not None:
@@ -539,7 +559,7 @@ class DataStore:
                     rand_state = int(c_rand_state)
                     log_message('cached', 'rand_state', rand_state)
                 else:
-                    rand_state = 4466
+                    rand_state = default_values['rand_state']
                     log_message('default', 'rand_state', rand_state)
         ann_metric = str(ann_metric)
         ann_m = int(ann_m)
@@ -552,7 +572,7 @@ class DataStore:
                 k = int(knn_loc.rsplit('__', 1)[1])
                 log_message('cached', 'k', k)
             else:
-                k = 11
+                k = default_values['k']
                 log_message('default', 'k', k)
         k = int(k)
         if ann_ef is None:
@@ -571,7 +591,7 @@ class DataStore:
                 log_message('default', 'n_centroids', n_centroids)
             else:
                 # n_centroids = min(data.shape[0]/10, max(500, data.shape[0]/100))
-                n_centroids = 500
+                n_centroids = default_values['n_centroids']
                 log_message('default', 'n_centroids', n_centroids)
         n_centroids = int(n_centroids)
 
@@ -586,14 +606,14 @@ class DataStore:
                     local_connectivity = c_local_connectivity
                     log_message('cached', 'local_connectivity', local_connectivity)
                 else:
-                    local_connectivity = 1.0
+                    local_connectivity = default_values['local_connectivity']
                     log_message('default', 'local_connectivity', local_connectivity)
             if bandwidth is None:
                 if c_bandwidth is not None:
                     bandwidth = c_bandwidth
                     log_message('cached', 'bandwidth', bandwidth)
                 else:
-                    bandwidth = 1.5
+                    bandwidth = default_values['bandwidth']
                     log_message('default', 'bandwidth', bandwidth)
         local_connectivity = float(local_connectivity)
         bandwidth = float(bandwidth)
@@ -903,7 +923,7 @@ class DataStore:
         clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
-    def run_tsne(self, *, sgtsne_loc, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_tsne(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                  min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500,
                  early_iter: int = 200, alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.',
@@ -916,7 +936,6 @@ class DataStore:
         http://t-sne-pi.cs.duke.edu/
 
         Args:
-            sgtsne_loc: Location of sgtSNE binary
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
@@ -944,6 +963,11 @@ class DataStore:
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
         from pathlib import Path
+        import sys
+
+        if sys.platform not in ['posix', 'linux', 'linux']:
+            logger.error(f"{sys.platform} operating system is currently not supported.")
+            return None
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -966,7 +990,7 @@ class DataStore:
                                      f"{(graph.shape[0], tsne_dims)}")
             h.write('\n'.join(map(str, ini_embed)))
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
-        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
+        cmd = f"sgtsne -m {max_iter} -l {lambda_scale} -d {tsne_dims} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
         if verbose:
             system_call(cmd)
@@ -1174,7 +1198,7 @@ class DataStore:
         self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
                        fill_val=-1, key=cell_key, overwrite=True)
 
-    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
+    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                           threshold: float = 0.25) -> None:
         """
         Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
@@ -1185,7 +1209,7 @@ class DataStore:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
-            subset_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table.
             threshold: This value dictates how specific the feature value has to be in a group before it is considered a
                        marker for that group. The value has to be greater than 0 but less than or equal to 1
@@ -1198,12 +1222,12 @@ class DataStore:
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key`. This should be the name of a column from "
                              "cell metadata object that has information on how cells should be grouped.")
-        if subset_key is None:
-            subset_key = 'I'
+        if cell_key is None:
+            cell_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, subset_key, self.nthreads, threshold)
+        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold)
         z = self.z[assay.name]
-        slot_name = f"{subset_key}__{group_key}"
+        slot_name = f"{cell_key}__{group_key}"
         if 'markers' not in z:
             z.create_group('markers')
         group = z['markers'].create_group(slot_name, overwrite=True)
@@ -1215,6 +1239,50 @@ class DataStore:
                 g_s = create_zarr_dataset(g, 'scores', (10000,), float, vals.values.shape)
                 g_s[:] = vals.values
         return None
+
+    def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
+                    group_id: Union[str, int] = None) -> pd.DataFrame:
+        """
+        Returns a table of markers features obtained through `run_maker_search` for a given group. The table
+        contains names of marker features and feature ids are used as table index.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table.
+            group_key: Required parameter. This has to be a column name from cell metadata table.
+                       Usually this would be a column denoting cell clusters. Please use the same value as used
+                       when ran `run_marker_search`
+            group_id: This is one of the value in `group_key` column of cell metadata.
+                      Results are returned for this group
+
+        Returns:
+            Pandas dataframe with marker feature names and scores
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if group_key is None:
+            raise ValueError(f"ERROR: Please provide a value for group_key. "
+                             f"This should be same as used for `run_marker_search`")
+        assay = self._get_assay(from_assay)
+        try:
+            g = assay.z['markers'][f"{cell_key}__{group_key}"]
+        except KeyError:
+            raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
+                           "`run_marker_search` method with same value of `cell_key` and `group_key`")
+        if group_id is None:
+             raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
+                              f"{list(g.keys())}")
+        df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
+                           index=['ids', 'score']).T.set_index('ids')
+        id_idx = assay.feats.get_idx_by_ids(df.index)
+        if len(id_idx) != df.shape[0]:
+            logger.warning("Internal error in fetching names of the features IDs")
+            return df
+        df['names'] = assay.feats.table['names'][id_idx].values
+        return df
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
@@ -1382,6 +1450,66 @@ class DataStore:
                 ms = np.log1p(ms)
             yield group, ms
 
+    def get_target_classes(self, *, target_name: str, from_assay: str = None,
+                           cell_key: str = 'I', reference_class_group: str = None, threshold_fraction: int = 1,
+                           target_subset: list = None, na_val='NA') -> pd.Series:
+        """
+        Perform classification of target cells using a reference group
+
+        :param target_name:
+        :param from_assay:
+        :param cell_key:
+        :param reference_class_group:
+        :param threshold_fraction:
+        :param target_subset:
+        :param na_val:
+        :return:
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        store_loc = f"{from_assay}/projections/{target_name}"
+        if store_loc not in self.z:
+            raise KeyError(f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
+                           f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters")
+        if reference_class_group is None:
+            raise ValueError("ERROR: A value is required for the parameter `reference_class_group`. "
+                             "This can be any cell metadata column. Please choose the value that contains cluster or "
+                             "group information")
+        ref_groups = self.cells.fetch(reference_class_group, key=cell_key)
+        if threshold_fraction < 0 or threshold_fraction > 1:
+            raise ValueError("ERROR: `threshold_fraction` should have a value between 0 and 1")
+        if target_subset is not None:
+            if type(target_subset) != list:
+                raise TypeError("ERROR:  `target_subset` should be <list> type")
+            target_subset = {x: None for x in target_subset}
+
+        store = self.z[store_loc]
+        indices = store['indices'][:]
+        dists = store['distances'][:]
+        preds = []
+        weights = 1 - (dists / dists.max(axis=1).reshape(-1, 1))
+        for n in range(indices.shape[0]):
+            if target_subset is not None and n not in target_subset:
+                continue
+            wd = {}
+            for i, j in zip(indices[n, :-1], weights[n, :-1]):
+                k = ref_groups[i]
+                if k not in wd:
+                    wd[k] = 0
+                wd[k] += j
+            temp = na_val
+            s = weights[n, :-1].sum()
+            for i, j in wd.items():
+                if j/s > threshold_fraction:
+                    if temp == na_val:
+                        temp = i
+                    else:
+                        temp = na_val
+                        break
+            preds.append(temp)        
+        return pd.Series(preds)
+
     def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
                            sparse_format: str = 'coo'):
         """
@@ -1433,7 +1561,7 @@ class DataStore:
             return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
 
     def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                         use_k: int = 3, target_weight: float = 0.5, spread: float = 2.0, min_dist: float = 1,
+                         use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                          repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
                          random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
@@ -1595,54 +1723,83 @@ class DataStore:
             Path.unlink(fn)
         return None
 
-    def calc_node_density(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          min_edge_weight: float = -1, neighbourhood_degree=2, label: str = 'node_density'):
+    def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+                     cluster_key: str = None, density_key: str = None,
+                     min_edge_weight: float = -1, seed_frac: float = 0.05,
+                     dynamic_seed_frac: bool = True, dynamic_frac_multiplier: float = 2,
+                     min_nodes: int = 3, rewards: tuple = (3, 0.1),
+                     rand_state: int = 4466, return_vals: bool = False, label: str = 'sketched'):
         """
-        Calculates the density of each node in the cell-cell neighbourhood graph. If the value of `neighbourhood_degree`
-        is 0 node density is simply in degree of each node in the cell-cell neighbourhood graph (KNN graph) calculated
-        by ``make_graph``. For values greater than 1 node density represents neighbourhood degree. For example, when
-        `neighbourhood_degree` = 1, node density of a node is the sum indegree of all its adjacent nodes i.e. nodes that
-        are at distance of 1. With increasing value of `neighbourhood_degree`, neighbours further away from each node
-        included.
+        Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
+        that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
+        large number of homogeneous and even sized cluster improves sub-sampling results.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
+            cluster_key: Name of the column in cell metadata table where cluster information is stored.
+            density_key: Name of the column in cell metadata table where neighbourhood density values are stored.
+                         Only required if `dynamic_seed_frac` is True.
             min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
-            neighbourhood_degree:
-            label: base label for saving values into a cell metadata column (Default value: 'node_density')
+            seed_frac: Fraction of cells to be sampled from each cluster. Should be greater than 0 and less than 1.
+                       (Default value: 0.05)
+            dynamic_seed_frac: if True, then dynamic sampling rate rate will be used. Dynamic sampling takes the mean
+                               node density into account while sampling cells from each cluster (default value: True)
+            dynamic_frac_multiplier: A scalar value used an multiplier to increase the dynamic sampling rate
+            min_nodes: Minimum number of nodes to be sampled from each cluster. (Default value: 3)
+            rewards: Reward values for seed and non-seed nodes. A tuple of two values is provided, first for seed nodes
+                     and second for non-seed nodes. (Default value: (3, 0.1))
+            rand_state: A random values to set seed while sampling cells from a cluster randomly.
+            return_vals: If True, then steiner nodes and edges are returned. (Default value: False)
+            label: base label for saving values into a cell metadata column (Default value: 'sketched')
 
         Returns:
 
         """
-        def calc_degree(g):
-            d = np.zeros(g.shape[0])
-            for i in tqdm(range(g.shape[0]), desc="INFO: Calculating node out degree"):
-                for j, k in zip(g[i].indices, g[i].data):
-                    d[j] += k
-            return d
-
-        def calc_neighbourhood_density(g, nn: int):
-            # TODO: speed up using numba
-            d = calc_degree(g)
-            for n in range(nn):
-                nd = np.zeros(g.shape[0])
-                for i in tqdm(range(g.shape[0]), desc=f"INFO: Calculating {n+1} neighbourhood"):
-                    for j, _ in zip(g[i].indices, g[i].data):
-                        nd[i] += d[j]
-                d = nd.copy()
-            return d
+        try:
+            from topacedo import cell_sampler
+        except ImportError:
+            logger.error("Could not find topacedo package")
+            return False
 
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
+        if cluster_key is None:
+            raise ValueError("ERROR: Please provide a value for cluster key")
+        clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
         graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight, False, False)
-        density = calc_neighbourhood_density(graph, nn=neighbourhood_degree)
-        self.cells.add(self._col_renamer(from_assay, cell_key, label), density,
-                       fill_val=0, key=cell_key, overwrite=True)
+        if len(clusters) != graph.shape[0]:
+            raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
+                             f"{graph.shape[0]} cells.")
+        if dynamic_seed_frac and density_key is None:
+            logger.warning("`dynamic_seed_frac` will be ignored because node_density has not been calculated.")
+            dynamic_seed_frac = False
+        if dynamic_seed_frac:
+            if density_key not in self.cells.table:
+                raise ValueError(f"ERROR: {density_key} not found in cell metadata table")
+            else:
+                cff = self.cells.table[self.cells.table.I].groupby(cluster_key)[density_key].median()
+                cff = (cff - cff.min()) / (cff.max() - cff.min())
+                cff = 1 - cff
+                cff = dynamic_frac_multiplier * cff
+        else:
+            n_clusts = clusters.nunique()
+            cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts + 1)))
+        steiner_nodes, steiner_edges = cell_sampler(
+            graph=graph, clusters=clusters, seed_frac=seed_frac, cluster_factor=cff, min_nodes=min_nodes,
+            rewards=rewards, pruning_method='strong', rand_state=rand_state)
+        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a[steiner_nodes] = True
+
+        key = self._col_renamer(from_assay, cell_key, label)
+        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        logger.info(f"Sketched cells saved with keyname '{key}'")
+        if return_vals:
+            return steiner_nodes, steiner_edges
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
@@ -1722,8 +1879,7 @@ class DataStore:
         return adata
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
-                         group_key: str = None, show_all_cells: bool = False,
-                         color: str = 'steelblue', cmap: str = 'tab20',
+                         group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
                          scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
         """
@@ -1733,7 +1889,6 @@ class DataStore:
             cols:
             cell_key:
             group_key:
-            show_all_cells: Deprecated
             color:
             cmap:
             fig_size:
@@ -1749,7 +1904,7 @@ class DataStore:
 
         from .plots import plot_qc
         import re
-        print('Deprecation Warning: `show_all_cells` is no longer used.', flush=True)
+        
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1762,7 +1917,7 @@ class DataStore:
                 if len(matches) > 0:
                     plot_cols.extend(matches)
                 else:
-                    print(f"{i} not found in cell metadata")
+                    logger.warning(f"{i} not found in cell metadata")
         df = self.cells.table[plot_cols].copy()
         if group_key is not None:
             df['groups'] = self.cells.table[group_key].copy()
@@ -1814,51 +1969,80 @@ class DataStore:
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
-                    missing_color: str = 'k', colormap=None, point_size: float = 10,
+                    cmap=None, color_key: dict = None,  mask_values: list = None,
+                    mask_name: str = 'NA', mask_color: str = 'k',  point_size: float = 10,
+                    do_shading: bool = False, shade_npixels: int = 1000, shade_sampling: float = 0.1, 
+                    shade_min_alpha: int = 10, spread_pixels: int = 1, spread_threshold: float = 0.2, 
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, ax=None, fig=None, scatter_kwargs: dict = None):
+                    cspacing: float = 1, savename: str = None, save_dpi: int = 300, 
+                    ax=None, fig=None, force_ints_as_cats: bool = True,
+                    scatter_kwargs: dict = None):
         """
+        Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
+        the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
+        rasterized image is `do_shading` is True. This can be useful when large number of cells are
+        present to quickly render the plot and avoid over-plotting.
 
         Args:
-            from_assay:
-            cell_key:
-            layout_key:
-            color_by:
-            subselection_key:
-            size_vals:
-            clip_fraction:
-            width:
-            height:
-            default_color:
-            missing_color:
-            colormap:
-            point_size:
-            ax_label_size:
-            frame_offset:
-            spine_width:
-            spine_color:
-            displayed_sides:
-            legend_ondata:
-            legend_onside:
-            legend_size:
-            legends_per_col:
-            marker_scale:
-            lspacing:
-            cspacing:
-            savename:
-            scatter_kwargs:
+            from_assay (str, optional): [description]. Defaults to deafult_assy attribute.
+            cell_key (str, optional): [description]. Defaults to 'I'.
+            layout_key (str): [description].
+            color_by (str, optional): [description]. Defaults to None.
+            subselection_key (str, optional): [description]. Defaults to None.
+            size_vals ([type], optional): [description]. Defaults to None.
+            clip_fraction (float, optional): [description]. Defaults to 0.01.
+            width (float, optional): [description]. Defaults to 6.
+            height (float, optional): [description]. Defaults to 6.
+            default_color (str, optional): [description]. Defaults to 'steelblue'.
+            cmap ([type], optional): [description]. Defaults to None.
+            color_key (dict, optional): [description]. Defaults to None.
+            mask_values (list, optional): [description]. Defaults to None.
+            mask_name (str, optional): [description]. Defaults to 'NA'.
+            mask_color (str, optional): [description]. Defaults to 'k'.
+            point_size (float, optional): [description]. Defaults to 10.
+            do_shading (bool, optional): [description]. Defaults to False.
+            shade_npixels (int, optional): [description]. Defaults to 1000.
+            shade_sampling (float, optional): [description]. Defaults to 0.1.
+            shade_min_alpha (int, optional): [description]. Defaults to 10.
+            spread_pixels (int, optional): [description]. Defaults to 1.
+            spread_threshold (float, optional): [description]. Defaults to 0.2.
+            ax_label_size (float, optional): [description]. Defaults to 12.
+            frame_offset (float, optional): [description]. Defaults to 0.05.
+            spine_width (float, optional): [description]. Defaults to 0.5.
+            spine_color (str, optional): [description]. Defaults to 'k'.
+            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
+            legend_ondata (bool, optional): [description]. Defaults to True.
+            legend_onside (bool, optional): [description]. Defaults to True.
+            legend_size (float, optional): [description]. Defaults to 12.
+            legends_per_col (int, optional): [description]. Defaults to 20.
+            marker_scale (float, optional): [description]. Defaults to 70.
+            lspacing (float, optional): [description]. Defaults to 0.1.
+            cspacing (float, optional): [description]. Defaults to 1.
+            savename (str, optional): [description]. Defaults to None.
+            save_dpi (int, optional): [description]. Defaults to 300.
+            ax ([type], optional): [description]. Defaults to None.
+            fig ([type], optional): [description]. Defaults to None.
+            force_ints_as_cats (bool, optional): [description]. Defaults to True.
+            scatter_kwargs (dict, optional): [description]. Defaults to None.
+
+        Raises:
+            ValueError: [description]
+            ValueError: [description]
+            ValueError: [description]
 
         Returns:
-
+            [type]: [description]
         """
+        
         # TODO: add support for subplots
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
 
-        from .plots import plot_scatter
+        from .plots import plot_scatter, shade_scatter
+
         if from_assay is None:
             from_assay = self._defaultAssay
         if layout_key is None:
@@ -1871,8 +2055,9 @@ class DataStore:
             v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=color_by,
                                    clip_fraction=clip_fraction)
         else:
+            color_by = 'vc'
             v = np.ones(len(x))
-        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, 'vc': v})
+        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, color_by: v})
         if size_vals is not None:
             if len(size_vals) != len(x):
                 raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
@@ -1883,54 +2068,77 @@ class DataStore:
                 logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
-        return plot_scatter(df, ax, fig, width, height, default_color, missing_color, colormap, point_size,
-                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
-                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
-                            scatter_kwargs)
+        if do_shading:
+            return shade_scatter(df, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
+                                 shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
+                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats)
+        else:
+            return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
+                                mask_values, mask_name, mask_color, point_size,
+                                ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                                legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                                lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                             layout_key: str = 'UMAP', show_target_only: bool = False,
-                            ref_color: str = 'coral', target_color='k', width: float = 6,
-                            height: float = 6, colormap=None, point_size: float = 10,
-                            ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
-                            spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
-                            legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
+                            ref_name: str = 'reference', target_groups: list = None,
+                            width: float = 6, height: float = 6, cmap=None, color_key: dict = None,
+                            mask_color: str = 'k', point_size: float = 10, ax_label_size: float = 12,
+                            frame_offset: float = 0.05, spine_width: float = 0.5, spine_color: str = 'k',
+                            displayed_sides: tuple = ('bottom', 'left'),
+                            legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
                             legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                            cspacing: float = 1, savename: str = None, scatter_kwargs: dict = None,
+                            cspacing: float = 1, savename: str = None, save_dpi: int = 300,
+                            ax=None, fig=None, force_ints_as_cats: bool = True,  scatter_kwargs: dict = None,
                             shuffle_zorder: bool = True):
         """
+        [summary]
 
         Args:
-            target_name:
-            from_assay:
-            cell_key:
-            layout_key:
-            show_target_only:
-            ref_color:
-            target_color:
-            width:
-            height:
-            colormap:
-            point_size:
-            ax_label_size:
-            frame_offset:
-            spine_width:
-            spine_color:
-            displayed_sides:
-            legend_ondata:
-            legend_onside:
-            legend_size:
-            legends_per_col:
-            marker_scale:
-            lspacing:
-            cspacing:
-            savename:
-            scatter_kwargs:
-            shuffle_zorder:
+            target_name (str): [description]
+            from_assay (str, optional): [description]. Defaults to None.
+            cell_key (str, optional): [description]. Defaults to 'I'.
+            layout_key (str, optional): [description]. Defaults to 'UMAP'.
+            show_target_only (bool, optional): [description]. Defaults to False.
+            ref_name (str, optional): [description]. Defaults to 'reference'.
+            target_groups (list, optional): [description]. Defaults to None.
+            width (float, optional): [description]. Defaults to 6.
+            height (float, optional): [description]. Defaults to 6.
+            cmap ([type], optional): [description]. Defaults to None.
+            color_key (dict, optional): [description]. Defaults to None.
+            mask_color (str, optional): [description]. Defaults to 'k'.
+            point_size (float, optional): [description]. Defaults to 10.
+            ax_label_size (float, optional): [description]. Defaults to 12.
+            frame_offset (float, optional): [description]. Defaults to 0.05.
+            spine_width (float, optional): [description]. Defaults to 0.5.
+            spine_color (str, optional): [description]. Defaults to 'k'.
+            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
+            legend_ondata (bool, optional): [description]. Defaults to True.
+            legend_onside (bool, optional): [description]. Defaults to True.
+            legend_size (float, optional): [description]. Defaults to 12.
+            legends_per_col (int, optional): [description]. Defaults to 20.
+            marker_scale (float, optional): [description]. Defaults to 70.
+            lspacing (float, optional): [description]. Defaults to 0.1.
+            cspacing (float, optional): [description]. Defaults to 1.
+            savename (str, optional): [description]. Defaults to None.
+            save_dpi (int, optional): [description]. Defaults to 300.
+            ax ([type], optional): [description]. Defaults to None.
+            fig ([type], optional): [description]. Defaults to None.
+            force_ints_as_cats (bool, optional): [description]. Defaults to True.
+            scatter_kwargs (dict, optional): [description]. Defaults to None.
+            shuffle_zorder (bool, optional): [description]. Defaults to True.
+
+        Raises:
+            KeyError: [description]
+            ValueError: [description]
+            ValueError: [description]
 
         Returns:
-
+            [type]: [description]
         """
+
         from .plots import plot_scatter
 
         if from_assay is None:
@@ -1941,34 +2149,37 @@ class DataStore:
         x = t[:, 0]
         y = t[:, 1]
         df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
-        missing_color = target_color
-
-        if type(ref_color) is not str and type(target_color) is not str:
-            raise ValueError('ERROR: Please provide a fixed colour for one of either ref_color or target_color')
-        if type(ref_color) is str and type(target_color) is str:
-            c = np.hstack([np.ones(ref_n_cells), np.ones(t_n_cells) + 1]).astype(object)
-            c[c == 1] = ref_color
-            c[c == 2] = target_color
-            df['c'] = c
-        else:
-            if type(ref_color) is not str:
-                if len(ref_color) != ref_n_cells:
-                    raise ValueError("ERROR: Number of values in `ref_color` should be same as no. of ref cells")
-                df['vc'] = np.hstack([ref_color, [np.nan for _ in range(t_n_cells)]])
+        if target_groups is None:
+            if color_key is not None:
+                if ref_name not in color_key or target_name not in color_key:
+                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
+                                   f"'{target_name}' which are values for paramters `ref_name` and "
+                                   f"`target_name` respectively.")
             else:
-                if len(target_color) != t_n_cells:
-                    raise ValueError("ERROR: Number of values in `target_color` should be same as no. of target cells")
-                df['vc'] = np.hstack([[np.nan for _ in range(ref_n_cells)], target_color])
-                missing_color = ref_color
-                ref_color = missing_color
+                color_key = {ref_name: 'coral', target_name: 'k'}
+            target_groups = np.array([target_name for _ in range(t_n_cells)]).astype(object)
+            mask_values = None
+            mask_name = 'NA'
+        else:
+            color_key = None
+            mask_values = [ref_name]
+            mask_name = ref_name
+            target_groups = np.array(target_groups).astype(object)
+        if len(target_groups) != t_n_cells:
+            raise ValueError("ERROR: Number of values in `target_groups` should be same as no. of target cells")
+        # Turning array to object forces np.NaN to 'nan'
+        if any(target_groups == 'nan'):
+            raise ValueError("ERROR: `target_groups` cannot contain nan values")            
+        df['vc'] = np.hstack([[ref_name for x in range(ref_n_cells)], target_groups]).astype(object)
         if show_target_only:
             df = df[ref_n_cells:]
         if shuffle_zorder:
             df = df.sample(frac=1)
-        return plot_scatter(df, None, None, width, height, ref_color, missing_color, colormap, point_size,
-                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides, legend_ondata,
-                            legend_onside, legend_size, legends_per_col, marker_scale, lspacing, cspacing, savename,
-                            scatter_kwargs)
+        return plot_scatter(df, ax, fig, width, height, mask_color, cmap, color_key,
+                            mask_values, mask_name, mask_color, point_size,
+                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                            legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = None, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
