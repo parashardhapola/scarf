@@ -3,6 +3,11 @@ FROM ubuntu:20.04
 RUN apt update -y && apt autoremove -y && apt clean -y && apt autoclean -y && apt upgrade -y
 RUN apt install -y wget build-essential git nano
 
+# The following is done to make sure that tzdata package doesnt prompt for timezone during installation
+ARG TZ="Europe/Stockholm"
+RUN DEBIAN_FRONTEND="noninteractive" TZ="Europe/Stockholm" apt-get -y install tzdata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone &
+
 #Installing dependencies for sgtsne
 RUN apt install -y libmetis-dev libtbb-dev libfftw3-dev lib32gcc-7-dev libflann-dev libcilkrts5
 
