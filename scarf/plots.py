@@ -273,7 +273,8 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
             centers = df[[x, y, vc]].groupby(vc).median().T
             for i in centers:
                 if ondata:
-                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize)
+                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize,
+                            ha='center', va='center')
                 if onside:
                     ax.scatter([float(centers[i][x])], [float(centers[i][y])],
                                c=ck[i], label=i, alpha=1, s=0.01)
