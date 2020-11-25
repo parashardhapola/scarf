@@ -16,18 +16,17 @@ RUN wget -O miniconda_inst "https://repo.anaconda.com/miniconda/Miniconda3-lates
 	bash miniconda_inst -b && \
 	rm miniconda_inst
 
-# The following is dine to make sure that tzdata package doesnt prompt for timzone in during installation
-ENV TZ=Europe/Stockholm
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
 # Exporting PATH and also saving it in bashrc for next session
 RUN echo "export PATH=$PATH:/root/miniconda3/bin" >> /root/.bashrc
 ENV PATH=/root/miniconda3/bin:$PATH
 
-# Installing numpy and pybind11 beforehand because sometimes thery dont't install so well from requirements.txt
+# Installing numpy and pybind11 beforehand because sometimes they don't install so well from requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -U numpy pybind11
 RUN pip install --no-cache-dir -U dask[array] dask[dataframe]
+
+# Needed for dask
+RUN conda install -c conda-forge 'fsspec>=0.3.3'
 
 # This for interactive programming purposes
 RUN pip install jupyterlab ipython-autotime
