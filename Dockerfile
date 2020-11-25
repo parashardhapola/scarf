@@ -41,6 +41,10 @@ RUN pip install jupytext
 
 # RUN pip install scarf
 
+RUN mkdir -p /tmp/scarf
+COPY . /tmp/scarf/
+RUN pip install -e /tmp/scarf/
+
 RUN mkdir workspace && \
     echo "jupyter lab --port 9734 --ip=0.0.0.0 --allow-root --no-browser" > launch_jupyter.sh
 
