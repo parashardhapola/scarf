@@ -1199,7 +1199,7 @@ class DataStore:
                        fill_val=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
-                          threshold: float = 0.25) -> None:
+                          threshold: float = 0.25, gene_batch_size: int = 50) -> None:
         """
         Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
         for further details of how marker features for groups are identified. The results are saved into the Zarr
@@ -1214,6 +1214,8 @@ class DataStore:
             threshold: This value dictates how specific the feature value has to be in a group before it is considered a
                        marker for that group. The value has to be greater than 0 but less than or equal to 1
                        (Default value: 0.25)
+            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
+                             these number of cells at a time.
         Returns:
 
         """
@@ -1225,7 +1227,7 @@ class DataStore:
         if cell_key is None:
             cell_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold)
+        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size)
         z = self.z[assay.name]
         slot_name = f"{cell_key}__{group_key}"
         if 'markers' not in z:
