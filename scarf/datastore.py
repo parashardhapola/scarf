@@ -2229,7 +2229,7 @@ class DataStore:
             feat_key = self.get_latest_feat_key(from_assay)
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for `cluster_key` parameter")
-        clusts = self.cells.fetch(cluster_key)
+        clusts = self.cells.fetch(cluster_key, key=cell_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
         subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
