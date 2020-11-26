@@ -1562,7 +1562,7 @@ class DataStore:
         elif sparse_format == 'csr':
             return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
 
-    def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_unified_umap(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                          use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                          repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
@@ -1644,7 +1644,7 @@ class DataStore:
                            t[:n_ref_cells, i], key=cell_key, overwrite=True)
         return None
 
-    def run_unified_tsne(self, sgtsne_loc, target_name: str, from_assay: str = None, cell_key: str = 'I',
+    def run_unified_tsne(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                          feat_key: str = None, use_k: int = 3, target_weight: float = 0.5,
                          lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200, alpha: int = 10,
                          box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
@@ -1654,7 +1654,6 @@ class DataStore:
         the same way as the graph as in ``run_tsne``
 
         Args:
-            sgtsne_loc: Location of sgtSNE binary
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
@@ -1707,7 +1706,7 @@ class DataStore:
         export_knn_to_mtx(knn_mtx_fn, self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
                                                               target_weight, sparse_format='csr'))
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
-        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
+        cmd = f"sgtsne -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
         if verbose:
             system_call(cmd)
