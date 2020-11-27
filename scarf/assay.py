@@ -249,7 +249,7 @@ class RNAassay(Assay):
             if top_n > n_valid_feats:
                 logger.warning(f"WARNING: Number of valid features are less then value "
                                f"of parameter `top_n`: {top_n}. Resetting `top_n` to {n_valid_feats}")
-                topn = n_valid_feats - 1
+                top_n = n_valid_feats - 1
             min_var = self.feats.table[idx][c_var_loc].sort_values(ascending=False).values[top_n]
         hvgs = self.feats.multi_sift(
             ['normed_n', 'nz_mean', c_var_loc], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
