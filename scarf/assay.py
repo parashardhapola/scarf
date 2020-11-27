@@ -77,7 +77,7 @@ class Assay:
             pass
         else:
             ncells = show_progress((self.rawData > 0).sum(axis=0),
-                                   f"INFO: ({self.name}) Computing nCells and dropOuts", self.nthreads)
+                                   f"({self.name}) Computing nCells and dropOuts", self.nthreads)
             self.feats.add('nCells', ncells, overwrite=True)
             self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
             self.feats.update(ncells > min_cells)
@@ -186,7 +186,7 @@ class RNAassay(Assay):
         if log_transform:
             self.normMethod = norm_lib_size_log
         if renormalize_subset:
-            a = show_progress(counts.sum(axis=1), "INFO: Normalizing with feature subset", self.nthreads)
+            a = show_progress(counts.sum(axis=1), "Normalizing with feature subset", self.nthreads)
             a[a == 0] = 1
             self.scalar = a
         else:
@@ -202,11 +202,11 @@ class RNAassay(Assay):
         if stats_loc is None:
             return None
         n_cells = show_progress((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
-                                f"INFO: ({self.name}) Computing nCells", self.nthreads)
+                                f"({self.name}) Computing nCells", self.nthreads)
         tot = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
-                            f"INFO: ({self.name}) Computing normed_tot", self.nthreads)
+                            f"({self.name}) Computing normed_tot", self.nthreads)
         sigmas = show_progress(self.normed(cell_idx, feat_idx).var(axis=0),
-                               f"INFO: ({self.name}) Computing sigmas", self.nthreads)
+                               f"({self.name}) Computing sigmas", self.nthreads)
         idx = n_cells > min_cells
         self.feats.update(idx, key=feat_key)
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
@@ -305,7 +305,7 @@ class ATACassay(Assay):
         if stats_loc is None:
             return None
         prevalence = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
-                                   f"INFO: ({self.name}) Calculating peak prevalence across cells", self.nthreads)
+                                   f"({self.name}) Calculating peak prevalence across cells", self.nthreads)
         group = self.z.create_group(stats_loc, overwrite=True)
         g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)
         g[:] = prevalence

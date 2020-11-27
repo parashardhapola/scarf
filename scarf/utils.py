@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from .logging_utils import logger
 
 __all__ = ['fetch_dataset', 'show_progress', 'system_call', 'clean_array', 'controlled_compute']
 
@@ -76,7 +77,7 @@ def show_progress(arr, msg: str = None, nthreads: int = 1):
     from dask.diagnostics import ProgressBar
 
     if msg is not None:
-        print(msg, flush=True)
+        logger.info(msg)
     pbar = ProgressBar()
     pbar.register()
     res = controlled_compute(arr, nthreads)
@@ -94,7 +95,7 @@ def system_call(command):
         if process.poll() is not None:
             break
         if output:
-            print(output.strip())
+            logger.info(output.strip())
     process.poll()
     return None
 
@@ -110,9 +111,9 @@ def handle_download(url, out_fn):
         raise ValueError(f"This operating system is not supported in this function. "
                          f"Please download the file manually from this URL:\n {url}\n "
                          f"Please save as: {out_fn}")
-    print("INFO: Download started...", flush=True)
+    logger.info("Download started...")
     system_call(cmd)
-    print(f"INFO: Download finished! File saved here: {out_fn}", flush=True)
+    logger.info(f"Download finished! File saved here: {out_fn}")
 
 
 def fetch_dataset(dataset_id: str, save_path: str = None) -> None:

@@ -236,7 +236,7 @@ class DataStore:
             var_name = from_assay + '_nCounts'
             if var_name not in self.cells.table.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
-                                    f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
+                                    f"({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
@@ -246,7 +246,7 @@ class DataStore:
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
-                                    f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
+                                    f"({from_assay}) Computing nFeatures", self.nthreads)
                 self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
@@ -774,9 +774,9 @@ class DataStore:
         else:
             if reduction_method == 'pca':
                 mu = clean_array(show_progress(data.mean(axis=0),
-                                               'INFO: Calculating mean of norm. data', self.nthreads))
+                                               'Calculating mean of norm. data', self.nthreads))
                 sigma = clean_array(show_progress(data.std(axis=0),
-                                                  'INFO: Calculating std. dev. of norm. data', self.nthreads), 1)
+                                                  'Calculating std. dev. of norm. data', self.nthreads), 1)
         if ann_loc in self.z:
             fit_ann = False
             logger.info(f"Using existing ANN index")
@@ -1365,11 +1365,11 @@ class DataStore:
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
                 mu = show_progress(target_data.mean(axis=0),
-                                   'INFO: Calculating mean of target norm. data', self.nthreads)
+                                   'Calculating mean of target norm. data', self.nthreads)
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
                 sigma = show_progress(target_data.std(axis=0),
-                                      'INFO: Calculating std. dev. of target norm. data', self.nthreads)
+                                      'Calculating std. dev. of target norm. data', self.nthreads)
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
