@@ -6,6 +6,7 @@ from .utils import show_progress, controlled_compute
 from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 from .logging_utils import logger
+from typing import Tuple, Union
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -81,12 +82,6 @@ class Assay:
             self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
             self.feats.update(ncells > min_cells)
 
-    def _verify_keys(self, cell_key: str, feat_key: str) -> None:
-        if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
-            raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
-        if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
-            raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
-
     def add_percent_feature(self, feat_pattern: str, name: str) -> None:
         if name in self.attrs['percentFeatures']:
             if self.attrs['percentFeatures'][name] == feat_pattern:
@@ -107,22 +102,45 @@ class Assay:
             return None
         self.cells.add(name, 100 * total / self.cells.table[self.name+'_nCounts'], overwrite=True)
 
-    def create_subset_hash(self, cell_key: str, feat_key: str):
+    def _verify_keys(self, cell_key: str, feat_key: str) -> None:
+        if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
+            raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
+        if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
+            raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
+
+    def _get_cell_feat_idx(self, cell_key: str, feat_key: str) -> Tuple[np.ndarray, np.ndarray]:
+        self._verify_keys(cell_key, feat_key)
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
+        return cell_idx, feat_idx
+
+    @staticmethod
+    def _create_subset_hash(cell_idx: np.ndarray, feat_idx: np.ndarray) -> int:
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
+
+    def _validate_stats_loc(self, cell_key: str, cell_idx: np.ndarray,
+                            feat_idx: np.ndarray) -> Union[str, None]:
+        subset_hash = self._create_subset_hash(cell_idx, feat_idx)
+        stats_loc = f"summary_stats_{cell_key}"
+        if stats_loc in self.z:
+            attrs = self.z[stats_loc].attrs
+            if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
+                logger.info(f"Using cached feature stats for cell_key {cell_key}")
+                return None
+        return stats_loc
 
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
                              location: str, log_transform: bool, renormalize_subset: bool,
                              update_feat_key: bool) -> daskarr:
-        # Because HVGs and other feature selections have cell key appended in their metadata
+
         from .writers import dask_to_zarr
 
+        # FIXME: Extensive documentation needed to justify the naming strategy of slots here
+        # Because HVGs and other feature selections have cell key appended in their metadata
         if feat_key != 'I':
             feat_key = cell_key + '__' + feat_key
-        self._verify_keys(cell_key, feat_key)
-
-        subset_hash = self.create_subset_hash(cell_key, feat_key)
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
+        subset_hash = self._create_subset_hash(cell_idx, feat_idx)
         subset_params = {'log_transform': log_transform, 'renormalize_subset': renormalize_subset}
         if location in self.z:
             if subset_hash == self.z[location].attrs['subset_hash'] and \
@@ -134,8 +152,6 @@ class Assay:
             else:
                 # Creating group here to overwrite all children
                 self.z.create_group(location, overwrite=True)
-        cell_idx = self.cells.active_index(cell_key)
-        feat_idx = self.feats.active_index(feat_key)
         vals = self.normed(cell_idx, feat_idx, log_transform=log_transform,
                            renormalize_subset=renormalize_subset)
         dask_to_zarr(vals, self.z, location + '/data', batch_size, self.nthreads)
@@ -181,17 +197,10 @@ class RNAassay(Assay):
 
     def set_feature_stats(self, cell_key: str, min_cells: int = 10) -> None:
         feat_key = 'I'  # Here we choose to calculate stats for all the features
-        self._verify_keys(cell_key, feat_key)
-        subset_hash = self.create_subset_hash(cell_key, feat_key)
-        stats_loc = f"summary_stats_{cell_key}"
-        if stats_loc in self.z:
-            attrs = self.z[stats_loc].attrs
-            if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
-                logger.info(f"Using cached feature stats for cell_key {cell_key}")
-                return None
-        cell_idx = self.cells.active_index(cell_key)
-        feat_idx = self.feats.active_index(feat_key)
-
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
+        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
+        if stats_loc is None:
+            return None
         n_cells = show_progress((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
                                 f"INFO: ({self.name}) Computing nCells", self.nthreads)
         tot = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
@@ -214,7 +223,7 @@ class RNAassay(Assay):
         g = create_zarr_dataset(group, 'normed_n', (50000,), float, tot.shape)
         g[:] = n_cells
 
-        self.z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
+        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
         return None
 
     def mark_hvgs(self, cell_key: str = 'I', min_cells: int = 20, top_n: int = 500,
@@ -291,22 +300,16 @@ class ATACassay(Assay):
 
     def set_feature_stats(self, cell_key: str = 'I') -> None:
         feat_key = 'I'
-        self._verify_keys(cell_key, feat_key)
-        subset_hash = self.create_subset_hash(cell_key, feat_key)
-        stats_loc = f"summary_stats_{cell_key}"
-        if stats_loc in self.z:
-            attrs = self.z[stats_loc].attrs
-            if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
-                logger.info(f"Using cached feature stats for cell_key {cell_key}")
-                return None
-        cell_idx = self.cells.active_index(cell_key)
-        feat_idx = self.feats.active_index(feat_key)
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
+        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
+        if stats_loc is None:
+            return None
         prevalence = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"INFO: ({self.name}) Calculating peak prevalence across cells", self.nthreads)
         group = self.z.create_group(stats_loc, overwrite=True)
         g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)
         g[:] = prevalence
-        self.z[stats_loc].attrs['subset_hash'] = self.create_subset_hash(cell_key, feat_key)
+        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
         return None
 
     def mark_top_prevalent_peaks(self, cell_key: str = 'I', n_top: int = 1000):
