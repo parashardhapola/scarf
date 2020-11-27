@@ -6,6 +6,7 @@ from .readers import CrReader, H5adReader
 import os
 import pandas as pd
 from .utils import controlled_compute
+from .logging_utils import logger
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
@@ -135,7 +136,7 @@ class H5adToZarr:
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
         if assay_name is None:
-            print(f"INFO: no value provided for assay names. Will use default value: 'RNA'")
+            logger.info(f"No value provided for assay names. Will use default value: 'RNA'")
             self.assayName = 'RNA'
         else:
             self.assayName = assay_name
@@ -278,7 +279,7 @@ class ZarrMerge:
             create_zarr_obj_array(g, 'names', list(self.mergedCells['names']))
             create_zarr_obj_array(g, 'I', [True for _ in range(self.mergedCells.shape[0])], 'bool')
         else:
-            print(f"INFO: cellData already exists so skipping _ini_cell_data", flush=True)
+            logger.info(f"cellData already exists so skipping _ini_cell_data")
 
     def write(self, nthreads=2):
         pos_start, pos_end = 0, 0
