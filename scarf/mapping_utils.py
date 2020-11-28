@@ -3,6 +3,7 @@ import numpy as np
 from typing import Tuple
 from .assay import Assay
 from .utils import controlled_compute, show_progress
+from .logging_utils import logger
 
 __all__ = ['align_features', 'coral']
 
@@ -20,10 +21,10 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
 
     s_cov = show_progress(_cov_diaged(s), f"CORAL: Computing source covariance", nthreads)
     t_cov = show_progress(_cov_diaged(t), f"CORAL: Computing target covariance", nthreads)
-    print("INFO: Calculating fractional power of covariance matrices. This might take a while... ", flush=True, end='')
+    logger.info("Calculating fractional power of covariance matrices. This might take a while... ")
     with threadpool_limits(limits=nthreads):
         a_coral = np.dot(fmp(s_cov, -0.5), fmp(t_cov, 0.5))
-    print("Done", flush=True)
+    logger.info("Fractional power calculation complete")
     return daskarr.dot(s, a_coral)
 
 
@@ -49,7 +50,7 @@ def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
     t_idx = t_assay.feats.table.ids.isin(s_feat_ids)
     if filter_null:
         if exclude_missing is False:
-            print("WARNING: `filter_null` has not effect because `exclude_missing` is False", flush=True)
+            logger.warning("`filter_null` has not effect because `exclude_missing` is False")
         else:
             t_idx[t_idx] = controlled_compute(
                 t_assay.rawData[:, list(t_idx[t_idx].index)][t_assay.cells.active_index('I'), :].sum(axis=0),
@@ -78,7 +79,7 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
     source_feat_ids = source_assay.feats.table.ids[source_assay.feats.table[
         source_cell_key + '__' + source_feat_key]].values
     s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing, nthreads)
-    print(f"INFO: {(t_idx == -1).sum()} features missing in target data", flush=True)
+    logger.info(f"{(t_idx == -1).sum()} features missing in target data")
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
     norm_params = source_assay.z[normed_loc].attrs['subset_params']
     sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))

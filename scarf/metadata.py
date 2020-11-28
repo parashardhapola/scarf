@@ -4,7 +4,7 @@ import pandas as pd
 from typing import List, Iterable
 from .utils import fit_lowess
 from .writers import create_zarr_obj_array
-
+from .logging_utils import logger
 
 __all__ = ['MetaData']
 
@@ -61,7 +61,7 @@ class MetaData:
             self.table.drop(columns=k, inplace=True)
             self._del(k)
         else:
-            print(f"WARNING: {k} does not exist. Nothing to remove")
+            logger.warning(f"{k} does not exist. Nothing to remove")
 
     def update(self, bool_arr: np.array, key: str = 'I') -> None:
         """
