@@ -1,6 +1,5 @@
 from .assay import Assay
 from .utils import controlled_compute
-from .logging_utils import logger
 from numba import jit
 import numpy as np
 import pandas as pd
@@ -12,6 +11,19 @@ __all__ = ['find_markers_by_rank']
 
 def find_markers_by_rank(assay: Assay, group_key: str, cell_key: str,
                          nthreads: int, threshold: float = 0.25, gene_batch_size: int = 50) -> dict:
+    """
+
+    Args:
+        assay:
+        group_key:
+        cell_key:
+        nthreads:
+        threshold:
+        gene_batch_size:
+
+    Returns:
+
+    """
 
     @jit()
     def calc_mean_rank(v):
