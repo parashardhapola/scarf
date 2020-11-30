@@ -6,7 +6,7 @@ from .utils import show_progress, controlled_compute
 from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 from .logging_utils import logger
-from typing import Tuple, Union
+from typing import Tuple, Union, List
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -119,13 +119,14 @@ class Assay:
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
     def _validate_stats_loc(self, cell_key: str, cell_idx: np.ndarray,
-                            feat_idx: np.ndarray) -> Union[str, None]:
+                            feat_idx: np.ndarray, verbose: bool = True) -> Union[str, None]:
         subset_hash = self._create_subset_hash(cell_idx, feat_idx)
         stats_loc = f"summary_stats_{cell_key}"
         if stats_loc in self.z:
             attrs = self.z[stats_loc].attrs
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
-                logger.info(f"Using cached feature stats for cell_key {cell_key}")
+                if verbose:
+                    logger.info(f"Using cached feature stats for cell_key {cell_key}")
                 return None
         return stats_loc
 
@@ -160,6 +161,39 @@ class Assay:
         if update_feat_key:
             self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
         return daskarr.from_zarr(self.z[location + '/data'])
+
+    def score_features(self, feature_names: List[str], cell_key: str,
+                       ctrl_size: int, n_bins: int, rand_seed: int) -> np.ndarray:
+
+        from .feat_utils import binned_sampling
+        import pandas as pd
+
+        def _name_to_ids(i):
+            x = self.feats.table.reindex(self.feats.get_idx_by_names(i))
+            x = x[x.I]
+            return x.ids.values
+
+        def _calc_mean(i):
+            idx = np.array(sorted(self.feats.get_idx_by_ids(i)))
+            return self.normed(cell_idx=cell_idx, feat_idx=idx).mean(axis=1).compute()
+
+        feature_ids = _name_to_ids(feature_names)
+        if len(feature_ids) == 0:
+            raise ValueError(f"ERROR: No feature ids found for any of the provided {len(feature_names)} features")
+
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, 'I')
+        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
+        if stats_loc is None:
+            stats_loc = f"summary_stats_{cell_key}"
+            if 'avg' not in self.z[stats_loc]:
+                raise KeyError(f"ERROR: 'avg' key not found in {stats_loc}. The internal file structure might be "
+                               f"corrupted. Please call `set_feature_stats` with the same cell key first.")
+        else:
+            raise ValueError(f"ERROR: Feature statistics not set for this cell key: {cell_key}. Please call "
+                             f"`set_feature_stats` with the same cell key first.")
+        obs_avg = pd.Series(self.z[stats_loc]['avg'][:], index=self.feats.fetch('ids'))
+        control_ids = binned_sampling(obs_avg, feature_ids, ctrl_size, n_bins, rand_seed)
+        return _calc_mean(feature_ids) - _calc_mean(control_ids)
 
     def __repr__(self):
         f = self.feats.table['I']
