@@ -1806,17 +1806,34 @@ class DataStore:
                                n_bins: int = 50, rand_seed: int = 4466, s_score_label: str = 'S_score',
                                g2m_score_label: str = 'G2M_score', phase_label: str = 'cell_cycle_phase'):
         """
+        Computes S and G2M phase scores by taking into account the average expression of S and G2M phase genes
+        respectively. Following steps are taken for each phase:
+            - Average expression of all the genes in across `cell_key` cells is calculated
+            - The log average expression is divided in `n_bins` bins
+            - A control set of genes is identified by sampling genes from same expression bins where phase's genes are
+              present.
+            - The average expression of phase genes (Ep) and control genes (Ec) is calculated per cell.
+            - A phase score is calculated as: Ep-Ec
+        Cell cycle phase is assigned to each cell based on following rule set:
+            - G1 phase: S score < -1 > G2M sore
+            - S phase: S score > G2M score
+            - G2M phase: G2M score > S score
 
         Args:
-            from_assay:
-            cell_key:
-            s_genes:
-            g2m_genes:
-            n_bins:
-            rand_seed:
-            s_score_label:
-            g2m_score_label:
-            phase_label:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            s_genes: A list of S phase genes. If not provided then Scarf loads pre-saved genes accessible at
+                     `scarf.bio_data.s_phase_genes`
+            g2m_genes: A list of G2M phase genes. If not provided then Scarf loads pre-saved genes accessible at
+                     `scarf.bio_data.g2m_phase_genes`
+            n_bins: Number of bins into which average expression of genes is divided.
+            rand_seed: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
+            s_score_label: A base label for saving the S phase scores into a cell metadata column
+                           (Default value: 'S_score')
+            g2m_score_label: A base label for saving the G2M phase scores into a cell metadata column
+                           (Default value: 'G2M_score')
+            phase_label: A base label for saving the inferred cell cycle phase into a cell metadata column
+                           (Default value: 'cell_cycle_phase')
 
         Returns:
 
