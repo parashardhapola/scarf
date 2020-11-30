@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List
+from typing import List, Sequence
 
 __all__ = ['fit_lowess', 'score_features']
 
@@ -43,8 +43,8 @@ def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
     return np.array([fixed_var[x] for x in range(len(a))])
 
 
-def score_features(assay, feature_list: List[str], ctrl_size: int = 50,
-                   n_bins: int = 25, rand_seed: int = 0) -> np.ndarray:
+def score_features(assay, feature_list: List[str], cell_idx: Sequence[int], ctrl_size: int,
+                   n_bins: int, rand_seed: int) -> np.ndarray:
     """
     Score a set of genes [Satija15]_.
     The score is the average expression of a set of genes subtracted with the
@@ -59,6 +59,7 @@ def score_features(assay, feature_list: List[str], ctrl_size: int = 50,
     Args:
         assay:
         feature_list:
+        cell_idx:
         ctrl_size:
         n_bins:
         rand_seed:
@@ -73,7 +74,7 @@ def score_features(assay, feature_list: List[str], ctrl_size: int = 50,
 
     def _calc_mean(i):
         idx = sorted(assay.feats.get_idx_by_ids(i))
-        return assay.normed(feat_idx=idx).mean(axis=1).compute()
+        return assay.normed(cell_idx=cell_idx, feat_idx=idx).mean(axis=1).compute()
 
     feature_list = set(_name_to_ids(feature_list))
     obs_avg = pd.Series(assay.z.summary_stats_I.avg[:], index=assay.feats.fetch('ids'))
