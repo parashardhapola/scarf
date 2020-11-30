@@ -101,36 +101,8 @@ def fetch_dataset(dataset_id: str, save_path: str = None) -> None:
     """
 
     import os
+    from .bio_data import datasets
 
-    datasets = {
-        'tenx_10k_pbmc_citeseq': [
-            {'name': 'data.h5',
-             'url': 'http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3'
-                     '/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5'}
-        ],
-        'kang_ctrl_pbmc_rnaseq': [
-            {'name': 'matrix.mtx.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/'
-                    'GSM2560248_2.1.mtx.gz'},
-            {'name': 'features.tsv.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/'
-                    'GSE96583_batch2.genes.tsv.gz'},
-            {'name': 'barcodes.tsv.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560248/suppl/'
-                    'GSM2560248_barcodes.tsv.gz'},
-        ],
-        'kang_stim_pbmc_rnaseq': [
-            {'name': 'matrix.mtx.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/'
-                    'GSM2560249_2.2.mtx.gz'},
-            {'name': 'features.tsv.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/'
-                    'GSE96583_batch2.genes.tsv.gz'},
-            {'name': 'barcodes.tsv.gz',
-             'url': 'https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/'
-                    'GSM2560249_barcodes.tsv.gz'},
-        ],
-    }
     if dataset_id not in datasets:
         dataset_list = '\n'.join(list(datasets.keys()))
         raise ValueError(f"ERROR: Dataset not found. Please choose one from the following:\n{dataset_list}\n")
