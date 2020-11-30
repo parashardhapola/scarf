@@ -119,14 +119,12 @@ class Assay:
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
     def _validate_stats_loc(self, cell_key: str, cell_idx: np.ndarray,
-                            feat_idx: np.ndarray, verbose: bool = True) -> Union[str, None]:
+                            feat_idx: np.ndarray) -> Union[str, None]:
         subset_hash = self._create_subset_hash(cell_idx, feat_idx)
         stats_loc = f"summary_stats_{cell_key}"
         if stats_loc in self.z:
             attrs = self.z[stats_loc].attrs
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
-                if verbose:
-                    logger.info(f"Using cached feature stats for cell_key {cell_key}")
                 return None
         return stats_loc
 
@@ -234,6 +232,7 @@ class RNAassay(Assay):
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
         if stats_loc is None:
+            logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
         n_cells = show_progress((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
                                 f"({self.name}) Computing nCells", self.nthreads)
@@ -257,7 +256,8 @@ class RNAassay(Assay):
         g = create_zarr_dataset(group, 'normed_n', (50000,), float, tot.shape)
         g[:] = n_cells
 
-        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
+        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx,
+                                                                          self.feats.active_index(feat_key))
         return None
 
     def mark_hvgs(self, cell_key: str = 'I', min_cells: int = 20, top_n: int = 500,
@@ -337,6 +337,7 @@ class ATACassay(Assay):
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
         if stats_loc is None:
+            logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
         prevalence = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"({self.name}) Calculating peak prevalence across cells", self.nthreads)
