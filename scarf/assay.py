@@ -189,7 +189,7 @@ class Assay:
         else:
             raise ValueError(f"ERROR: Feature statistics not set for this cell key: {cell_key}. Please call "
                              f"`set_feature_stats` with the same cell key first.")
-        obs_avg = pd.Series(self.z[stats_loc]['avg'][:], index=self.feats.fetch('ids'))
+        obs_avg = pd.Series(np.log(self.z[stats_loc]['avg'][:]), index=self.feats.fetch('ids'))
         control_ids = binned_sampling(obs_avg, feature_ids, ctrl_size, n_bins, rand_seed)
         return _calc_mean(feature_ids) - _calc_mean(control_ids)
 
