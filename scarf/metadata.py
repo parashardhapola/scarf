@@ -2,7 +2,7 @@ import numpy as np
 import re
 import pandas as pd
 from typing import List, Iterable
-from .utils import fit_lowess
+from .feat_utils import fit_lowess
 from .writers import create_zarr_obj_array
 from .logging_utils import logger
 
