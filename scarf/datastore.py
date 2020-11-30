@@ -1803,7 +1803,7 @@ class DataStore:
 
     def run_cell_cycle_scoring(self, *, from_assay: str = None, cell_key: str = None,
                                s_genes: List[str] = None, g2m_genes: List[str] = None,
-                               n_bins: int = 25, rand_seed: int = 4466, s_score_label: str = 'S_score',
+                               n_bins: int = 50, rand_seed: int = 4466, s_score_label: str = 'S_score',
                                g2m_score_label: str = 'G2M_score', phase_label: str = 'cell_cycle_phase'):
         """
 
