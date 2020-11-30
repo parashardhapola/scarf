@@ -1801,6 +1801,54 @@ class DataStore:
         if return_edges:
             return edges
 
+    def run_cell_cycle_scoring(self, *, from_assay: str = None, cell_key: str = None,
+                               s_genes: List[str] = None, g2m_genes: List[str] = None,
+                               n_bins: int = 25, rand_seed: int = 4466, s_score_label: str = 'S_score',
+                               g2m_score_label: str = 'G2M_score', phase_label: str = 'cell_cycle_phase'):
+        """
+
+        Args:
+            from_assay:
+            cell_key:
+            s_genes:
+            g2m_genes:
+            n_bins:
+            rand_seed:
+            s_score_label:
+            g2m_score_label:
+            phase_label:
+
+        Returns:
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay = self._get_assay(from_assay)
+        if cell_key is None:
+            cell_key = 'I'
+        if s_genes is None:
+            from .bio_data import s_phase_genes
+            s_genes = list(s_phase_genes)
+        if g2m_genes is None:
+            from .bio_data import g2m_phase_genes
+            g2m_genes = list(g2m_phase_genes)
+        control_size = min(len(s_genes), len(g2m_genes))
+
+        s_score = assay.score_features(s_genes, cell_key, control_size, n_bins, rand_seed)
+        s_score_label = self._col_renamer(from_assay, cell_key, s_score_label)
+        self.cells.add(s_score_label, s_score, key=cell_key, overwrite=True)
+
+        g2m_score = assay.score_features(g2m_genes, cell_key, control_size, n_bins, rand_seed)
+        g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
+        self.cells.add(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
+
+        phase = pd.Series(['S' for _ in range(self.cells.active_index(cell_key).shape[0])])
+        phase[g2m_score > s_score] = 'G2M'
+        phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
+        phase_label = self._col_renamer(from_assay, cell_key, phase_label)
+        self.cells.add(phase_label, phase.values, key=cell_key, overwrite=True)
+
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
         """
