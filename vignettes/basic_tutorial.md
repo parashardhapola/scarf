@@ -292,7 +292,7 @@ Discerning similarity between clusters can be difficult from visual inspection a
 ds.plot_cluster_tree(cluster_key='RNA_cluster', width=1)
 ```
 
-The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As an example, one can observe by looking at the branching pattern that cluster 1 is closer to cluster 8 than it is to cluster 4 since 1 and 8 share parent node whereas 4 is part of another branch.
+The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (the node with no cluster label or incoming edges).
 
 
 ---
