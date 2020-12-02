@@ -4,6 +4,7 @@ from scipy import sparse
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute
 from numpy.linalg import LinAlgError
+from .logging_utils import logger
 
 __all__ = ['AnnStream']
 
@@ -86,10 +87,10 @@ class AnnStream:
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
         if self.dims >= batch_size:
             self.dims = batch_size-1  # -1 because we will do PCA +1
-            print(f"INFO: Number of PCA components reduced to batch size of {batch_size}")
+            logger.info(f"Number of PCA components reduced to batch size of {batch_size}")
         if self.nClusters > batch_size:
             self.nClusters = batch_size
-            print(f"INFO: Cluster number reduced to batch size of {batch_size}")
+            logger.info(f"Cluster number reduced to batch size of {batch_size}")
         return batch_size
 
     def iter_blocks(self, msg: str = '') -> np.ndarray:
@@ -159,7 +160,7 @@ class AnnStream:
         try:
             self._pca.partial_fit(i, check_input=False)
         except LinAlgError:
-            print("WARNING: {i.shape[0]} samples were not used in PCA fitting due to LinAlgError", flush=True)
+            logger.warning("{i.shape[0]} samples were not used in PCA fitting due to LinAlgError", flush=True)
         self.loadings = self._pca.components_[:-1, :].T
 
     def _fit_lsi(self) -> None:

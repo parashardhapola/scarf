@@ -236,7 +236,7 @@ class DataStore:
             var_name = from_assay + '_nCounts'
             if var_name not in self.cells.table.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
-                                    f"INFO: ({from_assay}) Computing nCounts", self.nthreads)
+                                    f"({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
@@ -246,7 +246,7 @@ class DataStore:
             var_name = from_assay + '_nFeatures'
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
-                                    f"INFO: ({from_assay}) Computing nFeatures", self.nthreads)
+                                    f"({from_assay}) Computing nFeatures", self.nthreads)
                 self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
@@ -774,9 +774,9 @@ class DataStore:
         else:
             if reduction_method == 'pca':
                 mu = clean_array(show_progress(data.mean(axis=0),
-                                               'INFO: Calculating mean of norm. data', self.nthreads))
+                                               'Calculating mean of norm. data', self.nthreads))
                 sigma = clean_array(show_progress(data.std(axis=0),
-                                                  'INFO: Calculating std. dev. of norm. data', self.nthreads), 1)
+                                                  'Calculating std. dev. of norm. data', self.nthreads), 1)
         if ann_loc in self.z:
             fit_ann = False
             logger.info(f"Using existing ANN index")
@@ -1199,7 +1199,7 @@ class DataStore:
                        fill_val=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
-                          threshold: float = 0.25) -> None:
+                          threshold: float = 0.25, gene_batch_size: int = 50) -> None:
         """
         Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
         for further details of how marker features for groups are identified. The results are saved into the Zarr
@@ -1214,6 +1214,8 @@ class DataStore:
             threshold: This value dictates how specific the feature value has to be in a group before it is considered a
                        marker for that group. The value has to be greater than 0 but less than or equal to 1
                        (Default value: 0.25)
+            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
+                             these number of cells at a time.
         Returns:
 
         """
@@ -1225,7 +1227,7 @@ class DataStore:
         if cell_key is None:
             cell_key = 'I'
         assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold)
+        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size)
         z = self.z[assay.name]
         slot_name = f"{cell_key}__{group_key}"
         if 'markers' not in z:
@@ -1363,11 +1365,11 @@ class DataStore:
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
                 mu = show_progress(target_data.mean(axis=0),
-                                   'INFO: Calculating mean of target norm. data', self.nthreads)
+                                   'Calculating mean of target norm. data', self.nthreads)
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
                 sigma = show_progress(target_data.std(axis=0),
-                                      'INFO: Calculating std. dev. of target norm. data', self.nthreads)
+                                      'Calculating std. dev. of target norm. data', self.nthreads)
                 ann_obj.sigma = clean_array(sigma, 1)
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
@@ -1560,7 +1562,7 @@ class DataStore:
         elif sparse_format == 'csr':
             return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
 
-    def run_unified_umap(self, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_unified_umap(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                          use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                          repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
@@ -1642,7 +1644,7 @@ class DataStore:
                            t[:n_ref_cells, i], key=cell_key, overwrite=True)
         return None
 
-    def run_unified_tsne(self, sgtsne_loc, target_name: str, from_assay: str = None, cell_key: str = 'I',
+    def run_unified_tsne(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
                          feat_key: str = None, use_k: int = 3, target_weight: float = 0.5,
                          lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200, alpha: int = 10,
                          box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
@@ -1652,7 +1654,6 @@ class DataStore:
         the same way as the graph as in ``run_tsne``
 
         Args:
-            sgtsne_loc: Location of sgtSNE binary
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
@@ -1705,7 +1706,7 @@ class DataStore:
         export_knn_to_mtx(knn_mtx_fn, self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
                                                               target_weight, sparse_format='csr'))
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
-        cmd = f"{sgtsne_loc} -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
+        cmd = f"sgtsne -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
         if verbose:
             system_call(cmd)
@@ -1724,11 +1725,12 @@ class DataStore:
         return None
 
     def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                     cluster_key: str = None, density_key: str = None,
-                     min_edge_weight: float = -1, seed_frac: float = 0.05,
-                     dynamic_seed_frac: bool = True, dynamic_frac_multiplier: float = 2,
-                     min_nodes: int = 3, rewards: tuple = (3, 0.1),
-                     rand_state: int = 4466, return_vals: bool = False, label: str = 'sketched'):
+                             cluster_key: str = None, density_depth: int = 2,
+                             sampling_rate: float = 0.1, min_cells_per_group: int = 3,
+                             min_sr: float = 0.01, seed_reward: float = 3.0, non_seed_reward: float = 0,
+                             save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
+                             save_seeds_key: str = 'sketch_seeds', rand_state: int = 4466,
+                             return_edges: bool = False) -> Union[None, List]:
         """
         Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
         that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
@@ -1740,29 +1742,31 @@ class DataStore:
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             cluster_key: Name of the column in cell metadata table where cluster information is stored.
-            density_key: Name of the column in cell metadata table where neighbourhood density values are stored.
-                         Only required if `dynamic_seed_frac` is True.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
-            seed_frac: Fraction of cells to be sampled from each cluster. Should be greater than 0 and less than 1.
-                       (Default value: 0.05)
-            dynamic_seed_frac: if True, then dynamic sampling rate rate will be used. Dynamic sampling takes the mean
-                               node density into account while sampling cells from each cluster (default value: True)
-            dynamic_frac_multiplier: A scalar value used an multiplier to increase the dynamic sampling rate
-            min_nodes: Minimum number of nodes to be sampled from each cluster. (Default value: 3)
-            rewards: Reward values for seed and non-seed nodes. A tuple of two values is provided, first for seed nodes
-                     and second for non-seed nodes. (Default value: (3, 0.1))
-            rand_state: A random values to set seed while sampling cells from a cluster randomly.
-            return_vals: If True, then steiner nodes and edges are returned. (Default value: False)
-            label: base label for saving values into a cell metadata column (Default value: 'sketched')
-
+            density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
+            sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
+                           than this value depending on the neighbourhood density of the cells.
+                           Should be greater than 0 and less than 1. (Default value: 0.1)
+            min_cells_per_group: Minimum number of cells to sample from each group. (Default value: 3)
+            min_sr: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
+                    (Default value: 0.01)
+            seed_reward: Reward/prize value for seed nodes. (Default value: 3)
+            non_seed_reward: Reward/prize for non-seed nodes. (Default value: 0.1)
+            save_sampling_key: base label for marking the cells that were sampled into a cell metadata column
+                               (Default value: 'sketched')
+            save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
+                              (Default value: 'cell_density')
+            save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
+                            metadata column (Default value: 'sketch_seeds')
+            rand_state: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
+            return_edges: If True, then steiner nodes and edges are returned. (Default value: False)
         Returns:
 
         """
         try:
-            from topacedo import cell_sampler
+            from topacedo import TopacedoSampler
         except ImportError:
             logger.error("Could not find topacedo package")
-            return False
+            return None
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1771,35 +1775,96 @@ class DataStore:
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight, False, False)
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1, False, False)
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
-        if dynamic_seed_frac and density_key is None:
-            logger.warning("`dynamic_seed_frac` will be ignored because node_density has not been calculated.")
-            dynamic_seed_frac = False
-        if dynamic_seed_frac:
-            if density_key not in self.cells.table:
-                raise ValueError(f"ERROR: {density_key} not found in cell metadata table")
-            else:
-                cff = self.cells.table[self.cells.table.I].groupby(cluster_key)[density_key].median()
-                cff = (cff - cff.min()) / (cff.max() - cff.min())
-                cff = 1 - cff
-                cff = dynamic_frac_multiplier * cff
-        else:
-            n_clusts = clusters.nunique()
-            cff = pd.Series(np.zeros(n_clusts), index=list(range(1, n_clusts + 1)))
-        steiner_nodes, steiner_edges = cell_sampler(
-            graph=graph, clusters=clusters, seed_frac=seed_frac, cluster_factor=cff, min_nodes=min_nodes,
-            rewards=rewards, pruning_method='strong', rand_state=rand_state)
+        sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
+                                  min_sr, seed_reward, non_seed_reward, 1, rand_state)
+        nodes, edges = sampler.run()
         a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
-        a[steiner_nodes] = True
-
-        key = self._col_renamer(from_assay, cell_key, label)
+        a[nodes] = True
+        key = self._col_renamer(from_assay, cell_key, save_sampling_key)
         self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
-        logger.info(f"Sketched cells saved with keyname '{key}'")
-        if return_vals:
-            return steiner_nodes, steiner_edges
+        logger.info(f"Sketched cells saved under column '{key}'")
+
+        key = self._col_renamer(from_assay, cell_key, save_density_key)
+        self.cells.add(key, sampler.densities, key=cell_key, overwrite=True)
+        logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
+
+        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a[sampler.seeds] = True
+        key = self._col_renamer(from_assay, cell_key, save_seeds_key)
+        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        logger.info(f"Seed cells saved under column: '{key}'")
+
+        if return_edges:
+            return edges
+
+    def run_cell_cycle_scoring(self, *, from_assay: str = None, cell_key: str = None,
+                               s_genes: List[str] = None, g2m_genes: List[str] = None,
+                               n_bins: int = 50, rand_seed: int = 4466, s_score_label: str = 'S_score',
+                               g2m_score_label: str = 'G2M_score', phase_label: str = 'cell_cycle_phase'):
+        """
+        Computes S and G2M phase scores by taking into account the average expression of S and G2M phase genes
+        respectively. Following steps are taken for each phase:
+            - Average expression of all the genes in across `cell_key` cells is calculated
+            - The log average expression is divided in `n_bins` bins
+            - A control set of genes is identified by sampling genes from same expression bins where phase's genes are
+              present.
+            - The average expression of phase genes (Ep) and control genes (Ec) is calculated per cell.
+            - A phase score is calculated as: Ep-Ec
+        Cell cycle phase is assigned to each cell based on following rule set:
+            - G1 phase: S score < -1 > G2M sore
+            - S phase: S score > G2M score
+            - G2M phase: G2M score > S score
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            s_genes: A list of S phase genes. If not provided then Scarf loads pre-saved genes accessible at
+                     `scarf.bio_data.s_phase_genes`
+            g2m_genes: A list of G2M phase genes. If not provided then Scarf loads pre-saved genes accessible at
+                     `scarf.bio_data.g2m_phase_genes`
+            n_bins: Number of bins into which average expression of genes is divided.
+            rand_seed: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
+            s_score_label: A base label for saving the S phase scores into a cell metadata column
+                           (Default value: 'S_score')
+            g2m_score_label: A base label for saving the G2M phase scores into a cell metadata column
+                           (Default value: 'G2M_score')
+            phase_label: A base label for saving the inferred cell cycle phase into a cell metadata column
+                           (Default value: 'cell_cycle_phase')
+
+        Returns:
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay = self._get_assay(from_assay)
+        if cell_key is None:
+            cell_key = 'I'
+        if s_genes is None:
+            from .bio_data import s_phase_genes
+            s_genes = list(s_phase_genes)
+        if g2m_genes is None:
+            from .bio_data import g2m_phase_genes
+            g2m_genes = list(g2m_phase_genes)
+        control_size = min(len(s_genes), len(g2m_genes))
+
+        s_score = assay.score_features(s_genes, cell_key, control_size, n_bins, rand_seed)
+        s_score_label = self._col_renamer(from_assay, cell_key, s_score_label)
+        self.cells.add(s_score_label, s_score, key=cell_key, overwrite=True)
+
+        g2m_score = assay.score_features(g2m_genes, cell_key, control_size, n_bins, rand_seed)
+        g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
+        self.cells.add(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
+
+        phase = pd.Series(['S' for _ in range(self.cells.active_index(cell_key).shape[0])])
+        phase[g2m_score > s_score] = 'G2M'
+        phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
+        phase_label = self._col_renamer(from_assay, cell_key, phase_label)
+        self.cells.add(phase_label, phase.values, key=cell_key, overwrite=True)
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
@@ -2230,7 +2295,7 @@ class DataStore:
             feat_key = self.get_latest_feat_key(from_assay)
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for `cluster_key` parameter")
-        clusts = self.cells.fetch(cluster_key)
+        clusts = self.cells.fetch(cluster_key, key=cell_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
         subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)

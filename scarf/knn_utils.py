@@ -2,6 +2,7 @@ import numpy as np
 from .writers import create_zarr_dataset
 from .ann import AnnStream
 from tqdm import tqdm
+from .logging_utils import logger
 
 __all__ = ['self_query_knn', 'smoothen_dists', 'export_knn_to_mtx']
 
@@ -20,7 +21,7 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
         for i in ann_obj.iter_blocks(msg='Saving KNN graph'):
             nsample_end = nsample_start + i.shape[0]
             ki, kv, nm = ann_obj.transform_ann(ann_obj.reducer(i), k=n_neighbors,
-                                           self_indices=np.arange(nsample_start, nsample_end))
+                                               self_indices=np.arange(nsample_start, nsample_end))
             z_knn[nsample_start:nsample_end, :] = ki
             z_dist[nsample_start:nsample_end, :] = kv
             nsample_start = nsample_end
@@ -28,7 +29,7 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
     recall = ann_obj.data.shape[0] - tnm
     recall = 100 * recall / ann_obj.data.shape[0]
     recall = "%.2f" % recall
-    print(f"INFO: ANN recall: {recall}%", flush=True)
+    logger.info(f"ANN recall: {recall}%")
     return None
 
 

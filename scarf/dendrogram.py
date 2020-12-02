@@ -31,7 +31,7 @@ def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
         g.add_edge(n, i[1])
         n += 1
     if g.number_of_edges() != d.shape[0] * 2:
-        print('WARNING: Number of edges in directed graph not twice the dendrogram shape', flush=True)
+        logger.warning('Number of edges in directed graph not twice the dendrogram shape')
     return g
 
 
@@ -214,7 +214,7 @@ class BalancedCut:
         for n, i in enumerate(self.branchpoints, start=1):
             c[self.branchpoints[i]] = n
         if (c == 0).sum() > 0:
-            print(f"WARNING: {(c == 0).sum()} samples were not assigned a cluster")
+            logger.warning(f"{(c == 0).sum()} samples were not assigned a cluster")
             c[c == 0] = -1
         return c
 

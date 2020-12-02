@@ -6,6 +6,7 @@ import os
 import sparse
 from typing import IO
 import h5py
+from .logging_utils import logger
 
 __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader']
 
@@ -86,7 +87,7 @@ class CrReader(ABC):
         main_name_k = list(self.autoNames.keys())[0]
         main_name_v = list(self.autoNames.values())[0]
         if main_name_v in anames:
-            print(f"INFO: {main_name_v} already present")
+            logger.info(f"{main_name_v} already present")
             # Making sure that column name is in uppercase 'RNA'
             newnames = list(self.assayFeats.columns)
             newnames[anames.index(main_name_v)] = main_name_v
@@ -96,7 +97,7 @@ class CrReader(ABC):
             if at.sum() == 1:
                 main_assay = at[at].index[0]
             else:
-                print('WARNING:')
+                # FIXME: raise warning here
                 main_assay = self.assayFeats.T[at].nFeatures.astype(int).idxmax()
             self.rename_assays({main_assay: main_name_v})
 
@@ -110,7 +111,7 @@ class CrReader(ABC):
     def feature_names(self, assay: str = None) -> List[str]:
         vals = self._read_dataset('feature_names')
         if vals is None:
-            print('WARNING: Feature names extraction failed using feature IDs', flush=True)
+            logger.warning('Feature names extraction failed using feature IDs')
             vals = self._read_dataset('feature_ids')
         return self._subset_by_assay(vals, assay)
 
@@ -200,8 +201,8 @@ class CrDirReader(CrReader):
             vals = [x.split('\t')[self.grpNames[key][1]] for x in
                     read_file(self.loc + self.grpNames[key][0])]
         except IndexError:
-            print(f"WARNING: {key} extraction failed from {self.grpNames[key][0]} "
-                  f"in column {self.grpNames[key][1]}", flush=True)
+            logger.warning(f"{key} extraction failed from {self.grpNames[key][0]} "
+                           f"in column {self.grpNames[key][1]}", flush=True)
             vals = None
         return vals
 
@@ -349,23 +350,23 @@ class H5adReader:
 
     def _validate_group(self, group: str) -> int:
         if group not in self.h5:
-            print(f"WARNING: `{group}` group not found in the H5ad file", flush=True)
+            logger.warning(f"`{group}` group not found in the H5ad file")
             ret_val = 0
         elif type(self.h5[group]) == h5py.Dataset:
             ret_val = 1
         elif type(self.h5[group]) == h5py.Group:
             ret_val = 2
         else:
-            print(f"WARNING: `{group}` slot in H5ad file is not of Dataset or Group type. "
-                  f"Due to this, no information in `{group}` can be used", flush=True)
+            logger.warning(f"`{group}` slot in H5ad file is not of Dataset or Group type. "
+                           f"Due to this, no information in `{group}` can be used")
             ret_val = 0
         if ret_val == 2:
             if len(self.h5[group].keys()) == 0:
-                print(f"WARNING: `{group}` slot in H5ad file is empty.", flush=True)
+                logger.warning(f"`{group}` slot in H5ad file is empty.")
                 ret_val = 0
             elif len(set([self.h5[group][x].shape[0] for x in self.h5[group].keys() if
                           type(self.h5[group][x]) == h5py.Dataset])) > 1:
-                print(f"WARNING: `{group}` slot in H5ad file has unequal sized child groups", flush=True)
+                logger.info(f"`{group}` slot in H5ad file has unequal sized child groups")
         return ret_val
 
     def _fix_name_key(self, group: str, key: str) -> str:
@@ -399,7 +400,7 @@ class H5adReader:
                 return self.h5['obs'][self.cellNamesKey]
             else:
                 return self.h5['obs'][self.cellNamesKey][:]
-        print(f"WARNING: Could not find cells names key: {self.cellNamesKey} in `obs`.", flush=True)
+        logger.warning(f"Could not find cells names key: {self.cellNamesKey} in `obs`.")
         return np.array([f'cell_{x}' for x in range(self.nCells)])
 
     def feat_names(self) -> np.ndarray:
@@ -408,7 +409,7 @@ class H5adReader:
                 return self.h5['var'][self.featNamesKey]
             else:
                 return self.h5['var'][self.featNamesKey][:]
-        print(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.", flush=True)
+        logger.warning(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.")
         return np.array([f'feature_{x}' for x in range(self.nFeats)])
 
     def feat_ids(self) -> np.ndarray:

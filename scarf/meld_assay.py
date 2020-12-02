@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
 from .utils import controlled_compute
+from .logging_utils import logger
 
 __all__ = ['meld_assay', 'make_bed_from_gff']
 
@@ -26,7 +27,7 @@ def make_bed_from_gff(gff: str, up_offset: int = 2000,
         for i in range(5):
             l = next(h)
             if l[0] != '#':
-                print(f"WARNING: line num {i} is not comment line", flush=True)
+                logger.warning(f"line num {i} is not comment line", flush=True)
         for l in tqdm(h):
             c = l.split('\t')
             if c[2] != 'gene':
@@ -72,9 +73,9 @@ def make_bed_from_gff(gff: str, up_offset: int = 2000,
                 gn = a['gene_id']
             o = '\t'.join([chrom, str(s), str(e), a['gene_id'], gn, c[6]])
             out.append(o)
-    print(f"INFO: {len(out)} genes found in the GFF file", flush=True)
-    print(f"INFO: {ignored_genes} genes were ignored as they were not present in the valid_ids", flush=True)
-    print(f"INFO: {unknown_ids} genes were ignored as they did not have gene_id column", flush=True)
+    logger.info(f"{len(out)} genes found in the GFF file")
+    logger.info(f"{ignored_genes} genes were ignored as they were not present in the valid_ids")
+    logger.info(f"{unknown_ids} genes were ignored as they did not have gene_id column")
     return BedTool('\n'.join(out), from_string=True)
 
 
@@ -116,7 +117,7 @@ def _convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
             idx[i] = [ref[x] for x in cross_id_map[i]]
         else:
             null_ids += 1
-    print(f"INFO: {null_ids}/{len(cross_id_map)} ids did not have a cross id", flush=True)
+    logger.info(f"{null_ids}/{len(cross_id_map)} ids did not have a cross id")
     return idx
 
 

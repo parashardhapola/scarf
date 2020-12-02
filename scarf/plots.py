@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 from cmocean import cm
-
+from .logging_utils import logger
 
 plt.style.use('fivethirtyeight')
 plt.rcParams['svg.fonttype'] = 'none'
@@ -50,8 +50,8 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
     n_plots = data.shape[1] - 1
     n_groups = data['groups'].nunique()
     if n_groups > 5:
-        print (f"ATTENTION: Too many groups in the plot. If you think that plot is too wide then consider turning "
-               f"`show_on_single_row` parameter to True", )
+        logger.info(f"Too many groups in the plot. If you think that plot is too wide then consider turning "
+                    f"`show_on_single_row` parameter to True", )
     if show_on_single_row is True:
         n_rows = 1
         n_cols = n_plots
@@ -183,7 +183,7 @@ def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
             return v.astype('category')
         elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
             if v.nunique() > 100:
-                print ("Warning: too many categories. set force_ints_as_cats to false")
+                logger.warning("Too many categories. set force_ints_as_cats to false")
             return v.astype(np.int_).astype('category')
         else:
             return v.astype(np.float_)
@@ -273,7 +273,8 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
             centers = df[[x, y, vc]].groupby(vc).median().T
             for i in centers:
                 if ondata:
-                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize)
+                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize,
+                            ha='center', va='center')
                 if onside:
                     ax.scatter([float(centers[i][x])], [float(centers[i][y])],
                                c=ck[i], label=i, alpha=1, s=0.01)
@@ -289,7 +290,7 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                 cb.set_label(vc, fontsize=fontsize)
                 cb.ax.xaxis.set_label_position('top')
             else:
-                print("WARNING: Not plotting the colorbar because fig object was not passed")
+                logger.warning("Not plotting the colorbar because fig object was not passed")
         return None
 
 
@@ -309,10 +310,10 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
         if sk is None:
             sk = {}
         if 'c' in sk:
-            print('WARNING: scatter_kwarg value `c` will be ignored')
+            logger.warning('scatter_kwarg value `c` will be ignored')
             del sk['c']
         if 's' in sk:
-            print('WARNING: scatter_kwarg value `s` will be ignored')
+            logger.warning('scatter_kwarg value `s` will be ignored')
             del sk['s']
         if 'lw' not in sk:
             sk['lw'] = 0.1
