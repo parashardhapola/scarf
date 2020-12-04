@@ -1335,10 +1335,18 @@ class DataStore:
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
         from_assay = source_assay.name
+        if type(target_assay) != type(source_assay):
+            raise TypeError(f"ERROR: Source assay ({type(source_assay)}) and target assay "
+                            f"({type(target_assay)}) are of different types. "
+                            f"Mapping can only be performed between same assay types")
+        if type(target_assay) == RNAassay:
+            if target_assay.sf != source_assay.sf:
+                logger.info(f"Resetting target assay's size factor from {target_assay.sf} to {source_assay.sf}")
+                target_assay.sf = source_assay.sf
+
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
-        # FIXME: make sure RNAassay `sf` is same as reference. This raises the design issue if `sf` should be made a
-        #  norm parameter
+
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
                                   target_feat_key, filter_null, exclude_missing, self.nthreads)
         logger.info(f"{len(feat_idx)} features being used for mapping")
