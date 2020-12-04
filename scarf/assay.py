@@ -203,8 +203,11 @@ class RNAassay(Assay):
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
-        # TODO: Save sf to be persistent
-        self.sf = 10000
+        if 'size_factor' in self.attrs:
+            self.sf = int(self.attrs['size_factor'])
+        else:
+            self.sf = 1000
+            self.attrs['size_factor'] = self.sf
         self.scalar = None
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None,
