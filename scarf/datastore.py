@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import List, Iterable, Tuple, Generator, Union
+from typing import List, Iterable, Tuple, Generator, Union, Type
 import pandas as pd
 import zarr
 from tqdm import tqdm
@@ -203,7 +203,7 @@ class DataStore:
         self.z.attrs['assayTypes'] = z_attrs
         return None
 
-    def _get_assay(self, from_assay: str) -> Assay:
+    def _get_assay(self, from_assay: str) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """
         This is convenience function used internally to quickly obtain the assay object that is linked to a assay name
 
@@ -401,6 +401,90 @@ class DataStore:
                 logger.info("Using PCA for dimension reduction")
                 reduction_method = 'pca'
         return reduction_method
+
+    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = 'I', min_cells: int = None, top_n: int = 500,
+                  min_var: float = -np.Inf, max_var: float = np.Inf,
+                  min_mean: float = -np.Inf, max_mean: float = np.Inf,
+                  n_bins: int = 200, lowess_frac: float = 0.1,
+                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', clear_from_table: bool = True,
+                  **plot_kwargs) -> None:
+        """
+        Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
+        and is only applicable to RNAassay type of assays.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. Large values for this parameter might make it difficult
+                       to identify rare populations of cells. Very small values might lead to higher signal to noise
+                       ratio in the selected features. By default, a value is set assuming smallest population has no
+                       less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
+                       then `min-cells` will be set to 10.
+            top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            min_var: Minimum variance threshold for HVG selection. (Default: -Infinity)
+            max_var: Maximum variance threshold for HVG selection. (Default: Infinity)
+            min_mean: Minimum mean value of expression threshold for HVG selection. (Default: -Infinity)
+            max_mean: Maximum mean value of expression threshold for HVG selection. (Default: Infinity)
+            n_bins: Number of bins into which the mean expression is binned. (Default: 200)
+            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
+                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
+                         (Default: 0.1)
+            blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
+                       as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
+                       HLA genes. (Default: "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST" )
+            show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
+            hvg_key_name: Base label for HVGs in the features metadata column. The value for
+                          'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
+            clear_from_table: If True, then feature statistics are removed from metadata column but are cached onto the
+                              disk (Default: True)
+            plot_kwargs: These named parameters are passed to plotting.plot_mean_var
+
+        Returns:
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: RNAassay = self._get_assay(from_assay)
+        if type(assay) != RNAassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
+                        n_bins, lowess_frac, blacklist, hvg_key_name, clear_from_table,
+                        show_plot, **plot_kwargs)
+
+    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
+                             prevalence_key_name: str = 'prevalent_peaks', clear_from_table: bool = True):
+        """
+        Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
+        computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
+        as prevalent peaks.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
+                                'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
+            clear_from_table: If True, then feature statistics are removed from metadata column but are cached onto the
+                              disk (Default: True)
+
+        Returns:
+
+        """
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: ATACassay = self._get_assay(from_assay)
+        if type(assay) != ATACassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name, clear_from_table)
 
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
                           reduction_method='auto', dims=None, pca_cell_key=None,

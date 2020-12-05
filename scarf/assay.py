@@ -230,7 +230,7 @@ class RNAassay(Assay):
         self.normMethod = norm_method_cache
         return val
 
-    def set_feature_stats(self, cell_key: str, min_cells: int = 10) -> None:
+    def set_feature_stats(self, cell_key: str, min_cells: int) -> None:
         feat_key = 'I'  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
@@ -263,14 +263,12 @@ class RNAassay(Assay):
                                                                           self.feats.active_index(feat_key))
         return None
 
-    def mark_hvgs(self, cell_key: str = 'I', min_cells: int = 20, top_n: int = 500,
-                  min_var: float = -np.Inf, max_var: float = np.Inf,
-                  min_mean: float = -np.Inf, max_mean: float = np.Inf,
-                  n_bins: int = 200, lowess_frac: float = 0.1,
-                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
-                  show_plot: bool = True, hvg_key_name: str = 'hvgs', clear_from_table: bool = True,
-                  **plot_kwargs) -> None:
-        self.set_feature_stats(cell_key)
+    def mark_hvgs(self, cell_key: str, min_cells: int, top_n: int,
+                  min_var: float, max_var: float, min_mean: float, max_mean: float,
+                  n_bins: int, lowess_frac: float, blacklist: str, hvg_key_name: str,
+                  clear_from_table: bool, show_plot: bool, **plot_kwargs) -> None:
+
+        self.set_feature_stats(cell_key, min_cells)
         stats_loc = f"summary_stats_{cell_key}"
         c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
         slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
@@ -335,7 +333,7 @@ class ATACassay(Assay):
         self.n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
         return self.normMethod(self, counts)
 
-    def set_feature_stats(self, cell_key: str = 'I') -> None:
+    def set_feature_stats(self, cell_key: str) -> None:
         feat_key = 'I'
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
@@ -350,17 +348,20 @@ class ATACassay(Assay):
         self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
         return None
 
-    def mark_top_prevalent_peaks(self, cell_key: str = 'I', n_top: int = 1000):
+    def mark_prevalent_peaks(self, cell_key: str, top_n: int, prevalence_key_name: str, clear_from_table: bool):
         self.set_feature_stats(cell_key)
-        if n_top >= self.feats.N:
+        if top_n >= self.feats.N:
             raise ValueError(f"ERROR: n_top should be less than total number of features ({self.feats.N})]")
-        if type(n_top) != int:
+        if type(top_n) != int:
             raise TypeError("ERROR: n_top must a positive integer value")
         stats_loc = f"summary_stats_{cell_key}"
+
         self.feats.add('prevalence', self.z[stats_loc + '/prevalence'], key='I', overwrite=True)
-        idx = self.feats.table['prevalence'].sort_values(ascending=False)[:n_top].index
-        self.feats.add(cell_key+'__top_peaks', self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
-        self.feats.remove('prevalence')
+        idx = self.feats.table['prevalence'].sort_values(ascending=False)[:top_n].index
+        prevalence_key_name = cell_key + '__' + prevalence_key_name
+        self.feats.add(prevalence_key_name, self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
+        if clear_from_table:
+            self.feats.remove('prevalence')
 
 
 class ADTassay(Assay):
