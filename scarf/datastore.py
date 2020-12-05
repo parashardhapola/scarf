@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import List, Iterable, Tuple, Generator, Union, Type
+from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
 import zarr
 from tqdm import tqdm
@@ -458,7 +458,7 @@ class DataStore:
                         show_plot, **plot_kwargs)
 
     def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
-                             prevalence_key_name: str = 'prevalent_peaks', clear_from_table: bool = True):
+                             prevalence_key_name: str = 'prevalent_peaks', clear_from_table: bool = True) -> None:
         """
         Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
         computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
@@ -1182,11 +1182,13 @@ class DataStore:
 
         """
         try:
+            # noinspection PyPackageRequirements
             import leidenalg
         except ImportError:
             raise ImportError("ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
                               "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
                               "instead of Leiden clustering using `run_clustering` method")
+        # noinspection PyPackageRequirements
         import igraph  # python-igraph
 
         if from_assay is None:
@@ -1359,10 +1361,10 @@ class DataStore:
             raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
                            "`run_marker_search` method with same value of `cell_key` and `group_key`")
         if group_id is None:
-             raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
-                              f"{list(g.keys())}")
+            raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
+                             f"{list(g.keys())}")
         df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
-                           index=['ids', 'score']).T.set_index('ids')
+                          index=['ids', 'score']).T.set_index('ids')
         id_idx = assay.feats.get_idx_by_ids(df.index)
         if len(id_idx) != df.shape[0]:
             logger.warning("Internal error in fetching names of the features IDs")
@@ -2019,6 +2021,8 @@ class DataStore:
 
         """
         try:
+
+            # noinspection PyPackageRequirements
             from anndata import AnnData
         except ImportError:
             logger.error("Package anndata is not installed because its an optional dependency. "
@@ -2061,7 +2065,6 @@ class DataStore:
 
         from .plots import plot_qc
         import re
-        
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2327,7 +2330,7 @@ class DataStore:
         # Turning array to object forces np.NaN to 'nan'
         if any(target_groups == 'nan'):
             raise ValueError("ERROR: `target_groups` cannot contain nan values")            
-        df['vc'] = np.hstack([[ref_name for x in range(ref_n_cells)], target_groups]).astype(object)
+        df['vc'] = np.hstack([[ref_name for _ in range(ref_n_cells)], target_groups]).astype(object)
         if show_target_only:
             df = df[ref_n_cells:]
         if shuffle_zorder:
