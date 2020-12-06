@@ -19,7 +19,7 @@ class MetaData:
 
     def __init__(self, zgrp):
         self._zgrp = zgrp
-        # TODO: think of a strategy that the datframe columns (except I) are made immutable
+        # TODO: think of a strategy that the dataframe columns (except I) are made immutable
         self.table = load_zarr_table(self._zgrp)
         self.N = len(self.table)
 
@@ -63,6 +63,13 @@ class MetaData:
         else:
             logger.warning(f"{k} does not exist. Nothing to remove")
 
+    def reset(self) -> None:
+        """
+        Set all rows to active
+        """
+        self.table['I'] = np.array([True for _ in range(self.N)]).astype(bool)
+        self._zgrp['I'] = self.table['I'].values
+
     def update(self, bool_arr: np.array, key: str = 'I') -> None:
         """
         Update valid rows using a boolean array and 'and' operation
@@ -89,6 +96,13 @@ class MetaData:
     def get_idx_by_ids(self, ids: List[str], all_ids: bool = True) -> List[int]:
         return self._get_idx([x.upper() for x in ids], 'ids', all_ids)
 
+    def idx_to_bool(self, idx, invert: bool = False) -> np.ndarray:
+        a = np.zeros(self.N, dtype=bool)
+        a[idx] = True
+        if invert:
+            a = ~a
+        return a
+
     def grep(self, pattern: str, only_valid=False) -> List[str]:
         names = np.array(list(map(str.upper, self.table['names'].values)))
         if only_valid:
@@ -101,13 +115,6 @@ class MetaData:
         a = fit_lowess(self.fetch(x).astype(float),
                        self.fetch(y).astype(float),
                        n_bins, lowess_frac)
-        return a
-
-    def idx_to_bool(self, idx, invert: bool = False) -> np.ndarray:
-        a = np.zeros(self.N, dtype=bool)
-        a[idx] = True
-        if invert:
-            a = ~a
         return a
 
     @staticmethod
@@ -138,13 +145,6 @@ class MetaData:
         a[k] = v
         a[~k] = fill_val
         return a
-
-    def reset(self) -> None:
-        """
-        Set all rows to active
-        """
-        self.table['I'] = np.array([True for _ in range(self.N)]).astype(bool)
-        self._zgrp['I'] = self.table['I'].values
 
     def _make_data_table(self) -> pd.DataFrame:
         keys = ['I', 'ids', 'names']
