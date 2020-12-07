@@ -104,7 +104,7 @@ ds.RNA.rawData
 We can visualize the per-cell statistics in [violin plots](https://datavizcatalogue.com/methods/violin_plot.html) before we start filtering cells out.
 
 ```python
-ds.plot_cells_dists(cols=['percent*'])
+ds.plot_cells_dists()
 ```
 
 
@@ -120,7 +120,7 @@ Now we visualize the attributes again after filtering the values.
 
 
 ```python
-ds.plot_cells_dists(cols=['percent*'], cell_key='I')
+ds.plot_cells_dists(cell_key='I', color='coral')
 ```
 
 
@@ -133,25 +133,25 @@ print (ds.z.tree(expand=True))
 The data stored under the 'cellData' level can easily be accessed using the `cells.table` attribute of the `DataStore` object.
 
 ```python
-ds.cells.table
+ds.cells.table.head()
 ```
+<div class="alert alert-block alert-info">
+NOTE: We strongly discourage directly adding or removing the data from this table as Scarf will not be able to synchronize the changes to the disk. Instead use the methods of the <code>cells</code> attribute. Please refer to the <code>insert</code>, <code>fetch</code>, <code>fetch_all</code>, <code>drop</code> and <code>update_key</code> methods.
+</div>
+
+
 ---
 ### 3) Feature selection
 
 Similar to the cell table and the 'cellData' Zarr level, Scarf also saves the feature level data under 'featureData' that is located within each assay. For example, for the RNA assay the feature can be accessed as below:
 
-
-<div class="alert alert-block alert-info">
-NOTE: We strongly discourage directly adding or removing the data from this table as Scarf will not be able to synchronize the changes to the disk. Instead use the methods of the <code>cell</code> attribute. Please refer to the <code>add</code>, <code>fetch</code>, <code>remove</code> and <code>update</code> methods.
-</div>
-
 ```python
-ds.RNA.feats.table
+ds.RNA.feats.table.head()
 ```
-The feature selection step is performed on normalized data. The default normalization method for `RNAassay`-type data is library-size normalization, wherein the count values are divided by the sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 10000. However, if the total counts in a cell are less than this value, then on multiplication with this scalar factor the values will be 'scaled up' (which is not a desired behaviour). In the filtering step above, we set the `low` threshold for `RNA_nCounts` at 1000, and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay:
+The feature selection step is performed on normalized data. The default normalization method for `RNAassay`-type data is library-size normalization, wherein the count values are divided by the sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 10000. However, if the total counts in a cell are less than this value, then on multiplication with this scalar factor the values will be 'scaled up' (which is not a desired behaviour). In the filtering step above, we set the `low` threshold for `RNA_nCounts` at 1000, and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay. Let's print the default value of `sf`
 
 ```python
-ds.RNA.sf = 1000
+ds.RNA.sf
 ```
 
 Now the next step is to identify the highly variable genes in the dataset (for the RNA assay). This can be done using the `mark_hvgs` method of the assay. The parameters govern the min/max variance (corrected) and mean expression threshold for calling genes highly variable. 
@@ -163,13 +163,13 @@ A plot is produced, that for each gene shows the corrected variance on the y-axi
 The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to use to identify the HVGs. The default value of this parameter is `I`, which means it will use the non-filtered out cells.
 
 ```python
-ds.RNA.mark_hvgs(min_cells=20, top_n=2000, n_bins=50)
+ds.mark_hvgs(min_cells=20, top_n=2000)
 ```
 
 As a result of running `mark_hvgs`, the feature table now has an extra column **I__hvgs** which contains a `True` value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name (with a double underscore delimiter). Since we did not provide any `cell_key` parameter the default value was used, i.e. the filtered cells. This resulted in **I** becoming the prefix.
 
 ```python
-ds.RNA.feats.table
+ds.RNA.feats.table.head()
 ```
 ---
 ### 4) Graph creation
@@ -214,7 +214,7 @@ ds._get_latest_graph_loc(from_assay='RNA', cell_key='I', feat_key='hvgs')
 Next we run UMAP on the graph calculated above. Here we will not provide which assay, cell key or feature key to be used, because we want the UMAP to run on the default assay with all the non-filtered out cells and with the feature key used to calculate the latest graph. We can provide the parameter values for the UMAP algorithm here.
 
 ```python
-ds.run_umap(fit_n_epochs=500, min_dist=0.5)
+ds.run_umap(fit_n_epochs=500, spread=5, min_dist=2)
 ```
 
 The UMAP results are saved in the cell metadata table as seen below in columns: **RNA_UMAP1** and **RNA_UMAP2**
@@ -244,13 +244,13 @@ Identifying clusters of cells is one of the central tenets of single cell approa
 Paris is the default algorithm in Scarf due to its low memory consumption and high scalability. [Paris](https://github.com/tbonald/paris) is a hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
 
 ```python
-ds.run_clustering(n_clusters=20)
+ds.run_clustering(n_clusters=19)
 ```
 
 The results of the clustering algorithm are saved in the cell metadata table. In this case, they have been saved under the column name **RNA_cluster**.
 
 ```python
-ds.cells.table
+ds.cells.table.head()
 ```
 We can visualize the results using the `plot_layout` method again:
 
@@ -332,13 +332,13 @@ Here, we show how to work with non-default assays. We have surface protein data 
 
 
 ```python
-ds.ADT.feats.table
+ds.ADT.feats.table.head()
 ```
 We can manually filter out the control antibodies by updating **I** to be False for those features.
 
 ```python
-ds.ADT.feats.update((~ds.ADT.feats.table.names.str.contains('control')).values)
-ds.ADT.feats.table
+ds.ADT.feats.update_key(~ds.ADT.feats.to_pandas_dataframe(['names'])['names'].str.contains('control').values, 'I')
+ds.ADT.feats.table.head(n=ds.ADT.feats.N)
 ```
 Assays named ADT are automatically created as objects of the `ADTassay` class, which uses CLR (centred log ratio) normalization as the default normalization method.
 

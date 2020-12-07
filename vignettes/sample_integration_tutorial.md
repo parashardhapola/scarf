@@ -7,7 +7,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.2'
-      jupytext_version: 1.6.0
+      jupytext_version: 1.7.1
   kernelspec:
     display_name: Python 3
     language: python
@@ -48,8 +48,8 @@ cd ~
 The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `ctrl` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
 
 ```python
-scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
-scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
+# scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
+# scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
 ```
 
 Since multiple datasets will be handled in this vignette, we created a function ``scarf_pipeline`` that contains the basic steps of Scarf workflow: loading a Zarr file, marking HVGs, creation of cell-cell neighbourhood graph, clustering and UMAP embedding of the data. For further information on these steps please check the [basic tutorial vignette](./basic_tutorial.md). Here we have designed the pipeline in a way that will allow us to update required parameters easily for pedagogic purposes.
@@ -63,11 +63,11 @@ def scarf_pipeline(in_dir=None, zarr_fn=None, pca_cell_key='I',
         scarf.CrToZarr(reader, zarr_fn=zarr_fn, chunk_size=(2000, 2000)).dump(batch_size=4000)
     if zarr_fn is None:
         raise ValueError("Please provide a Zarr file")
-    ds = scarf.DataStore(zarr_fn, auto_filter=True, nthreads=4)
+    ds = scarf.DataStore(zarr_fn, nthreads=4)
+    ds.auto_filter_cells()
     ds.filter_cells(attrs=['RNA_nCounts'], highs=[None], lows=[1000])
-    ds.RNA.sf = 1000
-    ds.RNA.mark_hvgs(min_cells=20, top_n=2000)
-    ds.make_graph(feat_key=feat_key, k=21, dims=21, n_centroids=100,
+    ds.mark_hvgs(min_cells=20, top_n=1000)
+    ds.make_graph(feat_key=feat_key, k=11, dims=21, n_centroids=100,
                   log_transform=True, renormalize_subset=True, pca_cell_key=pca_cell_key)
     ds.run_clustering(n_clusters=n_cluster, min_edge_weight=0.1)
     ds.run_umap(fit_n_epochs=250, min_dist=0.5, label=umap_label)
@@ -215,27 +215,30 @@ ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr')
 One can see that in the cell metadata table, the names of samples are prepended to cell ids.
 
 ```python
-ds_merged.cells.table
+ds_merged.cells.table.head()
 ```
 
 We can extract these sample names and cell ids and add them as a separate column.
 
 ```python
-ds_merged.cells.add(k='sample_id', v=[x.split('__')[0] for x 
-                                      in ds_merged.cells.table.ids.values], overwrite=True)
+ds_merged.cells.insert(
+    column_name='sample_id',
+    values=[x.split('__')[0] for x in ds_merged.cells.fetch_all('ids')],
+    overwrite=True
+)
 ```
 
 Additionally, we can create two more columns that essentially have same information as the `sample_id` column but are in boolean format. One column for control cells and other for stimulated cells such that the values will be True in respective columns if a cell belong to that sample otherwise False. Having sample information organized this way will make the steps below more convenient for us.
 
 ```python
 for i in ['ctrl', 'stim']:
-    ds_merged.cells.add(k=f'sample_{i}',
-                        v=ds_merged.cells.table['sample_id'].isin([i]).values,
-                        overwrite=True)
+    ds_merged.cells.insert(column_name=f'sample_{i}',
+                           values=ds_merged.cells.to_pandas_dataframe(['sample_id']).isin([i]).values,
+                           overwrite=True)
 ```
 
 ```python
-ds_merged.cells.table
+ds_merged.cells.table.head()
 ```
 
 Let's visualize the UMAP of this merged dataset and colour the cells by `sample_id` column created above.
@@ -265,8 +268,8 @@ Another approach that is commonly used is supervised selection of features. Merg
 We can consider a gene to be HVG if it was detected as HVG in <ins>any</ins> one of the two datasets. We start by first extracting the gene id for HVGs from both the samples.
 
 ```python
-ctrl_hvgs = ds_ctrl.RNA.feats.table.ids[ds_ctrl.RNA.feats.table['I__hvgs']].values
-stim_hvgs = ds_stim.RNA.feats.table.ids[ds_stim.RNA.feats.table['I__hvgs']].values
+ctrl_hvgs = ds_ctrl.RNA.feats.fetch(column='ids', key='I__hvgs')
+stim_hvgs = ds_stim.RNA.feats.fetch(column='ids', key='I__hvgs') 
 len(ctrl_hvgs), len(stim_hvgs)
 ```
 
@@ -280,8 +283,10 @@ len(union_hvgs)
 Now we identify the indices of these 3191 features in the feature table and them as a new boolean column in the feature metadata table
 
 ```python
-union_hvgs_idx = ds_merged.RNA.feats.get_idx_by_ids(union_hvgs)
-ds_merged.RNA.feats.add(k='I__union_hvgs', v=ds_merged.RNA.feats.idx_to_bool(union_hvgs_idx), overwrite=True)
+union_hvgs_idx = ds_merged.RNA.feats.get_index_by(union_hvgs, column='ids')
+ds_merged.RNA.feats.insert(column_name='I__union_hvgs',
+                           values=ds_merged.RNA.feats.index_to_bool(union_hvgs_idx),
+                           overwrite=True)
 ```
 
 ```python
@@ -317,9 +322,10 @@ len(common_hvgs)
 We now follow similar steps as for union HVGs and run the pipeline using `common_hvgs`.
 
 ```python
-common_hvgs_idx = ds_merged.RNA.feats.get_idx_by_ids(common_hvgs)
-ds_merged.RNA.feats.add(k='I__common_hvgs',
-                        v=ds_merged.RNA.feats.idx_to_bool(common_hvgs_idx), overwrite=True)
+common_hvgs_idx = ds_merged.RNA.feats.get_index_by(common_hvgs, column='ids')
+ds_merged.RNA.feats.insert(column_name='I__common_hvgs',
+                           values=ds_merged.RNA.feats.index_to_bool(common_hvgs_idx),
+                           overwrite=True)
 ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr',
                            feat_key='common_hvgs', umap_label='UMAP_common_hvgs')
 ```
@@ -401,4 +407,4 @@ ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='IL8', subsel
 ds_merged.plot_layout(layout_key='RNA_UMAP_ctrl_trained', color_by='IL8', subselection_key='sample_stim', height=4, width=4)
 ```
 
-End of vignette.
+##### End of vignette.
