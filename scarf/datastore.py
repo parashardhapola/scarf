@@ -2487,8 +2487,3 @@ class DataStore:
                                           enumerate(assay.feats.table.columns, start=1)])
             res = res.rstrip('\n\t')[:-2]
         return res
-
-    def __del__(self):
-        # Disabling because it creates issues
-        # self.daskClient.close()
-        pass
