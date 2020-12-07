@@ -7,6 +7,7 @@ from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 from .logging_utils import logger
 from typing import Tuple, Union, List
+import pandas as pd
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
@@ -78,9 +79,9 @@ class Assay:
         else:
             ncells = show_progress((self.rawData > 0).sum(axis=0),
                                    f"({self.name}) Computing nCells and dropOuts", self.nthreads)
-            self.feats.add('nCells', ncells, overwrite=True)
-            self.feats.add('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
-            self.feats.update(ncells > min_cells)
+            self.feats.insert('nCells', ncells, overwrite=True)
+            self.feats.insert('dropOuts', abs(self.cells.N - self.feats.fetch('nCells')), overwrite=True)
+            self.feats.update_key(ncells > min_cells, 'I')
 
     def add_percent_feature(self, feat_pattern: str, name: str) -> None:
         if name in self.attrs['percentFeatures']:
@@ -90,7 +91,7 @@ class Assay:
                 logger.info(f"Pattern for percentage feature {name} updated.")
         self.attrs['percentFeatures'] = {**{k: v for k, v in self.attrs['percentFeatures'].items()},
                                          **{name: feat_pattern}}
-        feat_idx = sorted(self.feats.get_idx_by_names(self.feats.grep(feat_pattern)))
+        feat_idx = sorted(self.feats.get_index_by(self.feats.grep(feat_pattern), 'names'))
         if len(feat_idx) == 0:
             logger.warning(f"No matches found for pattern {feat_pattern}."
                            f" Will not add/update percentage feature")
@@ -100,7 +101,7 @@ class Assay:
         if total.sum() == 0:
             logger.warning(f"Percentage feature {name} not added because not detected in any cell")
             return None
-        self.cells.add(name, 100 * total / self.cells.table[self.name+'_nCounts'], overwrite=True)
+        self.cells.insert(name, 100 * total / self.cells.fetch_all(self.name+'_nCounts'), overwrite=True)
 
     def _verify_keys(self, cell_key: str, feat_key: str) -> None:
         if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
@@ -167,12 +168,10 @@ class Assay:
         import pandas as pd
 
         def _name_to_ids(i):
-            x = self.feats.table.reindex(self.feats.get_idx_by_names(i))
-            x = x[x.I]
-            return x.ids.values
+            return self.feats.table.fetch_all('ids')[self.feats.get_index_by(i, 'names', key='I')]
 
         def _calc_mean(i):
-            idx = np.array(sorted(self.feats.get_idx_by_ids(i)))
+            idx = np.array(sorted(self.feats.get_index_by(i, 'ids')))
             return self.normed(cell_idx=cell_idx, feat_idx=idx).mean(axis=1).compute()
 
         feature_ids = _name_to_ids(feature_names)
@@ -194,7 +193,7 @@ class Assay:
         return _calc_mean(feature_ids) - _calc_mean(control_ids)
 
     def __repr__(self):
-        f = self.feats.table['I']
+        f = self.feats.fetch_all('I')
         assay_name = str(self.__class__).split('.')[-1][:-2]
         return f"{assay_name} {self.name} with {f.sum()}({len(f)}) features"
 
@@ -225,7 +224,7 @@ class RNAassay(Assay):
             a[a == 0] = 1
             self.scalar = a
         else:
-            self.scalar = self.cells.table[self.name+'_nCounts'].values[cell_idx]
+            self.scalar = self.cells.fetch_all(self.name+'_nCounts')[cell_idx]
         val = self.normMethod(self, counts)
         self.normMethod = norm_method_cache
         return val
@@ -244,7 +243,7 @@ class RNAassay(Assay):
         sigmas = show_progress(self.normed(cell_idx, feat_idx).var(axis=0),
                                f"({self.name}) Computing sigmas", self.nthreads)
         idx = n_cells > min_cells
-        self.feats.update(idx, key=feat_key)
+        self.feats.update_key(idx, key=feat_key)
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
         group = self.z.create_group(stats_loc, overwrite=True)
@@ -273,44 +272,44 @@ class RNAassay(Assay):
         c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
         slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
         for i in slots:
-            self.feats.add(i, self.z[stats_loc + '/' + i], key='I', overwrite=True)
+            self.feats.insert(i, self.z[stats_loc + '/' + i], key='I', overwrite=True)
         if c_var_loc in self.z[stats_loc]:
             logger.info("Using existing corrected dispersion values")
         else:
             c_var = self.feats.remove_trend('avg', 'sigmas', n_bins, lowess_frac)
             g = create_zarr_dataset(self.z[stats_loc], c_var_loc, (50000,), float, c_var.shape)
             g[:] = c_var
-        self.feats.add(c_var_loc, self.z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
+        self.feats.insert(c_var_loc, self.z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
 
-        bl = self.feats.idx_to_bool(self.feats.get_idx_by_names(self.feats.grep(blacklist)), invert=True)
+        bl = self.feats.index_to_bool(self.feats.get_index_by(self.feats.grep(blacklist), 'names'), invert=True)
         if min_var == -np.Inf:
             if top_n < 1:
                 raise ValueError("ERROR: Please provide a value greater than 0 for `top_n` parameter")
             idx = self.feats.multi_sift(
                 ['normed_n', 'nz_mean'], [min_cells, min_mean], [np.Inf, max_mean])
-            idx = idx & self.feats.table['I'] & bl
+            idx = idx & self.feats.fetch_all('I') & bl
             n_valid_feats = idx.sum()
             if top_n > n_valid_feats:
                 logger.warning(f"WARNING: Number of valid features are less then value "
                                f"of parameter `top_n`: {top_n}. Resetting `top_n` to {n_valid_feats}")
                 top_n = n_valid_feats - 1
-            min_var = self.feats.table[idx][c_var_loc].sort_values(ascending=False).values[top_n]
+            min_var = pd.Series(self.feats.fetch_all(c_var_loc))[idx].sort_values(ascending=False).values[top_n]
         hvgs = self.feats.multi_sift(
             ['normed_n', 'nz_mean', c_var_loc], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
-        hvgs = hvgs & self.feats.table['I'] & bl
+        hvgs = hvgs & self.feats.fetch_all('I') & bl
         hvg_key_name = cell_key + '__' + hvg_key_name
         logger.info(f"{sum(hvgs)} genes marked as HVGs")
-        self.feats.add(hvg_key_name, hvgs, fill_val=False, overwrite=True)
+        self.feats.insert(hvg_key_name, hvgs, fill_value=False, overwrite=True)
 
         if show_plot:
             from .plots import plot_mean_var
             nzm, vf, nc = [self.feats.fetch(x).astype('float') for x in ['nz_mean', c_var_loc, 'nCells']]
             plot_mean_var(nzm, vf, nc, self.feats.fetch(hvg_key_name), **plot_kwargs)
 
-        if clear_from_table:
-            for i in slots:
-                self.feats.remove(i)
-            self.feats.remove(c_var_loc)
+        # if clear_from_table:
+        #     for i in slots:
+        #         self.feats.remove(i)
+        #     self.feats.remove(c_var_loc)
         return None
 
 
@@ -328,9 +327,9 @@ class ATACassay(Assay):
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
-        self.n_term_per_doc = self.cells.table[self.name+'_nFeatures'].values[cell_idx]
+        self.n_term_per_doc = self.cells.table.fetch_all(self.name+'_nFeatures')[cell_idx]
         self.n_docs = len(cell_idx)
-        self.n_docs_per_term = self.feats.table['nCells'].values[feat_idx]
+        self.n_docs_per_term = self.feats.fetch_all('nCells')[feat_idx]
         return self.normMethod(self, counts)
 
     def set_feature_stats(self, cell_key: str) -> None:
@@ -356,12 +355,12 @@ class ATACassay(Assay):
             raise TypeError("ERROR: n_top must a positive integer value")
         stats_loc = f"summary_stats_{cell_key}"
 
-        self.feats.add('prevalence', self.z[stats_loc + '/prevalence'], key='I', overwrite=True)
-        idx = self.feats.table['prevalence'].sort_values(ascending=False)[:top_n].index
+        self.feats.insert('prevalence', self.z[stats_loc + '/prevalence'], key='I', overwrite=True)
+        idx = pd.Series(self.feats.fetch_all('prevalence')).sort_values(ascending=False)[:top_n].index
         prevalence_key_name = cell_key + '__' + prevalence_key_name
-        self.feats.add(prevalence_key_name, self.feats.idx_to_bool(idx), fill_val=False, overwrite=True)
-        if clear_from_table:
-            self.feats.remove('prevalence')
+        self.feats.insert(prevalence_key_name, self.feats.index_to_bool(idx), fill_value=False, overwrite=True)
+        # if clear_from_table:
+        #     self.feats.remove('prevalence')
 
 
 class ADTassay(Assay):

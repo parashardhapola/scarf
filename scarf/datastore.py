@@ -237,7 +237,7 @@ class DataStore:
             if var_name not in self.cells.table.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"({from_assay}) Computing nCounts", self.nthreads)
-                self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_c.astype(np.float_), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
                     if min(n_c) < assay.sf:
@@ -247,7 +247,7 @@ class DataStore:
             if var_name not in self.cells.table.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
                                     f"({from_assay}) Computing nFeatures", self.nthreads)
-                self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
                 if mito_pattern is None:
@@ -266,7 +266,8 @@ class DataStore:
                     logger.warning(f"More than of half of the less have less than {min_features} features for assay: "
                                    f"{from_assay}. Will not remove low quality cells automatically.")
                 else:
-                    self.cells.update(self.cells.sift(v, min_features, np.Inf))
+                    bv = self.cells.sift(from_assay + '_nFeatures', min_features, np.Inf)
+                    self.cells.update_key(bv, key='I')
 
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
@@ -336,6 +337,7 @@ class DataStore:
 
         """
         for i, j, k in zip(attrs, lows, highs):
+            # Checking here to avoid hard error from metadata class
             if i not in self.cells.table.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
@@ -343,9 +345,9 @@ class DataStore:
                 j = -np.Inf
             if k is None:
                 k = np.Inf
-            x = self.cells.sift(self.cells.table[i].values, j, k)
+            x = self.cells.sift(i, j, k)
+            self.cells.update_key(x, key='I')
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
-            self.cells.update(x)
 
     def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
         """
@@ -368,7 +370,7 @@ class DataStore:
             if i not in self.cells.table.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
-            a = self.cells.table[i]
+            a = self.cells.fetch_all(i)
             dist = norm(np.median(a), np.std(a))
             self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
 
@@ -1082,8 +1084,8 @@ class DataStore:
             os.system(cmd)
         emb = pd.read_csv(out_fn, header=None, sep=' ')[list(range(tsne_dims))].values.T
         for i in range(tsne_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           emb[i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              emb[i], key=cell_key, overwrite=True)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
 
@@ -1154,8 +1156,8 @@ class DataStore:
                           repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
                           negative_sample_rate=negative_sample_rate)
         for i in range(umap_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:, i], key=cell_key, overwrite=True)
         return None
 
     def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
@@ -1205,8 +1207,8 @@ class DataStore:
         g.es['weight'] = adj[sources, targets].A1
         part = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition, resolution_parameter=resolution,
                                         seed=random_seed)
-        self.cells.add(self._col_renamer(from_assay, cell_key, label),
-                       np.array(part.membership) + 1, fill_val=-1, key=cell_key, overwrite=True)
+        self.cells.insert(self._col_renamer(from_assay, cell_key, label),
+                          np.array(part.membership) + 1, fill_value=-1, key=cell_key, overwrite=True)
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
@@ -1281,8 +1283,8 @@ class DataStore:
             logger.info(f"{len(set(labels))} clusters found")
         else:
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
-        self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
-                       fill_val=-1, key=cell_key, overwrite=True)
+        self.cells.insert(self._col_renamer(from_assay, cell_key, label), labels,
+                          fill_value=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                           threshold: float = 0.25, gene_batch_size: int = 50) -> None:
@@ -1365,11 +1367,11 @@ class DataStore:
                              f"{list(g.keys())}")
         df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
                           index=['ids', 'score']).T.set_index('ids')
-        id_idx = assay.feats.get_idx_by_ids(df.index)
+        id_idx = assay.feats.get_index_by(df.index, 'ids')
         if len(id_idx) != df.shape[0]:
             logger.warning("Internal error in fetching names of the features IDs")
             return df
-        df['names'] = assay.feats.table['names'][id_idx].values
+        df['names'] = assay.feats.fetch_all('names')[id_idx]
         return df
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
@@ -1442,7 +1444,7 @@ class DataStore:
             ann_feat_key = f'{feat_key}_common_{target_name}'
             a = np.zeros(source_assay.feats.N).astype(bool)
             a[feat_idx] = True
-            source_assay.feats.add(cell_key + '__' + ann_feat_key, a, fill_val=False, overwrite=True)
+            source_assay.feats.insert(cell_key + '__' + ann_feat_key, a, fill_value=False, overwrite=True)
         if run_coral:
             feat_scaling = False
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=ann_feat_key,
@@ -1468,7 +1470,7 @@ class DataStore:
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
         store = source_assay.z['projections'].create_group(target_name, overwrite=True)
-        nc, nk = target_assay.cells.table.I.sum(), save_k
+        nc, nk = target_assay.cells.fetch_all('I').sum(), save_k
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         entry_start = 0
@@ -1530,7 +1532,7 @@ class DataStore:
         else:
             groups = pd.Series(np.zeros(n_cells))
 
-        ref_n_cells = self.cells.table[cell_key].sum()
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
         for group in sorted(groups.unique()):
             coi = {x: None for x in groups[groups == group].index.values}
             ms = np.zeros(ref_n_cells)
@@ -1639,7 +1641,7 @@ class DataStore:
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         edges = self.z[graph_loc].edges[:]
         weights = self.z[graph_loc].weights[:]
-        n_cells = self.cells.table[cell_key].sum()
+        n_cells = self.cells.fetch_all(cell_key).sum()
         pidx = self.z[from_assay].projections[target_name].indices[:, :use_k]
         ne = []
         nw = []
@@ -1734,8 +1736,8 @@ class DataStore:
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
         for i in range(2):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
         return None
 
     def run_unified_tsne(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
@@ -1812,8 +1814,8 @@ class DataStore:
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
         for i in range(2):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
         return None
@@ -1876,20 +1878,20 @@ class DataStore:
         sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
                                   min_sr, seed_reward, non_seed_reward, 1, rand_state)
         nodes, edges = sampler.run()
-        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[nodes] = True
         key = self._col_renamer(from_assay, cell_key, save_sampling_key)
-        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
         logger.info(f"Sketched cells saved under column '{key}'")
 
         key = self._col_renamer(from_assay, cell_key, save_density_key)
-        self.cells.add(key, sampler.densities, key=cell_key, overwrite=True)
+        self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
         logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
 
-        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[sampler.seeds] = True
         key = self._col_renamer(from_assay, cell_key, save_seeds_key)
-        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
         logger.info(f"Seed cells saved under column: '{key}'")
 
         if return_edges:
@@ -1948,17 +1950,17 @@ class DataStore:
 
         s_score = assay.score_features(s_genes, cell_key, control_size, n_bins, rand_seed)
         s_score_label = self._col_renamer(from_assay, cell_key, s_score_label)
-        self.cells.add(s_score_label, s_score, key=cell_key, overwrite=True)
+        self.cells.insert(s_score_label, s_score, key=cell_key, overwrite=True)
 
         g2m_score = assay.score_features(g2m_genes, cell_key, control_size, n_bins, rand_seed)
         g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
-        self.cells.add(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
+        self.cells.insert(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
 
-        phase = pd.Series(['S' for _ in range(self.cells.active_index(cell_key).shape[0])])
+        phase = pd.Series(['S' for _ in range(self.cells.fetch(cell_key).sum())])
         phase[g2m_score > s_score] = 'G2M'
         phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
-        self.cells.add(phase_label, phase.values, key=cell_key, overwrite=True)
+        self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
@@ -1993,7 +1995,7 @@ class DataStore:
         assay = self._get_assay(from_assay)
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
-        groups = self.cells.table[group_key]
+        groups = self.cells.fetch_all(group_key)
 
         vals = {}
         for g in tqdm(sorted(set(groups))):
@@ -2004,8 +2006,8 @@ class DataStore:
                 vals[f"{g}_Rep{n + 1}"] = controlled_compute(assay.rawData[idx].sum(axis=0), self.nthreads)
         vals = pd.DataFrame(vals)
         vals = vals[(vals.sum(axis=1) != 0)]
-        vals['names'] = assay.feats.table.names.reindex(vals.index).values
-        vals.index = assay.feats.table.ids.reindex(vals.index).values
+        vals['names'] = pd.Series(assay.feats.fetch_all('names')).reindex(vals.index).values
+        vals.index = pd.Series(assay.feats.fetch_all('ids')).reindex(vals.index).values
         return vals
 
     def to_anndata(self, from_assay: str = None, cell_key: str = 'I', layers: dict = None):
@@ -2031,8 +2033,10 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
-        obs = self.cells.table[self.cells.table[cell_key]].reset_index(drop=True).set_index('ids')
-        var = assay.feats.table.set_index('names').rename(columns={'ids': 'gene_ids'})
+        df = self.cells.to_pandas_dataframe(self.cells.table.columns, key=cell_key)
+        obs = df.reset_index(drop=True).set_index('ids')
+        df = assay.feats.to_pandas_dataframe(assay.feats.table.columns)
+        var = df.set_index('names').rename(columns={'ids': 'gene_ids'})
         adata = AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
         if layers is not None:
             for layer, assay_name in layers.items():
@@ -2078,15 +2082,15 @@ class DataStore:
                     plot_cols.extend(matches)
                 else:
                     logger.warning(f"{i} not found in cell metadata")
-        df = self.cells.table[plot_cols].copy()
+        df = self.cells.to_pandas_dataframe(plot_cols)
         if group_key is not None:
-            df['groups'] = self.cells.table[group_key].copy()
+            df['groups'] = self.cells.to_pandas_dataframe([group_key])
         else:
             df['groups'] = np.zeros(len(df))
         if cell_key is not None:
             if self.cells.table[cell_key].dtype != bool:
                 raise ValueError("ERROR: Cell key must be a boolean type column in cell metadata")
-            df = df[self.cells.table[cell_key]]
+            df = df[self.cells.fetch_all(cell_key)]
         if df['groups'].nunique() == 1:
             color = 'coral'
         plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
@@ -2108,7 +2112,7 @@ class DataStore:
         cell_idx = self.cells.active_index(cell_key)
         if k not in self.cells.table.columns:
             assay = self._get_assay(from_assay)
-            feat_idx = assay.feats.get_idx_by_names([k], True)
+            feat_idx = assay.feats.get_index_by([k], 'names')
             if len(feat_idx) == 0:
                 raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
             else:
@@ -2304,7 +2308,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         t = self.z[from_assay].projections[target_name][layout_key][:]
-        ref_n_cells = self.cells.table[cell_key].sum()
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
         t_n_cells = t.shape[0] - ref_n_cells
         x = t[:, 0]
         y = t[:, 1]
@@ -2439,7 +2443,7 @@ class DataStore:
                 goi.extend(g[i]['names'][:][:topn])
         goi = np.array(sorted(set(goi)))
         cell_idx = np.array(assay.cells.active_index(subset_key))
-        feat_idx = np.array(assay.feats.get_idx_by_ids(goi))
+        feat_idx = np.array(assay.feats.get_index_by(goi, 'ids'))
         feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
         nc = normed_data.chunks[0]
@@ -2449,7 +2453,8 @@ class DataStore:
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
         df.columns = goi[feat_argsort]
         df = df.T
-        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
+        df.index = assay.feats.to_pandas_dataframe(['ids', 'names']).set_index(
+            'ids').reindex(df.index)['names'].values
         # noinspection PyTypeChecker
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
@@ -2466,7 +2471,7 @@ class DataStore:
         res = res.rstrip('\n\t')[:-2]
         for i in self.assayNames:
             assay = self._get_assay(i)
-            res += f"\n\t{i} assay has {assay.feats.active_index('I').shape[0]} ({assay.feats.N}) " \
+            res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
                    f"features and following metadata:"
             res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
                                           enumerate(assay.feats.table.columns, start=1)])
