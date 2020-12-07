@@ -409,8 +409,7 @@ class DataStore:
                   min_mean: float = -np.Inf, max_mean: float = np.Inf,
                   n_bins: int = 200, lowess_frac: float = 0.1,
                   blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
-                  show_plot: bool = True, hvg_key_name: str = 'hvgs', clear_from_table: bool = True,
-                  **plot_kwargs) -> None:
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
         """
         Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
         and is only applicable to RNAassay type of assays.
@@ -441,8 +440,6 @@ class DataStore:
             show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
             hvg_key_name: Base label for HVGs in the features metadata column. The value for
                           'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
-            clear_from_table: If True, then feature statistics are removed from metadata column but are cached onto the
-                              disk (Default: True)
             plot_kwargs: These named parameters are passed to plotting.plot_mean_var
 
         Returns:
@@ -456,11 +453,10 @@ class DataStore:
             raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
                             f"The provided assay is {type(assay)} type")
         assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
-                        n_bins, lowess_frac, blacklist, hvg_key_name, clear_from_table,
-                        show_plot, **plot_kwargs)
+                        n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
 
     def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
-                             prevalence_key_name: str = 'prevalent_peaks', clear_from_table: bool = True) -> None:
+                             prevalence_key_name: str = 'prevalent_peaks') -> None:
         """
         Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
         computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
@@ -474,8 +470,6 @@ class DataStore:
                    for `min_var` parameter. (Default: 500)
             prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
                                 'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
-            clear_from_table: If True, then feature statistics are removed from metadata column but are cached onto the
-                              disk (Default: True)
 
         Returns:
 
@@ -486,7 +480,7 @@ class DataStore:
         if type(assay) != ATACassay:
             raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
                             f"The provided assay is {type(assay)} type")
-        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name, clear_from_table)
+        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name)
 
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
                           reduction_method='auto', dims=None, pca_cell_key=None,

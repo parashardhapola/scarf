@@ -165,7 +165,6 @@ class Assay:
                        ctrl_size: int, n_bins: int, rand_seed: int) -> np.ndarray:
 
         from .feat_utils import binned_sampling
-        import pandas as pd
 
         def _name_to_ids(i):
             return self.feats.table.fetch_all('ids')[self.feats.get_index_by(i, 'names', key='I')]
@@ -265,7 +264,7 @@ class RNAassay(Assay):
     def mark_hvgs(self, cell_key: str, min_cells: int, top_n: int,
                   min_var: float, max_var: float, min_mean: float, max_mean: float,
                   n_bins: int, lowess_frac: float, blacklist: str, hvg_key_name: str,
-                  clear_from_table: bool, show_plot: bool, **plot_kwargs) -> None:
+                  show_plot: bool, **plot_kwargs) -> None:
 
         self.set_feature_stats(cell_key, min_cells)
         stats_loc = f"summary_stats_{cell_key}"
@@ -306,10 +305,6 @@ class RNAassay(Assay):
             nzm, vf, nc = [self.feats.fetch(x).astype('float') for x in ['nz_mean', c_var_loc, 'nCells']]
             plot_mean_var(nzm, vf, nc, self.feats.fetch(hvg_key_name), **plot_kwargs)
 
-        # if clear_from_table:
-        #     for i in slots:
-        #         self.feats.remove(i)
-        #     self.feats.remove(c_var_loc)
         return None
 
 
@@ -347,7 +342,7 @@ class ATACassay(Assay):
         self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
         return None
 
-    def mark_prevalent_peaks(self, cell_key: str, top_n: int, prevalence_key_name: str, clear_from_table: bool):
+    def mark_prevalent_peaks(self, cell_key: str, top_n: int, prevalence_key_name: str) -> None:
         self.set_feature_stats(cell_key)
         if top_n >= self.feats.N:
             raise ValueError(f"ERROR: n_top should be less than total number of features ({self.feats.N})]")
@@ -359,8 +354,7 @@ class ATACassay(Assay):
         idx = pd.Series(self.feats.fetch_all('prevalence')).sort_values(ascending=False)[:top_n].index
         prevalence_key_name = cell_key + '__' + prevalence_key_name
         self.feats.insert(prevalence_key_name, self.feats.index_to_bool(idx), fill_value=False, overwrite=True)
-        # if clear_from_table:
-        #     self.feats.remove('prevalence')
+        return None
 
 
 class ADTassay(Assay):
