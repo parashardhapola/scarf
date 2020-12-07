@@ -49,9 +49,6 @@ class DataStore:
                                will be filtered out.
         min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
                                less than this will be filtered out
-        auto_filter: If True then the auto_filter method will be triggered
-        show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
-                       not have an effect if `auto_filter` is False
         mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
         ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
@@ -59,7 +56,6 @@ class DataStore:
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
-                 auto_filter: bool = False, show_qc_plots: bool = True,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
 
         self._fn: str = zarr_loc
@@ -72,13 +68,6 @@ class DataStore:
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
-        if auto_filter:
-            filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
-            if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
-            self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
-            if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
         """
@@ -349,7 +338,8 @@ class DataStore:
             self.cells.update_key(x, key='I')
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
 
-    def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
+    def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
+                          show_qc_plots: bool = True) -> None:
         """
         Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
         determines the threshold values to be used for each column. For each cell metadata column, the function models a
@@ -360,12 +350,22 @@ class DataStore:
             attrs: column names to be used for filtering
             min_p: fractional density point to be used for calculating lower bounds of threshold
             max_p: fractional density point to be used for calculating lower bounds of threshold
+            show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
+                       not have an effect if `auto_filter` is False
 
         Returns:
 
         """
         from scipy.stats import norm
 
+        if attrs is None:
+            attrs = []
+            for i in ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']:
+                i = f"{self._defaultAssay}_{i}"
+                if i in self.cells.table.columns:
+                    attrs.append(i)
+
+        attrs_used = []
         for i in attrs:
             if i not in self.cells.table.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
@@ -373,6 +373,12 @@ class DataStore:
             a = self.cells.fetch_all(i)
             dist = norm(np.median(a), np.std(a))
             self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
+            attrs_used.append(i)
+
+        if show_qc_plots:
+            self.plot_cells_dists(cols=attrs_used, sup_title="Pre-filtering distribution")
+            self.plot_cells_dists(cols=attrs_used, cell_key='I', color='coral',
+                                  sup_title="Post-filtering distribution")
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
@@ -2040,7 +2046,8 @@ class DataStore:
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
-                         scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
+                         sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
+                         max_points: int = 10000, show_on_single_row: bool = True):
         """
 
         Args:
@@ -2053,6 +2060,8 @@ class DataStore:
             fig_size:
             label_size:
             title_size:
+            sup_title:
+            sup_title_size:
             scatter_size:
             max_points:
             show_on_single_row:
@@ -2062,33 +2071,40 @@ class DataStore:
         """
 
         from .plots import plot_qc
-        import re
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
+
         if cols is not None:
             if type(cols) != list:
-                raise ValueError("ERROR: 'attrs' argument must be of type list")
+                raise ValueError("ERROR: 'cols' argument must be of type list")
+            plot_cols = []
             for i in cols:
-                matches = [x for x in self.cells.table.columns if re.search(i, x)]
-                if len(matches) > 0:
-                    plot_cols.extend(matches)
+                if i in self.cells.table.columns:
+                    if i not in plot_cols:
+                        plot_cols.append(i)
                 else:
                     logger.warning(f"{i} not found in cell metadata")
+        else:
+            cols = ['nCounts', 'nFeatures', 'percentRibo', 'percentMito']
+            cols = [f"{from_assay}_{x}" for x in cols]
+            plot_cols = [x for x in cols if x in self.cells.table.columns]
+
+        debug_print_cols = '\n'.join(plot_cols)
+        logger.debug(f"(plot_cells_dists): Will plot following columns: {debug_print_cols}")
+
         df = self.cells.to_pandas_dataframe(plot_cols)
         if group_key is not None:
             df['groups'] = self.cells.to_pandas_dataframe([group_key])
         else:
             df['groups'] = np.zeros(len(df))
         if cell_key is not None:
-            if self.cells.table[cell_key].dtype != bool:
-                raise ValueError("ERROR: Cell key must be a boolean type column in cell metadata")
-            df = df[self.cells.fetch_all(cell_key)]
-        if df['groups'].nunique() == 1:
-            color = 'coral'
+            idx = self.cells.active_index(cell_key)
+            df = df.reindex(idx)
+
         plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
-                scatter_size=scatter_size, max_points=max_points, show_on_single_row=show_on_single_row)
+                sup_title=sup_title, sup_title_size=sup_title_size, scatter_size=scatter_size,
+                max_points=max_points, show_on_single_row=show_on_single_row)
         return None
 
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
