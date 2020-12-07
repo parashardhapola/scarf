@@ -237,6 +237,10 @@ class MetaData:
             raise ValueError(f"ERROR: {column_name} is a protected column name in MetaData class.")
         if column_name in self.table.columns and overwrite is False:
             raise ValueError(f"ERROR: {column_name} already exists. Please use `update` method instead.")
+        if type(values) == list:
+            logger.warning("'values' parameter is of `list` type and not `np.ndarray` as expected. The correct dtype "
+                           "may not be assigned to the the column")
+            values = np.array(values)
         v = self._fill_to_index(values, fill_value, key)
         self._save(column_name, v.astype(values.dtype))
         return None
