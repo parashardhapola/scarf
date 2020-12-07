@@ -217,8 +217,10 @@ class ZarrMerge:
         if len(self.assays) != len(set(self.names)):
             raise ValueError("ERROR: A unique name should be provided for each of the assay")
         for assay, name in zip(self.assays, self.names):
-            a = assay.cells.table[['names']].copy()
-            a['ids'] = [f"{name}__{x}" for x in assay.cells.table['ids']]
+            a = pd.DataFrame({
+                'names': assay.cells.fetch_all('names'),
+                'ids': [f"{name}__{x}" for x in assay.cells.fetch_all('ids')]
+            })
             ret_val.append(a)
         return pd.concat(ret_val).reset_index().drop(columns='index')
 
@@ -226,7 +228,7 @@ class ZarrMerge:
     def _get_feat_ids(assays):
         ret_val = []
         for i in assays:
-            ret_val.append(i.feats.table[['names', 'ids']].set_index('ids')['names'].to_dict())
+            ret_val.append(i.feats.to_pandas_dataframe(['names', 'ids']).set_index('ids')['names'].to_dict())
         return ret_val
 
     def _merge_order_feats(self):
