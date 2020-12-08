@@ -1,4 +1,3 @@
-import dask.dataframe as daskdf
 from zarr import hierarchy as zarr_hierarchy
 import numpy as np
 import re
@@ -29,40 +28,71 @@ class MetaData:
 
     def __init__(self, zgrp: zarr_hierarchy):
         """
-        This class provides an interface to perform CRUD operations on
-
-        - Synchronises with on-disk data
-        - Provides way to efficiently
+        This class provides an interface to perform CRUD operations on metadata, saved in the Zarr hierarchy.
+         All the changes ot the metadata are synchronized on disk.
 
         Args:
             zgrp: Zarr hierarchy object wherein metadata arrays are saved
         """
 
         self._zgrp = zgrp
-        self.table = self._load_zarr()
-        self.N = len(self.table)
+        self.N = self._get_size()
         self.index = np.array(range(self.N))
 
-    def _load_zarr(self) -> daskdf.DataFrame:
-        """
-        Loads cell or feature metadata saved as individual zarr arrays per column.
-
-        Returns: Dask dataframe with same number of columns as keys in self.zgrp
-
+    @property
+    def columns(self) -> List[str]:
         """
 
-        keys = ['I', 'ids', 'names']
-        keys = keys + [x for x in sorted(self._zgrp.keys()) if x not in keys]
-        # a = daskarr.stack([daskarr.from_zarr(self._zgrp.cellData[x]) for x in keys], axis=1)
-        # a = daskdf.from_dask_array(a, columns=keys)
-        a = daskdf.concat([daskdf.from_array(self._zgrp[x], columns=[x]) for x in keys], axis=1)
-        return a
+        Returns:
 
-    def _get_dtype(self, column: str):
+        """
+        c = ['I', 'ids', 'names']
+        c = c + [x for x in sorted(self._zgrp.keys()) if x not in c]
+        return c
+
+    def _get_size(self):
+        sizes = []
+        for i in self.columns:
+            sizes.append(self._zgrp[i].shape[0])
+        if len(set(sizes)) != 1:
+            raise ValueError("ERROR: Metadata table is corrupted. Not all columns are of same length")
+        return sizes[0]
+
+    def head(self, n: int = 5) -> pd.DataFrame:
         """
 
         Args:
-            column:
+            n:
+
+        Returns:
+
+        """
+        df = pd.DataFrame({
+            x: self._zgrp[x][:n] for x in self.columns
+        })
+        return df
+
+    def to_pandas_dataframe(self, columns: List[str], key: str = None) -> pd.DataFrame:
+        """
+
+        Args:
+            columns:
+            key:
+
+        Returns:
+
+        """
+        valid_cols = self.columns
+        df = pd.DataFrame({x: self._zgrp[x][:] for x in columns if x in valid_cols})
+        if key is not None:
+            df = df.reindex(self.active_index(key))
+        return df
+
+    def get_dtype(self, column: str) -> type:
+        """
+
+        Args:
+            column: Column name of the table
 
         Returns:
 
@@ -80,7 +110,7 @@ class MetaData:
 
         """
 
-        if self._get_dtype(key) != bool:
+        if self.get_dtype(key) != bool:
             raise TypeError("ERROR: `key` should be name of a boolean type column in Metadata table")
         return None
 
@@ -124,7 +154,6 @@ class MetaData:
 
         """
         create_zarr_obj_array(self._zgrp, column_name, values, values.dtype)
-        self.table = self._load_zarr()
         return None
 
     def active_index(self, key: str) -> np.ndarray:
@@ -200,9 +229,9 @@ class MetaData:
 
         """
 
-        if column is None or column not in self.table.columns:
+        if column is None or column not in self.columns:
             raise KeyError(f"ERROR: '{column}' not found in the MetaData table")
-        return self.table[column].compute().values.astype(self._get_dtype(column))
+        return self._zgrp[column][:].astype(self.get_dtype(column))
 
     def fetch(self, column: str, key: str = 'I') -> np.ndarray:
         """
@@ -235,7 +264,7 @@ class MetaData:
         """
         if column_name in ['I', 'ids']:
             raise ValueError(f"ERROR: {column_name} is a protected column name in MetaData class.")
-        if column_name in self.table.columns and overwrite is False:
+        if column_name in self.columns and overwrite is False:
             raise ValueError(f"ERROR: {column_name} already exists. Please use `update` method instead.")
         if type(values) == list:
             logger.warning("'values' parameter is of `list` type and not `np.ndarray` as expected. The correct dtype "
@@ -285,13 +314,12 @@ class MetaData:
         """
         if column in ['I', 'ids', 'names']:
             raise ValueError(f"ERROR: {column} is a protected name in MetaData class. Cannot be deleted")
-        if column not in self.table.columns:
+        if column not in self.columns:
             raise KeyError(f"{column} does not exist. Nothing to remove")
         if column not in self._zgrp:
             logger.warning(f"Unexpected inconsistency found: {column} is not present in the Zarr hierarchy")
         else:
             del self._zgrp[column]
-        self.table = self._load_zarr()
 
     def sift(self, column: str, min_v: float = -np.Inf, max_v: float = np.Inf) -> np.ndarray:
         """
@@ -356,20 +384,5 @@ class MetaData:
                        n_bins, lowess_frac)
         return a
 
-    def to_pandas_dataframe(self, columns: List[str], key: str = None) -> pd.DataFrame:
-        """
-
-        Args:
-            columns:
-            key:
-
-        Returns:
-
-        """
-        df = self.table[columns].compute()
-        if key is not None:
-            df = df.reindex(self.active_index(key))
-        return df
-
     def __repr__(self):
-        return f"MetaData of {self.table.fetch_all('I').sum()}({self.N}) elements"
+        return f"MetaData of {self.fetch_all('I').sum()}({self.N}) elements"

@@ -74,7 +74,7 @@ class Assay:
         return sm
 
     def _ini_feature_props(self, min_cells: int) -> None:
-        if 'nCells' in self.feats.table.columns and 'dropOuts' in self.feats.table.columns:
+        if 'nCells' in self.feats.columns and 'dropOuts' in self.feats.columns:
             pass
         else:
             ncells = show_progress((self.rawData > 0).sum(axis=0),
@@ -104,9 +104,9 @@ class Assay:
         self.cells.insert(name, 100 * total / self.cells.fetch_all(self.name+'_nCounts'), overwrite=True)
 
     def _verify_keys(self, cell_key: str, feat_key: str) -> None:
-        if cell_key not in self.cells.table or self.cells.table[cell_key].dtype != bool:
+        if cell_key not in self.cells.columns or self.cells.get_dtype(cell_key) != bool:
             raise ValueError(f"ERROR: Either {cell_key} does not exist or is not bool type")
-        if feat_key not in self.feats.table or self.feats.table[feat_key].dtype != bool:
+        if feat_key not in self.feats.columns or self.feats.get_dtype(feat_key) != bool:
             raise ValueError(f"ERROR: Either {feat_key} does not exist or is not bool type")
 
     def _get_cell_feat_idx(self, cell_key: str, feat_key: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -167,7 +167,7 @@ class Assay:
         from .feat_utils import binned_sampling
 
         def _name_to_ids(i):
-            return self.feats.table.fetch_all('ids')[self.feats.get_index_by(i, 'names', key='I')]
+            return self.feats.fetch_all('ids')[self.feats.get_index_by(i, 'names', key='I')]
 
         def _calc_mean(i):
             idx = np.array(sorted(self.feats.get_index_by(i, 'ids')))
@@ -322,7 +322,7 @@ class ATACassay(Assay):
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
-        self.n_term_per_doc = self.cells.table.fetch_all(self.name+'_nFeatures')[cell_idx]
+        self.n_term_per_doc = self.cells.fetch_all(self.name+'_nFeatures')[cell_idx]
         self.n_docs = len(cell_idx)
         self.n_docs_per_term = self.feats.fetch_all('nCells')[feat_idx]
         return self.normMethod(self, counts)

@@ -223,7 +223,7 @@ class DataStore:
             assay = self._get_assay(from_assay)
 
             var_name = from_assay + '_nCounts'
-            if var_name not in self.cells.table.columns:
+            if var_name not in self.cells.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"({from_assay}) Computing nCounts", self.nthreads)
                 self.cells.insert(var_name, n_c.astype(np.float_), overwrite=True)
@@ -233,7 +233,7 @@ class DataStore:
                         logger.warning(f"Minimum cell count ({min_nc}) is lower than "
                                        f"size factor multiplier ({assay.sf})")
             var_name = from_assay + '_nFeatures'
-            if var_name not in self.cells.table.columns:
+            if var_name not in self.cells.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
                                     f"({from_assay}) Computing nFeatures", self.nthreads)
                 self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
@@ -327,7 +327,7 @@ class DataStore:
         """
         for i, j, k in zip(attrs, lows, highs):
             # Checking here to avoid hard error from metadata class
-            if i not in self.cells.table.columns:
+            if i not in self.cells.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             if j is None:
@@ -362,12 +362,12 @@ class DataStore:
             attrs = []
             for i in ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']:
                 i = f"{self._defaultAssay}_{i}"
-                if i in self.cells.table.columns:
+                if i in self.cells.columns:
                     attrs.append(i)
 
         attrs_used = []
         for i in attrs:
-            if i not in self.cells.table.columns:
+            if i not in self.cells.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             a = self.cells.fetch_all(i)
@@ -596,9 +596,9 @@ class DataStore:
                     pca_cell_key = cell_key
                     log_message('default', 'pca_cell_key', pca_cell_key)
             else:
-                if pca_cell_key not in self.cells.table.columns:
+                if pca_cell_key not in self.cells.columns:
                     raise ValueError(f"ERROR: `pca_use_cell_key` {pca_cell_key} does not exist in cell metadata")
-                if self.cells.table[pca_cell_key].dtype != bool:
+                if self.cells.get_dtype(pca_cell_key) != bool:
                     raise TypeError("ERROR: Type of `pca_use_cell_key` column in cell metadata should be `bool`")
         dims = int(dims)
         reduction_method = self._choose_reduction_method(self._get_assay(from_assay), reduction_method)
@@ -819,15 +819,14 @@ class DataStore:
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
         if feat_key is None:
-            bool_cols = [x.split('__', 1) for x in assay.feats.table.columns if assay.feats.table[x].dtype == bool
+            bool_cols = [x.split('__', 1) for x in assay.feats.columns if assay.feats.get_dtype(x) == bool
                          and x != 'I']
             bool_cols = [f"{x[1]}({x[0]})" for x in bool_cols]
             bool_cols = ' '.join(map(str, bool_cols))
             raise ValueError("ERROR: You have to choose which features that should be used for graph construction. "
                              "Ideally you should have performed a feature selection step before making this graph. "
-                             "Feature selection step adds a column to your feature table. You can access your feature "
-                             f"table for for assay {from_assay} like this ds.{from_assay}.feats.table replace 'ds' "
-                             f"with the name of DataStore object.\nYou have following boolean columns in the feature "
+                             "Feature selection step adds a column to your feature table. \n"
+                             "You have following boolean columns in the feature "
                              f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
                              f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
                              f"as `feat_key` means that you will use all the genes for graph creation.")
@@ -2033,9 +2032,9 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
-        df = self.cells.to_pandas_dataframe(self.cells.table.columns, key=cell_key)
+        df = self.cells.to_pandas_dataframe(self.cells.columns, key=cell_key)
         obs = df.reset_index(drop=True).set_index('ids')
-        df = assay.feats.to_pandas_dataframe(assay.feats.table.columns)
+        df = assay.feats.to_pandas_dataframe(assay.feats.columns)
         var = df.set_index('names').rename(columns={'ids': 'gene_ids'})
         adata = AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
         if layers is not None:
@@ -2080,7 +2079,7 @@ class DataStore:
                 raise ValueError("ERROR: 'cols' argument must be of type list")
             plot_cols = []
             for i in cols:
-                if i in self.cells.table.columns:
+                if i in self.cells.columns:
                     if i not in plot_cols:
                         plot_cols.append(i)
                 else:
@@ -2088,7 +2087,7 @@ class DataStore:
         else:
             cols = ['nCounts', 'nFeatures', 'percentRibo', 'percentMito']
             cols = [f"{from_assay}_{x}" for x in cols]
-            plot_cols = [x for x in cols if x in self.cells.table.columns]
+            plot_cols = [x for x in cols if x in self.cells.columns]
 
         debug_print_cols = '\n'.join(plot_cols)
         logger.debug(f"(plot_cells_dists): Will plot following columns: {debug_print_cols}")
@@ -2120,7 +2119,7 @@ class DataStore:
 
         """
         cell_idx = self.cells.active_index(cell_key)
-        if k not in self.cells.table.columns:
+        if k not in self.cells.columns:
             assay = self._get_assay(from_assay)
             feat_idx = assay.feats.get_index_by([k], 'names')
             if len(feat_idx) == 0:
@@ -2477,13 +2476,13 @@ class DataStore:
         res = res + f"\n\tCell metadata:"
         tabs = '\t\t'
         res += '\n' + tabs + ''.join(
-            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.table.columns, start=1)])
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.columns, start=1)])
         res = res.rstrip('\n\t')[:-2]
         for i in self.assayNames:
             assay = self._get_assay(i)
             res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
                    f"features and following metadata:"
             res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
-                                          enumerate(assay.feats.table.columns, start=1)])
+                                          enumerate(assay.feats.columns, start=1)])
             res = res.rstrip('\n\t')[:-2]
         return res
