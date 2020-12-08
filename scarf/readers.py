@@ -425,9 +425,10 @@ class H5adReader:
     def feat_names(self) -> np.ndarray:
         if self.useGroup['var'] > 0 and self.featNamesKey in self.h5['var']:
             if self.useGroup['var'] == 1:
-                return self.h5['var'][self.featNamesKey]
+                values = self.h5['var'][self.featNamesKey]
             else:
-                return self.h5['var'][self.featNamesKey][:]
+                values = self.h5['var'][self.featNamesKey][:]
+            return self._replace_category_values(values, self.featNamesKey, 'var').astype(object)
         logger.warning(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.")
         return self.feat_ids()
 
