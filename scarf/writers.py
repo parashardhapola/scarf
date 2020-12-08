@@ -287,7 +287,7 @@ class ZarrMerge:
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
-                          desc=f"Writing aligned normed target data"):
+                          desc=f"Writing data to merged file"):
                 pos_end += i.shape[0]
                 a = np.ones((i.shape[0], self.nFeats))
                 a[:, feat_order] = controlled_compute(i, nthreads)
