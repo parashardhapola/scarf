@@ -149,6 +149,7 @@ class CrH5Reader(CrReader):
     def _read_dataset(self, key: Optional[str] = None):
         return [x.decode('UTF-8') for x in self.grp[self.grpNames[key]][:]]
 
+    # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int):
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
@@ -206,10 +207,12 @@ class CrDirReader(CrReader):
             vals = None
         return vals
 
+    # noinspection DuplicatedCode
     def to_sparse(self, a):
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([a[:, 1] - a[0, 1], a[:, 0] - 1], a[:, 2], shape=(len(idx) + 1, self.nFeatures))
 
+    # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
         stream = pd.read_csv(self.matFn, skiprows=3, sep=' ',
@@ -275,6 +278,7 @@ class MtxDirReader(CrReader):
             vals = None
         return vals
 
+    # noinspection DuplicatedCode
     def to_sparse(self, a):
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([a[:, 1] - a[0, 1], a[:, 0] - 1], a[:, 2], shape=(len(idx) + 1, self.nFeatures))
@@ -295,6 +299,7 @@ class MtxDirReader(CrReader):
         else:
             raise ValueError("ERROR: assay feats is 3D. Something went really wrong. Create a github issue")
 
+    # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
         stream = pd.read_csv(self.matFn, skiprows=3, sep='\t',
@@ -314,14 +319,16 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    def __init__(self, h5ad_fn: str, cell_names_key: str = '_index', feature_names_key: str = '_index',
+    def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
+                 feature_name_key: str = 'gene_short_name',
                  data_key: str = 'X', category_names_key: bool = '__categories'):
         """
 
         Args:
             h5ad_fn: Path to H5AD file
-            cell_names_key: Key in `obs` group that contains unique cell names. By default the index will be used.
-            feature_names_key: Key in `var` group that contains unique feature names. By default the index will be used.
+            cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
+            feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
+            feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
             data_key: Group where in the sparse matrix resides (default: 'X')
             category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
                                 corresponding index value within this group.
@@ -332,8 +339,9 @@ class H5adReader:
         self._validate_data_group()
         self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
         self.nCells, self.nFeats = self._get_n('obs'), self._get_n('var')
-        self.cellNamesKey = self._fix_name_key('obs', cell_names_key)
-        self.featNamesKey = self._fix_name_key('var', feature_names_key)
+        self.cellIdsKey = self._fix_name_key('obs', cell_ids_key)
+        self.featIdsKey = self._fix_name_key('var', feature_ids_key)
+        self.featNamesKey = feature_name_key
         self.catNamesKey = category_names_key
 
     def _validate_data_group(self) -> bool:
@@ -394,15 +402,26 @@ class H5adReader:
             raise KeyError(f"ERROR: `{group}` key doesn't contain any child node of Dataset type."
                            f"Aborting because unexpected H5ad format.")
 
-    def cell_names(self) -> np.ndarray:
-        if self.useGroup['obs'] > 0 and self.cellNamesKey in self.h5['obs']:
+    def cell_ids(self) -> np.ndarray:
+        if self.useGroup['obs'] > 0 and self.cellIdsKey in self.h5['obs']:
             if self.useGroup['obs'] == 1:
-                return self.h5['obs'][self.cellNamesKey]
+                return self.h5['obs'][self.cellIdsKey]
             else:
-                return self.h5['obs'][self.cellNamesKey][:]
-        logger.warning(f"Could not find cells names key: {self.cellNamesKey} in `obs`.")
+                return self.h5['obs'][self.cellIdsKey][:]
+        logger.warning(f"Could not find cells names key: {self.cellIdsKey} in `obs`.")
         return np.array([f'cell_{x}' for x in range(self.nCells)])
 
+    # noinspection DuplicatedCode
+    def feat_ids(self) -> np.ndarray:
+        if self.useGroup['var'] > 0 and self.featIdsKey in self.h5['var']:
+            if self.useGroup['var'] == 1:
+                return self.h5['var'][self.featIdsKey]
+            else:
+                return self.h5['var'][self.featIdsKey][:]
+        logger.warning(f"WARNING: Could not find feature names key: {self.featIdsKey} in `var`.")
+        return np.array([f'feature_{x}' for x in range(self.nFeats)])
+
+    # noinspection DuplicatedCode
     def feat_names(self) -> np.ndarray:
         if self.useGroup['var'] > 0 and self.featNamesKey in self.h5['var']:
             if self.useGroup['var'] == 1:
@@ -410,14 +429,7 @@ class H5adReader:
             else:
                 return self.h5['var'][self.featNamesKey][:]
         logger.warning(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.")
-        return np.array([f'feature_{x}' for x in range(self.nFeats)])
-
-    def feat_ids(self) -> np.ndarray:
-        if self.useGroup['var'] > 0:
-            names = self.feat_names()
-            if len(names) == len(set(names)):
-                return names
-        return np.array([f'feature_{x}' for x in range(self.nFeats)])
+        return self.feat_ids()
 
     def _replace_category_values(self, v: np.ndarray, key: str, group: str):
         if self.catNamesKey is not None:
@@ -432,27 +444,28 @@ class H5adReader:
                             return v
         return v
 
-    def _get_col_data(self, group: str, group_name_key: str) -> Generator[Tuple[str, np.ndarray], None, None]:
+    def _get_col_data(self, group: str, ignore_keys: List[str]) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.useGroup[group] == 1:
             for i in self.h5[group].dtype.names:
-                if i == group_name_key:
+                if i in ignore_keys:
                     continue
                 yield i, self._replace_category_values(self.h5[group][i][:], i, group)
         if self.useGroup[group] == 2:
             for i in self.h5[group].keys():
-                if i == group_name_key:
+                if i in ignore_keys:
                     continue
                 if type(self.h5[group][i]) == h5py.Dataset:
                     yield i, self._replace_category_values(self.h5[group][i][:], i, group)
 
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        for i, j in self._get_col_data('obs', self.cellNamesKey):
+        for i, j in self._get_col_data('obs', [self.cellIdsKey]):
             yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        for i, j in self._get_col_data('var', self.featNamesKey):
+        for i, j in self._get_col_data('var', [self.featIdsKey, self.featNamesKey]):
             yield i, j
 
+    # noinspection DuplicatedCode
     def consume(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
         grp = self.h5[self.dataKey]
         s = 0

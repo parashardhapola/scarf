@@ -26,7 +26,7 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: str = None, overwrite: bool = True) -> zarr.hierarchy:
     if dtype is None or dtype == object:
         dtype = 'U' + str(max([len(x) for x in data]))
-    return g.create_dataset(name, data=data, chunks=False,
+    return g.create_dataset(name, data=data, chunks=(100000,),
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
 
@@ -150,8 +150,8 @@ class H5adToZarr:
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
-        create_zarr_obj_array(g, 'ids', self.h5ad.cell_names())
-        create_zarr_obj_array(g, 'names', self.h5ad.cell_names())
+        create_zarr_obj_array(g, 'ids', self.h5ad.cell_ids())
+        create_zarr_obj_array(g, 'names', self.h5ad.cell_ids())
         create_zarr_obj_array(g, 'I', [True for _ in range(self.h5ad.nCells)], 'bool')
         for i, j in self.h5ad.get_cell_columns():
             create_zarr_obj_array(g, i, j, j.dtype)
