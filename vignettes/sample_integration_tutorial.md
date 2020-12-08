@@ -48,8 +48,8 @@ cd ~
 The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `ctrl` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
 
 ```python
-# scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
-# scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
+scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
+scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
 ```
 
 Since multiple datasets will be handled in this vignette, we created a function ``scarf_pipeline`` that contains the basic steps of Scarf workflow: loading a Zarr file, marking HVGs, creation of cell-cell neighbourhood graph, clustering and UMAP embedding of the data. For further information on these steps please check the [basic tutorial vignette](./basic_tutorial.md). Here we have designed the pipeline in a way that will allow us to update required parameters easily for pedagogic purposes.
@@ -215,7 +215,11 @@ ds_merged = scarf_pipeline(zarr_fn='scarf_data/kang_merged_pbmc_rnaseq.zarr')
 One can see that in the cell metadata table, the names of samples are prepended to cell ids.
 
 ```python
-ds_merged.cells.table.head()
+ds_merged
+```
+
+```python
+ds_merged.cells.head()
 ```
 
 We can extract these sample names and cell ids and add them as a separate column.
@@ -233,12 +237,12 @@ Additionally, we can create two more columns that essentially have same informat
 ```python
 for i in ['ctrl', 'stim']:
     ds_merged.cells.insert(column_name=f'sample_{i}',
-                           values=ds_merged.cells.to_pandas_dataframe(['sample_id']).isin([i]).values,
+                           values=(ds_merged.cells.fetch_all('sample_id') == i),
                            overwrite=True)
 ```
 
 ```python
-ds_merged.cells.table.head()
+ds_merged.cells.head()
 ```
 
 Let's visualize the UMAP of this merged dataset and colour the cells by `sample_id` column created above.
@@ -290,7 +294,7 @@ ds_merged.RNA.feats.insert(column_name='I__union_hvgs',
 ```
 
 ```python
-ds_merged.RNA.feats.table
+ds_merged.RNA.feats.head()
 ```
 
 Next we rerun the scarf pipeline using `union_hvgs` as `feat_key`. We will make sure that the previous UMAP data is not overwritten and hence will provide a new label to save UMAP coordinates. Please note that the pipeline will attempt to find HVGs again but these will not be used as the pipeline will directly use the column `I__common_hvgs` of features.
