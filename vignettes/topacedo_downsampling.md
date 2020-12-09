@@ -25,7 +25,9 @@ cd ~
 ```
 
 ```python
+# Loading preanalyzed dataset that processed in `basic_tutorial` vignette
 ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr')
+ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
 
 ### Down sampling
@@ -37,17 +39,18 @@ The first step is the micro-clustering of the cells. Micro-clustering is perform
 ```python
 ds.run_clustering(balanced_cut=True, min_size=10, max_size=100, label='b_cluster', max_distance_fc=3)
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_b_cluster', legend_onside=False, legend_ondata=False)
+```
+
+The micro-clusters and their size distribution can also be visualized using the `plot_cluster_tree` method.ds.plot_cluster_tree(cluster_key='RNA_b_cluster', width=1, do_label=False)
+
+```python
 ds.plot_cluster_tree(cluster_key='RNA_b_cluster', width=1, do_label=False)
 ```
 
-```python
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
-```
-
-Now we are ready to perform down-sampling of cells. The extent of down sampling is primarily governed by the number of micro clusters, i.e. atleast 1 cell from each micro-cluster (*seed cells*) will be present in the down sampled data. However, this might not be sufficient to ensure that these will conserve the topology, i.e. are connected to each other. Hence, the `run_topacedo_sampler` method will our TopACeDo (Topology assisted cell downsampling) algorithm which employs a prize-collecting Steiner graph search to ensure that *seed cells* are connected (to the extent that the full graph is connected). In order to do this we need to set a reward on each seed and non-seed cells. This is done using the parameter `seed_reward` and `non_seed_reward`. Low reward on seed cells might lead to them being excluded from the subsample (something that we should try to avoid). High reward on non-seed cells will lead to inflation of number of cells in the sample. We also set a value for parameter `sampling_rate` which is the fraction of cells that should be randomly sampled from each micro-cluster.
+Now we are ready to perform down-sampling of cells. The extent of down sampling is primarily governed by the number of micro clusters, i.e. atleast 1 cell from each micro-cluster (*seed cells*) will be present in the down sampled data. However, this might not be sufficient to ensure that these will conserve the topology, i.e. are connected to each other. Hence, the `run_topacedo_sampler` method will our TopACeDo (Topology assisted cell downsampling) algorithm which employs a prize-collecting Steiner graph traveral (PCST) to ensure that *seed cells* are connected (to the extent that the full graph is connected). In order to do this we need to set a reward on each seed and non-seed cells. This is done using the parameter `seed_reward` and `non_seed_reward`. Low reward on seed cells might lead to them being excluded from the subsample (something that we should try to avoid). High reward on non-seed cells will lead to inflation of number of cells in the sample. We also set a value for parameter `sampling_rate` which is the fraction of cells that should be randomly sampled from each micro-cluster.
 
 ```python
-ds.run_topacedo_sampler(cluster_key='RNA_cluster',
+ds.run_topacedo_sampler(cluster_key='RNA_cluster', density_depth=3,
                         seed_reward=3, non_seed_reward=0, 
                         min_cells_per_group=1, sampling_rate=0.05)
 ```
@@ -59,8 +62,11 @@ As a result of subsampling the sub sampled cells are marked True under the cell 
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketched')
 ```
 
-As can be seen from the plot above the subsample containing much smaller fraction of the cells has cells from all regions of the UMAP landscape.
+It may also be interesting to visualize the cells that were marked as `seed cells` useing using PCST was run. These cells are marked under the column `RNA_sketch_seeds`
 
+```python
+ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketch_seeds')
+```
 
 Internally, Topacedo is trying to acheive two goals:
 - Reduce redundancy in data (select fewer cells that are very similar)
@@ -72,10 +78,11 @@ DSRA is derived from cell neighbourhood density which provides an estimate of ho
 
 To calculate DSRA, we min-max normalize the neighbourhood density and for each cell substract these value from 1. Lower DSRA values will lead to decrease in effective sampling rate from clusters. These values are, by default, saved in the cell metadata table with 'cell_density' suffix. We can visualize these values using `plot_layout` method.
 
+
+As can be seen from the plot above the subsample containing much smaller fraction of the cells has cells from all regions of the UMAP landscape.
+
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cell_density')
 ```
 
-```python
-
-```
+##### End of vignette

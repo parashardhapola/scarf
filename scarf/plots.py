@@ -46,12 +46,13 @@ def plot_graph_qc(g):
 
 def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
             fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
-            scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
+            sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
+            max_points: int = 10000, show_on_single_row: bool = True):
     n_plots = data.shape[1] - 1
     n_groups = data['groups'].nunique()
-    if n_groups > 5:
+    if n_groups > 5 and show_on_single_row is True:
         logger.info(f"Too many groups in the plot. If you think that plot is too wide then consider turning "
-                    f"`show_on_single_row` parameter to True", )
+                    f"`show_on_single_row` parameter to False")
     if show_on_single_row is True:
         n_rows = 1
         n_cols = n_plots
@@ -59,9 +60,9 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
         n_rows = n_plots
         n_cols = 1
     if fig_size is None:
-        figwidth = min(15, n_groups+(2*n_cols))
-        figheight = 1+2.5*n_rows
-        fig_size = (figwidth, figheight)
+        fig_width = min(15, n_groups+(2*n_cols))
+        fig_height = 1+2.5*n_rows
+        fig_size = (fig_width, fig_height)
     fig = plt.figure(figsize=fig_size)
     grouped = data.groupby('groups')
     for i in range(n_plots):
@@ -76,10 +77,10 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
         ax = fig.add_subplot(n_rows, n_cols, i+1)
         if n_groups == 1:
             sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
-                           inner=None, cut=0, palette=cmap)
+                           inner=None, cut=0, color=color)
         else:
             sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
-                           inner=None, cut=0, color=color)
+                           inner=None, cut=0, palette=cmap)
         if len(vals) > max_points:
             vals = vals.sample(n=max_points)
         sns.stripplot(x='g', y='v', data=vals, jitter=0.4, ax=ax, orient='v',
@@ -91,6 +92,7 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
         if data['groups'].nunique() == 1:
             ax.set_title('Median: %.1f' % (int(np.median(vals['v']))), fontsize=title_size)
         clean_axis(ax)
+    fig.suptitle(sup_title, fontsize=sup_title_size)
     plt.tight_layout()
     plt.show()
 

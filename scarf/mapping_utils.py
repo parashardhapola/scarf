@@ -4,6 +4,7 @@ from typing import Tuple
 from .assay import Assay
 from .utils import controlled_compute, show_progress
 from .logging_utils import logger
+import pandas as pd
 
 __all__ = ['align_features', 'coral']
 
@@ -47,7 +48,9 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
 
 def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
                     exclude_missing: bool, nthreads: int) -> Tuple[np.ndarray, np.ndarray]:
-    t_idx = t_assay.feats.table.ids.isin(s_feat_ids)
+    s_ids = pd.Series(s_assay.feats.fetch_all('ids'))
+    t_ids = pd.Series(t_assay.feats.fetch_all('ids'))
+    t_idx = t_ids.isin(s_feat_ids)
     if filter_null:
         if exclude_missing is False:
             logger.warning("`filter_null` has not effect because `exclude_missing` is False")
@@ -57,12 +60,12 @@ def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
                 nthreads) != 0
     t_idx = t_idx[t_idx].index
     if exclude_missing:
-        s_idx = s_assay.feats.table.ids.isin(t_assay.feats.table.ids[t_idx].values)
+        s_idx = s_ids.isin(t_ids.values[t_idx])
     else:
-        s_idx = s_assay.feats.table.ids.isin(s_feat_ids)
+        s_idx = s_ids.isin(s_feat_ids)
     s_idx = s_idx[s_idx].index
-    t_idx_map = {v: k for k, v in t_assay.feats.table.ids[t_idx].to_dict().items()}
-    t_re_idx = np.array([t_idx_map[x] if x in t_idx_map else -1 for x in s_assay.feats.table.ids[s_idx].values])
+    t_idx_map = {v: k for k, v in t_ids.to_dict().items()}
+    t_re_idx = np.array([t_idx_map[x] if x in t_idx_map else -1 for x in s_ids.values[s_idx]])
     if len(s_idx) != len(t_re_idx):
         raise AssertionError("ERROR: Feature ordering failed. Please report this issue. "
                              f"This is an unexpected scenario. Source has {len(s_idx)} features while target has "
@@ -76,8 +79,7 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
     from .writers import create_zarr_dataset
     from tqdm import tqdm
 
-    source_feat_ids = source_assay.feats.table.ids[source_assay.feats.table[
-        source_cell_key + '__' + source_feat_key]].values
+    source_feat_ids = source_assay.feats.fetch('ids', key=source_cell_key + '__' + source_feat_key)
     s_idx, t_idx = _order_features(source_assay, target_assay, source_feat_ids, filter_null, exclude_missing, nthreads)
     logger.info(f"{(t_idx == -1).sum()} features missing in target data")
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
