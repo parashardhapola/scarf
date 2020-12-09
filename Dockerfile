@@ -38,6 +38,7 @@ RUN pip install Sphinx sphinx-autodoc-typehints nbsphinx sphinx_rtd_theme
 
 # For building vignettes
 RUN conda install -y nodejs
+RUN conda install -y -c conda-forge pandoc
 RUN pip install jupytext
 RUN jupyter lab build -y
 
