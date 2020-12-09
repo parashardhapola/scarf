@@ -5,7 +5,7 @@ RUN apt install -y wget build-essential git nano
 
 # The following is done to make sure that tzdata package doesnt prompt for timezone during installation
 ARG TZ="Europe/Stockholm"
-RUN DEBIAN_FRONTEND="noninteractive" TZ="Europe/Stockholm" apt-get -y install tzdata
+RUN DEBIAN_FRONTEND="noninteractive" TZ=$TZ apt-get -y install tzdata
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone &
 
 #Installing dependencies for sgtsne
@@ -17,8 +17,9 @@ RUN wget -O miniconda_inst "https://repo.anaconda.com/miniconda/Miniconda3-lates
 	rm miniconda_inst
 
 # Exporting PATH and also saving it in bashrc for next session
-RUN echo "export PATH=$PATH:/root/miniconda3/bin" >> /root/.bashrc
-ENV PATH=/root/miniconda3/bin:$PATH
+# /workspace/bin is so that sgtsne can be found
+RUN echo "export PATH=$PATH:/root/miniconda3/bin:/workspace/bin" >> /root/.bashrc
+ENV PATH=$PATH:/root/miniconda3/bin:/workspace/bin
 
 # Installing numpy and pybind11 beforehand because sometimes they don't install so well from requirements.txt
 RUN pip install --upgrade pip
@@ -37,7 +38,9 @@ RUN pip install Sphinx sphinx-autodoc-typehints nbsphinx sphinx_rtd_theme
 
 # For building vignettes
 RUN conda install -y nodejs
+RUN conda install -y -c conda-forge pandoc
 RUN pip install jupytext
+RUN jupyter lab build -y
 
 # RUN pip install scarf
 
