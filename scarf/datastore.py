@@ -49,9 +49,6 @@ class DataStore:
                                will be filtered out.
         min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
                                less than this will be filtered out
-        auto_filter: If True then the auto_filter method will be triggered
-        show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
-                       not have an effect if `auto_filter` is False
         mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
         ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
@@ -59,7 +56,6 @@ class DataStore:
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
-                 auto_filter: bool = False, show_qc_plots: bool = True,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
 
         self._fn: str = zarr_loc
@@ -72,13 +68,6 @@ class DataStore:
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
-        if auto_filter:
-            filter_attrs = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
-            if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
-            self.auto_filter_cells(attrs=[f'{self._defaultAssay}_{x}' for x in filter_attrs])
-            if show_qc_plots:
-                self.plot_cells_dists(cols=[self._defaultAssay + '_percent*'])
 
     def _load_cells(self) -> MetaData:
         """
@@ -203,7 +192,7 @@ class DataStore:
         self.z.attrs['assayTypes'] = z_attrs
         return None
 
-    def _get_assay(self, from_assay: str) -> Assay:
+    def _get_assay(self, from_assay: str) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """
         This is convenience function used internally to quickly obtain the assay object that is linked to a assay name
 
@@ -234,20 +223,20 @@ class DataStore:
             assay = self._get_assay(from_assay)
 
             var_name = from_assay + '_nCounts'
-            if var_name not in self.cells.table.columns:
+            if var_name not in self.cells.columns:
                 n_c = show_progress(assay.rawData.sum(axis=1),
                                     f"({from_assay}) Computing nCounts", self.nthreads)
-                self.cells.add(var_name, n_c.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_c.astype(np.float_), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
                     if min(n_c) < assay.sf:
                         logger.warning(f"Minimum cell count ({min_nc}) is lower than "
                                        f"size factor multiplier ({assay.sf})")
             var_name = from_assay + '_nFeatures'
-            if var_name not in self.cells.table.columns:
+            if var_name not in self.cells.columns:
                 n_f = show_progress((assay.rawData > 0).sum(axis=1),
                                     f"({from_assay}) Computing nFeatures", self.nthreads)
-                self.cells.add(var_name, n_f.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
                 if mito_pattern is None:
@@ -266,7 +255,8 @@ class DataStore:
                     logger.warning(f"More than of half of the less have less than {min_features} features for assay: "
                                    f"{from_assay}. Will not remove low quality cells automatically.")
                 else:
-                    self.cells.update(self.cells.sift(v, min_features, np.Inf))
+                    bv = self.cells.sift(from_assay + '_nFeatures', min_features, np.Inf)
+                    self.cells.update_key(bv, key='I')
 
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
@@ -336,18 +326,20 @@ class DataStore:
 
         """
         for i, j, k in zip(attrs, lows, highs):
-            if i not in self.cells.table.columns:
+            # Checking here to avoid hard error from metadata class
+            if i not in self.cells.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
             if j is None:
                 j = -np.Inf
             if k is None:
                 k = np.Inf
-            x = self.cells.sift(self.cells.table[i].values, j, k)
+            x = self.cells.sift(i, j, k)
+            self.cells.update_key(x, key='I')
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
-            self.cells.update(x)
 
-    def auto_filter_cells(self, *, attrs: Iterable[str], min_p: float = 0.01, max_p: float = 0.99) -> None:
+    def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
+                          show_qc_plots: bool = True) -> None:
         """
         Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
         determines the threshold values to be used for each column. For each cell metadata column, the function models a
@@ -358,19 +350,35 @@ class DataStore:
             attrs: column names to be used for filtering
             min_p: fractional density point to be used for calculating lower bounds of threshold
             max_p: fractional density point to be used for calculating lower bounds of threshold
+            show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
+                       not have an effect if `auto_filter` is False
 
         Returns:
 
         """
         from scipy.stats import norm
 
+        if attrs is None:
+            attrs = []
+            for i in ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']:
+                i = f"{self._defaultAssay}_{i}"
+                if i in self.cells.columns:
+                    attrs.append(i)
+
+        attrs_used = []
         for i in attrs:
-            if i not in self.cells.table.columns:
+            if i not in self.cells.columns:
                 logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
                 continue
-            a = self.cells.table[i]
+            a = self.cells.fetch_all(i)
             dist = norm(np.median(a), np.std(a))
             self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
+            attrs_used.append(i)
+
+        if show_qc_plots:
+            self.plot_cells_dists(cols=attrs_used, sup_title="Pre-filtering distribution")
+            self.plot_cells_dists(cols=attrs_used, cell_key='I', color='coral',
+                                  sup_title="Post-filtering distribution")
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
@@ -401,6 +409,84 @@ class DataStore:
                 logger.info("Using PCA for dimension reduction")
                 reduction_method = 'pca'
         return reduction_method
+
+    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = 'I', min_cells: int = None, top_n: int = 500,
+                  min_var: float = -np.Inf, max_var: float = np.Inf,
+                  min_mean: float = -np.Inf, max_mean: float = np.Inf,
+                  n_bins: int = 200, lowess_frac: float = 0.1,
+                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
+        """
+        Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
+        and is only applicable to RNAassay type of assays.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. Large values for this parameter might make it difficult
+                       to identify rare populations of cells. Very small values might lead to higher signal to noise
+                       ratio in the selected features. By default, a value is set assuming smallest population has no
+                       less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
+                       then `min-cells` will be set to 10.
+            top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            min_var: Minimum variance threshold for HVG selection. (Default: -Infinity)
+            max_var: Maximum variance threshold for HVG selection. (Default: Infinity)
+            min_mean: Minimum mean value of expression threshold for HVG selection. (Default: -Infinity)
+            max_mean: Maximum mean value of expression threshold for HVG selection. (Default: Infinity)
+            n_bins: Number of bins into which the mean expression is binned. (Default: 200)
+            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
+                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
+                         (Default: 0.1)
+            blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
+                       as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
+                       HLA genes. (Default: "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST" )
+            show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
+            hvg_key_name: Base label for HVGs in the features metadata column. The value for
+                          'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
+            plot_kwargs: These named parameters are passed to plotting.plot_mean_var
+
+        Returns:
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: RNAassay = self._get_assay(from_assay)
+        if type(assay) != RNAassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
+                        n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
+
+    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
+                             prevalence_key_name: str = 'prevalent_peaks') -> None:
+        """
+        Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
+        computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
+        as prevalent peaks.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
+                                'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
+
+        Returns:
+
+        """
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: ATACassay = self._get_assay(from_assay)
+        if type(assay) != ATACassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name)
 
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
                           reduction_method='auto', dims=None, pca_cell_key=None,
@@ -510,9 +596,9 @@ class DataStore:
                     pca_cell_key = cell_key
                     log_message('default', 'pca_cell_key', pca_cell_key)
             else:
-                if pca_cell_key not in self.cells.table.columns:
+                if pca_cell_key not in self.cells.columns:
                     raise ValueError(f"ERROR: `pca_use_cell_key` {pca_cell_key} does not exist in cell metadata")
-                if self.cells.table[pca_cell_key].dtype != bool:
+                if self.cells.get_dtype(pca_cell_key) != bool:
                     raise TypeError("ERROR: Type of `pca_use_cell_key` column in cell metadata should be `bool`")
         dims = int(dims)
         reduction_method = self._choose_reduction_method(self._get_assay(from_assay), reduction_method)
@@ -733,15 +819,14 @@ class DataStore:
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
         if feat_key is None:
-            bool_cols = [x.split('__', 1) for x in assay.feats.table.columns if assay.feats.table[x].dtype == bool
+            bool_cols = [x.split('__', 1) for x in assay.feats.columns if assay.feats.get_dtype(x) == bool
                          and x != 'I']
             bool_cols = [f"{x[1]}({x[0]})" for x in bool_cols]
             bool_cols = ' '.join(map(str, bool_cols))
             raise ValueError("ERROR: You have to choose which features that should be used for graph construction. "
                              "Ideally you should have performed a feature selection step before making this graph. "
-                             "Feature selection step adds a column to your feature table. You can access your feature "
-                             f"table for for assay {from_assay} like this ds.{from_assay}.feats.table replace 'ds' "
-                             f"with the name of DataStore object.\nYou have following boolean columns in the feature "
+                             "Feature selection step adds a column to your feature table. \n"
+                             "You have following boolean columns in the feature "
                              f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
                              f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
                              f"as `feat_key` means that you will use all the genes for graph creation.")
@@ -998,8 +1083,8 @@ class DataStore:
             os.system(cmd)
         emb = pd.read_csv(out_fn, header=None, sep=' ')[list(range(tsne_dims))].values.T
         for i in range(tsne_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           emb[i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              emb[i], key=cell_key, overwrite=True)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
 
@@ -1070,8 +1155,8 @@ class DataStore:
                           repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
                           negative_sample_rate=negative_sample_rate)
         for i in range(umap_dims):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:, i], key=cell_key, overwrite=True)
         return None
 
     def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
@@ -1098,11 +1183,13 @@ class DataStore:
 
         """
         try:
+            # noinspection PyPackageRequirements
             import leidenalg
         except ImportError:
             raise ImportError("ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
                               "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
                               "instead of Leiden clustering using `run_clustering` method")
+        # noinspection PyPackageRequirements
         import igraph  # python-igraph
 
         if from_assay is None:
@@ -1119,8 +1206,8 @@ class DataStore:
         g.es['weight'] = adj[sources, targets].A1
         part = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition, resolution_parameter=resolution,
                                         seed=random_seed)
-        self.cells.add(self._col_renamer(from_assay, cell_key, label),
-                       np.array(part.membership) + 1, fill_val=-1, key=cell_key, overwrite=True)
+        self.cells.insert(self._col_renamer(from_assay, cell_key, label),
+                          np.array(part.membership) + 1, fill_value=-1, key=cell_key, overwrite=True)
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
@@ -1195,8 +1282,8 @@ class DataStore:
             logger.info(f"{len(set(labels))} clusters found")
         else:
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
-        self.cells.add(self._col_renamer(from_assay, cell_key, label), labels,
-                       fill_val=-1, key=cell_key, overwrite=True)
+        self.cells.insert(self._col_renamer(from_assay, cell_key, label), labels,
+                          fill_value=-1, key=cell_key, overwrite=True)
 
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                           threshold: float = 0.25, gene_batch_size: int = 50) -> None:
@@ -1275,15 +1362,15 @@ class DataStore:
             raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
                            "`run_marker_search` method with same value of `cell_key` and `group_key`")
         if group_id is None:
-             raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
-                              f"{list(g.keys())}")
+            raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
+                             f"{list(g.keys())}")
         df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
-                           index=['ids', 'score']).T.set_index('ids')
-        id_idx = assay.feats.get_idx_by_ids(df.index)
+                          index=['ids', 'score']).T.set_index('ids')
+        id_idx = assay.feats.get_index_by(df.index, 'ids')
         if len(id_idx) != df.shape[0]:
             logger.warning("Internal error in fetching names of the features IDs")
             return df
-        df['names'] = assay.feats.table['names'][id_idx].values
+        df['names'] = assay.feats.fetch_all('names')[id_idx]
         return df
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
@@ -1335,10 +1422,18 @@ class DataStore:
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
         from_assay = source_assay.name
+        if type(target_assay) != type(source_assay):
+            raise TypeError(f"ERROR: Source assay ({type(source_assay)}) and target assay "
+                            f"({type(target_assay)}) are of different types. "
+                            f"Mapping can only be performed between same assay types")
+        if type(target_assay) == RNAassay:
+            if target_assay.sf != source_assay.sf:
+                logger.info(f"Resetting target assay's size factor from {target_assay.sf} to {source_assay.sf}")
+                target_assay.sf = source_assay.sf
+
         if target_feat_key == feat_key:
             raise ValueError(f"ERROR: `target_feat_key` cannot be sample as `feat_key`: {feat_key}")
-        # FIXME: make sure RNAassay `sf` is same as reference. This raises the design issue if `sf` should be made a
-        #  norm parameter
+
         feat_idx = align_features(source_assay, target_assay, cell_key, feat_key,
                                   target_feat_key, filter_null, exclude_missing, self.nthreads)
         logger.info(f"{len(feat_idx)} features being used for mapping")
@@ -1348,7 +1443,7 @@ class DataStore:
             ann_feat_key = f'{feat_key}_common_{target_name}'
             a = np.zeros(source_assay.feats.N).astype(bool)
             a[feat_idx] = True
-            source_assay.feats.add(cell_key + '__' + ann_feat_key, a, fill_val=False, overwrite=True)
+            source_assay.feats.insert(cell_key + '__' + ann_feat_key, a, fill_value=False, overwrite=True)
         if run_coral:
             feat_scaling = False
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=ann_feat_key,
@@ -1374,7 +1469,7 @@ class DataStore:
         if 'projections' not in source_assay.z:
             source_assay.z.create_group('projections')
         store = source_assay.z['projections'].create_group(target_name, overwrite=True)
-        nc, nk = target_assay.cells.table.I.sum(), save_k
+        nc, nk = target_assay.cells.fetch_all('I').sum(), save_k
         zi = create_zarr_dataset(store, 'indices', (batch_size,), 'u8', (nc, nk))
         zd = create_zarr_dataset(store, 'distances', (batch_size,), 'f8', (nc, nk))
         entry_start = 0
@@ -1436,7 +1531,7 @@ class DataStore:
         else:
             groups = pd.Series(np.zeros(n_cells))
 
-        ref_n_cells = self.cells.table[cell_key].sum()
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
         for group in sorted(groups.unique()):
             coi = {x: None for x in groups[groups == group].index.values}
             ms = np.zeros(ref_n_cells)
@@ -1545,7 +1640,7 @@ class DataStore:
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         edges = self.z[graph_loc].edges[:]
         weights = self.z[graph_loc].weights[:]
-        n_cells = self.cells.table[cell_key].sum()
+        n_cells = self.cells.fetch_all(cell_key).sum()
         pidx = self.z[from_assay].projections[target_name].indices[:, :use_k]
         ne = []
         nw = []
@@ -1640,8 +1735,8 @@ class DataStore:
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
         for i in range(2):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
         return None
 
     def run_unified_tsne(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
@@ -1718,8 +1813,8 @@ class DataStore:
         label = f"{label}_{target_name}"
         n_ref_cells = self.cells.fetch(cell_key).sum()
         for i in range(2):
-            self.cells.add(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                           t[:n_ref_cells, i], key=cell_key, overwrite=True)
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
         return None
@@ -1782,20 +1877,20 @@ class DataStore:
         sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
                                   min_sr, seed_reward, non_seed_reward, 1, rand_state)
         nodes, edges = sampler.run()
-        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[nodes] = True
         key = self._col_renamer(from_assay, cell_key, save_sampling_key)
-        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
         logger.info(f"Sketched cells saved under column '{key}'")
 
         key = self._col_renamer(from_assay, cell_key, save_density_key)
-        self.cells.add(key, sampler.densities, key=cell_key, overwrite=True)
+        self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
         logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
 
-        a = np.zeros(self.cells.table[cell_key].values.sum()).astype(bool)
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[sampler.seeds] = True
         key = self._col_renamer(from_assay, cell_key, save_seeds_key)
-        self.cells.add(key, a, fill_val=False, key=cell_key, overwrite=True)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
         logger.info(f"Seed cells saved under column: '{key}'")
 
         if return_edges:
@@ -1853,17 +1948,17 @@ class DataStore:
 
         s_score = assay.score_features(s_genes, cell_key, control_size, n_bins, rand_seed)
         s_score_label = self._col_renamer(from_assay, cell_key, s_score_label)
-        self.cells.add(s_score_label, s_score, key=cell_key, overwrite=True)
+        self.cells.insert(s_score_label, s_score, key=cell_key, overwrite=True)
 
         g2m_score = assay.score_features(g2m_genes, cell_key, control_size, n_bins, rand_seed)
         g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
-        self.cells.add(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
+        self.cells.insert(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
 
-        phase = pd.Series(['S' for _ in range(self.cells.active_index(cell_key).shape[0])])
+        phase = pd.Series(['S' for _ in range(self.cells.fetch(cell_key).sum())])
         phase[g2m_score > s_score] = 'G2M'
         phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
-        self.cells.add(phase_label, phase.values, key=cell_key, overwrite=True)
+        self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
@@ -1898,7 +1993,7 @@ class DataStore:
         assay = self._get_assay(from_assay)
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
-        groups = self.cells.table[group_key]
+        groups = self.cells.fetch_all(group_key)
 
         vals = {}
         for g in tqdm(sorted(set(groups))):
@@ -1909,8 +2004,8 @@ class DataStore:
                 vals[f"{g}_Rep{n + 1}"] = controlled_compute(assay.rawData[idx].sum(axis=0), self.nthreads)
         vals = pd.DataFrame(vals)
         vals = vals[(vals.sum(axis=1) != 0)]
-        vals['names'] = assay.feats.table.names.reindex(vals.index).values
-        vals.index = assay.feats.table.ids.reindex(vals.index).values
+        vals['names'] = pd.Series(assay.feats.fetch_all('names')).reindex(vals.index).values
+        vals.index = pd.Series(assay.feats.fetch_all('ids')).reindex(vals.index).values
         return vals
 
     def to_anndata(self, from_assay: str = None, cell_key: str = 'I', layers: dict = None):
@@ -1926,6 +2021,8 @@ class DataStore:
 
         """
         try:
+
+            # noinspection PyPackageRequirements
             from anndata import AnnData
         except ImportError:
             logger.error("Package anndata is not installed because its an optional dependency. "
@@ -1934,8 +2031,10 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
-        obs = self.cells.table[self.cells.table[cell_key]].reset_index(drop=True).set_index('ids')
-        var = assay.feats.table.set_index('names').rename(columns={'ids': 'gene_ids'})
+        df = self.cells.to_pandas_dataframe(self.cells.columns, key=cell_key)
+        obs = df.reset_index(drop=True).set_index('ids')
+        df = assay.feats.to_pandas_dataframe(assay.feats.columns)
+        var = df.set_index('names').rename(columns={'ids': 'gene_ids'})
         adata = AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
         if layers is not None:
             for layer, assay_name in layers.items():
@@ -1945,7 +2044,8 @@ class DataStore:
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
-                         scatter_size: float = 1.0, max_points: int = 10000, show_on_single_row: bool = True):
+                         sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
+                         max_points: int = 10000, show_on_single_row: bool = True):
         """
 
         Args:
@@ -1958,6 +2058,8 @@ class DataStore:
             fig_size:
             label_size:
             title_size:
+            sup_title:
+            sup_title_size:
             scatter_size:
             max_points:
             show_on_single_row:
@@ -1967,34 +2069,40 @@ class DataStore:
         """
 
         from .plots import plot_qc
-        import re
-        
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        plot_cols = [f'{from_assay}_nCounts', f'{from_assay}_nFeatures']
+
         if cols is not None:
             if type(cols) != list:
-                raise ValueError("ERROR: 'attrs' argument must be of type list")
+                raise ValueError("ERROR: 'cols' argument must be of type list")
+            plot_cols = []
             for i in cols:
-                matches = [x for x in self.cells.table.columns if re.search(i, x)]
-                if len(matches) > 0:
-                    plot_cols.extend(matches)
+                if i in self.cells.columns:
+                    if i not in plot_cols:
+                        plot_cols.append(i)
                 else:
                     logger.warning(f"{i} not found in cell metadata")
-        df = self.cells.table[plot_cols].copy()
+        else:
+            cols = ['nCounts', 'nFeatures', 'percentRibo', 'percentMito']
+            cols = [f"{from_assay}_{x}" for x in cols]
+            plot_cols = [x for x in cols if x in self.cells.columns]
+
+        debug_print_cols = '\n'.join(plot_cols)
+        logger.debug(f"(plot_cells_dists): Will plot following columns: {debug_print_cols}")
+
+        df = self.cells.to_pandas_dataframe(plot_cols)
         if group_key is not None:
-            df['groups'] = self.cells.table[group_key].copy()
+            df['groups'] = self.cells.to_pandas_dataframe([group_key])
         else:
             df['groups'] = np.zeros(len(df))
         if cell_key is not None:
-            if self.cells.table[cell_key].dtype != bool:
-                raise ValueError("ERROR: Cell key must be a boolean type column in cell metadata")
-            df = df[self.cells.table[cell_key]]
-        if df['groups'].nunique() == 1:
-            color = 'coral'
+            idx = self.cells.active_index(cell_key)
+            df = df.reindex(idx)
+
         plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
-                scatter_size=scatter_size, max_points=max_points, show_on_single_row=show_on_single_row)
+                sup_title=sup_title, sup_title_size=sup_title_size, scatter_size=scatter_size,
+                max_points=max_points, show_on_single_row=show_on_single_row)
         return None
 
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
@@ -2010,9 +2118,9 @@ class DataStore:
 
         """
         cell_idx = self.cells.active_index(cell_key)
-        if k not in self.cells.table.columns:
+        if k not in self.cells.columns:
             assay = self._get_assay(from_assay)
-            feat_idx = assay.feats.get_idx_by_names([k], True)
+            feat_idx = assay.feats.get_index_by([k], 'names')
             if len(feat_idx) == 0:
                 raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
             else:
@@ -2208,7 +2316,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         t = self.z[from_assay].projections[target_name][layout_key][:]
-        ref_n_cells = self.cells.table[cell_key].sum()
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
         t_n_cells = t.shape[0] - ref_n_cells
         x = t[:, 0]
         y = t[:, 1]
@@ -2234,7 +2342,7 @@ class DataStore:
         # Turning array to object forces np.NaN to 'nan'
         if any(target_groups == 'nan'):
             raise ValueError("ERROR: `target_groups` cannot contain nan values")            
-        df['vc'] = np.hstack([[ref_name for x in range(ref_n_cells)], target_groups]).astype(object)
+        df['vc'] = np.hstack([[ref_name for _ in range(ref_n_cells)], target_groups]).astype(object)
         if show_target_only:
             df = df[ref_n_cells:]
         if shuffle_zorder:
@@ -2343,7 +2451,7 @@ class DataStore:
                 goi.extend(g[i]['names'][:][:topn])
         goi = np.array(sorted(set(goi)))
         cell_idx = np.array(assay.cells.active_index(subset_key))
-        feat_idx = np.array(assay.feats.get_idx_by_ids(goi))
+        feat_idx = np.array(assay.feats.get_index_by(goi, 'ids'))
         feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
         nc = normed_data.chunks[0]
@@ -2353,7 +2461,8 @@ class DataStore:
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
         df.columns = goi[feat_argsort]
         df = df.T
-        df.index = assay.feats.table[['ids', 'names']].set_index('ids').reindex(df.index)['names'].values
+        df.index = assay.feats.to_pandas_dataframe(['ids', 'names']).set_index(
+            'ids').reindex(df.index)['names'].values
         # noinspection PyTypeChecker
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
@@ -2366,18 +2475,13 @@ class DataStore:
         res = res + f"\n\tCell metadata:"
         tabs = '\t\t'
         res += '\n' + tabs + ''.join(
-            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.table.columns, start=1)])
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.columns, start=1)])
         res = res.rstrip('\n\t')[:-2]
         for i in self.assayNames:
             assay = self._get_assay(i)
-            res += f"\n\t{i} assay has {assay.feats.active_index('I').shape[0]} ({assay.feats.N}) " \
+            res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
                    f"features and following metadata:"
             res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
-                                          enumerate(assay.feats.table.columns, start=1)])
+                                          enumerate(assay.feats.columns, start=1)])
             res = res.rstrip('\n\t')[:-2]
         return res
-
-    def __del__(self):
-        # Disabling because it creates issues
-        # self.daskClient.close()
-        pass

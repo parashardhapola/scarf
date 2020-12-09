@@ -26,7 +26,7 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: str = None, overwrite: bool = True) -> zarr.hierarchy:
     if dtype is None or dtype == object:
         dtype = 'U' + str(max([len(x) for x in data]))
-    return g.create_dataset(name, data=data, chunks=False,
+    return g.create_dataset(name, data=data, chunks=(100000,),
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
 
@@ -150,8 +150,8 @@ class H5adToZarr:
 
     def _ini_cell_data(self):
         g = self.z.create_group('cellData')
-        create_zarr_obj_array(g, 'ids', self.h5ad.cell_names())
-        create_zarr_obj_array(g, 'names', self.h5ad.cell_names())
+        create_zarr_obj_array(g, 'ids', self.h5ad.cell_ids())
+        create_zarr_obj_array(g, 'names', self.h5ad.cell_ids())
         create_zarr_obj_array(g, 'I', [True for _ in range(self.h5ad.nCells)], 'bool')
         for i, j in self.h5ad.get_cell_columns():
             create_zarr_obj_array(g, i, j, j.dtype)
@@ -217,8 +217,10 @@ class ZarrMerge:
         if len(self.assays) != len(set(self.names)):
             raise ValueError("ERROR: A unique name should be provided for each of the assay")
         for assay, name in zip(self.assays, self.names):
-            a = assay.cells.table[['names']].copy()
-            a['ids'] = [f"{name}__{x}" for x in assay.cells.table['ids']]
+            a = pd.DataFrame({
+                'names': assay.cells.fetch_all('names'),
+                'ids': [f"{name}__{x}" for x in assay.cells.fetch_all('ids')]
+            })
             ret_val.append(a)
         return pd.concat(ret_val).reset_index().drop(columns='index')
 
@@ -226,7 +228,7 @@ class ZarrMerge:
     def _get_feat_ids(assays):
         ret_val = []
         for i in assays:
-            ret_val.append(i.feats.table[['names', 'ids']].set_index('ids')['names'].to_dict())
+            ret_val.append(i.feats.to_pandas_dataframe(['names', 'ids']).set_index('ids')['names'].to_dict())
         return ret_val
 
     def _merge_order_feats(self):
@@ -285,7 +287,7 @@ class ZarrMerge:
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],
-                          desc=f"Writing aligned normed target data"):
+                          desc=f"Writing data to merged file"):
                 pos_end += i.shape[0]
                 a = np.ones((i.shape[0], self.nFeats))
                 a[:, feat_order] = controlled_compute(i, nthreads)

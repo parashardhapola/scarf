@@ -1,7 +1,7 @@
 import numpy as np
 from .logging_utils import logger
 
-__all__ = ['fetch_dataset', 'show_progress', 'system_call', 'clean_array', 'controlled_compute']
+__all__ = ['fetch_dataset', 'system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
