@@ -6,7 +6,7 @@ from .utils import show_progress, controlled_compute
 from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 from .logging_utils import logger
-from typing import Tuple, Union, List
+from typing import Tuple, List
 import pandas as pd
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
@@ -119,15 +119,35 @@ class Assay:
     def _create_subset_hash(cell_idx: np.ndarray, feat_idx: np.ndarray) -> int:
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
-    def _validate_stats_loc(self, cell_key: str, cell_idx: np.ndarray,
-                            feat_idx: np.ndarray) -> Union[str, None]:
+    @staticmethod
+    def _get_summary_stats_loc(cell_key: str) -> Tuple[str, str]:
+        return f"stats_{cell_key}", f"summary_stats_{cell_key}"
+
+    def _validate_stats_loc(self, stats_loc: str, cell_idx: np.ndarray,
+                            feat_idx: np.ndarray, delete_on_fail: bool = True) -> bool:
         subset_hash = self._create_subset_hash(cell_idx, feat_idx)
-        stats_loc = f"summary_stats_{cell_key}"
         if stats_loc in self.z:
             attrs = self.z[stats_loc].attrs
             if 'subset_hash' in attrs and attrs['subset_hash'] == subset_hash:
-                return None
-        return stats_loc
+                return True
+            else:
+                # Reset stats loc
+                if delete_on_fail:
+                    del self.z[stats_loc]
+                return False
+        else:
+            return False
+
+    def _load_stats_loc(self, cell_key: str) -> str:
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, 'I')
+        identifier, stats_loc = self._get_summary_stats_loc(cell_key)
+        if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is False:
+            raise KeyError(f"Summary statistics have not been calculated for cell key: {cell_key}")
+        if identifier not in self.feats.locations:
+            self.feats.mount_location(self.z[stats_loc], identifier)
+        else:
+            logger.debug(f"Location ({stats_loc}) already mounted")
+        return identifier
 
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
                              location: str, log_transform: bool, renormalize_subset: bool,
@@ -229,10 +249,19 @@ class RNAassay(Assay):
         return val
 
     def set_feature_stats(self, cell_key: str, min_cells: int) -> None:
+        """
+
+        Args:
+            cell_key:
+            min_cells:
+
+        Returns:
+
+        """
         feat_key = 'I'  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
-        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
-        if stats_loc is None:
+        identifier, stats_loc = self._get_summary_stats_loc(cell_key)
+        if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is True:
             logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
         n_cells = show_progress((self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
@@ -245,56 +274,76 @@ class RNAassay(Assay):
         self.feats.update_key(idx, key=feat_key)
         n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
-        group = self.z.create_group(stats_loc, overwrite=True)
-        g = create_zarr_dataset(group, 'normed_tot', (50000,), float, tot.shape)
-        g[:] = tot
-        g = create_zarr_dataset(group, 'avg', (50000,), float, tot.shape)
-        g[:] = tot / self.cells.N
-        g = create_zarr_dataset(group, 'nz_mean', (50000,), float, tot.shape)
-        g[:] = tot / n_cells
-        g = create_zarr_dataset(group, 'sigmas', (50000,), float, tot.shape)
-        g[:] = sigmas
-        g = create_zarr_dataset(group, 'normed_n', (50000,), float, tot.shape)
-        g[:] = n_cells
-
-        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx,
-                                                                          self.feats.active_index(feat_key))
+        self.z.create_group(stats_loc, overwrite=True)
+        self.feats.mount_location(self.z[stats_loc], identifier)
+        self.feats.insert('normed_tot', tot.astype(float), overwrite=True, location=identifier)
+        self.feats.insert('avg', (tot / self.cells.N).astype(float), overwrite=True, location=identifier)
+        self.feats.insert('nz_mean', (tot / n_cells).astype(float), overwrite=True, location=identifier)
+        self.feats.insert('sigmas', sigmas.astype(float), overwrite=True, location=identifier)
+        self.feats.insert('normed_n', n_cells.astype(float), overwrite=True, location=identifier)
+        self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(
+            cell_idx, self.feats.active_index(feat_key))
+        self.feats.unmount_location(identifier)
         return None
 
     def mark_hvgs(self, cell_key: str, min_cells: int, top_n: int,
                   min_var: float, max_var: float, min_mean: float, max_mean: float,
                   n_bins: int, lowess_frac: float, blacklist: str, hvg_key_name: str,
                   show_plot: bool, **plot_kwargs) -> None:
+        """
 
+        Args:
+            cell_key:
+            min_cells:
+            top_n:
+            min_var:
+            max_var:
+            min_mean:
+            max_mean:
+            n_bins:
+            lowess_frac:
+            blacklist:
+            hvg_key_name:
+            show_plot:
+            **plot_kwargs:
+
+        Returns:
+
+        """
         self.set_feature_stats(cell_key, min_cells)
-        stats_loc = f"summary_stats_{cell_key}"
-        c_var_loc = f"c_var__{n_bins}__{lowess_frac}"
-        slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
-        for i in slots:
-            self.feats.insert(i, self.z[stats_loc + '/' + i], key='I', overwrite=True)
-        if c_var_loc in self.z[stats_loc]:
+        identifier = self._load_stats_loc(cell_key)
+        # noinspection SpellCheckingInspection
+        col_renamer = lambda x: f"{identifier}_{x}"
+        c_var_col = f"c_var__{n_bins}__{lowess_frac}"
+        if col_renamer(c_var_col) in self.feats.columns:
             logger.info("Using existing corrected dispersion values")
         else:
-            c_var = self.feats.remove_trend('avg', 'sigmas', n_bins, lowess_frac)
-            g = create_zarr_dataset(self.z[stats_loc], c_var_loc, (50000,), float, c_var.shape)
-            g[:] = c_var
-        self.feats.insert(c_var_loc, self.z[stats_loc + '/' + c_var_loc], key='I', overwrite=True)
+            slots = ['normed_tot', 'avg', 'nz_mean', 'sigmas', 'normed_n']
+            for i in slots:
+                i = col_renamer(i)
+                if i not in self.feats.columns:
+                    raise KeyError("ERROR: {i} not found in feature metadata")
+            c_var = self.feats.remove_trend(col_renamer('avg'), col_renamer('sigmas'),
+                                            n_bins, lowess_frac)
+            self.feats.insert(c_var_col, c_var, overwrite=True, location=identifier)
 
         bl = self.feats.index_to_bool(self.feats.get_index_by(self.feats.grep(blacklist), 'names'), invert=True)
         if min_var == -np.Inf:
             if top_n < 1:
                 raise ValueError("ERROR: Please provide a value greater than 0 for `top_n` parameter")
             idx = self.feats.multi_sift(
-                ['normed_n', 'nz_mean'], [min_cells, min_mean], [np.Inf, max_mean])
+                [col_renamer('normed_n'), col_renamer('nz_mean')], [min_cells, min_mean], [np.Inf, max_mean])
             idx = idx & self.feats.fetch_all('I') & bl
             n_valid_feats = idx.sum()
             if top_n > n_valid_feats:
                 logger.warning(f"WARNING: Number of valid features are less then value "
                                f"of parameter `top_n`: {top_n}. Resetting `top_n` to {n_valid_feats}")
                 top_n = n_valid_feats - 1
-            min_var = pd.Series(self.feats.fetch_all(c_var_loc))[idx].sort_values(ascending=False).values[top_n]
+            min_var = pd.Series(self.feats.fetch_all(col_renamer(c_var_col))
+                                )[idx].sort_values(ascending=False).values[top_n]
         hvgs = self.feats.multi_sift(
-            ['normed_n', 'nz_mean', c_var_loc], [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
+            [col_renamer(x) for x in ['normed_n', 'nz_mean', c_var_col]],
+            [min_cells, min_mean, min_var], [np.Inf, max_mean, max_var])
         hvgs = hvgs & self.feats.fetch_all('I') & bl
         hvg_key_name = cell_key + '__' + hvg_key_name
         logger.info(f"{sum(hvgs)} genes marked as HVGs")
@@ -302,7 +351,7 @@ class RNAassay(Assay):
 
         if show_plot:
             from .plots import plot_mean_var
-            nzm, vf, nc = [self.feats.fetch(x).astype('float') for x in ['nz_mean', c_var_loc, 'nCells']]
+            nzm, vf, nc = [self.feats.fetch(x) for x in [col_renamer('nz_mean'), col_renamer(c_var_col), 'nCells']]
             plot_mean_var(nzm, vf, nc, self.feats.fetch(hvg_key_name), **plot_kwargs)
 
         return None
@@ -328,30 +377,30 @@ class ATACassay(Assay):
         return self.normMethod(self, counts)
 
     def set_feature_stats(self, cell_key: str) -> None:
-        feat_key = 'I'
+        feat_key = 'I'  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
-        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
-        if stats_loc is None:
+        identifier, stats_loc = self._get_summary_stats_loc(cell_key)
+        if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is True:
             logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
         prevalence = show_progress(self.normed(cell_idx, feat_idx).sum(axis=0),
                                    f"({self.name}) Calculating peak prevalence across cells", self.nthreads)
-        group = self.z.create_group(stats_loc, overwrite=True)
-        g = create_zarr_dataset(group, 'prevalence', (50000,), float, prevalence.shape)
-        g[:] = prevalence
+        self.z.create_group(stats_loc, overwrite=True)
+        self.feats.mount_location(self.z[stats_loc], identifier)
+        self.feats.insert('prevalence', prevalence.astype(float), overwrite=True, location=identifier)
         self.z[stats_loc].attrs['subset_hash'] = self._create_subset_hash(cell_idx, feat_idx)
+        self.feats.unmount_location(identifier)
         return None
 
     def mark_prevalent_peaks(self, cell_key: str, top_n: int, prevalence_key_name: str) -> None:
-        self.set_feature_stats(cell_key)
         if top_n >= self.feats.N:
             raise ValueError(f"ERROR: n_top should be less than total number of features ({self.feats.N})]")
         if type(top_n) != int:
             raise TypeError("ERROR: n_top must a positive integer value")
-        stats_loc = f"summary_stats_{cell_key}"
-
-        self.feats.insert('prevalence', self.z[stats_loc + '/prevalence'], key='I', overwrite=True)
-        idx = pd.Series(self.feats.fetch_all('prevalence')).sort_values(ascending=False)[:top_n].index
+        self.set_feature_stats(cell_key)
+        identifier = self._load_stats_loc(cell_key)
+        col_renamer = lambda x: f"{identifier}_{x}"
+        idx = pd.Series(self.feats.fetch_all(col_renamer('prevalence'))).sort_values(ascending=False)[:top_n].index
         prevalence_key_name = cell_key + '__' + prevalence_key_name
         self.feats.insert(prevalence_key_name, self.feats.index_to_bool(idx), fill_value=False, overwrite=True)
         return None
