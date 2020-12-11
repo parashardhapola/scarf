@@ -25,7 +25,7 @@ def find_markers_by_rank(assay: Assay, group_key: str, cell_key: str,
 
     """
 
-    @jit()
+    @jit(nopython=True)
     def calc_mean_rank(v):
         r = np.ones(n_groups)
         for x in range(n_groups):

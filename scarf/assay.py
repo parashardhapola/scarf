@@ -197,18 +197,12 @@ class Assay:
         if len(feature_ids) == 0:
             raise ValueError(f"ERROR: No feature ids found for any of the provided {len(feature_names)} features")
 
-        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, 'I')
-        stats_loc = self._validate_stats_loc(cell_key, cell_idx, feat_idx)
-        if stats_loc is None:
-            stats_loc = f"summary_stats_{cell_key}"
-            if 'avg' not in self.z[stats_loc]:
-                raise KeyError(f"ERROR: 'avg' key not found in {stats_loc}. The internal file structure might be "
-                               f"corrupted. Please call `set_feature_stats` with the same cell key first.")
-        else:
-            raise ValueError(f"ERROR: Feature statistics not set for this cell key: {cell_key}. Please call "
-                             f"`set_feature_stats` with the same cell key first.")
-        obs_avg = pd.Series(np.log(self.z[stats_loc]['avg'][:]), index=self.feats.fetch('ids'))
+        identifier = self._load_stats_loc(cell_key)
+        obs_avg = pd.Series(np.log(self.feats.fetch(f"{identifier}_avg")),
+                            index=self.feats.fetch('ids'))
+        feature_ids = list(set(feature_ids).intersection(obs_avg.index))
         control_ids = binned_sampling(obs_avg, feature_ids, ctrl_size, n_bins, rand_seed)
+        cell_idx, _ = self._get_cell_feat_idx(cell_key, 'I')
         return _calc_mean(feature_ids) - _calc_mean(control_ids)
 
     def __repr__(self):
