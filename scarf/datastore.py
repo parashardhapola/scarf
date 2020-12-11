@@ -2041,6 +2041,15 @@ class DataStore:
                 adata.layers[layer] = self._get_assay(assay_name).to_raw_sparse(cell_key)
         return adata
 
+    def show_zarr_tree(self) -> None:
+        """
+        Prints the Zarr hierarchy of the DataStore
+
+        Returns:
+
+        """
+        print(self.z.tree(expand=True))
+
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
