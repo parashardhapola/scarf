@@ -1999,7 +1999,7 @@ class DataStore:
         for g in tqdm(sorted(set(groups))):
             if g in null_vals:
                 continue
-            rep_indices = make_reps(groups[groups == g].index, pseudo_reps, random_seed)
+            rep_indices = make_reps(np.where(groups == g)[0], pseudo_reps, random_seed)
             for n, idx in enumerate(rep_indices):
                 vals[f"{g}_Rep{n + 1}"] = controlled_compute(assay.rawData[idx].sum(axis=0), self.nthreads)
         vals = pd.DataFrame(vals)
