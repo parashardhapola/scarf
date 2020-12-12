@@ -470,8 +470,9 @@ class DataStore:
 
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
-            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
-                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            cell_key: Cells to use for selection of most prevalent peaks. By default all cells with True value in
+                      'I' will be used. The provided value for `cell_key` should be a column in cell metadata table
+                       with boolean values.
             top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
                    for `min_var` parameter. (Default: 500)
             prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
@@ -493,29 +494,29 @@ class DataStore:
                           ann_metric=None, ann_efc=None, ann_ef=None, ann_m=None,
                           rand_state=None, k=None, n_centroids=None, local_connectivity=None, bandwidth=None) -> tuple:
         """
-        This function allows determination of values for the paramters of `make_graph` function. This function harbours
+        This function allows determination of values for the parameters of `make_graph` function. This function harbours
         the default values for each parameter.  If parameter value is None, then before choosing the default, it tries
         to use the values from latest iteration of the step within the same hierarchy tree.
         Find details for parameters in the `make_graph` method
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            log_transform:
-            renormalize_subset:
-            reduction_method:
-            dims:
-            pca_cell_key:
-            ann_metric:
-            ann_efc:
-            ann_ef:
-            ann_m:
-            rand_state:
-            k:
-            n_centroids:
-            local_connectivity:
-            bandwidth:
+            from_assay: Same as from_assay in make_graph
+            cell_key: Same as cell_key in make_graph
+            feat_key: Same as feat_key in make_graph
+            log_transform: Same as log_transform in make_graph
+            renormalize_subset: Same as renormalize_subset in make_graph
+            reduction_method: Same as reduction_method in make_graph
+            dims: Same as dims in make_graph
+            pca_cell_key: Same as pca_cell_key in make_graph
+            ann_metric: Same as ann_metric in make_graph
+            ann_efc: Same as ann_efc in make_graph
+            ann_ef: Same as ann_ef in make_graph
+            ann_m: Same as ann_m in make_graph
+            rand_state: Same as rand_state in make_graph
+            k: Same as k in make_graph
+            n_centroids: Same as n_centroids in make_graph
+            local_connectivity: Same as local_connectivity in make_graph
+            bandwidth: Same as bandwidth in make_graph
 
         Returns:
             Finalized values for the all the optional parameters in the same order
@@ -523,6 +524,18 @@ class DataStore:
         """
 
         def log_message(category, name, value, custom_msg=None):
+            """
+            Convenience function to log variable usage messages for make_graph
+
+            Args:
+                category:
+                name:
+                value:
+                custom_msg:
+
+            Returns:
+
+            """
             msg = f"No value provided for parameter `{name}`. "
             if category == 'default':
                 msg += f"Will use default value: {value}"
@@ -1548,19 +1561,24 @@ class DataStore:
             yield group, ms
 
     def get_target_classes(self, *, target_name: str, from_assay: str = None,
-                           cell_key: str = 'I', reference_class_group: str = None, threshold_fraction: int = 1,
-                           target_subset: list = None, na_val='NA') -> pd.Series:
+                           cell_key: str = 'I', reference_class_group: str = None, threshold_fraction: int = 0.5,
+                           target_subset: List[int] = None, na_val='NA') -> pd.Series:
         """
         Perform classification of target cells using a reference group
 
-        :param target_name:
-        :param from_assay:
-        :param cell_key:
-        :param reference_class_group:
-        :param threshold_fraction:
-        :param target_subset:
-        :param na_val:
-        :return:
+        :param target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
+        :param from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+        :param cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+        :param reference_class_group: Group/cluster identity of the reference cells. These are the target labels for the
+                                      classifier. The value here should be a column from cell metadata table. For
+                                      example, to use default clustering identity one could use `RNA_cluster`
+        :param threshold_fraction: This value (Default value: 0.5)
+        :param target_subset: Choose only a subset of target cells to be classified. The value should be a list of
+                              indices of the target cells (Default: None)
+        :param na_val: Value to be used if a cell is not classified to any of the `reference_class_group`
+                       (Default value: 'NA')
+
+        :return: A pandas Series containing predicted class for each cell in the projected sample (`target_name`).
         """
 
         if from_assay is None:
