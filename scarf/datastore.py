@@ -2070,28 +2070,39 @@ class DataStore:
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
-                         fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
-                         sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
-                         max_points: int = 10000, show_on_single_row: bool = True):
+                         fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10.0,
+                         sup_title: str = None, sup_title_size: float = 12.0, scatter_size: float = 1.0,
+                         max_points: int = 10000, show_on_single_row: bool = True) -> None:
         """
+        Makes violin plots of the distribution of values present in cell metadata. This method is designed to
+        distribution of nCounts, nFeatures, percentMito and percentRibo cell attrbutes.
 
         Args:
-            from_assay:
-            cols:
-            cell_key:
-            group_key:
-            color:
-            cmap:
-            fig_size:
-            label_size:
-            title_size:
-            sup_title:
-            sup_title_size:
-            scatter_size:
-            max_points:
-            show_on_single_row:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cols: Column names from cell metadata table to be used for plotting. Be default, nCounts, nFeatures,
+                  percentMito and percentRibo columns are chosen.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used for plotting.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            group_key: A column name from cell metadata table that indicates how cells should be grouped. This can be
+                       any column that has either boolean or categorical values. By default, no grouping will be
+                       performed (Default value: None)
+            color: Face color of the violin plots. The value can be valid matplotlib named colour. This is used only
+                   when there is a single group. (Default value: 'steelblue')
+            cmap: A matplotlib colormap to be used to color different groups. (Default value: 'tab20')
+            fig_size: A tuple of figure width and figure height (Default value:  Automatically determined by `plot_qc`)
+            label_size: The font size of y-axis labels (Default value: 10.0)
+            title_size: The font size of title. Median value is printed as title of each violin plot
+                        (Default value: 10.0)
+            sup_title: The title for complete figure panel (Default value: 12.0 )
+            sup_title_size: The font size of title for complete figure panel (Default value: 12.0 )
+            scatter_size: Size of each point in the violin plot (Default value: 1.0)
+            max_points: Maximum number of points to display over violin plot. Random uniform sampling will be performed
+                        to bring down the number of datapoints to this value. This doesnot effect the violing plot.
+                        (Default value: 10000)
+            show_on_single_row: Show all subplots in a singel row. It might be useful to set this to False if you have
+                                too many groups wihtin each subplot (Default value: True)
 
-        Returns:
+        Returns: None
 
         """
 
@@ -2111,7 +2122,7 @@ class DataStore:
                 else:
                     logger.warning(f"{i} not found in cell metadata")
         else:
-            cols = ['nCounts', 'nFeatures', 'percentRibo', 'percentMito']
+            cols = ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']
             cols = [f"{from_assay}_{x}" for x in cols]
             plot_cols = [x for x in cols if x in self.cells.columns]
 
@@ -2134,12 +2145,16 @@ class DataStore:
 
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
         """
+        This convenience function allows fetching values for cells from either cell metadata table or values of a given
+        given feature from normalized matrix.
 
         Args:
-            from_assay:
-            cell_key:
-            k:
-            clip_fraction:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            k: A cell metadata column or name of a feature.
+            clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
+                            (Default value: 0 )
 
         Returns:
 
@@ -2156,6 +2171,8 @@ class DataStore:
             vals = controlled_compute(assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads).astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
+        if clip_fraction < 0 or clip_fraction > 1:
+            raise ValueError("ERROR: Value for `clip_fraction` parameter should be between 0 and 1")
         if clip_fraction > 0:
             if vals.dtype in [np.float_, np.uint64]:
                 min_v = np.percentile(vals, 100 * clip_fraction)
@@ -2186,54 +2203,50 @@ class DataStore:
         present to quickly render the plot and avoid over-plotting.
 
         Args:
-            from_assay (str, optional): [description]. Defaults to deafult_assy attribute.
-            cell_key (str, optional): [description]. Defaults to 'I'.
-            layout_key (str): [description].
-            color_by (str, optional): [description]. Defaults to None.
-            subselection_key (str, optional): [description]. Defaults to None.
-            size_vals ([type], optional): [description]. Defaults to None.
-            clip_fraction (float, optional): [description]. Defaults to 0.01.
-            width (float, optional): [description]. Defaults to 6.
-            height (float, optional): [description]. Defaults to 6.
-            default_color (str, optional): [description]. Defaults to 'steelblue'.
-            cmap ([type], optional): [description]. Defaults to None.
-            color_key (dict, optional): [description]. Defaults to None.
-            mask_values (list, optional): [description]. Defaults to None.
-            mask_name (str, optional): [description]. Defaults to 'NA'.
-            mask_color (str, optional): [description]. Defaults to 'k'.
-            point_size (float, optional): [description]. Defaults to 10.
-            do_shading (bool, optional): [description]. Defaults to False.
-            shade_npixels (int, optional): [description]. Defaults to 1000.
-            shade_sampling (float, optional): [description]. Defaults to 0.1.
-            shade_min_alpha (int, optional): [description]. Defaults to 10.
-            spread_pixels (int, optional): [description]. Defaults to 1.
-            spread_threshold (float, optional): [description]. Defaults to 0.2.
-            ax_label_size (float, optional): [description]. Defaults to 12.
-            frame_offset (float, optional): [description]. Defaults to 0.05.
-            spine_width (float, optional): [description]. Defaults to 0.5.
-            spine_color (str, optional): [description]. Defaults to 'k'.
-            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
-            legend_ondata (bool, optional): [description]. Defaults to True.
-            legend_onside (bool, optional): [description]. Defaults to True.
-            legend_size (float, optional): [description]. Defaults to 12.
-            legends_per_col (int, optional): [description]. Defaults to 20.
-            marker_scale (float, optional): [description]. Defaults to 70.
-            lspacing (float, optional): [description]. Defaults to 0.1.
-            cspacing (float, optional): [description]. Defaults to 1.
-            savename (str, optional): [description]. Defaults to None.
-            save_dpi (int, optional): [description]. Defaults to 300.
-            ax ([type], optional): [description]. Defaults to None.
-            fig ([type], optional): [description]. Defaults to None.
-            force_ints_as_cats (bool, optional): [description]. Defaults to True.
-            scatter_kwargs (dict, optional): [description]. Defaults to None.
-
-        Raises:
-            ValueError: [description]
-            ValueError: [description]
-            ValueError: [description]
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            layout_key: A prefix to cell metadata columns that contain
+            color_by:
+            subselection_key:
+            size_vals:
+            clip_fraction:
+            width:
+            height:
+            default_color:
+            cmap:
+            color_key:
+            mask_values:
+            mask_name:
+            mask_color:
+            point_size:
+            do_shading:
+            shade_npixels:
+            shade_sampling:
+            shade_min_alpha:
+            spread_pixels:
+            spread_threshold:
+            ax_label_size:
+            frame_offset:
+            spine_width:
+            spine_color:
+            displayed_sides:
+            legend_ondata:
+            legend_onside:
+            legend_size:
+            legends_per_col:
+            marker_scale:
+            lspacing:
+            cspacing:
+            savename:
+            save_dpi:
+            ax:
+            fig:
+            force_ints_as_cats:
+            scatter_kwargs:
 
         Returns:
-            [type]: [description]
+
         """
         
         # TODO: add support for subplots
