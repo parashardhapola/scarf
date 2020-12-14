@@ -263,7 +263,7 @@ def _scatter_label_axis(df, ax, fs: float, fo: float):
 
 
 def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize: float,
-             n_per_col: int, scale: float, ls: float, cs: float) -> None:
+                     n_per_col: int, scale: float, ls: float, cs: float) -> None:
         from matplotlib.colors import Normalize
         from matplotlib.colorbar import ColorbarBase
 
@@ -281,7 +281,9 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                     ax.scatter([float(centers[i][x])], [float(centers[i][y])],
                                c=ck[i], label=i, alpha=1, s=0.01)
             if onside:
-                n_cols = max(1, int(v.nunique() / n_per_col))
+                n_cols = v.nunique() // n_per_col
+                if v.nunique() % n_per_col > 0:
+                    n_cols += 1
                 ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
                           markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
