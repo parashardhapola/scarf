@@ -2206,24 +2206,44 @@ class DataStore:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
                       The values in the chosen column should be boolean (Default value: 'I')
-            layout_key: A prefix to cell metadata columns that contain
-            color_by:
-            subselection_key:
-            size_vals:
-            clip_fraction:
-            width:
-            height:
-            default_color:
-            cmap:
-            color_key:
-            mask_values:
-            mask_name:
-            mask_color:
-            point_size:
-            do_shading:
-            shade_npixels:
-            shade_sampling:
-            shade_min_alpha:
+            layout_key: A prefix to cell metadata columns that contains the coordinates for the 2D layout of the cells.
+                        For example, 'RNA_UMAP' or 'RNA_tSNE'
+            color_by: One of the columns of the metadata table or a feature names (for example gene, GATA2).
+                      (Default: None)
+            subselection_key: A column from cell metadata table to be used to show only a subselection of cells. This
+                              key can be used to hide certain cells from a 2D layout. (Default value: None)
+            size_vals: An array of values to be used to set sizes of each cell's datapoint in the layout.
+                       By default all cells are of same size determined by `point_size` parameter.
+                       Has no effect if `do_shading` is True (Default value: None)
+            clip_fraction: Same as `clip_fraction` parameter of 'get_cell_vals' method. This value is multiplied by 100
+                           and the percentiles are soft-clipped from either end. (Default value: 0)
+            width: Figure width (Default value: 6)
+            height: Figure height (Default value: 6)
+            default_color: A default color for the cells. (Default value: steelblue)
+            cmap: A matplotlib colourmap to be used to colour categorical or continuous values plotted on the cells.
+                  (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
+            color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
+                       dictionary should be the category label as present in the `color_by` column and values should be
+                        valid matplotlib colour names or hex codes of colours. (Default value: None)
+            mask_values: These can a subset of categorical variables that are present in `color_by` which you would like
+                         to mask away. These values would be combined under a same label (`mask_name`) and will be given
+                         same colour (`mask_color`)
+            mask_name: Label to replace the masked value labels. (Default value : None)
+            mask_color: Color to be used for masked values. This should be a valid matplotlib named colour or a hexcode
+                        of a colour. (Default value: 'k')
+            point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
+                        `do_shading` is True. (Default value: 10)
+            do_shading: Sets shading mode on/off. If shading mode is off (default) then matplotlib's scatter function is
+                        is used otherwise a rasterized image is generated using datashader library. Turn this on if you
+                        have more than 100K cells to improve render time and also to avoid issues with overplotting.
+                        (Default value: False)
+            shade_npixels: Number of pixels to rasterize (for both heoght and width). This controls the resolution of
+                           the figure. Adjust this according to the size of the image you want to generate.
+                            (Default value: 1000)
+            shade_sampling: Specifies the smallest allowed sampling interval along the x and y axis. Larger values will
+                            lead loss of resolution (Default value: 0.1)
+            shade_min_alpha: Value between 0 - 255 representing the alpha value to use for  colormapped pixels that
+                             contain the data
             spread_pixels:
             spread_threshold:
             ax_label_size:
