@@ -1566,21 +1566,22 @@ class DataStore:
         """
         Perform classification of target cells using a reference group
 
-        :param target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
-        :param from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-        :param cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-        :param reference_class_group: Group/cluster identity of the reference cells. These are the target labels for the
-                                      classifier. The value here should be a column from cell metadata table. For
-                                      example, to use default clustering identity one could use `RNA_cluster`
-        :param threshold_fraction: This value (Default value: 0.5)
-        :param target_subset: Choose only a subset of target cells to be classified. The value should be a list of
-                              indices of the target cells (Default: None)
-        :param na_val: Value to be used if a cell is not classified to any of the `reference_class_group`
-                       (Default value: 'NA')
+        Args:
+            target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            reference_class_group: Group/cluster identity of the reference cells. These are the target labels for the
+                                   classifier. The value here should be a column from cell metadata table. For
+                                   example, to use default clustering identity one could use `RNA_cluster`
+            threshold_fraction: This value (Default value: 0.5)
+            target_subset: Choose only a subset of target cells to be classified. The value should be a list of
+                           indices of the target cells (Default: None)
+            na_val: Value to be used if a cell is not classified to any of the `reference_class_group`
+                    (Default value: 'NA')
 
-        :return: A pandas Series containing predicted class for each cell in the projected sample (`target_name`).
+        Returns: A pandas Series containing predicted class for each cell in the projected sample (`target_name`).
+
         """
-
         if from_assay is None:
             from_assay = self._defaultAssay
         store_loc = f"{from_assay}/projections/{target_name}"
@@ -2201,6 +2202,8 @@ class DataStore:
         the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
         rasterized image is `do_shading` is True. This can be useful when large number of cells are
         present to quickly render the plot and avoid over-plotting.
+        The description of shading parameters has mostly been copied from the Datashader API that can be found here:
+        http://holoviews.org/_modules/holoviews/operation/datashader.html
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2237,33 +2240,47 @@ class DataStore:
                         is used otherwise a rasterized image is generated using datashader library. Turn this on if you
                         have more than 100K cells to improve render time and also to avoid issues with overplotting.
                         (Default value: False)
-            shade_npixels: Number of pixels to rasterize (for both heoght and width). This controls the resolution of
+            shade_npixels: Number of pixels to rasterize (for both height and width). This controls the resolution of
                            the figure. Adjust this according to the size of the image you want to generate.
                             (Default value: 1000)
             shade_sampling: Specifies the smallest allowed sampling interval along the x and y axis. Larger values will
                             lead loss of resolution (Default value: 0.1)
-            shade_min_alpha: Value between 0 - 255 representing the alpha value to use for  colormapped pixels that
-                             contain the data
-            spread_pixels:
-            spread_threshold:
-            ax_label_size:
-            frame_offset:
-            spine_width:
-            spine_color:
-            displayed_sides:
-            legend_ondata:
-            legend_onside:
-            legend_size:
-            legends_per_col:
-            marker_scale:
-            lspacing:
-            cspacing:
-            savename:
-            save_dpi:
-            ax:
-            fig:
-            force_ints_as_cats:
-            scatter_kwargs:
+            shade_min_alpha: The minimum alpha value to use for non-empty pixels when doing colormapping, in [0, 255].
+                             Use a higher value to avoid undersaturation, i.e. poorly visible low-value datapoints, at
+                             the expense of the overall dynamic range. (Default value: 10)
+            spread_pixels: Maximum number of pixels to spread on all sides (Default value: 1)
+            spread_threshold:  When spreading, determines how far to spread. Spreading starts at 1 pixel, and stops
+                               when the fraction of adjacent non-empty pixels reaches this threshold. Higher values
+                               give more spreading, up to the `spread_pixels` allowed. (Default value: 0.2)
+            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
+            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
+            spine_width: Line width of the displayed spines (Default value: 0.5)
+            spine_color: Colour of the displayed spines.  (Default value: 'k')
+            displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
+                             tuple. The options are: top, bottom, left and right. (Default value: ('bottom', 'left) )
+            legend_ondata: Whether to show category labels on the data (scatter points). The position of the label is
+                           the centroid of the corresponding values. Has no effect if `color_by` has continuous values.
+                           (Default value: True)
+            legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
+            legend_size: Font size of the legend text. (Default value: 12)
+            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
+                             legend columns will be drawn (Default value: 20)
+            marker_scale: The relative size of legend markers compared with the originally drawn ones.
+                          (Default value: 70)
+            lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
+            cspacing: The spacing between columns. Measured in font-size units. (Default value: 1)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
+            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+                created axes. It is ignored if `do_shading` is set to True. (Default value: None)
+            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values. It is
+                 ignored if `do_shading` is set to True. (Default value: None)
+            force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
+                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                are chosen and how legends are rendered. Set this to False if you are large number of
+                                unique integer entries (Default: True)
+            scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
 
         Returns:
 
@@ -2326,49 +2343,67 @@ class DataStore:
                             ax=None, fig=None, force_ints_as_cats: bool = True,  scatter_kwargs: dict = None,
                             shuffle_zorder: bool = True):
         """
-        [summary]
+        This function helps plotting the reference and target cells the coordinates for which were obtained from
+        either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
+        but rather in the projections slot of the Zarr hierarchy, this function is needed to correctly fetch the values
+        for reference and target cells. Additionally this function provides a way to colour target cells by bringing in
+        external annotations for those cells.
 
         Args:
-            target_name (str): [description]
-            from_assay (str, optional): [description]. Defaults to None.
-            cell_key (str, optional): [description]. Defaults to 'I'.
-            layout_key (str, optional): [description]. Defaults to 'UMAP'.
-            show_target_only (bool, optional): [description]. Defaults to False.
-            ref_name (str, optional): [description]. Defaults to 'reference'.
-            target_groups (list, optional): [description]. Defaults to None.
-            width (float, optional): [description]. Defaults to 6.
-            height (float, optional): [description]. Defaults to 6.
-            cmap ([type], optional): [description]. Defaults to None.
-            color_key (dict, optional): [description]. Defaults to None.
-            mask_color (str, optional): [description]. Defaults to 'k'.
-            point_size (float, optional): [description]. Defaults to 10.
-            ax_label_size (float, optional): [description]. Defaults to 12.
-            frame_offset (float, optional): [description]. Defaults to 0.05.
-            spine_width (float, optional): [description]. Defaults to 0.5.
-            spine_color (str, optional): [description]. Defaults to 'k'.
-            displayed_sides (tuple, optional): [description]. Defaults to ('bottom', 'left').
-            legend_ondata (bool, optional): [description]. Defaults to True.
-            legend_onside (bool, optional): [description]. Defaults to True.
-            legend_size (float, optional): [description]. Defaults to 12.
-            legends_per_col (int, optional): [description]. Defaults to 20.
-            marker_scale (float, optional): [description]. Defaults to 70.
-            lspacing (float, optional): [description]. Defaults to 0.1.
-            cspacing (float, optional): [description]. Defaults to 1.
-            savename (str, optional): [description]. Defaults to None.
-            save_dpi (int, optional): [description]. Defaults to 300.
-            ax ([type], optional): [description]. Defaults to None.
-            fig ([type], optional): [description]. Defaults to None.
-            force_ints_as_cats (bool, optional): [description]. Defaults to True.
-            scatter_kwargs (dict, optional): [description]. Defaults to None.
-            shuffle_zorder (bool, optional): [description]. Defaults to True.
-
-        Raises:
-            KeyError: [description]
-            ValueError: [description]
-            ValueError: [description]
+            target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      Should be same as the one that was used in one of the `run_mapping` calls fo the given assay.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            layout_key: Should be same as the parameter value for `label` in `run_unified_umap` or `run_unified_tsne`
+                        (Default value: 'UMAP')
+            show_target_only: If True then the reference cells are not shown (Default value: False)
+            ref_name: A label for reference cells to be used in the legend. (Default value: 'reference')
+            target_groups: Categorical values to be used to colourmap target cells. (Default value: None)
+            width: Figure width (Default value: 6)
+            height: Figure height (Default value: 6)
+            cmap: A matplotlib colourmap to be used to colour categorical or continuous values plotted on the cells.
+                  (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
+            color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
+                       dictionary should be the category label as present in the `color_by` column and values should be
+                        valid matplotlib colour names or hex codes of colours. (Default value: None)
+            mask_color: Color to be used for masked values. This should be a valid matplotlib named colour or a hexcode
+                        of a colour. (Default value: 'k')
+            point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
+                        `do_shading` is True. (Default value: 10)
+            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
+            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
+            spine_width: Line width of the displayed spines (Default value: 0.5)
+            spine_color: Colour of the displayed spines.  (Default value: 'k')
+            displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
+                             tuple. The options are: top, bottom, left and right. (Default value: ('bottom', 'left) )
+            legend_ondata: Whether to show category labels on the data (scatter points). The position of the label is
+                           the centroid of the corresponding values.
+                           (Default value: True)
+            legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
+            legend_size: Font size of the legend text. (Default value: 12)
+            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
+                             legend columns will be drawn (Default value: 20)
+            marker_scale: The relative size of legend markers compared with the originally drawn ones.
+                          (Default value: 70)
+            lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
+            cspacing: The spacing between columns. Measured in font-size units. (Default value: 1)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
+            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+                created axes. (Default value: None)
+            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values.
+                 (Default value: None)
+            force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
+                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                are chosen and how legends are rendered. Set this to False if you are large number of
+                                unique integer entries (Default: True)
+            scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
+            shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
 
         Returns:
-            [type]: [description]
+
         """
 
         from .plots import plot_scatter
@@ -2385,7 +2420,7 @@ class DataStore:
             if color_key is not None:
                 if ref_name not in color_key or target_name not in color_key:
                     raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
-                                   f"'{target_name}' which are values for paramters `ref_name` and "
+                                   f"'{target_name}' which are values for parameters `ref_name` and "
                                    f"`target_name` respectively.")
             else:
                 color_key = {ref_name: 'coral', target_name: 'k'}
