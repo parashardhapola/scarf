@@ -48,4 +48,9 @@ datasets = {
          'url': 'https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM2560nnn/GSM2560249/suppl/'
                 'GSM2560249_barcodes.tsv.gz'},
     ],
+    'tenx_10k_pbmc_atacseq': [
+        {'name': 'data.h5',
+         'url': 'http://cf.10xgenomics.com/samples/cell-atac/1.2.0/atac_pbmc_10k_nextgem'
+                '/atac_pbmc_10k_nextgem_filtered_peak_bc_matrix.h5'}
+    ],
 }
