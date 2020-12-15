@@ -126,12 +126,12 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
     return None
 
 
-def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
-                           node_power: float = 1.2, root_size: float = 100, non_leaf_size: float = 10,
-                           do_label: bool = True, fontsize=10, node_color: str = None,
+def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5, vert_gap: float = 0.2,
+                           min_node_size: float = 10, node_power: float = 1.2, root_size: float = 100,
+                           non_leaf_size: float = 10, do_label: bool = True, fontsize=10, node_color: str = None,
                            root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', edgecolors: str = 'k',
                            edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
-                           savename: str = None, save_format: str = 'svg',  fig_dpi=300):
+                           savename: str = None, save_dpi=300):
     import networkx as nx
     import EoN
     import math
@@ -155,7 +155,7 @@ def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5
             else:
                 nc.append(non_leaf_color)
                 ns.append(non_leaf_size)
-    pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor)
+    pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor, vert_gap=vert_gap)
     new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -167,7 +167,7 @@ def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5
                 v = sg.nodes[i]['partition_id']
                 ax.text(new_pos[i][0], new_pos[i][1], v, fontsize=fontsize)
     if savename:
-        plt.savefig(savename+'.'+save_format, dpi=fig_dpi)
+        plt.savefig(savename, dpi=save_dpi)
     if show_fig:
         plt.show()
     else:
