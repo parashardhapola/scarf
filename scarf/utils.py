@@ -88,7 +88,7 @@ def handle_download(url, out_fn):
     logger.info(f"Download finished! File saved here: {out_fn}")
 
 
-def fetch_dataset(dataset_id: str, save_path: str = None) -> None:
+def fetch_dataset(dataset_id: str, save_path: str = '.') -> None:
     """
     Downloads datasets from online repositories and saves them in as-is format
 
