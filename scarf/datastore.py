@@ -1306,11 +1306,11 @@ class DataStore:
         hierarchy under `markers` group.
 
         Args:
-            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
             group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
-            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
-                        the cell metadata table.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table. (Default value: 'I')
             threshold: This value dictates how specific the feature value has to be in a group before it is considered a
                        marker for that group. The value has to be greater than 0 but less than or equal to 1
                        (Default value: 0.25)
@@ -2532,20 +2532,28 @@ class DataStore:
                                edgewidth=edgewidth, alpha=alpha, figsize=figsize, ax=ax, show_fig=show_fig,
                                savename=savename, save_dpi=save_dpi)
 
-    def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
+    def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
                             **heatmap_kwargs):
         """
+        Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
+        Z-scores are calculated for each marker gene before plotting them. The groups are subjected to hierarchical
+        clustering to bring groups with similar expression pattern in proximity.
 
         Args:
-            from_assay:
-            group_key:
-            subset_key:
-            topn:
-            log_transform:
-            vmin:
-            vmax:
-            **heatmap_kwargs:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
+                       how the cells will be grouped. This value should be same as used for `run_marker_search`
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                     Should be same as the one that was used in one of the `run_marker_search` calls for the given
+                     assay. The values in the chosen column should be boolean (Default value: 'I')
+            topn: Number of markers to be displayed for each group in `group_key` column. The markers are sorted based
+                  on obtained scores by `run_marker_search`. (Default value: 5)
+            log_transform: Whether to log-transform the values before displaying them in the heatmap.
+                           (Default value: True)
+            vmin: z-scores lower than this value are ceiled to this value. (Default value: -1)
+            vmax: z-scores higher than this value are floored to this value. (Default value: 2)
+            **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap
 
         Returns:
 
@@ -2555,28 +2563,28 @@ class DataStore:
         assay = self._get_assay(from_assay)
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key`")
-        if subset_key is None:
-            subset_key = 'I'
+        if cell_key is None:
+            cell_key = 'I'
         if 'markers' not in self.z[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
-        slot_name = f"{subset_key}__{group_key}"
+        slot_name = f"{cell_key}__{group_key}"
         if slot_name not in self.z[assay.name]['markers']:
             raise KeyError(f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key` and "
-                           f"{subset_key} as `subset_key`")
+                           f"{cell_key} as `cell_key`")
         g = self.z[assay.name]['markers'][slot_name]
         goi = []
         for i in g.keys():
             if 'names' in g[i]:
                 goi.extend(g[i]['names'][:][:topn])
         goi = np.array(sorted(set(goi)))
-        cell_idx = np.array(assay.cells.active_index(subset_key))
+        cell_idx = np.array(assay.cells.active_index(cell_key))
         feat_idx = np.array(assay.feats.get_index_by(goi, 'ids'))
         feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
         nc = normed_data.chunks[0]
         # FIXME: avoid conversion to dask dataframe here
         normed_data = normed_data.to_dask_dataframe()
-        groups = daskarr.from_array(assay.cells.fetch(group_key, subset_key), chunks=nc).to_dask_dataframe()
+        groups = daskarr.from_array(assay.cells.fetch(group_key, cell_key), chunks=nc).to_dask_dataframe()
         df = controlled_compute(normed_data.groupby(groups).mean(), 4)
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
         df.columns = goi[feat_argsort]
