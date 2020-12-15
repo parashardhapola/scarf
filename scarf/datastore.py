@@ -2353,7 +2353,7 @@ class DataStore:
             target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      Should be same as the one that was used in one of the `run_mapping` calls fo the given assay.
+                      Should be same as the one that was used in one of the `run_mapping` calls for the given assay.
                       The values in the chosen column should be boolean (Default value: 'I')
             layout_key: Should be same as the parameter value for `label` in `run_unified_umap` or `run_unified_tsne`
                         (Default value: 'UMAP')
@@ -2449,40 +2449,64 @@ class DataStore:
                             lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                          cluster_key: str = None, width: float = 2, lvr_factor: float = 0.5, min_node_size: float = 10,
-                          node_power: float = 1.2, root_size: float = 100, non_leaf_size: float = 10,
-                          do_label: bool = True, fontsize=10, node_color: str = None,
-                          root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', edgecolors: str = 'k',
-                          edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
-                          savename: str = None, save_format: str = 'svg', fig_dpi=300):
+                          cluster_key: str = None, width: float = 1, lvr_factor: float = 0.5, vert_gap: float = 0.2,
+                          min_node_size: float = 10, node_power: float = 1.2, root_size: float = 100,
+                          non_leaf_size: float = 10, do_label: bool = True, fontsize: float = 10,
+                          node_color: str = None, root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20',
+                          edgecolors: str = 'k', edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5),
+                          ax=None, show_fig: bool = True, savename: str = None, save_dpi=300):
         """
+        Plots a hierarchical layout of the clusters detected using `run_clustering` in a binary tree form. This helps
+        evaluate the relationships between the clusters. This figure can complement embeddings likes tSNE where
+        global distances are not preserved. The plot shows clusters as coloured nodes and the nodes are sized
+        proportionally to the number of cells within the clusters. Root and branching nodes are shown to visually
+        track the branching pattern of the tree. This figure is not scaled, i.e. the distances between the nodes are
+        meaningless and only the branching pattern of the nodes must be evaluated.
+
+        https://epidemicsonnetworks.readthedocs.io/en/latest/functions/EoN.hierarchy_pos.html
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            cluster_key:
-            width:
-            lvr_factor:
-            min_node_size:
-            node_power:
-            root_size:
-            non_leaf_size:
-            do_label:
-            fontsize:
-            node_color:
-            root_color:
-            non_leaf_color:
-            cmap:
-            edgecolors:
-            edgewidth:
-            alpha:
-            figsize:
-            ax:
-            show_fig:
-            savename:
-            save_format:
-            fig_dpi:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      Should be same as the one that was used in one of the `run_clustering` calls for the given assay.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in `run_clustering` calls for the
+                      given assay. By default the latest used feature for the given assay will be used.
+            cluster_key: Should be one of the columns from cell metadata table that contains the output of
+                         `run_clustering` method. For example if chosen assay is `RNA` and default value for `label`
+                        parameter was used in `run_clustering` then `cluster_key` can be 'RNA_cluster'
+            width: Horizontal space allocated for the branches. Larger values may disrupt the hierarchical layout of
+                   the cells (Default value: 1)
+            lvr_factor: Leaf vs root factor. Controls the relative nodes horizontal spacing between as one moves up or
+                        down the tree. Higher values will cause terminal nodes to be more spread out at cost of nodes
+                        closer to the root and vice versa. (Default value: 0.5)
+            vert_gap: Gap between levels of hierarchy (Default value: 0.2)
+            min_node_size: Minimum size of a node (Default value: 10 )
+            node_power: The number of cells within each cluster is raised to this value to scale up the node size.
+                        (Default value: 1.2)
+            root_size: Size of the root node (Default value: 100)
+            non_leaf_size: Size of the nodes that represent branch points in the tree (Default value: 10)
+            do_label: Whether to show the cluster labels on the cluster nodes (Default value: True)
+            fontsize: Font size of cluster labels. Only used when `do_label` is True (Default value: 10)
+            node_color: A fixed colour for each cluster node. Acceptable values are  Matplotlib named colours or
+                       hexcodes for colours. By default each cluster node is coloured based on a colormap.
+                       (Default value : None)
+            root_color: Colour for root node. Acceptable values are  Matplotlib named colours or hexcodes for colours.
+                        (Default value: '#C0C0C0')
+            non_leaf_color: Colour for branchpoint nodes. Acceptable values are  Matplotlib named colours or hexcodes
+                            for colours. (Default value: 'k')
+            cmap: A colormap to be used to colour cluster nodes. Should be one of Matplotlib colourmaps.
+                  (Default value: 'tab20')
+            edgecolors: Edge colour of circles representing nodes in the hierarchical tree (Default value: 'k)
+            edgewidth:  Line width of the edges circles representing nodes in the hierarchical tree  (Default value: 1)
+            alpha: Alpha level (Opacity) of the displayed nodes in the figure. (Default value: 0.7)
+            figsize: A tuple with describing figure width and height (Default value: (5, 5))
+            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+                created axes. (Default value: None)
+            show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
 
         Returns:
 
@@ -2501,12 +2525,12 @@ class DataStore:
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
         subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
-        plot_cluster_hierarchy(subgraph, clusts, width=width, lvr_factor=lvr_factor, min_node_size=min_node_size,
-                               node_power=node_power, root_size=root_size, non_leaf_size=non_leaf_size,
-                               do_label=do_label, fontsize=fontsize, node_color=node_color,
+        plot_cluster_hierarchy(subgraph, clusts, width=width, lvr_factor=lvr_factor, vert_gap=vert_gap,
+                               min_node_size=min_node_size, node_power=node_power, root_size=root_size,
+                               non_leaf_size=non_leaf_size, do_label=do_label, fontsize=fontsize, node_color=node_color,
                                root_color=root_color, non_leaf_color=non_leaf_color, cmap=cmap, edgecolors=edgecolors,
                                edgewidth=edgewidth, alpha=alpha, figsize=figsize, ax=ax, show_fig=show_fig,
-                               savename=savename, save_format=save_format, fig_dpi=fig_dpi)
+                               savename=savename, save_dpi=save_dpi)
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, subset_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
@@ -2550,6 +2574,7 @@ class DataStore:
         feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(cell_idx=cell_idx, feat_idx=feat_idx[feat_argsort], log_transform=log_transform)
         nc = normed_data.chunks[0]
+        # FIXME: avoid conversion to dask dataframe here
         normed_data = normed_data.to_dask_dataframe()
         groups = daskarr.from_array(assay.cells.fetch(group_key, subset_key), chunks=nc).to_dask_dataframe()
         df = controlled_compute(normed_data.groupby(groups).mean(), 4)
