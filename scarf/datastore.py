@@ -59,7 +59,10 @@ class DataStore:
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
 
         self._fn: str = zarr_loc
-        self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
+        if type(self._fn) != str:
+            self.z: zarr.hierarchy = zarr.group(self._fn)
+        else:
+            self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()
@@ -68,6 +71,8 @@ class DataStore:
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
+        self._cachedGraph = None
+        self._cachedGraphLoc = None
 
     def _load_cells(self) -> MetaData:
         """
@@ -726,7 +731,8 @@ class DataStore:
                    rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
-                   update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
+                   update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True,
+                   cache_graph: bool = True):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
 
@@ -819,6 +825,8 @@ class DataStore:
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
+            cache_graph: Whether to save graph as an attribute of DataStore class. This can help prevent IO for graph
+                         loading. (Default value: True)
 
         Returns:
             Either None or `AnnStream` object
@@ -925,6 +933,9 @@ class DataStore:
         self.z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
         self.z[ann_loc].attrs['latest_knn'] = knn_loc
         self.z[knn_loc].attrs['latest_graph'] = graph_loc
+        if cache_graph:
+            _, self._cachedGraph = self._store_to_sparse(graph_loc)
+            self._cachedGraphLoc = graph_loc
         if return_ann_object:
             return ann_obj
         return None
@@ -948,6 +959,25 @@ class DataStore:
         knn_loc = self.z[ann_loc].attrs['latest_knn']
         return self.z[knn_loc].attrs['latest_graph']
 
+    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
+        """
+
+        """
+        from scipy.sparse import coo_matrix, csr_matrix
+
+        store = self.z[graph_loc]
+        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
+        n_cells = knn_loc['indices'].shape[0]
+        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
+        if sparse_format == 'csr':
+            return n_cells, csr_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+        else:
+            return n_cells, coo_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+
     def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                    min_edge_weight: float, symmetric: bool, upper_only: bool):
         """
@@ -970,17 +1000,18 @@ class DataStore:
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        if graph_loc not in self.z:
-            raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
-                             f"Run `make_graph` for assay {from_assay}")
-        if graph_format not in ['coo', 'csr']:
-            raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
-        store = self.z[graph_loc]
-        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-        n_cells = knn_loc['indices'].shape[0]
-        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
-        graph = coo_matrix((store['weights'][:], (store['edges'][:, 0], store['edges'][:, 1])),
-                           shape=(n_cells, n_cells))
+        if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None and \
+                min_edge_weight == -1 and symmetric is False:
+            logger.info(f"Loading cached graph from: {self._cachedGraphLoc}")
+            return self._cachedGraph
+        else:
+            if graph_loc not in self.z:
+                raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
+                                 f"Run `make_graph` for assay {from_assay}")
+            if graph_format not in ['coo', 'csr']:
+                raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
+            n_cells, graph = self._store_to_sparse(graph_loc, 'coo')
+
         if symmetric:
             graph = (graph + graph.T) / 2
             if upper_only:
@@ -1158,8 +1189,10 @@ class DataStore:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self.get_latest_feat_key(from_assay)
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
-                                symmetric_graph, graph_upper_only)
+        # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
+                                symmetric_graph, graph_upper_only).tocoo()
+
         if ini_embed is None:
             ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
@@ -1174,7 +1207,7 @@ class DataStore:
 
     def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                               resolution: int = 1, min_edge_weight: float = -1,
-                              symmetric_graph: bool = True, graph_upper_only: bool = True,
+                              symmetric_graph: bool = False, graph_upper_only: bool = False,
                               label: str = 'leiden_cluster', random_seed: int = 4444) -> None:
         """
         Executes Leiden graph clustering algorithm on the cell-neighbourhood graph and saves cluster identities in the
@@ -1224,8 +1257,8 @@ class DataStore:
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                       n_clusters: int = None, min_edge_weight: float = -1, symmetric_graph: bool = True,
-                       graph_upper_only: bool = True, balanced_cut: bool = False,
+                       n_clusters: int = None, min_edge_weight: float = -1, symmetric_graph: bool = False,
+                       graph_upper_only: bool = False, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
                        force_recalc: bool = False, label: str = 'cluster') -> None:
         """
@@ -1648,7 +1681,7 @@ class DataStore:
         """
         # TODO:  allow loading multiple targets
 
-        from scipy.sparse import coo_matrix, csr_matrix
+        from scipy.sparse import csr_matrix, coo_matrix
 
         if from_assay is None:
             from_assay = self._defaultAssay
