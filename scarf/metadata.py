@@ -318,7 +318,8 @@ class MetaData:
 
         """
         a = np.zeros(self.N, dtype=bool)
-        a[idx] = True
+        if len(idx) > 0:
+            a[idx] = True
         if invert:
             a = ~a
         return a
