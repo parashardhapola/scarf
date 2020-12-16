@@ -39,9 +39,9 @@ class AnnStream:
     def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
                  dims: int, loadings: np.ndarray, use_for_pca: np.ndarray,
                  mu: np.ndarray, sigma: np.ndarray,
-                 ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int, ann_idx_loc,
-                 nthreads: int, rand_state: int, do_ann_fit: bool, do_kmeans_fit: bool,
-                 scale_features: bool):
+                 ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int,
+                 nthreads: int, rand_state: int, do_kmeans_fit: bool,
+                 scale_features: bool, ann_idx):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -68,7 +68,7 @@ class AnnStream:
                 self.mu, self.sigma = mu, sigma
                 if self.loadings is None or len(self.loadings) == 0:
                     if len(use_for_pca) != self.nCells:
-                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells", flush=True)
+                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells")
                     self._fit_pca(scale_features, use_for_pca)
                 if scale_features:
                     self.reducer = lambda x: self.transform_pca(self.transform_z(x))
@@ -80,7 +80,12 @@ class AnnStream:
                 self.reducer = self.transform_lsi
             else:
                 raise ValueError("ERROR: Unknown reduction method")
-            self.annIdx = self._fit_ann(ann_idx_loc, do_ann_fit)
+            if ann_idx is None:
+                self.annIdx = self._fit_ann()
+            else:
+                self.annIdx = ann_idx
+                self.annIdx.set_ef(self.annEf)
+                self.annIdx.set_num_threads(1)
             self.kmeans = self._fit_kmeans(do_kmeans_fit)
 
     def _handle_batch_size(self):
@@ -174,20 +179,16 @@ class AnnStream:
             self._lsiModel.add_documents(vec_to_bow(i))
         self.loadings = self._lsiModel.get_topics().T
 
-    def _fit_ann(self, ann_idx_loc, do_ann_fit):
+    def _fit_ann(self):
         import hnswlib
 
         ann_idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
-        if do_ann_fit is True:
-            ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
-                               M=self.annM, random_seed=self.randState)
-        else:
-            ann_idx.load_index(ann_idx_loc)
+        ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
+                           M=self.annM, random_seed=self.randState)
         ann_idx.set_ef(self.annEf)
         ann_idx.set_num_threads(1)
-        if do_ann_fit is True:
-            for i in self.iter_blocks(msg='Fitting ANN'):
-                ann_idx.add_items(self.reducer(i))
+        for i in self.iter_blocks(msg='Fitting ANN'):
+            ann_idx.add_items(self.reducer(i))
         return ann_idx
 
     def _fit_kmeans(self, do_ann_fit):
