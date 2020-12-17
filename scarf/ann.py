@@ -68,7 +68,7 @@ class AnnStream:
                 self.mu, self.sigma = mu, sigma
                 if self.loadings is None or len(self.loadings) == 0:
                     if len(use_for_pca) != self.nCells:
-                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells", flush=True)
+                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells")
                     self._fit_pca(scale_features, use_for_pca)
                 if scale_features:
                     self.reducer = lambda x: self.transform_pca(self.transform_z(x))
