@@ -3,7 +3,6 @@ import dask.array as daskarr
 import zarr
 from .metadata import MetaData
 from .utils import show_progress, controlled_compute
-from .writers import create_zarr_dataset
 from scipy.sparse import csr_matrix, vstack
 from .logging_utils import logger
 from typing import Tuple, List
@@ -12,7 +11,7 @@ import pandas as pd
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
 
 
-def norm_dummy(assay, counts: daskarr) -> daskarr:
+def norm_dummy(_, counts: daskarr) -> daskarr:
     return counts
 
 
@@ -24,7 +23,7 @@ def norm_lib_size_log(assay, counts: daskarr) -> daskarr:
     return np.log1p(assay.sf * counts / assay.scalar.reshape(-1, 1))
 
 
-def norm_clr(assay, counts: daskarr) -> daskarr:
+def norm_clr(_, counts: daskarr) -> daskarr:
     f = np.exp(np.log1p(counts).sum(axis=0) / len(counts))
     return np.log1p(counts / f)
 
@@ -101,7 +100,7 @@ class Assay:
         if total.sum() == 0:
             logger.warning(f"Percentage feature {name} not added because not detected in any cell")
             return None
-        self.cells.insert(name, 100 * total / self.cells.fetch_all(self.name+'_nCounts'), overwrite=True)
+        self.cells.insert(name, 100 * total / self.cells.fetch_all(self.name + '_nCounts'), overwrite=True)
 
     def _verify_keys(self, cell_key: str, feat_key: str) -> None:
         if cell_key not in self.cells.columns or self.cells.get_dtype(cell_key) != bool:
@@ -237,7 +236,7 @@ class RNAassay(Assay):
             a[a == 0] = 1
             self.scalar = a
         else:
-            self.scalar = self.cells.fetch_all(self.name+'_nCounts')[cell_idx]
+            self.scalar = self.cells.fetch_all(self.name + '_nCounts')[cell_idx]
         val = self.normMethod(self, counts)
         self.normMethod = norm_method_cache
         return val
@@ -306,7 +305,6 @@ class RNAassay(Assay):
         """
         self.set_feature_stats(cell_key, min_cells)
         identifier = self._load_stats_loc(cell_key)
-        # noinspection SpellCheckingInspection
         col_renamer = lambda x: f"{identifier}_{x}"
         c_var_col = f"c_var__{n_bins}__{lowess_frac}"
         if col_renamer(c_var_col) in self.feats.columns:
@@ -320,6 +318,15 @@ class RNAassay(Assay):
             c_var = self.feats.remove_trend(col_renamer('avg'), col_renamer('sigmas'),
                                             n_bins, lowess_frac)
             self.feats.insert(c_var_col, c_var, overwrite=True, location=identifier)
+
+        if max_mean != np.Inf:
+            max_mean = 2 ** max_mean
+        if max_var != np.Inf:
+            max_var = 2 ** max_var
+        if min_mean != -np.Inf:
+            min_mean = 2 ** min_mean
+        if min_var != -np.Inf:
+            min_var = 2 ** min_var
 
         bl = self.feats.index_to_bool(self.feats.get_index_by(self.feats.grep(blacklist), 'names'), invert=True)
         if min_var == -np.Inf:
@@ -365,7 +372,7 @@ class ATACassay(Assay):
         if feat_idx is None:
             feat_idx = self.feats.active_index('I')
         counts = self.rawData[:, feat_idx][cell_idx, :]
-        self.n_term_per_doc = self.cells.fetch_all(self.name+'_nFeatures')[cell_idx]
+        self.n_term_per_doc = self.cells.fetch_all(self.name + '_nFeatures')[cell_idx]
         self.n_docs = len(cell_idx)
         self.n_docs_per_term = self.feats.fetch_all('nCells')[feat_idx]
         return self.normMethod(self, counts)

@@ -884,17 +884,22 @@ class DataStore:
                 sigma = clean_array(show_progress(data.std(axis=0),
                                                   'Calculating std. dev. of norm. data', self.nthreads), 1)
         if ann_loc in self.z:
-            fit_ann = False
+            import hnswlib
+
+            ann_idx = hnswlib.Index(space=ann_metric, dim=dims)
+            ann_idx.load_index(ann_idx_loc)
             logger.info(f"Using existing ANN index")
+        else:
+            ann_idx = None
         if kmeans_loc in self.z:
             fit_kmeans = False
             logger.info(f"using existing kmeans cluster centers")
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, use_for_pca=use_for_pca,
                             mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
-                            ann_ef=ann_ef, ann_m=ann_m, ann_idx_loc=ann_idx_loc, nthreads=self.nthreads,
-                            rand_state=rand_state, do_ann_fit=fit_ann, do_kmeans_fit=fit_kmeans,
-                            scale_features=feat_scaling)
+                            ann_ef=ann_ef, ann_m=ann_m, nthreads=self.nthreads,
+                            rand_state=rand_state, do_kmeans_fit=fit_kmeans,
+                            scale_features=feat_scaling, ann_idx=ann_idx)
 
         if loadings is None:
             logger.info(f"Saving loadings to {reduction_loc}")
