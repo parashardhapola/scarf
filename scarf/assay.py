@@ -64,7 +64,7 @@ class Assay:
 
         sm = None
         for i in tqdm(self.rawData[self.cells.active_index(cell_key), :].blocks, total=self.rawData.numblocks[0],
-                      desc="INFO: Converting raw data from {self.name} assay into CSR format"):
+                      desc=f"INFO: Converting raw data from {self.name} assay into CSR format"):
             s = csr_matrix(controlled_compute(i, self.nthreads))
             if sm is None:
                 sm = s
