@@ -73,6 +73,10 @@ class DataStore:
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
         self._cachedGraph = None
         self._cachedGraphLoc = None
+        self._cachedMagicOperator = None
+        self._cachedMagicOperatorLoc = None
+        # TODO: Implement _caches to hold are cached data
+        # TODO: Implement _defaults to hold default parameters for methods
 
     def _load_cells(self) -> MetaData:
         """
@@ -868,7 +872,6 @@ class DataStore:
                                           log_transform, renormalize_subset, update_feat_key)
         loadings = None
         fit_kmeans = True
-        fit_ann = True
         mu, sigma = np.ndarray([]), np.ndarray([])
         use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
         if reduction_loc in self.z:
@@ -2219,6 +2222,76 @@ class DataStore:
                 vals[vals < min_v] = min_v
                 vals[vals > max_v] = max_v
         return vals
+
+    def get_imputed(self, *, from_assay: str = None, cell_key: str = 'I',  feature_name: str = None,
+                    feat_key: str = None, t: int = 2, cache_operator: bool = True) -> np.ndarray:
+        """
+
+        Args:
+            from_assay:
+            cell_key:
+            feature_name:
+            feat_key:
+            t:
+            cache_operator:
+
+        Returns:
+
+        """
+        from scipy.sparse import csr_matrix, coo_matrix
+
+        def calc_diff_operator(g: csr_matrix, to_power: int) -> coo_matrix:
+            d = np.ravel(g.sum(axis=1))
+            d[d != 0] = 1 / d[d != 0]
+            n = g.shape[0]
+            d = csr_matrix((d, (range(n), range(n))), shape=[n, n])
+            return d.dot(g).__pow__(to_power).tocoo()
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if feat_key is None:
+            feat_key = self.get_latest_feat_key(from_assay)
+        if feature_name is None:
+            raise ValueError("ERROR: Please provide name for the feature to be imputed. It can, for example, "
+                             "be a gene name ")
+        data = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=feature_name)
+
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        magic_loc = f"{graph_loc}/magic_{t}"
+        if magic_loc in self.z:
+            logger.info("Using existing MAGIC diffusion operator")
+            if self._cachedMagicOperatorLoc == magic_loc:
+                diff_op = self._cachedMagicOperator
+            else:
+                knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
+                n_cells = knn_loc['indices'].shape[0]
+                store = self.z[magic_loc]
+                diff_op = coo_matrix((store['data'][:],
+                                     (store['row'][:], store['col'][:])),
+                                     shape=(n_cells, n_cells))
+                if cache_operator:
+                    self._cachedMagicOperator = diff_op
+                    self._cachedMagicOperatorLoc = magic_loc
+                else:
+                    self._cachedMagicOperator = None
+                    self._cachedMagicOperatorLoc = None
+        else:
+            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
+                                    False, False)
+            diff_op = calc_diff_operator(graph, t)
+            shape = diff_op.data.shape
+            store = self.z.create_group(magic_loc, overwrite=True)
+            for i,j in zip(['row', 'col', 'data'], ['uint32', 'uint32', 'float32']):
+                zg = create_zarr_dataset(store, i, (1000000,), j, shape)
+                zg[:] = diff_op.__getattribute__(i)
+            self.z[graph_loc].attrs['latest_magic'] = magic_loc
+            if cache_operator:
+                self._cachedMagicOperator = diff_op
+                self._cachedMagicOperatorLoc = magic_loc
+            else:
+                self._cachedMagicOperator = None
+                self._cachedMagicOperatorLoc = None
+        return diff_op.dot(data)
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I',
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
