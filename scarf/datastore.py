@@ -2020,6 +2020,28 @@ class DataStore:
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
+    def run_pseudotime_scoring(self, r: dict = None) -> None:
+        """
+        Calculate differentiation potential of cells.
+        This function is a reimplementation of population balance analysis
+        (PBA) approach published in Weinreb et al. 2017, PNAS.
+        This function computes the random walk normalized Laplacian matrix
+        of the reference graph, L_rw = I-A/D and then calculates a
+        Moore-Penrose pseudoinverse of L_rw. The method takes an optional
+        but recommended parameter 'r' which represents the relative rates of
+        proliferation and loss in different gene expression states (R). If
+        not provided then a vector with ones is used. The differentiation
+        potential is the dot product of inverse L_rw and R
+        Args:
+            r: Same as parameter R in the above said reference. Should be a
+               dictionary with each reference cell name as a key and its
+               corresponding R values.
+
+        Returns:
+
+        """
+        pass
+
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
         """
@@ -2139,10 +2161,10 @@ class DataStore:
             sup_title_size: The font size of title for complete figure panel (Default value: 12.0 )
             scatter_size: Size of each point in the violin plot (Default value: 1.0)
             max_points: Maximum number of points to display over violin plot. Random uniform sampling will be performed
-                        to bring down the number of datapoints to this value. This doesnot effect the violing plot.
+                        to bring down the number of datapoints to this value. This does not effect the violin plot.
                         (Default value: 10000)
-            show_on_single_row: Show all subplots in a singel row. It might be useful to set this to False if you have
-                                too many groups wihtin each subplot (Default value: True)
+            show_on_single_row: Show all subplots in a single row. It might be useful to set this to False if you have
+                                too many groups within each subplot (Default value: True)
 
         Returns: None
 
@@ -2281,7 +2303,7 @@ class DataStore:
             diff_op = calc_diff_operator(graph, t)
             shape = diff_op.data.shape
             store = self.z.create_group(magic_loc, overwrite=True)
-            for i,j in zip(['row', 'col', 'data'], ['uint32', 'uint32', 'float32']):
+            for i, j in zip(['row', 'col', 'data'], ['uint32', 'uint32', 'float32']):
                 zg = create_zarr_dataset(store, i, (1000000,), j, shape)
                 zg[:] = diff_op.__getattribute__(i)
             self.z[graph_loc].attrs['latest_magic'] = magic_loc
