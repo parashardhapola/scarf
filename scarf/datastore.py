@@ -2250,14 +2250,18 @@ class DataStore:
         """
 
         Args:
-            from_assay:
-            cell_key:
-            feature_name:
-            feat_key:
-            t:
-            cache_operator:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feature_name: Name of the feature to be imputed
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            t: Same as the t parameter in MAGIC. Higher values lead to larger diffusion of values. Too large values
+               can slow down the algorithm and cause over-smoothening. (Default value: 2)
+            cache_operator: Whether to keep the diffusion operator in memory after the method returns. Can be useful
+                            to set to True if many features are to imputed in a batch but can lead to increased memory
+                            usage (Default value: True)
 
-        Returns:
+        Returns: An array of imputed values for the given feature
 
         """
         from scipy.sparse import csr_matrix, coo_matrix
