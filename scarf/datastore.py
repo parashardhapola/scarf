@@ -35,28 +35,10 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     return True
 
 
-class DataStore:
-    """
-    DataStore objects provide primary interface to interact with the data.
-
-    Args:
-        zarr_loc: Path to Zarr file created using one of writer functions of Scarf
-        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'
-        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                       when DataStore loads a Zarr file for the first time
-        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
-                               will be filtered out.
-        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                               less than this will be filtered out
-        mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
-        ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
-        nthreads: Number of maximum threads to use in all multi-threaded functions
-    """
-
-    def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
-                 min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
-                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
+class BaseDataStore:
+    def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
+                 min_features_per_cell: int, min_cells_per_feature: int,
+                 mito_pattern: str, ribo_pattern: str, nthreads: int):
 
         self._fn: str = zarr_loc
         if type(self._fn) != str:
@@ -287,7 +269,26 @@ class DataStore:
             ret_val = '_'.join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
-    def get_latest_feat_key(self, from_assay: str) -> str:
+    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
+        """
+
+        """
+        from scipy.sparse import coo_matrix, csr_matrix
+
+        store = self.z[graph_loc]
+        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
+        n_cells = knn_loc['indices'].shape[0]
+        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
+        if sparse_format == 'csr':
+            return n_cells, csr_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+        else:
+            return n_cells, coo_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+
+    def _get_latest_feat_key(self, from_assay: str) -> str:
         """
         Looks up the the value in assay level attributes for key 'latest_feat_key'
 
@@ -320,74 +321,65 @@ class DataStore:
         else:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
-    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int]) -> None:
+    def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
         """
-        Filter cells based on the cell metadata column values. Filtering triggers `update` method on  'I' column of
-        cell metadata which uses 'and' operation. This means that cells that are not within the filtering thresholds
-        will have value set as False in 'I' column of cell metadata table
+        This convenience function allows fetching values for cells from either cell metadata table or values of a given
+        given feature from normalized matrix.
 
         Args:
-            attrs: Names of columns to be used for filtering
-            lows: Lower bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
-            highs: Upper bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            k: A cell metadata column or name of a feature.
+            clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
+                            (Default value: 0 )
 
         Returns:
 
         """
-        for i, j, k in zip(attrs, lows, highs):
-            # Checking here to avoid hard error from metadata class
-            if i not in self.cells.columns:
-                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
-                continue
-            if j is None:
-                j = -np.Inf
-            if k is None:
-                k = np.Inf
-            x = self.cells.sift(i, j, k)
-            self.cells.update_key(x, key='I')
-            logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
+        cell_idx = self.cells.active_index(cell_key)
+        if k not in self.cells.columns:
+            assay = self._get_assay(from_assay)
+            feat_idx = assay.feats.get_index_by([k], 'names')
+            if len(feat_idx) == 0:
+                raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
+            else:
+                if len(feat_idx) > 1:
+                    logger.warning(f"Plotting mean of {len(feat_idx)} features because {k} is not unique.")
+            vals = controlled_compute(assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads).astype(np.float_)
+        else:
+            vals = self.cells.fetch(k, cell_key)
+        if clip_fraction < 0 or clip_fraction > 1:
+            raise ValueError("ERROR: Value for `clip_fraction` parameter should be between 0 and 1")
+        if clip_fraction > 0:
+            if vals.dtype in [np.float_, np.uint64]:
+                min_v = np.percentile(vals, 100 * clip_fraction)
+                max_v = np.percentile(vals, 100 - 100 * clip_fraction)
+                vals[vals < min_v] = min_v
+                vals[vals > max_v] = max_v
+        return vals
 
-    def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
-                          show_qc_plots: bool = True) -> None:
-        """
-        Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
-        determines the threshold values to be used for each column. For each cell metadata column, the function models a
-        normal distribution using the median value and std. dev. of the column and then determines the point estimates
-        of values at `min_p` and `max_p` fraction of densities.
+    def __repr__(self):
+        res = f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with" \
+              f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
+        res = res + f"\n\tCell metadata:"
+        tabs = '\t\t'
+        res += '\n' + tabs + ''.join(
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.columns, start=1)])
+        res = res.rstrip('\n\t')[:-2]
+        for i in self.assayNames:
+            assay = self._get_assay(i)
+            res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
+                   f"features and following metadata:"
+            res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
+                                          enumerate(assay.feats.columns, start=1)])
+            res = res.rstrip('\n\t')[:-2]
+        return res
 
-        Args:
-            attrs: column names to be used for filtering
-            min_p: fractional density point to be used for calculating lower bounds of threshold
-            max_p: fractional density point to be used for calculating lower bounds of threshold
-            show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
-                       not have an effect if `auto_filter` is False
 
-        Returns:
-
-        """
-        from scipy.stats import norm
-
-        if attrs is None:
-            attrs = []
-            for i in ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']:
-                i = f"{self._defaultAssay}_{i}"
-                if i in self.cells.columns:
-                    attrs.append(i)
-
-        attrs_used = []
-        for i in attrs:
-            if i not in self.cells.columns:
-                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
-                continue
-            a = self.cells.fetch_all(i)
-            dist = norm(np.median(a), np.std(a))
-            self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
-            attrs_used.append(i)
-
-        if show_qc_plots:
-            self.plot_cells_dists(cols=attrs_used, sup_title="Pre-filtering distribution")
-            self.plot_cells_dists(cols=attrs_used, cell_key='I', color='coral',
-                                  sup_title="Post-filtering distribution")
+class GraphDataStore(BaseDataStore):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
@@ -418,85 +410,6 @@ class DataStore:
                 logger.info("Using PCA for dimension reduction")
                 reduction_method = 'pca'
         return reduction_method
-
-    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = 'I', min_cells: int = None, top_n: int = 500,
-                  min_var: float = -np.Inf, max_var: float = np.Inf,
-                  min_mean: float = -np.Inf, max_mean: float = np.Inf,
-                  n_bins: int = 200, lowess_frac: float = 0.1,
-                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
-                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
-        """
-        Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
-        and is only applicable to RNAassay type of assays.
-
-        Args:
-            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
-            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
-                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
-            min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
-                       considered a candidate for HVG selection. Large values for this parameter might make it difficult
-                       to identify rare populations of cells. Very small values might lead to higher signal to noise
-                       ratio in the selected features. By default, a value is set assuming smallest population has no
-                       less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
-                       then `min-cells` will be set to 10.
-            top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
-                   for `min_var` parameter. (Default: 500)
-            min_var: Minimum variance threshold for HVG selection. (Default: -Infinity)
-            max_var: Maximum variance threshold for HVG selection. (Default: Infinity)
-            min_mean: Minimum mean value of expression threshold for HVG selection. (Default: -Infinity)
-            max_mean: Maximum mean value of expression threshold for HVG selection. (Default: Infinity)
-            n_bins: Number of bins into which the mean expression is binned. (Default: 200)
-            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
-                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
-                         (Default: 0.1)
-            blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
-                       as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
-                       HLA genes. (Default: "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST" )
-            show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
-            hvg_key_name: Base label for HVGs in the features metadata column. The value for
-                          'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
-            plot_kwargs: These named parameters are passed to plotting.plot_mean_var
-
-        Returns:
-
-        """
-
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        assay: RNAassay = self._get_assay(from_assay)
-        if type(assay) != RNAassay:
-            raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
-                            f"The provided assay is {type(assay)} type")
-        assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
-                        n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
-
-    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
-                             prevalence_key_name: str = 'prevalent_peaks') -> None:
-        """
-        Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
-        computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
-        as prevalent peaks.
-
-        Args:
-            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
-            cell_key: Cells to use for selection of most prevalent peaks. By default all cells with True value in
-                      'I' will be used. The provided value for `cell_key` should be a column in cell metadata table
-                       with boolean values.
-            top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
-                   for `min_var` parameter. (Default: 500)
-            prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
-                                'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
-
-        Returns:
-
-        """
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        assay: ATACassay = self._get_assay(from_assay)
-        if type(assay) != ATACassay:
-            raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
-                            f"The provided assay is {type(assay)} type")
-        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name)
 
     def _set_graph_params(self, from_assay, cell_key, feat_key, log_transform=None, renormalize_subset=None,
                           reduction_method='auto', dims=None, pca_cell_key=None,
@@ -729,6 +642,25 @@ class DataStore:
         return (log_transform, renormalize_subset, reduction_method, dims, pca_cell_key,
                 ann_metric, ann_efc, ann_ef, ann_m, rand_state, k, n_centroids, local_connectivity, bandwidth)
 
+    def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str) -> str:
+        """
+        Convenience function to identify location of latest graph in the Zarr hierarchy.
+
+        Args:
+            from_assay: Name of the assay
+            cell_key: Cell key used to create the graph
+            feat_key: Feature key used to create the graph
+
+        Returns:
+            Path of graph in the Zarr hierarchy
+
+        """
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
+        ann_loc = self.z[reduction_loc].attrs['latest_ann']
+        knn_loc = self.z[ann_loc].attrs['latest_knn']
+        return self.z[knn_loc].attrs['latest_graph']
+
     def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                    pca_cell_key: str = None, reduction_method: str = 'auto', dims: int = None, k: int = None,
                    ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
@@ -772,7 +704,7 @@ class DataStore:
         The most recent child of each hierarchy node is noted for quick retrieval and in cases where multiple child
         nodes exist. Parameters starting with `ann` are forwarded to HNSWlib. More details about these parameters can
         be found here: https://github.com/nmslib/hnswlib/blob/master/ALGO_PARAMS.md
-        
+
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
             cell_key: Cells to use for graph creation. By default all cells with True value in 'I' will be used.
@@ -948,44 +880,6 @@ class DataStore:
             return ann_obj
         return None
 
-    def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str) -> str:
-        """
-        Convenience function to identify location of latest graph in the Zarr hierarchy.
-
-        Args:
-            from_assay: Name of the assay
-            cell_key: Cell key used to create the graph
-            feat_key: Feature key used to create the graph
-
-        Returns:
-            Path of graph in the Zarr hierarchy
-
-        """
-        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
-        ann_loc = self.z[reduction_loc].attrs['latest_ann']
-        knn_loc = self.z[ann_loc].attrs['latest_knn']
-        return self.z[knn_loc].attrs['latest_graph']
-
-    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
-        """
-
-        """
-        from scipy.sparse import coo_matrix, csr_matrix
-
-        store = self.z[graph_loc]
-        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-        n_cells = knn_loc['indices'].shape[0]
-        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
-        if sparse_format == 'csr':
-            return n_cells, csr_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
-        else:
-            return n_cells, coo_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
-
     def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
                    min_edge_weight: float, symmetric: bool, upper_only: bool):
         """
@@ -1032,7 +926,7 @@ class DataStore:
         else:
             return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
-    def get_ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int) -> np.ndarray:
+    def _get_ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int) -> np.ndarray:
         """
         Runs PCA on kmeans cluster centers and ascribes the PC values to individual cells based on their cluster
         labels. This is used in `run_umap` and `run_tsne` for initial embedding of cells. Uses `rescale_array` to
@@ -1109,7 +1003,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
 
         uid = str(uuid4())
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
@@ -1120,7 +1014,7 @@ class DataStore:
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
         with open(ini_emb_fn, 'w') as h:
             if ini_embed is None:
-                ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, tsne_dims).flatten()
+                ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, tsne_dims).flatten()
             else:
                 if ini_embed.shape != (graph.shape[0], tsne_dims):
                     raise ValueError("ERROR: Provided initial embedding does not shape required shape: "
@@ -1196,13 +1090,13 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
         graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
                                 symmetric_graph, graph_upper_only).tocoo()
 
         if ini_embed is None:
-            ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
+            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
         t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, set_op_mix_ratio=set_op_mix_ratio,
@@ -1240,16 +1134,17 @@ class DataStore:
             # noinspection PyPackageRequirements
             import leidenalg
         except ImportError:
-            raise ImportError("ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
-                              "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
-                              "instead of Leiden clustering using `run_clustering` method")
+            raise ImportError(
+                "ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
+                "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
+                "instead of Leiden clustering using `run_clustering` method")
         # noinspection PyPackageRequirements
         import igraph  # python-igraph
 
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
 
         adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
                               symmetric_graph, graph_upper_only)
@@ -1258,7 +1153,8 @@ class DataStore:
         g.add_vertices(adj.shape[0])
         g.add_edges(list(zip(sources, targets)))
         g.es['weight'] = adj[sources, targets].A1
-        part = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition, resolution_parameter=resolution,
+        part = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition,
+                                        resolution_parameter=resolution,
                                         seed=random_seed)
         self.cells.insert(self._col_renamer(from_assay, cell_key, label),
                           np.array(part.membership) + 1, fill_value=-1, key=cell_key, overwrite=True)
@@ -1304,7 +1200,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         if balanced_cut is False:
             if n_clusters is None:
                 raise ValueError("ERROR: Please provide a value for n_clusters parameter. We are working on making "
@@ -1339,93 +1235,106 @@ class DataStore:
         self.cells.insert(self._col_renamer(from_assay, cell_key, label), labels,
                           fill_value=-1, key=cell_key, overwrite=True)
 
-    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
-                          threshold: float = 0.25, gene_batch_size: int = 50) -> None:
+    def get_imputed(self, *, from_assay: str = None, cell_key: str = 'I', feature_name: str = None,
+                    feat_key: str = None, t: int = 2, cache_operator: bool = True) -> np.ndarray:
         """
-        Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
-        for further details of how marker features for groups are identified. The results are saved into the Zarr
-        hierarchy under `markers` group.
-
-        Args:
-            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
-            group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
-                       how the cells will be grouped. Usually this would be a column denoting cell clusters.
-            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
-                        the cell metadata table. (Default value: 'I')
-            threshold: This value dictates how specific the feature value has to be in a group before it is considered a
-                       marker for that group. The value has to be greater than 0 but less than or equal to 1
-                       (Default value: 0.25)
-            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
-                             these number of cells at a time.
-        Returns:
-
-        """
-        from .markers import find_markers_by_rank
-
-        if group_key is None:
-            raise ValueError("ERROR: Please provide a value for `group_key`. This should be the name of a column from "
-                             "cell metadata object that has information on how cells should be grouped.")
-        if cell_key is None:
-            cell_key = 'I'
-        assay = self._get_assay(from_assay)
-        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size)
-        z = self.z[assay.name]
-        slot_name = f"{cell_key}__{group_key}"
-        if 'markers' not in z:
-            z.create_group('markers')
-        group = z['markers'].create_group(slot_name, overwrite=True)
-        for i in markers:
-            g = group.create_group(i)
-            vals = markers[i]
-            if len(vals) != 0:
-                create_zarr_obj_array(g, 'names', list(vals.index))
-                g_s = create_zarr_dataset(g, 'scores', (10000,), float, vals.values.shape)
-                g_s[:] = vals.values
-        return None
-
-    def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
-                    group_id: Union[str, int] = None) -> pd.DataFrame:
-        """
-        Returns a table of markers features obtained through `run_maker_search` for a given group. The table
-        contains names of marker features and feature ids are used as table index.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
-                        the cell metadata table.
-            group_key: Required parameter. This has to be a column name from cell metadata table.
-                       Usually this would be a column denoting cell clusters. Please use the same value as used
-                       when ran `run_marker_search`
-            group_id: This is one of the value in `group_key` column of cell metadata.
-                      Results are returned for this group
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feature_name: Name of the feature to be imputed
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            t: Same as the t parameter in MAGIC. Higher values lead to larger diffusion of values. Too large values
+               can slow down the algorithm and cause over-smoothening. (Default value: 2)
+            cache_operator: Whether to keep the diffusion operator in memory after the method returns. Can be useful
+                            to set to True if many features are to imputed in a batch but can lead to increased memory
+                            usage (Default value: True)
 
-        Returns:
-            Pandas dataframe with marker feature names and scores
+        Returns: An array of imputed values for the given feature
 
         """
+        from scipy.sparse import csr_matrix, coo_matrix
+
+        def calc_diff_operator(g: csr_matrix, to_power: int) -> coo_matrix:
+            d = np.ravel(g.sum(axis=1))
+            d[d != 0] = 1 / d[d != 0]
+            n = g.shape[0]
+            d = csr_matrix((d, (range(n), range(n))), shape=[n, n])
+            return d.dot(g).__pow__(to_power).tocoo()
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        if group_key is None:
-            raise ValueError(f"ERROR: Please provide a value for group_key. "
-                             f"This should be same as used for `run_marker_search`")
-        assay = self._get_assay(from_assay)
-        try:
-            g = assay.z['markers'][f"{cell_key}__{group_key}"]
-        except KeyError:
-            raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
-                           "`run_marker_search` method with same value of `cell_key` and `group_key`")
-        if group_id is None:
-            raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
-                             f"{list(g.keys())}")
-        df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
-                          index=['ids', 'score']).T.set_index('ids')
-        id_idx = assay.feats.get_index_by(df.index, 'ids')
-        if len(id_idx) != df.shape[0]:
-            logger.warning("Internal error in fetching names of the features IDs")
-            return df
-        df['names'] = assay.feats.fetch_all('names')[id_idx]
-        return df
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        if feature_name is None:
+            raise ValueError("ERROR: Please provide name for the feature to be imputed. It can, for example, "
+                             "be a gene name ")
+        data = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=feature_name)
+
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        magic_loc = f"{graph_loc}/magic_{t}"
+        if magic_loc in self.z:
+            logger.info("Using existing MAGIC diffusion operator")
+            if self._cachedMagicOperatorLoc == magic_loc:
+                diff_op = self._cachedMagicOperator
+            else:
+                knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
+                n_cells = knn_loc['indices'].shape[0]
+                store = self.z[magic_loc]
+                diff_op = coo_matrix((store['data'][:],
+                                      (store['row'][:], store['col'][:])),
+                                     shape=(n_cells, n_cells))
+                if cache_operator:
+                    self._cachedMagicOperator = diff_op
+                    self._cachedMagicOperatorLoc = magic_loc
+                else:
+                    self._cachedMagicOperator = None
+                    self._cachedMagicOperatorLoc = None
+        else:
+            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
+                                    False, False)
+            diff_op = calc_diff_operator(graph, t)
+            shape = diff_op.data.shape
+            store = self.z.create_group(magic_loc, overwrite=True)
+            for i, j in zip(['row', 'col', 'data'], ['uint32', 'uint32', 'float32']):
+                zg = create_zarr_dataset(store, i, (1000000,), j, shape)
+                zg[:] = diff_op.__getattribute__(i)
+            self.z[graph_loc].attrs['latest_magic'] = magic_loc
+            if cache_operator:
+                self._cachedMagicOperator = diff_op
+                self._cachedMagicOperatorLoc = magic_loc
+            else:
+                self._cachedMagicOperator = None
+                self._cachedMagicOperatorLoc = None
+        return diff_op.dot(data)
+
+    def run_pseudotime_scoring(self, r: dict = None) -> None:
+        """
+        Calculate differentiation potential of cells.
+        This function is a reimplementation of population balance analysis
+        (PBA) approach published in Weinreb et al. 2017, PNAS.
+        This function computes the random walk normalized Laplacian matrix
+        of the reference graph, L_rw = I-A/D and then calculates a
+        Moore-Penrose pseudoinverse of L_rw. The method takes an optional
+        but recommended parameter 'r' which represents the relative rates of
+        proliferation and loss in different gene expression states (R). If
+        not provided then a vector with ones is used. The differentiation
+        potential is the dot product of inverse L_rw and R
+        Args:
+            r: Same as parameter R in the above said reference. Should be a
+               dictionary with each reference cell name as a key and its
+               corresponding R values.
+
+        Returns:
+
+        """
+        pass
+
+
+class MappingDatastore(GraphDataStore):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def run_mapping(self, *, target_assay: Assay, target_name: str, target_feat_key: str, from_assay: str = None,
                     cell_key: str = 'I', feat_key: str = None, save_k: int = 3, batch_size: int = 1000,
@@ -1474,7 +1383,7 @@ class DataStore:
 
         source_assay = self._get_assay(from_assay)
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         from_assay = source_assay.name
         if type(target_assay) != type(source_assay):
             raise TypeError(f"ERROR: Source assay ({type(source_assay)}) and target assay "
@@ -1579,8 +1488,9 @@ class DataStore:
 
         if target_groups is not None:
             if len(target_groups) != n_cells:
-                raise ValueError(f"ERROR: Length of target_groups {len(target_groups)} not same as number of target "
-                                 f"cells in the projection {n_cells}")
+                raise ValueError(
+                    f"ERROR: Length of target_groups {len(target_groups)} not same as number of target "
+                    f"cells in the projection {n_cells}")
             groups = pd.Series(target_groups)
         else:
             groups = pd.Series(np.zeros(n_cells))
@@ -1658,13 +1568,13 @@ class DataStore:
             temp = na_val
             s = weights[n, :-1].sum()
             for i, j in wd.items():
-                if j/s > threshold_fraction:
+                if j / s > threshold_fraction:
                     if temp == na_val:
                         temp = i
                     else:
                         temp = na_val
                         break
-            preds.append(temp)        
+            preds.append(temp)
         return pd.Series(preds)
 
     def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
@@ -1694,7 +1604,7 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         if sparse_format not in ['csr', 'coo']:
             raise KeyError("ERROR: `sparse_format` should be either 'coo' or 'csr'")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -1717,10 +1627,12 @@ class DataStore:
         elif sparse_format == 'csr':
             return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
 
-    def run_unified_umap(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_unified_umap(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
+                         feat_key: str = None,
                          use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
                          fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
-                         repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
+                         repulsion_strength: float = 1.0, initial_alpha: float = 1.0,
+                         negative_sample_rate: float = 5,
                          random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
         """
         Calculates the UMAP embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
@@ -1775,10 +1687,10 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         graph = self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
         if ini_embed_with == 'kmeans':
-            ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
+            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
@@ -1842,10 +1754,10 @@ class DataStore:
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
 
         if ini_embed_with == 'kmeans':
-            ini_embed = self.get_ini_embed(from_assay, cell_key, feat_key, 2)
+            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
             x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
             y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
@@ -1879,82 +1791,386 @@ class DataStore:
             Path.unlink(fn)
         return None
 
-    def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
-                             cluster_key: str = None, density_depth: int = 2,
-                             sampling_rate: float = 0.1, min_cells_per_group: int = 3,
-                             min_sr: float = 0.01, seed_reward: float = 3.0, non_seed_reward: float = 0,
-                             save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
-                             save_seeds_key: str = 'sketch_seeds', rand_state: int = 4466,
-                             return_edges: bool = False) -> Union[None, List]:
+    def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
+                            layout_key: str = 'UMAP', show_target_only: bool = False,
+                            ref_name: str = 'reference', target_groups: list = None,
+                            width: float = 6, height: float = 6, cmap=None, color_key: dict = None,
+                            mask_color: str = 'k', point_size: float = 10, ax_label_size: float = 12,
+                            frame_offset: float = 0.05, spine_width: float = 0.5, spine_color: str = 'k',
+                            displayed_sides: tuple = ('bottom', 'left'),
+                            legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
+                            legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
+                            cspacing: float = 1, savename: str = None, save_dpi: int = 300,
+                            ax=None, fig=None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None,
+                            shuffle_zorder: bool = True):
         """
-        Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
-        that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
-        large number of homogeneous and even sized cluster improves sub-sampling results.
+        This function helps plotting the reference and target cells the coordinates for which were obtained from
+        either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
+        but rather in the projections slot of the Zarr hierarchy, this function is needed to correctly fetch the values
+        for reference and target cells. Additionally this function provides a way to colour target cells by bringing in
+        external annotations for those cells.
 
         Args:
+            target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
-                       used feature for the given assay will be used.
-            cluster_key: Name of the column in cell metadata table where cluster information is stored.
-            density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
-            sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
-                           than this value depending on the neighbourhood density of the cells.
-                           Should be greater than 0 and less than 1. (Default value: 0.1)
-            min_cells_per_group: Minimum number of cells to sample from each group. (Default value: 3)
-            min_sr: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
-                    (Default value: 0.01)
-            seed_reward: Reward/prize value for seed nodes. (Default value: 3)
-            non_seed_reward: Reward/prize for non-seed nodes. (Default value: 0.1)
-            save_sampling_key: base label for marking the cells that were sampled into a cell metadata column
-                               (Default value: 'sketched')
-            save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
-                              (Default value: 'cell_density')
-            save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
-                            metadata column (Default value: 'sketch_seeds')
-            rand_state: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
-            return_edges: If True, then steiner nodes and edges are returned. (Default value: False)
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      Should be same as the one that was used in one of the `run_mapping` calls for the given assay.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            layout_key: Should be same as the parameter value for `label` in `run_unified_umap` or `run_unified_tsne`
+                        (Default value: 'UMAP')
+            show_target_only: If True then the reference cells are not shown (Default value: False)
+            ref_name: A label for reference cells to be used in the legend. (Default value: 'reference')
+            target_groups: Categorical values to be used to colourmap target cells. (Default value: None)
+            width: Figure width (Default value: 6)
+            height: Figure height (Default value: 6)
+            cmap: A matplotlib colourmap to be used to colour categorical or continuous values plotted on the cells.
+                  (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
+            color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
+                       dictionary should be the category label as present in the `color_by` column and values should be
+                        valid matplotlib colour names or hex codes of colours. (Default value: None)
+            mask_color: Color to be used for masked values. This should be a valid matplotlib named colour or a hexcode
+                        of a colour. (Default value: 'k')
+            point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
+                        `do_shading` is True. (Default value: 10)
+            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
+            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
+            spine_width: Line width of the displayed spines (Default value: 0.5)
+            spine_color: Colour of the displayed spines.  (Default value: 'k')
+            displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
+                             tuple. The options are: top, bottom, left and right. (Default value: ('bottom', 'left) )
+            legend_ondata: Whether to show category labels on the data (scatter points). The position of the label is
+                           the centroid of the corresponding values.
+                           (Default value: True)
+            legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
+            legend_size: Font size of the legend text. (Default value: 12)
+            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
+                             legend columns will be drawn (Default value: 20)
+            marker_scale: The relative size of legend markers compared with the originally drawn ones.
+                          (Default value: 70)
+            lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
+            cspacing: The spacing between columns. Measured in font-size units. (Default value: 1)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
+            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+                created axes. (Default value: None)
+            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values.
+                 (Default value: None)
+            force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
+                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                are chosen and how legends are rendered. Set this to False if you are large number of
+                                unique integer entries (Default: True)
+            scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
+            shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
+
         Returns:
 
         """
-        try:
-            from topacedo import TopacedoSampler
-        except ImportError:
-            logger.error("Could not find topacedo package")
-            return None
+
+        from .plots import plot_scatter
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
-        if cluster_key is None:
-            raise ValueError("ERROR: Please provide a value for cluster key")
-        clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1, False, False)
-        if len(clusters) != graph.shape[0]:
-            raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
-                             f"{graph.shape[0]} cells.")
-        sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
-                                  min_sr, seed_reward, non_seed_reward, 1, rand_state)
-        nodes, edges = sampler.run()
-        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
-        a[nodes] = True
-        key = self._col_renamer(from_assay, cell_key, save_sampling_key)
-        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
-        logger.info(f"Sketched cells saved under column '{key}'")
+        t = self.z[from_assay].projections[target_name][layout_key][:]
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
+        t_n_cells = t.shape[0] - ref_n_cells
+        x = t[:, 0]
+        y = t[:, 1]
+        df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
+        if target_groups is None:
+            if color_key is not None:
+                if ref_name not in color_key or target_name not in color_key:
+                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
+                                   f"'{target_name}' which are values for parameters `ref_name` and "
+                                   f"`target_name` respectively.")
+            else:
+                color_key = {ref_name: 'coral', target_name: 'k'}
+            target_groups = np.array([target_name for _ in range(t_n_cells)]).astype(object)
+            mask_values = None
+            mask_name = 'NA'
+        else:
+            color_key = None
+            mask_values = [ref_name]
+            mask_name = ref_name
+            target_groups = np.array(target_groups).astype(object)
+        if len(target_groups) != t_n_cells:
+            raise ValueError("ERROR: Number of values in `target_groups` should be same as no. of target cells")
+        # Turning array to object forces np.NaN to 'nan'
+        if any(target_groups == 'nan'):
+            raise ValueError("ERROR: `target_groups` cannot contain nan values")
+        df['vc'] = np.hstack([[ref_name for _ in range(ref_n_cells)], target_groups]).astype(object)
+        if show_target_only:
+            df = df[ref_n_cells:]
+        if shuffle_zorder:
+            df = df.sample(frac=1)
+        return plot_scatter(df, ax, fig, width, height, mask_color, cmap, color_key,
+                            mask_values, mask_name, mask_color, point_size,
+                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                            legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
-        key = self._col_renamer(from_assay, cell_key, save_density_key)
-        self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
-        logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
 
-        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
-        a[sampler.seeds] = True
-        key = self._col_renamer(from_assay, cell_key, save_seeds_key)
-        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
-        logger.info(f"Seed cells saved under column: '{key}'")
+class DataStore(MappingDatastore):
+    """
+    DataStore objects provide primary interface to interact with the data.
 
-        if return_edges:
-            return edges
+    Args:
+        zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                       when DataStore loads a Zarr file for the first time
+        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                               will be filtered out.
+        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                               less than this will be filtered out
+        mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
+        ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+        nthreads: Number of maximum threads to use in all multi-threaded functions
+    """
+
+    def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
+                 min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
+                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
+        super().__init__(zarr_loc=zarr_loc, assay_types=assay_types, default_assay=default_assay,
+                         min_features_per_cell=min_features_per_cell, min_cells_per_feature=min_cells_per_feature,
+                         mito_pattern=mito_pattern, ribo_pattern=ribo_pattern, nthreads=nthreads)
+
+    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int]) -> None:
+        """
+        Filter cells based on the cell metadata column values. Filtering triggers `update` method on  'I' column of
+        cell metadata which uses 'and' operation. This means that cells that are not within the filtering thresholds
+        will have value set as False in 'I' column of cell metadata table
+
+        Args:
+            attrs: Names of columns to be used for filtering
+            lows: Lower bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+            highs: Upper bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+
+        Returns:
+
+        """
+        for i, j, k in zip(attrs, lows, highs):
+            # Checking here to avoid hard error from metadata class
+            if i not in self.cells.columns:
+                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
+                continue
+            if j is None:
+                j = -np.Inf
+            if k is None:
+                k = np.Inf
+            x = self.cells.sift(i, j, k)
+            self.cells.update_key(x, key='I')
+            logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
+
+    def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
+                          show_qc_plots: bool = True) -> None:
+        """
+        Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
+        determines the threshold values to be used for each column. For each cell metadata column, the function models a
+        normal distribution using the median value and std. dev. of the column and then determines the point estimates
+        of values at `min_p` and `max_p` fraction of densities.
+
+        Args:
+            attrs: column names to be used for filtering
+            min_p: fractional density point to be used for calculating lower bounds of threshold
+            max_p: fractional density point to be used for calculating lower bounds of threshold
+            show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
+                       not have an effect if `auto_filter` is False
+
+        Returns:
+
+        """
+        from scipy.stats import norm
+
+        if attrs is None:
+            attrs = []
+            for i in ['nCounts', 'nFeatures', 'percentMito', 'percentRibo']:
+                i = f"{self._defaultAssay}_{i}"
+                if i in self.cells.columns:
+                    attrs.append(i)
+
+        attrs_used = []
+        for i in attrs:
+            if i not in self.cells.columns:
+                logger.warning(f"{i} not found in cell metadata. Will ignore {i} for filtering")
+                continue
+            a = self.cells.fetch_all(i)
+            dist = norm(np.median(a), np.std(a))
+            self.filter_cells(attrs=[i], lows=[dist.ppf(min_p)], highs=[dist.ppf(max_p)])
+            attrs_used.append(i)
+
+        if show_qc_plots:
+            self.plot_cells_dists(cols=attrs_used, sup_title="Pre-filtering distribution")
+            self.plot_cells_dists(cols=attrs_used, cell_key='I', color='coral',
+                                  sup_title="Post-filtering distribution")
+
+    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = 'I', min_cells: int = None, top_n: int = 500,
+                  min_var: float = -np.Inf, max_var: float = np.Inf,
+                  min_mean: float = -np.Inf, max_mean: float = np.Inf,
+                  n_bins: int = 200, lowess_frac: float = 0.1,
+                  blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
+                  show_plot: bool = True, hvg_key_name: str = 'hvgs', **plot_kwargs) -> None:
+        """
+        Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
+        and is only applicable to RNAassay type of assays.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+                      The provided value for `cell_key` should be a column in cell metadata table with boolean values.
+            min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. Large values for this parameter might make it difficult
+                       to identify rare populations of cells. Very small values might lead to higher signal to noise
+                       ratio in the selected features. By default, a value is set assuming smallest population has no
+                       less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
+                       then `min-cells` will be set to 10.
+            top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            min_var: Minimum variance threshold for HVG selection. (Default: -Infinity)
+            max_var: Maximum variance threshold for HVG selection. (Default: Infinity)
+            min_mean: Minimum mean value of expression threshold for HVG selection. (Default: -Infinity)
+            max_mean: Maximum mean value of expression threshold for HVG selection. (Default: Infinity)
+            n_bins: Number of bins into which the mean expression is binned. (Default: 200)
+            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
+                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
+                         (Default: 0.1)
+            blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
+                       as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
+                       HLA genes. (Default: "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST" )
+            show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
+            hvg_key_name: Base label for HVGs in the features metadata column. The value for
+                          'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
+            plot_kwargs: These named parameters are passed to plotting.plot_mean_var
+
+        Returns:
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: RNAassay = self._get_assay(from_assay)
+        if type(assay) != RNAassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
+                        n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
+
+    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
+                             prevalence_key_name: str = 'prevalent_peaks') -> None:
+        """
+        Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
+        computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
+        as prevalent peaks.
+
+        Args:
+            from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
+            cell_key: Cells to use for selection of most prevalent peaks. By default all cells with True value in
+                      'I' will be used. The provided value for `cell_key` should be a column in cell metadata table
+                       with boolean values.
+            top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
+                   for `min_var` parameter. (Default: 500)
+            prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
+                                'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
+
+        Returns:
+
+        """
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        assay: ATACassay = self._get_assay(from_assay)
+        if type(assay) != ATACassay:
+            raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
+                            f"The provided assay is {type(assay)} type")
+        assay.mark_prevalent_peaks(cell_key, top_n, prevalence_key_name)
+
+    def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
+                          threshold: float = 0.25, gene_batch_size: int = 50) -> None:
+        """
+        Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
+        for further details of how marker features for groups are identified. The results are saved into the Zarr
+        hierarchy under `markers` group.
+
+        Args:
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
+            group_key: Required parameter. This has to be a column name from cell metadata table. This column dictates
+                       how the cells will be grouped. Usually this would be a column denoting cell clusters.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table. (Default value: 'I')
+            threshold: This value dictates how specific the feature value has to be in a group before it is considered a
+                       marker for that group. The value has to be greater than 0 but less than or equal to 1
+                       (Default value: 0.25)
+            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
+                             these number of cells at a time.
+        Returns:
+
+        """
+        from .markers import find_markers_by_rank
+
+        if group_key is None:
+            raise ValueError("ERROR: Please provide a value for `group_key`. This should be the name of a column from "
+                             "cell metadata object that has information on how cells should be grouped.")
+        if cell_key is None:
+            cell_key = 'I'
+        assay = self._get_assay(from_assay)
+        markers = find_markers_by_rank(assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size)
+        z = self.z[assay.name]
+        slot_name = f"{cell_key}__{group_key}"
+        if 'markers' not in z:
+            z.create_group('markers')
+        group = z['markers'].create_group(slot_name, overwrite=True)
+        for i in markers:
+            g = group.create_group(i)
+            vals = markers[i]
+            if len(vals) != 0:
+                create_zarr_obj_array(g, 'names', list(vals.index))
+                g_s = create_zarr_dataset(g, 'scores', (10000,), float, vals.values.shape)
+                g_s[:] = vals.values
+        return None
+
+    def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
+                    group_id: Union[str, int] = None) -> pd.DataFrame:
+        """
+        Returns a table of markers features obtained through `run_maker_search` for a given group. The table
+        contains names of marker features and feature ids are used as table index.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table.
+            group_key: Required parameter. This has to be a column name from cell metadata table.
+                       Usually this would be a column denoting cell clusters. Please use the same value as used
+                       when ran `run_marker_search`
+            group_id: This is one of the value in `group_key` column of cell metadata.
+                      Results are returned for this group
+
+        Returns:
+            Pandas dataframe with marker feature names and scores
+
+        """
+
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if group_key is None:
+            raise ValueError(f"ERROR: Please provide a value for group_key. "
+                             f"This should be same as used for `run_marker_search`")
+        assay = self._get_assay(from_assay)
+        try:
+            g = assay.z['markers'][f"{cell_key}__{group_key}"]
+        except KeyError:
+            raise KeyError("ERROR: Couldnt find the location of markers. Please make sure that you have already called "
+                           "`run_marker_search` method with same value of `cell_key` and `group_key`")
+        if group_id is None:
+            raise ValueError(f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
+                             f"{list(g.keys())}")
+        df = pd.DataFrame([g[group_id]['names'][:], g[group_id]['scores'][:]],
+                          index=['ids', 'score']).T.set_index('ids')
+        id_idx = assay.feats.get_index_by(df.index, 'ids')
+        if len(id_idx) != df.shape[0]:
+            logger.warning("Internal error in fetching names of the features IDs")
+            return df
+        df['names'] = assay.feats.fetch_all('names')[id_idx]
+        return df
 
     def run_cell_cycle_scoring(self, *, from_assay: str = None, cell_key: str = None,
                                s_genes: List[str] = None, g2m_genes: List[str] = None,
@@ -1973,7 +2189,7 @@ class DataStore:
         - G1 phase: S score < -1 > G2M sore
         - S phase: S score > G2M score
         - G2M phase: G2M score > S score
-        
+
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
@@ -1989,9 +2205,9 @@ class DataStore:
                            (Default value: 'G2M_score')
             phase_label: A base label for saving the inferred cell cycle phase into a cell metadata column
                            (Default value: 'cell_cycle_phase')
-        
+
         Returns:
-        
+
         """
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2019,28 +2235,6 @@ class DataStore:
         phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
-
-    def run_pseudotime_scoring(self, r: dict = None) -> None:
-        """
-        Calculate differentiation potential of cells.
-        This function is a reimplementation of population balance analysis
-        (PBA) approach published in Weinreb et al. 2017, PNAS.
-        This function computes the random walk normalized Laplacian matrix
-        of the reference graph, L_rw = I-A/D and then calculates a
-        Moore-Penrose pseudoinverse of L_rw. The method takes an optional
-        but recommended parameter 'r' which represents the relative rates of
-        proliferation and loss in different gene expression states (R). If
-        not provided then a vector with ones is used. The differentiation
-        potential is the dot product of inverse L_rw and R
-        Args:
-            r: Same as parameter R in the above said reference. Should be a
-               dictionary with each reference cell name as a key and its
-               corresponding R values.
-
-        Returns:
-
-        """
-        pass
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
@@ -2207,131 +2401,19 @@ class DataStore:
                 max_points=max_points, show_on_single_row=show_on_single_row)
         return None
 
-    def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
-        """
-        This convenience function allows fetching values for cells from either cell metadata table or values of a given
-        given feature from normalized matrix.
-
-        Args:
-            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      The values in the chosen column should be boolean (Default value: 'I')
-            k: A cell metadata column or name of a feature.
-            clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
-                            (Default value: 0 )
-
-        Returns:
-
-        """
-        cell_idx = self.cells.active_index(cell_key)
-        if k not in self.cells.columns:
-            assay = self._get_assay(from_assay)
-            feat_idx = assay.feats.get_index_by([k], 'names')
-            if len(feat_idx) == 0:
-                raise ValueError(f"ERROR: {k} not found in {from_assay} assay.")
-            else:
-                if len(feat_idx) > 1:
-                    logger.warning(f"Plotting mean of {len(feat_idx)} features because {k} is not unique.")
-            vals = controlled_compute(assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads).astype(np.float_)
-        else:
-            vals = self.cells.fetch(k, cell_key)
-        if clip_fraction < 0 or clip_fraction > 1:
-            raise ValueError("ERROR: Value for `clip_fraction` parameter should be between 0 and 1")
-        if clip_fraction > 0:
-            if vals.dtype in [np.float_, np.uint64]:
-                min_v = np.percentile(vals, 100 * clip_fraction)
-                max_v = np.percentile(vals, 100 - 100 * clip_fraction)
-                vals[vals < min_v] = min_v
-                vals[vals > max_v] = max_v
-        return vals
-
-    def get_imputed(self, *, from_assay: str = None, cell_key: str = 'I',  feature_name: str = None,
-                    feat_key: str = None, t: int = 2, cache_operator: bool = True) -> np.ndarray:
-        """
-
-        Args:
-            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feature_name: Name of the feature to be imputed
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
-                       used feature for the given assay will be used.
-            t: Same as the t parameter in MAGIC. Higher values lead to larger diffusion of values. Too large values
-               can slow down the algorithm and cause over-smoothening. (Default value: 2)
-            cache_operator: Whether to keep the diffusion operator in memory after the method returns. Can be useful
-                            to set to True if many features are to imputed in a batch but can lead to increased memory
-                            usage (Default value: True)
-
-        Returns: An array of imputed values for the given feature
-
-        """
-        from scipy.sparse import csr_matrix, coo_matrix
-
-        def calc_diff_operator(g: csr_matrix, to_power: int) -> coo_matrix:
-            d = np.ravel(g.sum(axis=1))
-            d[d != 0] = 1 / d[d != 0]
-            n = g.shape[0]
-            d = csr_matrix((d, (range(n), range(n))), shape=[n, n])
-            return d.dot(g).__pow__(to_power).tocoo()
-
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
-        if feature_name is None:
-            raise ValueError("ERROR: Please provide name for the feature to be imputed. It can, for example, "
-                             "be a gene name ")
-        data = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=feature_name)
-
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        magic_loc = f"{graph_loc}/magic_{t}"
-        if magic_loc in self.z:
-            logger.info("Using existing MAGIC diffusion operator")
-            if self._cachedMagicOperatorLoc == magic_loc:
-                diff_op = self._cachedMagicOperator
-            else:
-                knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-                n_cells = knn_loc['indices'].shape[0]
-                store = self.z[magic_loc]
-                diff_op = coo_matrix((store['data'][:],
-                                     (store['row'][:], store['col'][:])),
-                                     shape=(n_cells, n_cells))
-                if cache_operator:
-                    self._cachedMagicOperator = diff_op
-                    self._cachedMagicOperatorLoc = magic_loc
-                else:
-                    self._cachedMagicOperator = None
-                    self._cachedMagicOperatorLoc = None
-        else:
-            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
-                                    False, False)
-            diff_op = calc_diff_operator(graph, t)
-            shape = diff_op.data.shape
-            store = self.z.create_group(magic_loc, overwrite=True)
-            for i, j in zip(['row', 'col', 'data'], ['uint32', 'uint32', 'float32']):
-                zg = create_zarr_dataset(store, i, (1000000,), j, shape)
-                zg[:] = diff_op.__getattribute__(i)
-            self.z[graph_loc].attrs['latest_magic'] = magic_loc
-            if cache_operator:
-                self._cachedMagicOperator = diff_op
-                self._cachedMagicOperatorLoc = magic_loc
-            else:
-                self._cachedMagicOperator = None
-                self._cachedMagicOperatorLoc = None
-        return diff_op.dot(data)
-
     def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I',
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
-                    cmap=None, color_key: dict = None,  mask_values: list = None,
-                    mask_name: str = 'NA', mask_color: str = 'k',  point_size: float = 10,
-                    do_shading: bool = False, shade_npixels: int = 1000, shade_sampling: float = 0.1, 
-                    shade_min_alpha: int = 10, spread_pixels: int = 1, spread_threshold: float = 0.2, 
+                    cmap=None, color_key: dict = None, mask_values: list = None,
+                    mask_name: str = 'NA', mask_color: str = 'k', point_size: float = 10,
+                    do_shading: bool = False, shade_npixels: int = 1000, shade_sampling: float = 0.1,
+                    shade_min_alpha: int = 10, spread_pixels: int = 1, spread_threshold: float = 0.2,
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, save_dpi: int = 300, 
+                    cspacing: float = 1, savename: str = None, save_dpi: int = 300,
                     ax=None, fig=None, force_ints_as_cats: bool = True,
                     scatter_kwargs: dict = None):
         """
@@ -2422,7 +2504,7 @@ class DataStore:
         Returns:
 
         """
-        
+
         # TODO: add support for subplots
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
@@ -2466,124 +2548,6 @@ class DataStore:
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
-
-    def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
-                            layout_key: str = 'UMAP', show_target_only: bool = False,
-                            ref_name: str = 'reference', target_groups: list = None,
-                            width: float = 6, height: float = 6, cmap=None, color_key: dict = None,
-                            mask_color: str = 'k', point_size: float = 10, ax_label_size: float = 12,
-                            frame_offset: float = 0.05, spine_width: float = 0.5, spine_color: str = 'k',
-                            displayed_sides: tuple = ('bottom', 'left'),
-                            legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
-                            legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                            cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                            ax=None, fig=None, force_ints_as_cats: bool = True,  scatter_kwargs: dict = None,
-                            shuffle_zorder: bool = True):
-        """
-        This function helps plotting the reference and target cells the coordinates for which were obtained from
-        either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
-        but rather in the projections slot of the Zarr hierarchy, this function is needed to correctly fetch the values
-        for reference and target cells. Additionally this function provides a way to colour target cells by bringing in
-        external annotations for those cells.
-
-        Args:
-            target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
-            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      Should be same as the one that was used in one of the `run_mapping` calls for the given assay.
-                      The values in the chosen column should be boolean (Default value: 'I')
-            layout_key: Should be same as the parameter value for `label` in `run_unified_umap` or `run_unified_tsne`
-                        (Default value: 'UMAP')
-            show_target_only: If True then the reference cells are not shown (Default value: False)
-            ref_name: A label for reference cells to be used in the legend. (Default value: 'reference')
-            target_groups: Categorical values to be used to colourmap target cells. (Default value: None)
-            width: Figure width (Default value: 6)
-            height: Figure height (Default value: 6)
-            cmap: A matplotlib colourmap to be used to colour categorical or continuous values plotted on the cells.
-                  (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
-            color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
-                       dictionary should be the category label as present in the `color_by` column and values should be
-                        valid matplotlib colour names or hex codes of colours. (Default value: None)
-            mask_color: Color to be used for masked values. This should be a valid matplotlib named colour or a hexcode
-                        of a colour. (Default value: 'k')
-            point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
-                        `do_shading` is True. (Default value: 10)
-            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
-            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
-            spine_width: Line width of the displayed spines (Default value: 0.5)
-            spine_color: Colour of the displayed spines.  (Default value: 'k')
-            displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
-                             tuple. The options are: top, bottom, left and right. (Default value: ('bottom', 'left) )
-            legend_ondata: Whether to show category labels on the data (scatter points). The position of the label is
-                           the centroid of the corresponding values.
-                           (Default value: True)
-            legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
-            legend_size: Font size of the legend text. (Default value: 12)
-            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
-                             legend columns will be drawn (Default value: 20)
-            marker_scale: The relative size of legend markers compared with the originally drawn ones.
-                          (Default value: 70)
-            lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
-            cspacing: The spacing between columns. Measured in font-size units. (Default value: 1)
-            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
-                      the extension present in the parameter value. (Default value: None)
-            save_dpi: DPI when saving figure (Default value: 300)
-            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
-                created axes. (Default value: None)
-            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values.
-                 (Default value: None)
-            force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
-                                treated as continuous variables otherwise as categories. This effects how colourmaps
-                                are chosen and how legends are rendered. Set this to False if you are large number of
-                                unique integer entries (Default: True)
-            scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
-            shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
-
-        Returns:
-
-        """
-
-        from .plots import plot_scatter
-
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        t = self.z[from_assay].projections[target_name][layout_key][:]
-        ref_n_cells = self.cells.fetch_all(cell_key).sum()
-        t_n_cells = t.shape[0] - ref_n_cells
-        x = t[:, 0]
-        y = t[:, 1]
-        df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
-        if target_groups is None:
-            if color_key is not None:
-                if ref_name not in color_key or target_name not in color_key:
-                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
-                                   f"'{target_name}' which are values for parameters `ref_name` and "
-                                   f"`target_name` respectively.")
-            else:
-                color_key = {ref_name: 'coral', target_name: 'k'}
-            target_groups = np.array([target_name for _ in range(t_n_cells)]).astype(object)
-            mask_values = None
-            mask_name = 'NA'
-        else:
-            color_key = None
-            mask_values = [ref_name]
-            mask_name = ref_name
-            target_groups = np.array(target_groups).astype(object)
-        if len(target_groups) != t_n_cells:
-            raise ValueError("ERROR: Number of values in `target_groups` should be same as no. of target cells")
-        # Turning array to object forces np.NaN to 'nan'
-        if any(target_groups == 'nan'):
-            raise ValueError("ERROR: `target_groups` cannot contain nan values")            
-        df['vc'] = np.hstack([[ref_name for _ in range(ref_n_cells)], target_groups]).astype(object)
-        if show_target_only:
-            df = df[ref_n_cells:]
-        if shuffle_zorder:
-            df = df.sample(frac=1)
-        return plot_scatter(df, ax, fig, width, height, mask_color, cmap, color_key,
-                            mask_values, mask_name, mask_color, point_size,
-                            ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-                            legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
                           cluster_key: str = None, width: float = 1, lvr_factor: float = 0.5, vert_gap: float = 0.2,
@@ -2733,20 +2697,3 @@ class DataStore:
         # noinspection PyTypeChecker
         df[df > vmax] = vmax
         plot_heatmap(df, **heatmap_kwargs)
-
-    def __repr__(self):
-        res = f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with" \
-              f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
-        res = res + f"\n\tCell metadata:"
-        tabs = '\t\t'
-        res += '\n' + tabs + ''.join(
-            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.columns, start=1)])
-        res = res.rstrip('\n\t')[:-2]
-        for i in self.assayNames:
-            assay = self._get_assay(i)
-            res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
-                   f"features and following metadata:"
-            res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
-                                          enumerate(assay.feats.columns, start=1)])
-            res = res.rstrip('\n\t')[:-2]
-        return res
