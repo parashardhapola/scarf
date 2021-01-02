@@ -150,7 +150,7 @@ class Assay:
 
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
                              location: str, log_transform: bool, renormalize_subset: bool,
-                             update_feat_key: bool) -> daskarr:
+                             update_keys: bool) -> daskarr:
 
         from .writers import dask_to_zarr
 
@@ -165,8 +165,9 @@ class Assay:
             if subset_hash == self.z[location].attrs['subset_hash'] and \
                     subset_params == self.z[location].attrs['subset_params']:
                 logger.info(f"Using existing normalized data with cell key {cell_key} and feat key {feat_key}")
-                if update_feat_key:
+                if update_keys:
                     self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
+                    self.attrs['latest_cell_key'] = cell_key
                 return daskarr.from_zarr(self.z[location + '/data'])
             else:
                 # Creating group here to overwrite all children
@@ -176,8 +177,9 @@ class Assay:
         dask_to_zarr(vals, self.z, location + '/data', batch_size, self.nthreads)
         self.z[location].attrs['subset_hash'] = subset_hash
         self.z[location].attrs['subset_params'] = subset_params
-        if update_feat_key:
+        if update_keys:
             self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
+            self.attrs['latest_cell_key'] = cell_key
         return daskarr.from_zarr(self.z[location + '/data'])
 
     def score_features(self, feature_names: List[str], cell_key: str,

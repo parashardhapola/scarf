@@ -53,8 +53,6 @@ class BaseDataStore:
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
-        self._cachedGraph = None
-        self._cachedGraphLoc = None
         self._cachedMagicOperator = None
         self._cachedMagicOperatorLoc = None
         # TODO: Implement _caches to hold are cached data
@@ -197,6 +195,34 @@ class BaseDataStore:
             from_assay = self._defaultAssay
         return self.__getattribute__(from_assay)
 
+    def _get_latest_feat_key(self, from_assay: str) -> str:
+        """
+        Looks up the the value in assay level attributes for key 'latest_feat_key'
+
+        Args:
+            from_assay: Assay whose latest feature is to be returned
+
+        Returns:
+            Name of the latest feature that was used to run `save_normalized_data`
+
+        """
+        assay = self._get_assay(from_assay)
+        return assay.attrs['latest_feat_key']
+
+    def _get_latest_cell_key(self, from_assay: str) -> str:
+        """
+        Looks up the the value in assay level attributes for key 'latest_cell_key'
+
+        Args:
+            from_assay: Assay whose latest feature is to be returned
+
+        Returns:
+            Name of the latest feature that was used to run `save_normalized_data`
+
+        """
+        assay = self._get_assay(from_assay)
+        return assay.attrs['latest_cell_key']
+
     def _ini_cell_props(self, min_features: int, mito_pattern: str, ribo_pattern: str) -> None:
         """
         This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
@@ -268,39 +294,6 @@ class BaseDataStore:
         else:
             ret_val = '_'.join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
-
-    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
-        """
-
-        """
-        from scipy.sparse import coo_matrix, csr_matrix
-
-        store = self.z[graph_loc]
-        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-        n_cells = knn_loc['indices'].shape[0]
-        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
-        if sparse_format == 'csr':
-            return n_cells, csr_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
-        else:
-            return n_cells, coo_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
-
-    def _get_latest_feat_key(self, from_assay: str) -> str:
-        """
-        Looks up the the value in assay level attributes for key 'latest_feat_key'
-
-        Args:
-            from_assay: Assay whose latest feature is to be returned
-
-        Returns:
-            Name of the latest feature that was used to run `save_normalized_data`
-
-        """
-        assay = self._get_assay(from_assay)
-        return assay.attrs['latest_feat_key']
 
     def set_default_assay(self, assay_name: str) -> None:
         """
@@ -380,6 +373,8 @@ class BaseDataStore:
 class GraphDataStore(BaseDataStore):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._cachedGraph = None
+        self._cachedGraphLoc = None
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
@@ -642,6 +637,15 @@ class GraphDataStore(BaseDataStore):
         return (log_transform, renormalize_subset, reduction_method, dims, pca_cell_key,
                 ann_metric, ann_efc, ann_ef, ann_m, rand_state, k, n_centroids, local_connectivity, bandwidth)
 
+    def _get_latest_keys(self, from_assay: str, cell_key: str, feat_key: str) -> Tuple[str, str, str]:
+        if from_assay is None:
+            from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = self._get_latest_cell_key(from_assay)
+        if feat_key is None:
+            feat_key = self._get_latest_feat_key(from_assay)
+        return from_assay, cell_key, feat_key
+
     def _get_latest_graph_loc(self, from_assay: str, cell_key: str, feat_key: str) -> str:
         """
         Convenience function to identify location of latest graph in the Zarr hierarchy.
@@ -661,13 +665,77 @@ class GraphDataStore(BaseDataStore):
         knn_loc = self.z[ann_loc].attrs['latest_knn']
         return self.z[knn_loc].attrs['latest_graph']
 
-    def make_graph(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def _get_ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int) -> np.ndarray:
+        """
+        Runs PCA on kmeans cluster centers and ascribes the PC values to individual cells based on their cluster
+        labels. This is used in `run_umap` and `run_tsne` for initial embedding of cells. Uses `rescale_array` to
+        to reduce the magnitude of extreme values.
+
+        Args:
+            from_assay: Name fo the assay for which Kmeans was fit
+            cell_key: Cell key used
+            feat_key: Feature key used
+            n_comps: Number of PC components to use
+
+        Returns:
+            Matrix with n_comps dimensions representing initial embedding of cells.
+
+        """
+        from sklearn.decomposition import PCA
+        from .utils import rescale_array
+
+        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
+        kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
+        pc = PCA(n_components=n_comps).fit_transform(self.z[kmeans_loc]['cluster_centers'][:])
+        for i in range(n_comps):
+            pc[:, i] = rescale_array(pc[:, i])
+        clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
+        return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
+
+    def _get_graph_ncells(self, graph_loc: str) -> int:
+        """
+
+        Args:
+            graph_loc:
+
+        Returns:
+
+        """
+        knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
+        return knn_loc['indices'].shape[0]
+
+    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
+        """
+
+        Args:
+            graph_loc:
+            sparse_format:
+
+        Returns:
+
+        """
+        from scipy.sparse import coo_matrix, csr_matrix
+
+        store = self.z[graph_loc]
+        n_cells = self._get_graph_ncells(graph_loc)
+        # TODO: can we have a progress bar for graph loading. Append to coo matrix?
+        if sparse_format == 'csr':
+            return n_cells, csr_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+        else:
+            return n_cells, coo_matrix((store['weights'][:],
+                                        (store['edges'][:, 0], store['edges'][:, 1])),
+                                       shape=(n_cells, n_cells))
+
+    def make_graph(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                    pca_cell_key: str = None, reduction_method: str = 'auto', dims: int = None, k: int = None,
                    ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
                    rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
-                   update_feat_key: bool = True, return_ann_object: bool = False, feat_scaling: bool = True,
+                   update_keys: bool = True, return_ann_object: bool = False, feat_scaling: bool = True,
                    cache_graph: bool = True):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
@@ -751,8 +819,8 @@ class GraphDataStore(BaseDataStore):
                        push the mean of distribution of graph edge weights towards right.  (Default value: 1.5). Read
                        more about `smooth_knn_dist` function here:
                        https://umap-learn.readthedocs.io/en/latest/api.html#umap.umap_.smooth_knn_dist
-            update_feat_key: If True (default) then `latest_feat_key` zarr attribute of the assay will be updated.
-                             Choose False if you are experimenting with a `feat_key` do not want to overide existing
+            update_keys: If True (default) then `latest_feat_key` zarr attribute of the assay will be updated.
+                             Choose False if you are experimenting with a `feat_key` do not want to override existing
                              `latest_feat_key` and by extension `latest_graph`.
             return_ann_object: If True then returns the ANNStream object. This allows one to directly interact with the
                                PCA transformer and HNSWlib index. Check out ANNStream documentation to know more.
@@ -775,6 +843,8 @@ class GraphDataStore(BaseDataStore):
         assay = self._get_assay(from_assay)
         if batch_size is None:
             batch_size = assay.rawData.chunksize[0]
+        if cell_key is None:
+            cell_key = 'I'
         if feat_key is None:
             bool_cols = [x.split('__', 1) for x in assay.feats.columns if assay.feats.get_dtype(x) == bool
                          and x != 'I']
@@ -801,7 +871,7 @@ class GraphDataStore(BaseDataStore):
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
         data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
-                                          log_transform, renormalize_subset, update_feat_key)
+                                          log_transform, renormalize_subset, update_keys)
         loadings = None
         fit_kmeans = True
         mu, sigma = np.ndarray([]), np.ndarray([])
@@ -876,6 +946,10 @@ class GraphDataStore(BaseDataStore):
         if cache_graph:
             _, self._cachedGraph = self._store_to_sparse(graph_loc)
             self._cachedGraphLoc = graph_loc
+        else:
+            # Making sure to overwrite the previous graph from cache
+            self._cachedGraph = None
+            self._cachedGraphLoc = None
         if return_ann_object:
             return ann_obj
         return None
@@ -902,10 +976,10 @@ class GraphDataStore(BaseDataStore):
         from scipy.sparse import coo_matrix, csr_matrix, triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None and \
-                min_edge_weight == -1 and symmetric is False:
+        if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None:
             logger.info(f"Loading cached graph from: {self._cachedGraphLoc}")
-            return self._cachedGraph
+            graph = self._cachedGraph.tocoo()
+            n_cells = self._get_graph_ncells(graph_loc)
         else:
             if graph_loc not in self.z:
                 raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
@@ -921,40 +995,22 @@ class GraphDataStore(BaseDataStore):
             else:
                 graph = graph.tocoo()
         idx = graph.data > min_edge_weight
-        if graph_format == 'coo':
-            return coo_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
+        # Following if-else block is for purpose for improving performance when no filtering is performed.
+        if idx.sum() == graph.data.shape[0]:
+            if graph_format == 'coo':
+                if type(graph) == coo_matrix:
+                    return graph
+                else:
+                    return graph.tocoo()
+            else:
+                return graph.tocsr()
         else:
-            return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
+            if graph_format == 'coo':
+                return coo_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
+            else:
+                return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
-    def _get_ini_embed(self, from_assay: str, cell_key: str, feat_key: str, n_comps: int) -> np.ndarray:
-        """
-        Runs PCA on kmeans cluster centers and ascribes the PC values to individual cells based on their cluster
-        labels. This is used in `run_umap` and `run_tsne` for initial embedding of cells. Uses `rescale_array` to
-        to reduce the magnitude of extreme values.
-
-        Args:
-            from_assay: Name fo the assay for which Kmeans was fit
-            cell_key: Cell key used
-            feat_key: Feature key used
-            n_comps: Number of PC components to use
-
-        Returns:
-            Matrix with n_comps dimensions representing initial embedding of cells.
-
-        """
-        from sklearn.decomposition import PCA
-        from .utils import rescale_array
-
-        normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-        reduction_loc = self.z[normed_loc].attrs['latest_reduction']
-        kmeans_loc = self.z[reduction_loc].attrs['latest_kmeans']
-        pc = PCA(n_components=n_comps).fit_transform(self.z[kmeans_loc]['cluster_centers'][:])
-        for i in range(n_comps):
-            pc[:, i] = rescale_array(pc[:, i])
-        clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
-        return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
-
-    def run_tsne(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_tsne(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                  min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500,
                  early_iter: int = 200, alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.',
@@ -996,14 +1052,11 @@ class GraphDataStore(BaseDataStore):
         from pathlib import Path
         import sys
 
-        if sys.platform not in ['posix', 'linux', 'linux']:
+        if sys.platform not in ['posix', 'linux']:
             logger.error(f"{sys.platform} operating system is currently not supported.")
             return None
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
 
         uid = str(uuid4())
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
@@ -1034,7 +1087,7 @@ class GraphDataStore(BaseDataStore):
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
 
-    def run_umap(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_umap(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                  min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, umap_dims: int = 2, spread: float = 2.0, min_dist: float = 1,
                  fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
@@ -1087,13 +1140,10 @@ class GraphDataStore(BaseDataStore):
 
         """
         from .umap import fit_transform
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
-                                symmetric_graph, graph_upper_only).tocoo()
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
+                                symmetric_graph, graph_upper_only)
 
         if ini_embed is None:
             ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
@@ -1107,7 +1157,7 @@ class GraphDataStore(BaseDataStore):
                               t[:, i], key=cell_key, overwrite=True)
         return None
 
-    def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                               resolution: int = 1, min_edge_weight: float = -1,
                               symmetric_graph: bool = False, graph_upper_only: bool = False,
                               label: str = 'leiden_cluster', random_seed: int = 4444) -> None:
@@ -1141,11 +1191,7 @@ class GraphDataStore(BaseDataStore):
         # noinspection PyPackageRequirements
         import igraph  # python-igraph
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
-
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
                               symmetric_graph, graph_upper_only)
         sources, targets = adj.nonzero()
@@ -1160,7 +1206,7 @@ class GraphDataStore(BaseDataStore):
                           np.array(part.membership) + 1, fill_value=-1, key=cell_key, overwrite=True)
         return None
 
-    def run_clustering(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def run_clustering(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                        n_clusters: int = None, min_edge_weight: float = -1, symmetric_graph: bool = False,
                        graph_upper_only: bool = False, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
@@ -1197,10 +1243,7 @@ class GraphDataStore(BaseDataStore):
         """
         import sknetwork as skn
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         if balanced_cut is False:
             if n_clusters is None:
                 raise ValueError("ERROR: Please provide a value for n_clusters parameter. We are working on making "
@@ -1235,7 +1278,7 @@ class GraphDataStore(BaseDataStore):
         self.cells.insert(self._col_renamer(from_assay, cell_key, label), labels,
                           fill_value=-1, key=cell_key, overwrite=True)
 
-    def get_imputed(self, *, from_assay: str = None, cell_key: str = 'I', feature_name: str = None,
+    def get_imputed(self, *, from_assay: str = None, cell_key: str = None, feature_name: str = None,
                     feat_key: str = None, t: int = 2, cache_operator: bool = True) -> np.ndarray:
         """
 
@@ -1263,13 +1306,10 @@ class GraphDataStore(BaseDataStore):
             d = csr_matrix((d, (range(n), range(n))), shape=[n, n])
             return d.dot(g).__pow__(to_power).tocoo()
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         if feature_name is None:
             raise ValueError("ERROR: Please provide name for the feature to be imputed. It can, for example, "
-                             "be a gene name ")
+                             "be a gene name.")
         data = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=feature_name)
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -1279,8 +1319,7 @@ class GraphDataStore(BaseDataStore):
             if self._cachedMagicOperatorLoc == magic_loc:
                 diff_op = self._cachedMagicOperator
             else:
-                knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-                n_cells = knn_loc['indices'].shape[0]
+                n_cells = self._get_graph_ncells(graph_loc)
                 store = self.z[magic_loc]
                 diff_op = coo_matrix((store['data'][:],
                                       (store['row'][:], store['col'][:])),
@@ -1381,10 +1420,9 @@ class MappingDatastore(GraphDataStore):
         """
         from .mapping_utils import align_features, coral
 
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         source_assay = self._get_assay(from_assay)
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
-        from_assay = source_assay.name
+
         if type(target_assay) != type(source_assay):
             raise TypeError(f"ERROR: Source assay ({type(source_assay)}) and target assay "
                             f"({type(target_assay)}) are of different types. "
@@ -1410,7 +1448,7 @@ class MappingDatastore(GraphDataStore):
         if run_coral:
             feat_scaling = False
         ann_obj = self.make_graph(from_assay=from_assay, cell_key=cell_key, feat_key=ann_feat_key,
-                                  return_ann_object=True, update_feat_key=False,
+                                  return_ann_object=True, update_keys=False,
                                   feat_scaling=feat_scaling)
         if save_k > ann_obj.k:
             logger.warning(f"`save_k` was decreased to {ann_obj.k}")
@@ -2619,7 +2657,7 @@ class DataStore(MappingDatastore):
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
-            feat_key = self.get_latest_feat_key(from_assay)
+            feat_key = self._get_latest_feat_key(from_assay)
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for `cluster_key` parameter")
         clusts = self.cells.fetch(cluster_key, key=cell_key)
