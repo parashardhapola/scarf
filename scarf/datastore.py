@@ -2043,7 +2043,7 @@ class DataStore(MappingDatastore):
             self.plot_cells_dists(cols=attrs_used, cell_key='I', color='coral',
                                   sup_title="Post-filtering distribution")
 
-    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = 'I', min_cells: int = None, top_n: int = 500,
+    def mark_hvgs(self, *, from_assay: str = None, cell_key: str = None, min_cells: int = None, top_n: int = 500,
                   min_var: float = -np.Inf, max_var: float = np.Inf,
                   min_mean: float = -np.Inf, max_mean: float = np.Inf,
                   n_bins: int = 200, lowess_frac: float = 0.1,
@@ -2085,8 +2085,8 @@ class DataStore(MappingDatastore):
 
         """
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = 'I'
         assay: RNAassay = self._get_assay(from_assay)
         if type(assay) != RNAassay:
             raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
@@ -2094,7 +2094,7 @@ class DataStore(MappingDatastore):
         assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
                         n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
 
-    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = 'I', top_n: int = 10000,
+    def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = None, top_n: int = 10000,
                              prevalence_key_name: str = 'prevalent_peaks') -> None:
         """
         Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
@@ -2114,8 +2114,8 @@ class DataStore(MappingDatastore):
         Returns:
 
         """
-        if from_assay is None:
-            from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = 'I'
         assay: ATACassay = self._get_assay(from_assay)
         if type(assay) != ATACassay:
             raise TypeError(f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
@@ -2166,7 +2166,7 @@ class DataStore(MappingDatastore):
                 g_s[:] = vals.values
         return None
 
-    def get_markers(self, *, from_assay: str = None, cell_key: str = 'I', group_key: str = None,
+    def get_markers(self, *, from_assay: str = None, cell_key: str = None, group_key: str = None,
                     group_id: Union[str, int] = None) -> pd.DataFrame:
         """
         Returns a table of markers features obtained through `run_maker_search` for a given group. The table
@@ -2187,8 +2187,8 @@ class DataStore(MappingDatastore):
 
         """
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = 'I'
         if group_key is None:
             raise ValueError(f"ERROR: Please provide a value for group_key. "
                              f"This should be same as used for `run_marker_search`")
@@ -2302,8 +2302,6 @@ class DataStore(MappingDatastore):
             pseudo_reps = 1
         if null_vals is None:
             null_vals = [-1]
-        if from_assay is None:
-            from_assay = self._defaultAssay
         assay = self._get_assay(from_assay)
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
@@ -2322,7 +2320,7 @@ class DataStore(MappingDatastore):
         vals.index = pd.Series(assay.feats.fetch_all('ids')).reindex(vals.index).values
         return vals
 
-    def to_anndata(self, from_assay: str = None, cell_key: str = 'I', layers: dict = None):
+    def to_anndata(self, from_assay: str = None, cell_key: str = None, layers: dict = None):
         """
 
         Args:
@@ -2342,8 +2340,9 @@ class DataStore(MappingDatastore):
             logger.error("Package anndata is not installed because its an optional dependency. "
                          "Install via `pip install anndata` or `conda install anndata -c conda-forge`")
             return None
-        if from_assay is None:
-            from_assay = self._defaultAssay
+
+        if cell_key is None:
+            cell_key = 'I'
         assay = self._get_assay(from_assay)
         df = self.cells.to_pandas_dataframe(self.cells.columns, key=cell_key)
         obs = df.reset_index(drop=True).set_index('ids')
@@ -2406,6 +2405,8 @@ class DataStore(MappingDatastore):
 
         if from_assay is None:
             from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = 'I'
 
         if cols is not None:
             if type(cols) != list:
@@ -2439,7 +2440,7 @@ class DataStore(MappingDatastore):
                 max_points=max_points, show_on_single_row=show_on_single_row)
         return None
 
-    def plot_layout(self, *, from_assay: str = None, cell_key: str = 'I',
+    def plot_layout(self, *, from_assay: str = None, cell_key: str = None,
                     layout_key: str = None, color_by: str = None, subselection_key: str = None,
                     size_vals=None, clip_fraction: float = 0.01,
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
@@ -2551,6 +2552,8 @@ class DataStore(MappingDatastore):
 
         if from_assay is None:
             from_assay = self._defaultAssay
+        if cell_key is None:
+            cell_key = 'I'
         if layout_key is None:
             raise ValueError("Please provide a value for `layout_key` parameter.")
         if clip_fraction >= 0.5:
@@ -2587,7 +2590,7 @@ class DataStore(MappingDatastore):
                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
-    def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = 'I', feat_key: str = None,
+    def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                           cluster_key: str = None, width: float = 1, lvr_factor: float = 0.5, vert_gap: float = 0.2,
                           min_node_size: float = 10, node_power: float = 1.2, root_size: float = 100,
                           non_leaf_size: float = 10, do_label: bool = True, fontsize: float = 10,
@@ -2654,10 +2657,8 @@ class DataStore(MappingDatastore):
         from .plots import plot_cluster_hierarchy
         from .dendrogram import CoalesceTree, make_digraph
 
-        if from_assay is None:
-            from_assay = self._defaultAssay
-        if feat_key is None:
-            feat_key = self._get_latest_feat_key(from_assay)
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
+
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for `cluster_key` parameter")
         clusts = self.cells.fetch(cluster_key, key=cell_key)
