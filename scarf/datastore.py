@@ -1278,6 +1278,82 @@ class GraphDataStore(BaseDataStore):
         self.cells.insert(self._col_renamer(from_assay, cell_key, label), labels,
                           fill_value=-1, key=cell_key, overwrite=True)
 
+    def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
+                             cluster_key: str = None, density_depth: int = 2,
+                             sampling_rate: float = 0.1, min_cells_per_group: int = 3,
+                             min_sr: float = 0.01, seed_reward: float = 3.0, non_seed_reward: float = 0,
+                             save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
+                             save_seeds_key: str = 'sketch_seeds', rand_state: int = 4466,
+                             return_edges: bool = False) -> Union[None, List]:
+        """
+        Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
+        that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
+        large number of homogeneous and even sized cluster improves sub-sampling results.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                       used feature for the given assay will be used.
+            cluster_key: Name of the column in cell metadata table where cluster information is stored.
+            density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
+            sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
+                           than this value depending on the neighbourhood density of the cells.
+                           Should be greater than 0 and less than 1. (Default value: 0.1)
+            min_cells_per_group: Minimum number of cells to sample from each group. (Default value: 3)
+            min_sr: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
+                    (Default value: 0.01)
+            seed_reward: Reward/prize value for seed nodes. (Default value: 3)
+            non_seed_reward: Reward/prize for non-seed nodes. (Default value: 0.1)
+            save_sampling_key: base label for marking the cells that were sampled into a cell metadata column
+                               (Default value: 'sketched')
+            save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
+                              (Default value: 'cell_density')
+            save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
+                            metadata column (Default value: 'sketch_seeds')
+            rand_state: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
+            return_edges: If True, then steiner nodes and edges are returned. (Default value: False)
+
+        Returns:
+
+        """
+
+        try:
+            from topacedo import TopacedoSampler
+        except ImportError:
+            logger.error("Could not find topacedo package")
+            return None
+
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
+        if cluster_key is None:
+            raise ValueError("ERROR: Please provide a value for cluster key")
+        clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1, False, False)
+        if len(clusters) != graph.shape[0]:
+            raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
+                             f"{graph.shape[0]} cells.")
+        sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
+                                  min_sr, seed_reward, non_seed_reward, 1, rand_state)
+        nodes, edges = sampler.run()
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
+        a[nodes] = True
+        key = self._col_renamer(from_assay, cell_key, save_sampling_key)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
+        logger.info(f"Sketched cells saved under column '{key}'")
+
+        key = self._col_renamer(from_assay, cell_key, save_density_key)
+        self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
+        logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
+
+        a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
+        a[sampler.seeds] = True
+        key = self._col_renamer(from_assay, cell_key, save_seeds_key)
+        self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
+        logger.info(f"Seed cells saved under column: '{key}'")
+
+        if return_edges:
+            return edges
+
     def get_imputed(self, *, from_assay: str = None, cell_key: str = None, feature_name: str = None,
                     feat_key: str = None, t: int = 2, cache_operator: bool = True) -> np.ndarray:
         """
