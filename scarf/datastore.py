@@ -1092,7 +1092,7 @@ class GraphDataStore(BaseDataStore):
                  ini_embed: np.ndarray = None, umap_dims: int = 2, spread: float = 2.0, min_dist: float = 1,
                  fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                  repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
-                 random_seed: int = 4444, label='UMAP') -> None:
+                 random_seed: int = 4444, label='UMAP', parallel: bool = False) -> None:
         """
         Runs UMAP algorithm using the precomputed cell-neighbourhood graph. The calculated UMAP coordinates are saved
         in the cell metadata table
@@ -1135,6 +1135,8 @@ class GraphDataStore(BaseDataStore):
                                   slightly more accuracy. (Default value: 5)
             random_seed: (Default value: 4444)
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
+            parallel: Whether to run UMAP in parallel mode. Setting value to True will use all available CPU cores.
+                      The results are not reproducible in parallel mode. (Default: False)
 
         Returns:
 
@@ -1151,7 +1153,7 @@ class GraphDataStore(BaseDataStore):
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, set_op_mix_ratio=set_op_mix_ratio,
                           repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
-                          negative_sample_rate=negative_sample_rate)
+                          negative_sample_rate=negative_sample_rate, parallel=parallel, nthreads=self.nthreads)
         for i in range(umap_dims):
             self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
                               t[:, i], key=cell_key, overwrite=True)
