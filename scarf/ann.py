@@ -12,7 +12,7 @@ __all__ = ['AnnStream']
 def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarray):
     fixed_ind, fixed_dist = indices.copy()[:, 1:], distances.copy()[:, 1:]
     # Identify positions where first index is not a self loop
-    mis_idx = ~(indices[:, 0].reshape(1, -1)[0] == ref_idx)
+    mis_idx = indices[:, 0].reshape(1, -1)[0] != ref_idx
     n_mis = mis_idx.sum()
     if n_mis > 0:
         for n, i, j, k in zip(np.where(mis_idx)[0], ref_idx[mis_idx], indices[mis_idx], distances[mis_idx]):
@@ -145,7 +145,7 @@ class AnnStream:
             if scale_features:
                 i = self.transform_z(i)
             if len(carry_over) > 0:
-                i = np.vstack(carry_over, i)
+                i = np.vstack((carry_over, i))
                 carry_over = []
             if len(i) < (self.dims + 1):
                 carry_over = i
@@ -159,7 +159,7 @@ class AnnStream:
                 # Add retry counter to make memory consumption doesn't escalate
                 carry_over = i
         if len(carry_over) > 0:
-            i = np.vstack(end_reservoir, carry_over)
+            i = np.vstack((end_reservoir, carry_over))
         else:
             i = end_reservoir
         try:
