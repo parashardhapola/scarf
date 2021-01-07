@@ -321,7 +321,7 @@ class MtxDirReader(CrReader):
 class H5adReader:
     def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
                  feature_name_key: str = 'gene_short_name',
-                 data_key: str = 'X', category_names_key: bool = '__categories'):
+                 data_key: str = 'X', category_names_key: str = '__categories'):
         """
 
         Args:
@@ -338,7 +338,7 @@ class H5adReader:
         self.dataKey = data_key
         self._validate_data_group()
         self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
-        self.nCells, self.nFeats = self._get_n('obs'), self._get_n('var')
+        self.nCells, self.nFeatures = self._get_n('obs'), self._get_n('var')
         self.cellIdsKey = self._fix_name_key('obs', cell_ids_key)
         self.featIdsKey = self._fix_name_key('var', feature_ids_key)
         self.featNamesKey = feature_name_key
@@ -377,18 +377,28 @@ class H5adReader:
                 logger.info(f"`{group}` slot in H5ad file has unequal sized child groups")
         return ret_val
 
+    def _check_exists(self, group: str, key: str) -> bool:
+        if group not in self.useGroup:
+            self._validate_group(group)
+        if self.useGroup[group] == 1:
+            if key in list(self.h5[group].dtype.names):
+                return True
+        if self.useGroup[group] == 2:
+            if key in self.h5[group].keys():
+                return True
+        return False
+
     def _fix_name_key(self, group: str, key: str) -> str:
-        if self.useGroup[group] > 0:
-            if key not in self.h5[group]:
-                if key.startswith('_'):
-                    temp_key = key[1:]
-                    if temp_key in self.h5[group]:
-                        return temp_key
+        if self._check_exists(group, key):
+            if key.startswith('_'):
+                temp_key = key[1:]
+                if self._check_exists(group, temp_key):
+                    return temp_key
         return key
 
     def _get_n(self, group: str) -> int:
         if self.useGroup[group] == 0:
-            if 'shape' in self.h5[self.dataKey]:
+            if self._check_exists(self.dataKey, 'shape'):
                 return self.h5[self.dataKey]['shape'][0]
             else:
                 raise KeyError(f"ERROR: `{group}` not found and `shape` key is missing in the {self.dataKey} group. "
@@ -403,38 +413,38 @@ class H5adReader:
                            f"Aborting because unexpected H5ad format.")
 
     def cell_ids(self) -> np.ndarray:
-        if self.useGroup['obs'] > 0 and self.cellIdsKey in self.h5['obs']:
+        if self._check_exists('obs', self.cellIdsKey):
             if self.useGroup['obs'] == 1:
                 return self.h5['obs'][self.cellIdsKey]
             else:
                 return self.h5['obs'][self.cellIdsKey][:]
-        logger.warning(f"Could not find cells names key: {self.cellIdsKey} in `obs`.")
+        logger.warning(f"Could not find cells ids key: {self.cellIdsKey} in `obs`.")
         return np.array([f'cell_{x}' for x in range(self.nCells)])
 
     # noinspection DuplicatedCode
     def feat_ids(self) -> np.ndarray:
-        if self.useGroup['var'] > 0 and self.featIdsKey in self.h5['var']:
+        if self._check_exists('var', self.featIdsKey):
             if self.useGroup['var'] == 1:
                 return self.h5['var'][self.featIdsKey]
             else:
                 return self.h5['var'][self.featIdsKey][:]
-        logger.warning(f"WARNING: Could not find feature names key: {self.featIdsKey} in `var`.")
-        return np.array([f'feature_{x}' for x in range(self.nFeats)])
+        logger.warning(f"Could not find feature ids key: {self.featIdsKey} in `var`.")
+        return np.array([f'feature_{x}' for x in range(self.nFeatures)])
 
     # noinspection DuplicatedCode
     def feat_names(self) -> np.ndarray:
-        if self.useGroup['var'] > 0 and self.featNamesKey in self.h5['var']:
+        if self._check_exists('var', self.featNamesKey):
             if self.useGroup['var'] == 1:
                 values = self.h5['var'][self.featNamesKey]
             else:
                 values = self.h5['var'][self.featNamesKey][:]
             return self._replace_category_values(values, self.featNamesKey, 'var').astype(object)
-        logger.warning(f"WARNING: Could not find feature names key: {self.featNamesKey} in `var`.")
+        logger.warning(f"Could not find feature names key: {self.featNamesKey} in `var`.")
         return self.feat_ids()
 
     def _replace_category_values(self, v: np.ndarray, key: str, group: str):
         if self.catNamesKey is not None:
-            if self.catNamesKey in self.h5[group]:
+            if self._check_exists(group, self.catNamesKey):
                 cat_g = self.h5[group][self.catNamesKey]
                 if type(cat_g) == h5py.Group:
                     if key in cat_g:
@@ -481,5 +491,5 @@ class H5adReader:
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype('int32'))
             yield sparse.COO([nidx, grp['indices'][s: e]], grp['data'][s: e],
-                             shape=(n, self.nFeats))
+                             shape=(n, self.nFeatures))
             s = e
