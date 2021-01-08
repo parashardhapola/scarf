@@ -53,4 +53,9 @@ datasets = {
          'url': 'http://cf.10xgenomics.com/samples/cell-atac/1.2.0/atac_pbmc_10k_nextgem'
                 '/atac_pbmc_10k_nextgem_filtered_peak_bc_matrix.h5'}
     ],
+    'bastidas_pancreas_day15_rnaseq': [
+        {'name': 'data.h5ad',
+         'url': 'https://github.com/theislab/scvelo_notebooks/raw/master/data/Pancreas/'
+                'endocrinogenesis_day15.h5ad'}
+    ]
 }
