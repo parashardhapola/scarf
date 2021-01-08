@@ -187,24 +187,21 @@ class Assay:
 
         from .feat_utils import binned_sampling
 
-        def _name_to_ids(i):
-            return self.feats.fetch_all('ids')[self.feats.get_index_by(i, 'names', key='I')]
+        def _names_to_idx(i):
+            return self.feats.get_index_by(i, 'names', None)
 
         def _calc_mean(i):
-            idx = np.array(sorted(self.feats.get_index_by(i, 'ids')))
-            return self.normed(cell_idx=cell_idx, feat_idx=idx).mean(axis=1).compute()
+            return self.normed(cell_idx=cell_idx, feat_idx=sorted(i)).mean(axis=1).compute()
 
-        feature_ids = _name_to_ids(feature_names)
-        if len(feature_ids) == 0:
+        feature_idx = _names_to_idx(feature_names)
+        if len(feature_idx) == 0:
             raise ValueError(f"ERROR: No feature ids found for any of the provided {len(feature_names)} features")
 
         identifier = self._load_stats_loc(cell_key)
-        obs_avg = pd.Series(np.log(self.feats.fetch(f"{identifier}_avg")),
-                            index=self.feats.fetch('ids'))
-        feature_ids = list(set(feature_ids).intersection(obs_avg.index))
-        control_ids = binned_sampling(obs_avg, feature_ids, ctrl_size, n_bins, rand_seed)
+        obs_avg = pd.Series(self.feats.fetch_all(f"{identifier}_avg"))
+        control_idx = binned_sampling(obs_avg, list(feature_idx), ctrl_size, n_bins, rand_seed)
         cell_idx, _ = self._get_cell_feat_idx(cell_key, 'I')
-        return _calc_mean(feature_ids) - _calc_mean(control_ids)
+        return _calc_mean(feature_idx) - _calc_mean(control_idx)
 
     def __repr__(self):
         f = self.feats.fetch_all('I')

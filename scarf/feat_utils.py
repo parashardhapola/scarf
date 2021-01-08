@@ -70,11 +70,11 @@ def binned_sampling(values: pd.Series, feature_list: List[str], ctrl_size: int,
     feature_list = set(feature_list)
     # Made following more linter friendly
     # obs_cut = obs_avg.rank(method='min') // n_items
-    obs_cut: pd.Series = values.rank(method='min').divide(n_items).astype(int)
+    obs_cut: pd.Series = values.fillna(0).rank(method='min').divide(n_items).astype(int)
 
     control_genes = set()
-    for cut in np.unique(obs_cut.loc[feature_list]):
+    for cut in np.unique(obs_cut[feature_list]):
         # Replaced np.random.shuffle with pandas' sample method
-        r_genes = obs_cut[obs_cut == cut].sample(n=ctrl_size, random_state=rand_seed)
-        control_genes.update(set(r_genes.index))
+        r_genes = obs_cut[obs_cut == cut].sample(n=ctrl_size, random_state=rand_seed).index
+        control_genes.update(set(r_genes))
     return list(control_genes - feature_list)
