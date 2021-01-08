@@ -1425,7 +1425,7 @@ class GraphDataStore(BaseDataStore):
                     self._cachedMagicOperatorLoc = None
         else:
             graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
-                                    False, False)
+                                    True, False)
             diff_op = calc_diff_operator(graph, t)
             shape = diff_op.data.shape
             store = self.z.create_group(magic_loc, overwrite=True)
@@ -1482,6 +1482,7 @@ class GraphDataStore(BaseDataStore):
             u, s, vt = svds(lap, k=k_singular, which='SM')
             return vt.T @ np.diag(np.linalg.pinv([s]).reshape(1, -1)[0]) @ u.T
 
+        from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
                                 True, False)
         inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
