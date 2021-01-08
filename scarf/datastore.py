@@ -1441,27 +1441,56 @@ class GraphDataStore(BaseDataStore):
                 self._cachedMagicOperatorLoc = None
         return diff_op.dot(data)
 
-    def run_pseudotime_scoring(self, r: dict = None) -> None:
+    def run_pseudotime_scoring(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
+                               k_singular: int = 20, r_vec: np.ndarray = None, label: str = 'pseudotime') -> None:
         """
-        Calculate differentiation potential of cells.
-        This function is a reimplementation of population balance analysis
-        (PBA) approach published in Weinreb et al. 2017, PNAS.
-        This function computes the random walk normalized Laplacian matrix
-        of the reference graph, L_rw = I-A/D and then calculates a
-        Moore-Penrose pseudoinverse of L_rw. The method takes an optional
-        but recommended parameter 'r' which represents the relative rates of
-        proliferation and loss in different gene expression states (R). If
-        not provided then a vector with ones is used. The differentiation
-        potential is the dot product of inverse L_rw and R
+        Calculate differentiation potential of cells. This function is a reimplementation of population balance
+        analysis (PBA) approach published in Weinreb et al. 2017, PNAS. This function computes the random walk
+        normalized Laplacian matrix of the reference graph, L_rw = I-A/D and then calculates a Moore-Penrose
+        pseudoinverse of L_rw. The method takes an optional but recommended parameter 'r' which represents the
+        relative rates of proliferation and loss in different gene expression states (R). If not provided then a vector
+        with ones is used. The differentiation potential is the dot product of inverse L_rw and R
+
         Args:
-            r: Same as parameter R in the above said reference. Should be a
-               dictionary with each reference cell name as a key and its
-               corresponding R values.
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+                        used feature for the given assay will be used.
+            k_singular: Number of smallest singular values to save
+            r_vec: Same as parameter R in the above said reference.
+            label:
 
         Returns:
 
-        """
-        pass
+       """
+
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.linalg import svds
+
+        def inverse_degree(g):
+            d = np.ravel(g.sum(axis=1))
+            n = g.shape[0]
+            d[d != 0] = 1 / d[d != 0]
+            return csr_matrix((d, (range(n), range(n))), shape=[n, n])
+
+        def laplacian(g, inv_deg):
+            n = g.shape[0]
+            identity = csr_matrix((np.ones(n), (range(n), range(n))), shape=[n, n])
+            return identity - graph.dot(inv_deg)
+
+        def pseudo_inverse(lap):
+            u, s, vt = svds(lap, k=k_singular, which='SM')
+            return vt.T @ np.diag(np.linalg.pinv([s]).reshape(1, -1)[0]) @ u.T
+
+        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
+                                True, False)
+        inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
+        if r_vec is None:
+            r_vec = np.ones(inv_lap.shape[0])
+        v = np.dot(inv_lap, r_vec)
+        self.cells.insert(self._col_renamer(from_assay, cell_key, label), v,
+                          key=cell_key, overwrite=True)
+        return None
 
 
 class MappingDatastore(GraphDataStore):
