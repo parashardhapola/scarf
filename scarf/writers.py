@@ -2,7 +2,7 @@ import zarr
 from typing import Any, Tuple, List, Union
 import numpy as np
 from tqdm import tqdm
-from .readers import CrReader, H5adReader
+from .readers import CrReader, H5adReader, NaboH5Reader
 import os
 import pandas as pd
 from .utils import controlled_compute
@@ -10,7 +10,7 @@ from .logging_utils import logger
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr']
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -167,6 +167,38 @@ class H5adToZarr:
             s = e
 
 
+class NaboH5ToZarr:
+    def __init__(self, h5: NaboH5Reader, zarr_fn: str, assay_name: str = None,
+                 chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        self.h5 = h5
+        self.fn = zarr_fn
+        self.chunkSizes = chunk_size
+        if assay_name is None:
+            logger.info(f"No value provided for assay names. Will use default value: 'RNA'")
+            self.assayName = 'RNA'
+        else:
+            self.assayName = assay_name
+        self.z = zarr.open(self.fn, mode='w')
+        self._ini_cell_data()
+        create_zarr_count_assay(self.z, self.assayName, chunk_size, self.h5.nCells,
+                                self.h5.feat_ids(), self.h5.feat_names(), dtype)
+
+    def _ini_cell_data(self):
+        g = self.z.create_group('cellData')
+        create_zarr_obj_array(g, 'ids', self.h5.cell_ids())
+        create_zarr_obj_array(g, 'names', self.h5.cell_ids())
+        create_zarr_obj_array(g, 'I', [True for _ in range(self.h5.nCells)], 'bool')
+
+    def dump(self, batch_size: int = 500) -> None:
+        store = self.z["%s/counts" % self.assayName]
+        s, e, = 0, 0
+        n_chunks = self.h5.nCells // batch_size + 1
+        for a in tqdm(self.h5.consume(batch_size), total=n_chunks):
+            e += a.shape[0]
+            store[s:e] = a
+            s = e
+
+
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       cells_idx: np.ndarray, feat_idx: np.ndarray,
                       chunk_size: tuple):
@@ -293,3 +325,4 @@ class ZarrMerge:
                 a[:, feat_order] = controlled_compute(i, nthreads)
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end
+

@@ -8,7 +8,7 @@ from typing import IO
 import h5py
 from .logging_utils import logger
 
-__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader']
+__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader']
 
 
 def get_file_handle(fn: str) -> IO:
@@ -493,3 +493,47 @@ class H5adReader:
             yield sparse.COO([nidx, grp['indices'][s: e]], grp['data'][s: e],
                              shape=(n, self.nFeatures))
             s = e
+
+
+class NaboH5Reader:
+    def __init__(self, h5_fn: str):
+        """
+
+        Args:
+            h5_fn: Path to H5 file
+
+        """
+
+        self.h5 = h5py.File(h5_fn, mode='r')
+        self._check_intergrity()
+        self.nCells = self.h5['names']['cells'].shape[0]
+        self.nFeatures = self.h5['names']['genes'].shape[0]
+
+    def _check_intergrity(self) -> bool:
+        for i in ['cell_data', 'gene_data', 'names']:
+            if i not in self.h5:
+                raise KeyError(f"ERROR: Expected group: {i} is missing in the H5 file")
+        return True
+
+    def cell_ids(self) -> List[str]:
+        return [x.decode('UTF-8') for x in self.h5['names']['cells'][:]]
+
+    def feat_ids(self) -> np.ndarray:
+        return np.array([f'feature_{x}' for x in range(self.nFeatures)])
+
+    def feat_names(self) -> List[str]:
+        return [x.decode('UTF-8').rsplit('_', 1)[0] for x in self.h5['names']['genes'][:]]
+
+    def consume(self, batch_size: int = 100) -> Generator[np.ndarray, None, None]:
+        batch = []
+        for i in self.h5['cell_data']:
+            a = np.zeros(self.nFeatures).astype(int)
+            v = self.h5['cell_data'][i][:]
+            a[v['idx']] = v['val']
+            batch.append(a)
+            if len(batch) >= batch_size:
+                batch = np.array(batch)
+                yield batch
+                batch = []
+        if len(batch) > 0:
+            yield np.array(batch)
