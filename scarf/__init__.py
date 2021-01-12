@@ -1,8 +1,14 @@
 import warnings
 from dask.array import PerformanceWarning
+from importlib import metadata
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)
+
+try:
+    __version__ = metadata.version('scarf')
+except ImportError:
+    print("Scarf is not installed", flush=True)
 
 from .datastore import *
 from .readers import *
