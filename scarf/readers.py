@@ -528,7 +528,7 @@ class NaboH5Reader:
         batch = []
         for i in self.h5['cell_data']:
             a = np.zeros(self.nFeatures).astype(int)
-            v = self.h5['cell_data'][i][:]
+            v = self.h5['cell_data'][i][:][::-1]
             a[v['idx']] = v['val']
             batch.append(a)
             if len(batch) >= batch_size:
