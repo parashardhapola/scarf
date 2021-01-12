@@ -73,6 +73,9 @@ class CrToZarr:
             for j in range(len(stores)):
                 stores[j][s:e] = a[:, spidx[j][0]:spidx[j][1]]
             s = e
+        if e != self.cr.nCells:
+            raise AssertionError("ERROR: This is a bug in CrToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
 
 
 class MtxToZarr:
@@ -126,6 +129,9 @@ class MtxToZarr:
             for store_name in stores.keys():
                 stores[store_name][s:e] = b[store_name]
             s = e
+        if e != self.cr.nCells:
+            raise AssertionError("ERROR: This is a bug in MtxToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
 
 
 class H5adToZarr:
@@ -165,6 +171,9 @@ class H5adToZarr:
             a = a.todense()
             store[s:e] = a
             s = e
+        if e != self.h5ad.nCells:
+            raise AssertionError("ERROR: This is a bug in H5adToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
 
 
 class NaboH5ToZarr:
@@ -197,6 +206,9 @@ class NaboH5ToZarr:
             e += a.shape[0]
             store[s:e] = a
             s = e
+        if e != self.h5.nCells:
+            raise AssertionError("ERROR: This is a bug in NaboH5ToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
 
 
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
