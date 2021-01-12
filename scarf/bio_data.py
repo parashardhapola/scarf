@@ -53,9 +53,53 @@ datasets = {
          'url': 'http://cf.10xgenomics.com/samples/cell-atac/1.2.0/atac_pbmc_10k_nextgem'
                 '/atac_pbmc_10k_nextgem_filtered_peak_bc_matrix.h5'}
     ],
-    'bastidas_pancreas_day15_rnaseq': [
+    'bastidas_day15_pancreas_rnaseq': [
         {'name': 'data.h5ad',
          'url': 'https://github.com/theislab/scvelo_notebooks/raw/master/data/Pancreas/'
                 'endocrinogenesis_day15.h5ad'}
-    ]
+    ],
+    'baron_8k_pancreas_rnaseq': [
+        {'name': 'matrix.mtx.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d3386541a041414a914'},
+        {'name': 'features.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d3286541a041514b220'},
+        {'name': 'barcodes.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d32e80d370429a57906'},
+    ],
+    'muraro_2k_pancreas_rnaseq': [
+        {'name': 'matrix.mtx.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d86e80d37042ea589df'},
+        {'name': 'features.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d85ba0109040989135e'},
+        {'name': 'barcodes.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d84ba0109040d8931bb'},
+    ],
+    'segerstolpe_2k_pancreas_rnaseq': [
+        {'name': 'matrix.mtx.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d9e86541a040e14b481'},
+        {'name': 'features.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d9d86541a041514b340'},
+        {'name': 'barcodes.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1d9de80d37042ea58a03'},
+    ],
+    'xin_1k_pancreas_rnaseq': [
+        {'name': 'matrix.mtx.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1dd5ba010904098913a7'},
+        {'name': 'features.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1dd4ba0109040c892074'},
+        {'name': 'barcodes.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '5ffe1dd4e80d37042aa56f5a'},
+    ],
 }

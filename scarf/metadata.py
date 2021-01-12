@@ -347,7 +347,7 @@ class MetaData:
             raise ValueError(f"ERROR: {col} already exists. Please set `overwrite` to True to overwrite.")
         if type(values) == list:
             logger.warning("'values' parameter is of `list` type and not `np.ndarray` as expected. The correct dtype "
-                           "may not be assigned to the the column")
+                           "may not be assigned to the column")
             values = np.array(values)
         v = self._fill_to_index(values, fill_value, key)
         self._save(column_name, v.astype(values.dtype), location=location)
