@@ -85,8 +85,11 @@ def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: st
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
     norm_params = source_assay.z[normed_loc].attrs['subset_params']
     sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))
+
+    # TODO: add target cell key
     normed_data = target_assay.normed(target_assay.cells.active_index('I'), sorted_t_idx, **norm_params)
     loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
+
     og = create_zarr_dataset(target_assay.z['/'], loc, (1000,), 'float64', (normed_data.shape[0], len(t_idx)))
     pos_start, pos_end = 0, 0
     unsorter_idx = np.argsort(np.argsort(t_idx[t_idx != -1]))

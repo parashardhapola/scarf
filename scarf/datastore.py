@@ -5,6 +5,7 @@ import pandas as pd
 import zarr
 from tqdm import tqdm
 import dask.array as daskarr
+from scipy.sparse import csr_matrix, coo_matrix
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
@@ -715,8 +716,6 @@ class GraphDataStore(BaseDataStore):
         Returns:
 
         """
-        from scipy.sparse import coo_matrix, csr_matrix
-
         store = self.z[graph_loc]
         n_cells = self._get_graph_ncells(graph_loc)
         # TODO: can we have a progress bar for graph loading. Append to coo matrix?
@@ -954,8 +953,8 @@ class GraphDataStore(BaseDataStore):
             return ann_obj
         return None
 
-    def load_graph(self, from_assay: str, cell_key: str, feat_key: str, graph_format: str,
-                   min_edge_weight: float, symmetric: bool, upper_only: bool):
+    def load_graph(self, *, from_assay: str, cell_key: str, feat_key: str,
+                   min_edge_weight: float, symmetric: bool, upper_only: bool) -> csr_matrix:
         """
         Load the cell neighbourhood as a scipy sparse matrix
 
@@ -963,7 +962,6 @@ class GraphDataStore(BaseDataStore):
             from_assay: Name of the assay/
             cell_key: Cell key used to create the graph
             feat_key: Feature key used to create the graph
-            graph_format: Can be either 'csr' or 'coo'.
             min_edge_weight: Edges with weights less than this value are removed.
             symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
@@ -973,7 +971,7 @@ class GraphDataStore(BaseDataStore):
             A scipy sparse matrix representing cell neighbourhood graph.
 
         """
-        from scipy.sparse import coo_matrix, csr_matrix, triu
+        from scipy.sparse import triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None:
@@ -984,31 +982,19 @@ class GraphDataStore(BaseDataStore):
             if graph_loc not in self.z:
                 raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
                                  f"Run `make_graph` for assay {from_assay}")
-            if graph_format not in ['coo', 'csr']:
-                raise KeyError("ERROR: format has to be either 'coo' or 'csr'")
-            n_cells, graph = self._store_to_sparse(graph_loc, 'coo')
+            n_cells, graph = self._store_to_sparse(graph_loc, 'csr')
 
         if symmetric:
             graph = (graph + graph.T) / 2
             if upper_only:
                 graph = triu(graph)
-            else:
-                graph = graph.tocoo()
         idx = graph.data > min_edge_weight
         # Following if-else block is for purpose for improving performance when no filtering is performed.
         if idx.sum() == graph.data.shape[0]:
-            if graph_format == 'coo':
-                if type(graph) == coo_matrix:
-                    return graph
-                else:
-                    return graph.tocoo()
-            else:
-                return graph.tocsr()
+            return graph
         else:
-            if graph_format == 'coo':
-                return coo_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
-            else:
-                return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
+            graph = graph.tocoo()
+            return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
     def run_tsne(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                  min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
@@ -1064,8 +1050,9 @@ class GraphDataStore(BaseDataStore):
 
         uid = str(uuid4())
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
-                                symmetric_graph, graph_upper_only)
+        graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
+                                upper_only=graph_upper_only)
         export_knn_to_mtx(knn_mtx_fn, graph)
 
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
@@ -1157,14 +1144,15 @@ class GraphDataStore(BaseDataStore):
         from .umap import fit_transform
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'coo', min_edge_weight,
-                                symmetric_graph, graph_upper_only)
+        graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
+                                upper_only=graph_upper_only)
 
         if ini_embed is None:
             ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
         if nthreads is None:
             nthreads = self.nthreads
-        t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
+        t = fit_transform(graph=graph.tocoo(), ini_embed=ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, set_op_mix_ratio=set_op_mix_ratio,
                           repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
@@ -1209,8 +1197,9 @@ class GraphDataStore(BaseDataStore):
         import igraph  # python-igraph
 
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
-        adj = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
-                              symmetric_graph, graph_upper_only)
+        adj = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                              min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
+                              upper_only=graph_upper_only)
         sources, targets = adj.nonzero()
         g = igraph.Graph()
         g.add_vertices(adj.shape[0])
@@ -1278,8 +1267,9 @@ class GraphDataStore(BaseDataStore):
             logger.info("Using existing dendrogram")
         else:
             paris = skn.hierarchy.Paris()
-            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', min_edge_weight,
-                                    symmetric_graph, graph_upper_only)
+            graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                    min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
+                                    upper_only=graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self.z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -1345,7 +1335,9 @@ class GraphDataStore(BaseDataStore):
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1, False, False)
+        graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                min_edge_weight=-1, symmetric=False, upper_only=False)
+
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
@@ -1390,7 +1382,6 @@ class GraphDataStore(BaseDataStore):
         Returns: An array of imputed values for the given feature
 
         """
-        from scipy.sparse import csr_matrix, coo_matrix
 
         def calc_diff_operator(g: csr_matrix, to_power: int) -> coo_matrix:
             d = np.ravel(g.sum(axis=1))
@@ -1424,8 +1415,8 @@ class GraphDataStore(BaseDataStore):
                     self._cachedMagicOperator = None
                     self._cachedMagicOperatorLoc = None
         else:
-            graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
-                                    True, False)
+            graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                    min_edge_weight=-1, symmetric=True, upper_only=False)
             diff_op = calc_diff_operator(graph, t)
             shape = diff_op.data.shape
             store = self.z.create_group(magic_loc, overwrite=True)
@@ -1464,7 +1455,6 @@ class GraphDataStore(BaseDataStore):
 
        """
 
-        from scipy.sparse import csr_matrix
         from scipy.sparse.linalg import svds
 
         def inverse_degree(g):
@@ -1483,8 +1473,8 @@ class GraphDataStore(BaseDataStore):
             return vt.T @ np.diag(np.linalg.pinv([s]).reshape(1, -1)[0]) @ u.T
 
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
-        graph = self.load_graph(from_assay, cell_key, feat_key, 'csr', -1,
-                                True, False)
+        graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+                                min_edge_weight=-1, symmetric=True, upper_only=False)
         inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
         if r_vec is None:
             r_vec = np.ones(inv_lap.shape[0])
@@ -1738,8 +1728,8 @@ class MappingDatastore(GraphDataStore):
             preds.append(temp)
         return pd.Series(preds)
 
-    def load_unified_graph(self, from_assay, cell_key, feat_key, target_name, use_k, target_weight,
-                           sparse_format: str = 'coo'):
+    def load_unified_graph(self, *, from_assay: str, cell_key: str, feat_key: str, target_names: List[str],
+                           use_k: int, target_weight: float) -> Tuple[List[int], csr_matrix]:
         """
         This is similar to ``load_graph`` but includes projected cells and their edges.
 
@@ -1748,59 +1738,75 @@ class MappingDatastore(GraphDataStore):
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
-            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            target_names: Name of target datasets to be included in the unified graph
             use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
                    than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
                    'save_k'
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
-            sparse_format: Format for sparse graph. Can be either 'coo' (default) or 'csr'
 
         Returns:
 
         """
         # TODO:  allow loading multiple targets
 
-        from scipy.sparse import csr_matrix, coo_matrix
-
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        if sparse_format not in ['csr', 'coo']:
-            raise KeyError("ERROR: `sparse_format` should be either 'coo' or 'csr'")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         edges = self.z[graph_loc].edges[:]
         weights = self.z[graph_loc].weights[:]
-        n_cells = self.cells.fetch_all(cell_key).sum()
-        pidx = self.z[from_assay].projections[target_name].indices[:, :use_k]
+        ref_n_cells = self.cells.fetch_all(cell_key).sum()
+        store = self.z[from_assay].projections
+        pidx = np.vstack([store[x].indices[:, :use_k] for x in target_names])
+        n_cells = [ref_n_cells] + [store[x].indices.shape[0] for x in target_names]
         ne = []
         nw = []
         for n, i in enumerate(pidx):
             for j in i:
-                ne.append([n_cells + n, j])
+                ne.append([ref_n_cells + n, j])
                 # TODO: Better way to weigh the target edges
                 nw.append(target_weight)
         me = np.vstack([edges, ne]).astype(int)
         mw = np.hstack([weights, nw])
-        tot_cells = n_cells + pidx.shape[0]
-        if sparse_format == 'coo':
-            return coo_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
-        elif sparse_format == 'csr':
-            return csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
+        tot_cells = ref_n_cells + pidx.shape[0]
+        graph = csr_matrix((mw, (me[:, 0], me[:, 1])), shape=(tot_cells, tot_cells))
+        return n_cells, graph
 
-    def run_unified_umap(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
-                         feat_key: str = None,
-                         use_k: int = 3, target_weight: float = 0.1, spread: float = 2.0, min_dist: float = 1,
-                         fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
-                         repulsion_strength: float = 1.0, initial_alpha: float = 1.0,
-                         negative_sample_rate: float = 5,
-                         random_seed: int = 4444, ini_embed_with: str = 'kmeans', label: str = 'UMAP'):
+    def _get_uni_ini_embed(self, from_assay: str, cell_key: str, feat_key: str, graph: csr_matrix,
+                           ini_embed_with: str, ref_n_cells: int) -> np.ndarray:
+        if ini_embed_with == 'kmeans':
+            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
+        else:
+            x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
+            y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
+            ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
+        targets_best_nn = np.array(np.argmax(graph, axis=1)).reshape(1, -1)[0][ref_n_cells:]
+        return np.vstack([ini_embed, ini_embed[targets_best_nn]])
+
+    def _save_embedding(self, from_assay: str, cell_key: str, label: str, embedding: np.ndarray,
+                        n_cells: List[int], target_names: List[str]) -> None:
+        g = create_zarr_dataset(self.z[from_assay].projections, label, (1000, 2), 'float64', embedding.shape)
+        g[:] = embedding
+        g.attrs['n_cells'] = [int(x) for x in n_cells]  # forcing int type here otherwise json raises TypeError
+        g.attrs['target_names'] = target_names
+        for i in range(2):
+            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
+                              embedding[:n_cells[0], i], key=cell_key, overwrite=True)
+        return None
+
+    def run_unified_umap(self, *, target_names: List[str], from_assay: str = None, cell_key: str = 'I',
+                         feat_key: str = None, use_k: int = 3, target_weight: float = 0.1,
+                         spread: float = 2.0, min_dist: float = 1, fit_n_epochs: int = 200,
+                         tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0, repulsion_strength: float = 1.0,
+                         initial_alpha: float = 1.0, negative_sample_rate: float = 5, random_seed: int = 4444,
+                         ini_embed_with: str = 'kmeans', label: str = 'unified_UMAP') -> None:
         """
         Calculates the UMAP embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
         the same way as the graph as in ``run_umap``
 
         Args:
-            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            target_names: Names of target datasets to be included in the unified UMAP.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
@@ -1843,46 +1849,33 @@ class MappingDatastore(GraphDataStore):
         """
         from .umap import fit_transform
 
-        # TODO: add support for multiple targets
-
         if from_assay is None:
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
-        graph = self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k, target_weight)
-        if ini_embed_with == 'kmeans':
-            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
-        else:
-            x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
-            y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
-            ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
-        pidx = self.z[from_assay].projections[target_name].indices[:, 0]
-        ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
-        t = fit_transform(graph=graph, ini_embed=ini_embed, spread=spread, min_dist=min_dist,
+        n_cells, graph = self.load_unified_graph(
+            from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+            target_names=target_names, use_k=use_k, target_weight=target_weight)
+        ini_embed = self._get_uni_ini_embed(from_assay, cell_key, feat_key, graph, ini_embed_with, n_cells[0])
+        t = fit_transform(graph=graph.tocoo(), ini_embed=ini_embed, spread=spread, min_dist=min_dist,
                           tx_n_epochs=tx_n_epochs, fit_n_epochs=fit_n_epochs,
                           random_seed=random_seed, set_op_mix_ratio=set_op_mix_ratio,
                           repulsion_strength=repulsion_strength, initial_alpha=initial_alpha,
                           negative_sample_rate=negative_sample_rate)
-        g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
-        g[:] = t
-        label = f"{label}_{target_name}"
-        n_ref_cells = self.cells.fetch(cell_key).sum()
-        for i in range(2):
-            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
+        self._save_embedding(from_assay, cell_key, label, t, n_cells, target_names)
         return None
 
-    def run_unified_tsne(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
+    def run_unified_tsne(self, *, target_names: List[str], from_assay: str = None, cell_key: str = 'I',
                          feat_key: str = None, use_k: int = 3, target_weight: float = 0.5,
                          lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200, alpha: int = 10,
                          box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
-                         ini_embed_with: str = 'kmeans', label: str = 'tSNE'):
+                         ini_embed_with: str = 'kmeans', label: str = 'tSNE') -> None:
         """
         Calculates the tSNE embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
         the same way as the graph as in ``run_tsne``
 
         Args:
-            target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
+            target_names: Names of target datasets to be included in the unified tSNE.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
@@ -1916,23 +1909,18 @@ class MappingDatastore(GraphDataStore):
             from_assay = self._defaultAssay
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
+        n_cells, graph = self.load_unified_graph(
+            from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
+            target_names=target_names, use_k=use_k, target_weight=target_weight)
+        ini_embed = self._get_uni_ini_embed(from_assay, cell_key, feat_key, graph, ini_embed_with, n_cells[0])
 
-        if ini_embed_with == 'kmeans':
-            ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
-        else:
-            x = self.cells.fetch(f'{ini_embed_with}1', cell_key)
-            y = self.cells.fetch(f'{ini_embed_with}2', cell_key)
-            ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
-        pidx = self.z[from_assay].projections[target_name].indices[:, 0]
-        ini_embed = np.vstack([ini_embed, ini_embed[pidx]])
         uid = str(uuid4())
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
         with open(ini_emb_fn, 'w') as h:
             h.write('\n'.join(map(str, ini_embed.flatten())))
         del ini_embed
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
-        export_knn_to_mtx(knn_mtx_fn, self.load_unified_graph(from_assay, cell_key, feat_key, target_name, use_k,
-                                                              target_weight, sparse_format='csr'))
+        export_knn_to_mtx(knn_mtx_fn, graph)
         out_fn = Path(temp_file_loc, f'{uid}_output.txt').resolve()
         cmd = f"sgtsne -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}" \
               f" -h {box_h} -i {ini_emb_fn} -o {out_fn} {knn_mtx_fn}"
@@ -1941,19 +1929,12 @@ class MappingDatastore(GraphDataStore):
         else:
             os.system(cmd)
         t = pd.read_csv(out_fn, header=None, sep=' ')[[0, 1]].values
-        g = create_zarr_dataset(self.z[from_assay].projections[target_name], label, (1000, 2), 'float64', t.shape)
-        g[:] = t
-        label = f"{label}_{target_name}"
-        n_ref_cells = self.cells.fetch(cell_key).sum()
-        for i in range(2):
-            self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
-                              t[:n_ref_cells, i], key=cell_key, overwrite=True)
+        self._save_embedding(from_assay, cell_key, label, t, n_cells, target_names)
         for fn in [out_fn, knn_mtx_fn, ini_emb_fn]:
             Path.unlink(fn)
         return None
 
-    def plot_unified_layout(self, *, target_name: str, from_assay: str = None, cell_key: str = 'I',
-                            layout_key: str = 'UMAP', show_target_only: bool = False,
+    def plot_unified_layout(self, *, from_assay: str = None, layout_key: str = None, show_target_only: bool = False,
                             ref_name: str = 'reference', target_groups: list = None,
                             width: float = 6, height: float = 6, cmap=None, color_key: dict = None,
                             mask_color: str = 'k', point_size: float = 10, ax_label_size: float = 12,
@@ -1972,11 +1953,7 @@ class MappingDatastore(GraphDataStore):
         external annotations for those cells.
 
         Args:
-            target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      Should be same as the one that was used in one of the `run_mapping` calls for the given assay.
-                      The values in the chosen column should be boolean (Default value: 'I')
             layout_key: Should be same as the parameter value for `label` in `run_unified_umap` or `run_unified_tsne`
                         (Default value: 'UMAP')
             show_target_only: If True then the reference cells are not shown (Default value: False)
@@ -2032,29 +2009,51 @@ class MappingDatastore(GraphDataStore):
 
         if from_assay is None:
             from_assay = self._defaultAssay
-        t = self.z[from_assay].projections[target_name][layout_key][:]
-        ref_n_cells = self.cells.fetch_all(cell_key).sum()
-        t_n_cells = t.shape[0] - ref_n_cells
+        if layout_key is None:
+            raise ValueError("ERROR: Please provide a value for the `layout_key` parameter. This should be same as "
+                             "that for either `run_unified_umap` or `run_unified_tsne`. Please see the default values "
+                             "for `label` parameter in those functions if unsure.")
+        t = self.z[from_assay].projections[layout_key][:]
+        attrs = dict(self.z[from_assay].projections[layout_key].attrs)
+        t_names = attrs['target_names']
+        ref_n_cells = attrs['n_cells'][0]
+        t_n_cells = attrs['n_cells'][1:]
         x = t[:, 0]
         y = t[:, 1]
         df = pd.DataFrame({f"{layout_key}1": x, f"{layout_key}2": y})
         if target_groups is None:
             if color_key is not None:
-                if ref_name not in color_key or target_name not in color_key:
-                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and "
-                                   f"'{target_name}' which are values for parameters `ref_name` and "
-                                   f"`target_name` respectively.")
+                temp_raise_error = False
+                if ref_name not in color_key:
+                    temp_raise_error = True
+                for i in t_names:
+                    if i not in color_key:
+                        temp_raise_error = True
+                if temp_raise_error:
+                    temp = ' '.join(t_names)
+                    raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and '{temp}'")
             else:
-                color_key = {ref_name: 'coral', target_name: 'k'}
-            target_groups = np.array([target_name for _ in range(t_n_cells)]).astype(object)
+                import seaborn as sns
+                temp_cmap = sns.color_palette('hls', n_colors=len(t_names)+1).as_hex()
+                color_key = {k: v for k, v in zip(t_names, temp_cmap[1:])}
+                color_key[ref_name] = temp_cmap[0]
+            target_groups = []
+            for i, j in zip(t_names, t_n_cells):
+                target_groups.extend([i for _ in range(j)])
+            target_groups = np.array(target_groups).astype(object)
             mask_values = None
             mask_name = 'NA'
         else:
+            if len(target_groups) == len(t_names):
+                temp = []
+                for i in target_groups:
+                    temp.extend(list(i))
+                target_groups = list(temp)
             color_key = None
             mask_values = [ref_name]
             mask_name = ref_name
             target_groups = np.array(target_groups).astype(object)
-        if len(target_groups) != t_n_cells:
+        if len(target_groups) != sum(t_n_cells):
             raise ValueError("ERROR: Number of values in `target_groups` should be same as no. of target cells")
         # Turning array to object forces np.NaN to 'nan'
         if any(target_groups == 'nan'):
