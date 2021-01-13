@@ -976,7 +976,7 @@ class GraphDataStore(BaseDataStore):
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None:
             logger.info(f"Loading cached graph from: {self._cachedGraphLoc}")
-            graph = self._cachedGraph.tocoo()
+            graph = self._cachedGraph
             n_cells = self._get_graph_ncells(graph_loc)
         else:
             if graph_loc not in self.z:
