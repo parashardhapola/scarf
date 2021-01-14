@@ -453,6 +453,13 @@ class H5adReader:
                             return np.array([c[x] for x in v])
                         except (IndexError, TypeError):
                             return v
+        if 'uns' in self.h5:
+            if key+'_categories' in self.h5['uns']:
+                c = self.h5['uns'][key+'_categories'][:]
+                try:
+                    return np.array([c[x] for x in v])
+                except (IndexError, TypeError):
+                    return v
         return v
 
     def _get_col_data(self, group: str, ignore_keys: List[str]) -> Generator[Tuple[str, np.ndarray], None, None]:
