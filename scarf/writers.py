@@ -2,7 +2,7 @@ import zarr
 from typing import Any, Tuple, List, Union
 import numpy as np
 from tqdm import tqdm
-from .readers import CrReader, H5adReader, NaboH5Reader
+from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
 import os
 import pandas as pd
 from .utils import controlled_compute
@@ -10,7 +10,7 @@ from .logging_utils import logger
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr']
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
@@ -208,6 +208,55 @@ class NaboH5ToZarr:
             s = e
         if e != self.h5.nCells:
             raise AssertionError("ERROR: This is a bug in NaboH5ToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
+
+
+class LoomToZarr:
+    def __init__(self, loom: LoomReader, zarr_fn: str, assay_name: str = None,
+                 chunk_size=(1000, 1000)):
+        """
+        Converts Loom file read using scarf.LoomReader into Scarf's Zarr format
+
+        Args:
+            loom: LoomReader object used to open Loom format file
+            zarr_fn: Output Zarr filename with path
+            assay_name: Name for the output assay. If not provided then automatically set to RNA
+            chunk_size: Chunk size for the count matrix saved in Zarr file.
+        """
+        # TODO: support for multiple assay. Data from within individual layers can be treated as separate assays
+        self.loom = loom
+        self.fn = zarr_fn
+        self.chunkSizes = chunk_size
+        if assay_name is None:
+            logger.info(f"No value provided for assay names. Will use default value: 'RNA'")
+            self.assayName = 'RNA'
+        else:
+            self.assayName = assay_name
+        self.z = zarr.open(self.fn, mode='w')
+        self._ini_cell_data()
+        create_zarr_count_assay(self.z, self.assayName, chunk_size, self.loom.nCells,
+                                self.loom.feature_ids(), self.loom.feature_names(), self.loom.matrixDtype)
+        for i, j in self.loom.get_feature_attrs():
+            create_zarr_obj_array(self.z[self.assayName]['featureData'], i, j, j.dtype)
+
+    def _ini_cell_data(self):
+        g = self.z.create_group('cellData')
+        create_zarr_obj_array(g, 'ids', self.loom.cell_ids())
+        create_zarr_obj_array(g, 'names', self.loom.cell_ids())
+        create_zarr_obj_array(g, 'I', [True for _ in range(self.loom.nCells)], 'bool')
+        for i, j in self.loom.get_cell_attrs():
+            create_zarr_obj_array(g, i, j, j.dtype)
+
+    def dump(self, batch_size: int = 1000) -> None:
+        store = self.z["%s/counts" % self.assayName]
+        s, e, = 0, 0
+        n_chunks = self.loom.nCells//batch_size + 1
+        for a in tqdm(self.loom.consume(batch_size), total=n_chunks):
+            e += a.shape[0]
+            store[s:e] = a
+            s = e
+        if e != self.loom.nCells:
+            raise AssertionError("ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
                                  "written into the zarr file. Please report this issue")
 
 

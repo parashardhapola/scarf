@@ -8,7 +8,7 @@ from typing import IO
 import h5py
 from .logging_utils import logger
 
-__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader']
+__all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader', 'LoomReader']
 
 
 def get_file_handle(fn: str) -> IO:
@@ -505,11 +505,11 @@ class NaboH5Reader:
         """
 
         self.h5 = h5py.File(h5_fn, mode='r')
-        self._check_intergrity()
+        self._check_integrity()
         self.nCells = self.h5['names']['cells'].shape[0]
         self.nFeatures = self.h5['names']['genes'].shape[0]
 
-    def _check_intergrity(self) -> bool:
+    def _check_integrity(self) -> bool:
         for i in ['cell_data', 'gene_data', 'names']:
             if i not in self.h5:
                 raise KeyError(f"ERROR: Expected group: {i} is missing in the H5 file")
@@ -537,3 +537,102 @@ class NaboH5Reader:
                 batch = []
         if len(batch) > 0:
             yield np.array(batch)
+
+
+class LoomReader:
+    def __init__(self, loom_fn: str, matrix_key: str = 'matrix',
+                 cell_attrs_key='col_attrs', cell_names_key: str = 'obs_names',
+                 feature_attrs_key: str = 'row_attrs', feature_names_key: str = 'var_names',
+                 feature_ids_key: str = None, dtype: str = 'int64') -> None:
+        """
+        This class enables reading of the Loom files.
+
+        Args:
+            loom_fn: Path to loom format file
+            matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
+                        This matrix is expected to be of form (nFeatures x nCells)
+            cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
+                            (Default value: col_attrs)
+            cell_names_key: Child node under the `cell_attrs_key` wherein the cell names are stored.
+                            (Default value: obs_names)
+            feature_attrs_key: Child node under the HDF5 file wherein the feature/gene attributes are stored.
+                               (Default value: row_attrs)
+            feature_names_key: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
+                               (Default value: var_names)
+            feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
+                               (Default value: None)
+            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+                   method. (Default value: int64)
+        """
+
+        self.h5 = h5py.File(loom_fn, mode='r')
+        self.matrixKey = matrix_key
+        self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
+        self.cellNamesKey, self.featureNamesKey = cell_names_key, feature_names_key
+        self.featureIdsKey = feature_ids_key
+        self.matrixDtype = dtype
+        self._check_integrity()
+        self.nFeatures, self.nCells = self.h5[self.matrixKey].shape
+
+    def _check_integrity(self) -> bool:
+        if self.matrixKey not in self.h5:
+            raise KeyError(f"ERROR: Matrix key (location): {self.matrixKey} is missing in the H5 file")
+        if self.cellAttrsKey not in self.h5:
+            logger.warning(f"Cell attributes are missing. Key {self.cellAttrsKey} was not found")
+        if self.featureAttrsKey not in self.h5:
+            logger.warning(f"Feature attributes are missing. Key {self.featureAttrsKey} was not found")
+        return True
+
+    def cell_names(self) -> List[str]:
+        if self.cellAttrsKey not in self.h5:
+            pass
+        elif self.cellNamesKey not in self.h5[self.cellAttrsKey]:
+            logger.warning(f"Cell names/ids key ({self.cellNamesKey}) is missing in attributes")
+        else:
+            return self.h5[self.cellAttrsKey][self.cellNamesKey][:]
+        return [f"cell_{x}" for x in range(self.nCells)]
+
+    def cell_ids(self) -> List[str]:
+        return self.cell_names()
+
+    def get_cell_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        if self.cellAttrsKey in self.h5:
+            for i in self.h5[self.cellAttrsKey]:
+                if i == self.cellNamesKey:
+                    continue
+                yield i, self.h5[self.cellAttrsKey][i][:]
+
+    def feature_names(self) -> List[str]:
+        if self.featureAttrsKey not in self.h5:
+            pass
+        elif self.featureNamesKey not in self.h5[self.featureAttrsKey]:
+            logger.warning(f"Feature names key ({self.featureNamesKey}) is missing in attributes")
+        else:
+            return self.h5[self.featureAttrsKey][self.featureNamesKey][:]
+        return [f"feature_{x}" for x in range(self.nFeatures)]
+
+    def feature_ids(self) -> List[str]:
+        if self.featureAttrsKey not in self.h5:
+            pass
+        elif self.featureIdsKey is None:
+            pass
+        elif self.featureIdsKey not in self.h5[self.featureAttrsKey]:
+            logger.warning(f"Feature names key ({self.featureIdsKey}) is missing in attributes")
+        else:
+            return self.h5[self.featureAttrsKey][self.featureIdsKey][:]
+        return [f"feature_{x}" for x in range(self.nFeatures)]
+
+    def get_feature_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        if self.featureAttrsKey in self.h5:
+            for i in self.h5[self.featureAttrsKey]:
+                if i in [self.featureIdsKey, self.featureNamesKey]:
+                    continue
+                yield i, self.h5[self.featureAttrsKey][i][:]
+
+    def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
+        last_n = 0
+        for i in range(batch_size, self.nCells, batch_size):
+            yield self.h5[self.matrixKey][:, last_n:i].astype(self.matrixDtype).T
+            last_n = i
+        if last_n < self.nCells:
+            yield self.h5[self.matrixKey][:, last_n:].astype(self.matrixDtype).T
