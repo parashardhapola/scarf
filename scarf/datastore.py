@@ -2213,6 +2213,10 @@ class DataStore(MappingDatastore):
         if type(assay) != RNAassay:
             raise TypeError(f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
                             f"The provided assay is {type(assay)} type")
+        if min_cells is None:
+            min_cells = int(0.01 * self.cells.N)
+            logger.info(f"Setting `min_cells` to {min_cells}. Only those genes that are present in atleast this number "
+                        f"of cells will be considered HVGs.")
         assay.mark_hvgs(cell_key, min_cells, top_n, min_var, max_var, min_mean, max_mean,
                         n_bins, lowess_frac, blacklist, hvg_key_name, show_plot, **plot_kwargs)
 
