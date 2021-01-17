@@ -976,7 +976,8 @@ class GraphDataStore(BaseDataStore):
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None:
             logger.info(f"Loading cached graph from: {self._cachedGraphLoc}")
-            graph = self._cachedGraph
+            # This is done so that the changes in this copy graph does not affect cache
+            graph = self._cachedGraph.copy()
             n_cells = self._get_graph_ncells(graph_loc)
         else:
             if graph_loc not in self.z:
@@ -988,9 +989,13 @@ class GraphDataStore(BaseDataStore):
             graph = (graph + graph.T) / 2
             if upper_only:
                 graph = triu(graph)
-        idx = graph.data > min_edge_weight
+        idx = None
+        if min_edge_weight > 0:
+            idx = graph.data > min_edge_weight
         # Following if-else block is for purpose for improving performance when no filtering is performed.
-        if idx.sum() == graph.data.shape[0]:
+        if idx is None:
+            return graph
+        elif idx.sum() == graph.data.shape[0]:
             return graph
         else:
             graph = graph.tocoo()
