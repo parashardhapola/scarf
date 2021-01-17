@@ -39,13 +39,13 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 class BaseDataStore:
     def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
                  min_features_per_cell: int, min_cells_per_feature: int,
-                 mito_pattern: str, ribo_pattern: str, nthreads: int):
+                 mito_pattern: str, ribo_pattern: str, nthreads: int, zarr_mode: str, synchronizer):
 
         self._fn: str = zarr_loc
         if type(self._fn) != str:
-            self.z: zarr.hierarchy = zarr.group(self._fn)
+            self.z: zarr.hierarchy = zarr.group(self._fn, synchronizer=synchronizer)
         else:
-            self.z: zarr.hierarchy = zarr.open(self._fn, 'r+')
+            self.z: zarr.hierarchy = zarr.open(self._fn, mode=zarr_mode, synchronizer=synchronizer)
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()
@@ -179,7 +179,8 @@ class BaseDataStore:
                     z_attrs[i] = 'Assay'
                 logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
-        self.z.attrs['assayTypes'] = z_attrs
+        if self.z.attrs['assayTypes'] != z_attrs:
+            self.z.attrs['assayTypes'] = z_attrs
         return None
 
     def _get_assay(self, from_assay: str) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
@@ -274,7 +275,11 @@ class BaseDataStore:
                                    f"{from_assay}. Will not remove low quality cells automatically.")
                 else:
                     bv = self.cells.sift(from_assay + '_nFeatures', min_features, np.Inf)
-                    self.cells.update_key(bv, key='I')
+                    # Making sure that the write operation is only done if the filtering results have changed
+                    cur_I = self.cells.fetch_all('I')
+                    nbv = bv & cur_I
+                    if all(nbv == cur_I) is False:
+                        self.cells.update_key(bv, key='I')
 
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
@@ -2039,7 +2044,7 @@ class MappingDatastore(GraphDataStore):
                     raise KeyError(f"ERROR: `color_key` must contain these keys: '{ref_name}' and '{temp}'")
             else:
                 import seaborn as sns
-                temp_cmap = sns.color_palette('hls', n_colors=len(t_names)+1).as_hex()
+                temp_cmap = sns.color_palette('hls', n_colors=len(t_names) + 1).as_hex()
                 color_key = {k: v for k, v in zip(t_names, temp_cmap[1:])}
                 color_key[ref_name] = temp_cmap[0]
             target_groups = []
@@ -2092,14 +2097,25 @@ class DataStore(MappingDatastore):
         mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
         ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
+        zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
+        synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for more
+                     details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default ThreadSynchronizer will
+                     be used.
+
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
-                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2):
+                 mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, zarr_mode: str = 'r+',
+                 synchronizer=None):
+        if zarr_mode not in ['r', 'r+']:
+            raise ValueError("ERROR: Zarr file can only be accessed using either 'r' ot 'r+' mode")
+        if synchronizer is None:
+            synchronizer = zarr.ThreadSynchronizer()
         super().__init__(zarr_loc=zarr_loc, assay_types=assay_types, default_assay=default_assay,
                          min_features_per_cell=min_features_per_cell, min_cells_per_feature=min_cells_per_feature,
-                         mito_pattern=mito_pattern, ribo_pattern=ribo_pattern, nthreads=nthreads)
+                         mito_pattern=mito_pattern, ribo_pattern=ribo_pattern, nthreads=nthreads,
+                         zarr_mode=zarr_mode, synchronizer=synchronizer)
 
     def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int]) -> None:
         """
