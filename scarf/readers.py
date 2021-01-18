@@ -6,6 +6,7 @@ import os
 import sparse
 from typing import IO
 import h5py
+from tqdm import tqdm
 from .logging_utils import logger
 
 __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader', 'LoomReader']
@@ -464,12 +465,12 @@ class H5adReader:
 
     def _get_col_data(self, group: str, ignore_keys: List[str]) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.useGroup[group] == 1:
-            for i in self.h5[group].dtype.names:
+            for i in tqdm(self.h5[group].dtype.names, desc=f"Reading attributes from group {group}"):
                 if i in ignore_keys:
                     continue
                 yield i, self._replace_category_values(self.h5[group][i][:], i, group)
         if self.useGroup[group] == 2:
-            for i in self.h5[group].keys():
+            for i in tqdm(self.h5[group].keys(), desc=f"Reading attributes from group {group}"):
                 if i in ignore_keys:
                     continue
                 if type(self.h5[group][i]) == h5py.Dataset:
@@ -604,7 +605,7 @@ class LoomReader:
 
     def get_cell_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.cellAttrsKey in self.h5:
-            for i in self.h5[self.cellAttrsKey]:
+            for i in tqdm(self.h5[self.cellAttrsKey].keys(), desc=f"Reading cell attributes"):
                 if i == self.cellNamesKey:
                     continue
                 yield i, self.h5[self.cellAttrsKey][i][:]
@@ -631,7 +632,7 @@ class LoomReader:
 
     def get_feature_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.featureAttrsKey in self.h5:
-            for i in self.h5[self.featureAttrsKey]:
+            for i in tqdm(self.h5[self.featureAttrsKey].keys(), desc=f"Reading feature attributes"):
                 if i in [self.featureIdsKey, self.featureNamesKey]:
                     continue
                 yield i, self.h5[self.featureAttrsKey][i][:]
