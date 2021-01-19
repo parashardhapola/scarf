@@ -2553,7 +2553,8 @@ class DataStore(MappingDatastore):
         if from_assay is None:
             from_assay = self._defaultAssay
         if cell_key is None:
-            cell_key = 'I'
+            # Show all cells
+            pass
 
         if cols is not None:
             if type(cols) != list:
