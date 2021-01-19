@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from .utils import controlled_compute
 from .logging_utils import logger
+from scipy.sparse import csr_matrix
 # from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
@@ -257,6 +258,51 @@ class LoomToZarr:
             s = e
         if e != self.loom.nCells:
             raise AssertionError("ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
+                                 "written into the zarr file. Please report this issue")
+
+
+class SparseToZarr:
+    def __init__(self, csr_mat: csr_matrix, zarr_fn: str, cell_ids: List[str], feature_ids: List[str],
+                 assay_name: str = None, chunk_size=(1000, 1000), ):
+        self.mat = csr_mat
+        self.fn = zarr_fn
+        self.chunkSizes = chunk_size
+        if assay_name is None:
+            logger.info(f"No value provided for assay names. Will use default value: 'RNA'")
+            self.assayName = 'RNA'
+        else:
+            self.assayName = assay_name
+        self.nFeatures, self.nCells = self.mat.shape
+        if len(cell_ids) != self.nCells:
+            raise ValueError("ERROR: Number of cell ids are not same as number of cells in the matrix")
+        if len(feature_ids) != self.nFeatures:
+            raise ValueError("ERROR: Number of feature ids are not same as number of features in the matrix")
+
+        self.z = zarr.open(self.fn, mode='w')
+        self._ini_cell_data(cell_ids)
+        create_zarr_count_assay(self.z, self.assayName, chunk_size, self.nCells,
+                                feature_ids, feature_ids, 'int64')
+
+    def _ini_cell_data(self, cell_ids):
+        g = self.z.create_group('cellData')
+        create_zarr_obj_array(g, 'ids', cell_ids)
+        create_zarr_obj_array(g, 'names', cell_ids)
+        create_zarr_obj_array(g, 'I', [True for _ in range(self.nCells)], 'bool')
+
+    def dump(self, batch_size: int = 1000) -> None:
+        store = self.z["%s/counts" % self.assayName]
+        s, e, = 0, 0
+        n_chunks = self.nCells//batch_size + 1
+        for e in tqdm(range(batch_size, self.nCells+batch_size, batch_size), total=n_chunks):
+            if s == self.nCells:
+                raise ValueError("Unexpected error encountered in writing to Zarr. The last iteration has failed. "
+                                 "Please report this issue.")
+            if e > self.nCells:
+                e = self.nCells
+            store[s:e] = self.mat[:, s:e].todense().T
+            s = e
+        if e != self.nCells:
+            raise AssertionError("ERROR: This is a bug in SparseToZarr. All cells might not have been successfully "
                                  "written into the zarr file. Please report this issue")
 
 
