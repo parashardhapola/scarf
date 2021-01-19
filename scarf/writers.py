@@ -10,8 +10,9 @@ from .logging_utils import logger
 from scipy.sparse import csr_matrix
 # from .assay import Assay  # Disabled because of circular dependency
 
-__all__ = ['CrToZarr', 'create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr']
+__all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge',
+           'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
