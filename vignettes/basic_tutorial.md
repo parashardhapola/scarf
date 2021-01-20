@@ -23,6 +23,7 @@ This workflow is meant to familiarize users with the Scarf API and how data is i
 %config InlineBackend.figure_format = 'retina'
 
 import scarf
+scarf.__version__
 ```
 
 
@@ -33,7 +34,7 @@ cd ~
 Download the data from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
-scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
+# scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
 ```
 
 ---
@@ -90,7 +91,9 @@ writer.dump(batch_size=1000)
 The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. The first time a Zarr file is loaded, we need to set the default assay. Here we set the 'RNA' assay as the default assay. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell.
 
 ```python
-ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr', default_assay='RNA')
+ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr',
+                     default_assay='RNA',
+                     nthreads=4)
 ```
 
 Scarf uses Zarr format so that data can be stored in rectangular chunks. The raw data is saved in the `counts` level within each assay level in the Zarr hierarchy. It can easily be accessed as a [Dask](https://dask.org/) array using the `rawData` attribute of the assay. Note that for a standard analysis one would not interact with the raw data directly. Scarf internally optimizes the use of this Dask array to minimize the memory requirement of all operations.
@@ -111,7 +114,9 @@ ds.plot_cells_dists()
 We can filter cells based on these cell attributes by providing upper and lower threshold values.
 
 ```python
-ds.filter_cells(attrs=['RNA_nCounts', 'RNA_nFeatures', 'RNA_percentMito'], highs=[20000, 5000, 25], lows=[1000, 500, 0])
+ds.filter_cells(attrs=['RNA_nCounts', 'RNA_nFeatures', 'RNA_percentMito'],
+                highs=[15000, 4000, 15],
+                lows=[1000, 500, 0])
 ```
 
 Now we visualize the attributes again after filtering the values. 
@@ -127,7 +132,11 @@ ds.plot_cells_dists(cell_key='I', color='coral')
 Scarf attempts to store most of the data on disk immediately after it is processed. Below we can see that the calculated cell attributes can now be found under the 'cellData' level.
 
 ```python
-print (ds.z.tree(expand=True))
+ds.show_zarr_tree()
+```
+
+```python
+ds.RNA.set_feature_stats('I', 20)
 ```
 
 The data stored under the 'cellData' level can easily be accessed using the `cells.table` attribute of the `DataStore` object.
@@ -163,7 +172,7 @@ A plot is produced, that for each gene shows the corrected variance on the y-axi
 The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to use to identify the HVGs. The default value of this parameter is `I`, which means it will use the non-filtered out cells.
 
 ```python
-ds.mark_hvgs(min_cells=20, top_n=2000)
+ds.mark_hvgs(min_cells=20, top_n=2000, max_mean=1.9, min_mean=-2, max_var=7)
 ```
 
 As a result of running `mark_hvgs`, the feature table now has an extra column **I__hvgs** which contains a `True` value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name (with a double underscore delimiter). Since we did not provide any `cell_key` parameter the default value was used, i.e. the filtered cells. This resulted in **I** becoming the prefix.
@@ -190,7 +199,7 @@ ds.make_graph(feat_key='hvgs', k=21, dims=30, n_centroids=100)
 All the results of `make_graph` are saved under a name on the form '*normed\_\_{cell key}\_\_{feature key}*' (placeholders used in brackets here). In this case, since we did not provide a cell key it takes default value of `I`, which means all the non-filtered out cells. The feature key (`feat_key`) was set to `hvgs`. The Zarr directory is organized such that all the intermediate data is also saved. The intermediate data is organized in a hierarchy which triggers recomputation when upstream changes are detected. The parameter values are also saved in hierarchy level names. For example, 'reduction_pca_31_I' means that PCA linear dimension reduction with 31 PC axes was used and the PCA was fit across all the cells that have `True` value in column **I**.
 
 ```python
-print (ds.RNA.z.tree(expand=True))
+ds.show_zarr_tree()
 ```
 
 The graph calculated by `make_graph` can be easily loaded using the `load_graph` method, like below. The graph is loaded as a sparse matrix of the cells that were used for creating a graph.
@@ -200,7 +209,7 @@ Next, we show how the graph can be accessed if required. However, as stated abov
 Because Scarf saves all the intermediate data, it might be the case that a lot of graphs are stored in the Zarr hierachy. `load_graph` will load only the latest graph that was computed (for the given assay, cell key and feat key). 
 
 ```python
-ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', graph_format='csr',
+ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs',
               min_edge_weight=-1, symmetric=False, upper_only=False)
 ```
 The location of the latest graph can be accessed by `_get_latest_graph_loc` method. The latest graph location is set using the parameters used in the latest call to `make_graph`. If one needs to set the latest graph to one that was previously calculated then one needs to call `make_graph` with the corresponding parameters.
@@ -244,7 +253,7 @@ Identifying clusters of cells is one of the central tenets of single cell approa
 Paris is the default algorithm in Scarf due to its low memory consumption and high scalability. [Paris](https://github.com/tbonald/paris) is a hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
 
 ```python
-ds.run_clustering(n_clusters=19)
+ds.run_clustering(n_clusters=21)
 ```
 
 The results of the clustering algorithm are saved in the cell metadata table. In this case, they have been saved under the column name **RNA_cluster**.
@@ -292,7 +301,7 @@ Discerning similarity between clusters can be difficult from visual inspection a
 ds.plot_cluster_tree(cluster_key='RNA_cluster', width=1)
 ```
 
-The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (the node with no cluster label or incoming edges).
+The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As an example, one can observe by looking at the branching pattern that cluster 1 is closer to cluster 8 than it is to cluster 4 since 1 and 8 share parent node whereas 4 is part of another branch. Cluster 4 is in turn closest to cluster 17. 
 
 
 ---
@@ -321,7 +330,7 @@ ds.plot_marker_heatmap(group_key='RNA_cluster', topn=3)
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
 
 ```python
-ds.plot_layout(layout_key='RNA_UMAP', color_by='CD79A')
+ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')
 ```
 
 
