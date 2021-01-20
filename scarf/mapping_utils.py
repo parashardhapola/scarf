@@ -51,6 +51,8 @@ def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
     s_ids = pd.Series(s_assay.feats.fetch_all('ids'))
     t_ids = pd.Series(t_assay.feats.fetch_all('ids'))
     t_idx = t_ids.isin(s_feat_ids)
+    if t_idx.sum() == 0:
+        raise ValueError("ERROR: None of the features from reference were found in the target data")
     if filter_null:
         if exclude_missing is False:
             logger.warning("`filter_null` has not effect because `exclude_missing` is False")

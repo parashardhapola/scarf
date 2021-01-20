@@ -325,7 +325,7 @@ class MetaData:
         return a
 
     def insert(self, column_name: str, values: np.array, fill_value: Any = np.NaN,
-               key: str = 'I', overwrite: bool = False, location: str = 'primary') -> None:
+               key: str = 'I', overwrite: bool = False, location: str = 'primary', force: bool = False) -> None:
         """
         add
 
@@ -336,12 +336,13 @@ class MetaData:
             key:
             overwrite:
             location:
+            force:
 
         Returns:
 
         """
         col = self._col_renamer(location, column_name)
-        if col in ['I', 'ids']:
+        if col in ['I', 'ids'] and force is False:
             raise ValueError(f"ERROR: {col} is a protected column name in MetaData class.")
         if col in self.columns and overwrite is False:
             raise ValueError(f"ERROR: {col} already exists. Please set `overwrite` to True to overwrite.")
