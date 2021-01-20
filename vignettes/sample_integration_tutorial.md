@@ -48,8 +48,8 @@ cd ~
 The data was downloaded from [this GEO repo](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) of the article. The vignette assumes that the data was stored in a directory called `kang_stim_pbmc` which contains two subdirectories `ctrl` (for control cells) and `stim` (IFN-beta stimulated cells). Both of these directories contain the 10x format barcodes, genes and matrix files.
 
 ```python
-scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
-scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
+# scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
+# scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
 ```
 
 Since multiple datasets will be handled in this vignette, we created a function ``scarf_pipeline`` that contains the basic steps of Scarf workflow: loading a Zarr file, marking HVGs, creation of cell-cell neighbourhood graph, clustering and UMAP embedding of the data. For further information on these steps please check the [basic tutorial vignette](./basic_tutorial.md). Here we have designed the pipeline in a way that will allow us to update required parameters easily for pedagogic purposes.
@@ -69,7 +69,7 @@ def scarf_pipeline(in_dir=None, zarr_fn=None, pca_cell_key='I',
     ds.mark_hvgs(min_cells=20, top_n=1000)
     ds.make_graph(feat_key=feat_key, k=11, dims=21, n_centroids=100,
                   log_transform=True, renormalize_subset=True, pca_cell_key=pca_cell_key)
-    ds.run_clustering(n_clusters=n_cluster, min_edge_weight=0.1)
+    ds.run_leiden_clustering(resolution=1)
     ds.run_umap(fit_n_epochs=250, min_dist=0.5, label=umap_label)
     return ds
 ```
@@ -129,20 +129,20 @@ ds_ctrl.run_mapping(target_assay=ds_stim.RNA, target_name='stim',
 We can now extend the cell-cell neighbourhood graph of reference cells (control PMBCs) by including the target cells (stimulated PBMCs) based on their nearest reference cells. A 'unified' UMAP embedding of this extended graph can then be generated to visualize the reference and target cells together. To encourage similarity between UMAP of control only cells and this 'unified' UMAP, we use the UMAP coordinates of only control cells for initialization of UMAP. ``run_unified_umap`` will take the name of the target cells to be included in the extended graph.
 
 ```python
-ds_ctrl.run_unified_umap(target_name='stim', ini_embed_with='RNA_UMAP', target_weight=1,
+ds_ctrl.run_unified_umap(target_names=['stim'], ini_embed_with='RNA_UMAP', target_weight=1,
                          use_k=5, fit_n_epochs=100, tx_n_epochs=10)
 ```
 
-We fist visualize the unified UMAP embedding of control cells. These embeddings were automatically saved in cell metadata columns starting with `RNA_UMAP_stim`. When compared to independent control PMBC UMAP, this UMAP looks strikingly similar. This mostly due to the fact that independent control PMBC UMAP coordinates were used for initialization, but also because the inclusion of target cells in the UMAP did not have a major impact.
+We fist visualize the unified UMAP embedding of control cells. These embeddings were automatically saved in cell metadata columns starting with `RNA_unified_UMAP`. When compared to independent control PMBC UMAP, this UMAP looks strikingly similar. This mostly due to the fact that independent control PMBC UMAP coordinates were used for initialization, but also because the inclusion of target cells in the UMAP did not have a major impact.
 
 ```python
-ds_ctrl.plot_layout(layout_key='RNA_UMAP_stim', color_by='RNA_cluster')
+ds_ctrl.plot_layout(layout_key='RNA_unified_UMAP', color_by='RNA_cluster')
 ```
 
-Because the UMAP coordinates of target cells cannot be stored in cell metadata object of the reference, ``plot_layout`` method can not be used to visualize the 'unified' UMAP. Hence, we use a specialized method, ``plot_unified_layout``. By default the reference cells (control PBMCs) will be shown in `coral` colour while the target cells (stimulated cells here) will be shown in `black`
+Because the UMAP coordinates of target cells cannot be stored in cell metadata object of the reference, ``plot_layout`` method can not be used to visualize the 'unified' UMAP. Hence, we use a specialized method, ``plot_unified_layout``. By default the reference cells (control PBMCs) are shown here in `red` colour while the target cells (stimulated cells here) are shown in `cyan`
 
 ```python
-ds_ctrl.plot_unified_layout(target_name='stim')
+ds_ctrl.plot_unified_layout(layout_key='unified_UMAP')
 ```
 
 One can clearly see that the target cells have integrated more or less evenly throughout the reference UMAP landscape.
@@ -150,7 +150,7 @@ One can clearly see that the target cells have integrated more or less evenly th
 ``plot_unified_layout`` can also be used to visualize target cells only. Here we colour the target cells based on the cluster information in independent analysis of stimulated cells.
 
 ```python
-ds_ctrl.plot_unified_layout(target_name='stim', show_target_only=True,
+ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=True,
                             target_groups=ds_stim.cells.fetch('RNA_cluster'))
 ```
 
@@ -159,12 +159,12 @@ Quite clearly, the target cells are <ins>not</ins> located randomly on the unifi
 As an alternative to unified UMAPs, we can use `mapping scores` to perform cross dataset cluster similarity inspection. `mapping scores` are scores assigned to each reference cell based on how frequently it was identified as one of the nearest neighbour of the target cells. ``get_mapping_score`` method allows generating these scores. We use an optional parameter of `get_mapping_score`, `target_groups`. `target_groups` takes grouping information for target cells such that mapping scores are calculated for one group at a time. Here we provide the cluster information of stimulated cells as group information and mapping scores will be obtained for each target cluster independently.
 
 ```python
-# Here we will generate plots for target clusters 5, 7 and 8 for sake of brevity
+# Here we will generate plots for target clusters 1, 3 and 7 for sake of brevity
 
 for g, ms in ds_ctrl.get_mapping_score(target_name='stim',
                                        target_groups=ds_stim.cells.fetch('RNA_cluster'),
                                        log_transform=False):
-    if g in [1, 7, 4]:
+    if g in [1, 3, 7]:
         print (f"Target cluster {g}")
         ds_ctrl.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster',
                             size_vals=ms*10, height=4, width=4, legend_onside=False)
@@ -180,20 +180,20 @@ The mapping can be performed both ways. It is highly recommended that users try 
 ```python
 ds_stim.run_mapping(target_assay=ds_ctrl.RNA, target_name='ctrl',
                     target_feat_key='hvgs_stim', save_k=5, run_coral=True)
-ds_stim.run_unified_umap(target_name='ctrl', ini_embed_with='RNA_UMAP', use_k=5,
+ds_stim.run_unified_umap(target_names=['ctrl'], ini_embed_with='RNA_UMAP', use_k=5,
                          target_weight=1, fit_n_epochs=100, tx_n_epochs=10)
 ```
 
 ```python
-ds_stim.plot_layout(layout_key='RNA_UMAP_ctrl', color_by='RNA_cluster')
+ds_stim.plot_layout(layout_key='RNA_unified_UMAP', color_by='RNA_cluster')
 ```
 
 ```python
-ds_stim.plot_unified_layout(target_name='ctrl')
+ds_stim.plot_unified_layout(layout_key='unified_UMAP')
 ```
 
 ```python
-ds_stim.plot_unified_layout(target_name='ctrl', show_target_only=True, target_groups=ds_ctrl.cells.fetch('RNA_cluster'))
+ds_stim.plot_unified_layout(layout_key='unified_UMAP', show_target_only=True, target_groups=ds_ctrl.cells.fetch('RNA_cluster'))
 ```
 
 ### <a name="chapter3"></a>3) Integration through merging of Zarr files.
