@@ -115,15 +115,17 @@ def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.
 
 
 def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
-                 cmap=cm.matter_r, figsize=None):
+                 cmap=cm.matter_r, savename: str = None, save_dpi: int = 300, figsize=None):
     if figsize is None:
         figsize = (cdf.shape[1]*fontsize*width_factor, fontsize*cdf.shape[0]*height_factor)
     cgx = sns.clustermap(cdf, yticklabels=cdf.index, xticklabels=cdf.columns, method='ward',
-                         figsize=figsize, cmap=cmap)
+                         figsize=figsize, cmap=cmap, rasterized=True)
     cgx.ax_heatmap.set_yticklabels(cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize)
     cgx.ax_heatmap.set_xticklabels(cdf.columns[cgx.dendrogram_col.reordered_ind], fontsize=fontsize)
     cgx.ax_heatmap.figure.patch.set_alpha(0)
     cgx.ax_heatmap.patch.set_alpha(0)
+    if savename:
+        plt.savefig(savename, dpi=save_dpi)
     plt.show()
     return None
 

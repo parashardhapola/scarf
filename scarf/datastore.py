@@ -361,18 +361,38 @@ class BaseDataStore:
     def __repr__(self):
         res = f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with" \
               f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
-        res = res + f"\n\tCell metadata:"
-        tabs = '\t\t'
-        res += '\n' + tabs + ''.join(
-            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{tabs}" for n, x in enumerate(self.cells.columns, start=1)])
+        htabs = ' ' * 3
+        stabs = htabs * 2
+        dtabs = stabs * 2
+        res = res + f"\n{htabs}Cell metadata:"
+        res += '\n' + dtabs + ''.join(
+            [f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}" for n, x in enumerate(self.cells.columns, start=1)])
         res = res.rstrip('\n\t')[:-2]
         for i in self.assayNames:
             assay = self._get_assay(i)
-            res += f"\n\t{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
+            res += f"\n{htabs}{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) " \
                    f"features and following metadata:"
-            res += '\n' + tabs + ''.join([f"'{x}', " if n % 7 != 0 else f"'{x}', \n{tabs}" for n, x in
-                                          enumerate(assay.feats.columns, start=1)])
+            res += '\n' + dtabs + ''.join([f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}" for n, x in
+                                           enumerate(assay.feats.columns, start=1)])
             res = res.rstrip('\n\t')[:-2]
+            if 'projections' in self.z[i]:
+                targets = []
+                layouts = []
+                for j in self.z[i]['projections']:
+                    if 'indices' in self.z[i]['projections'][j]:
+                        targets.append(j)
+                    else:
+                        layouts.append(j)
+                if len(targets) > 0:
+                    res += f"\n{stabs}Projected samples:"
+                    res += '\n' + dtabs + ''.join([f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}" for n, x in
+                                                   enumerate(targets, start=1)])
+                    res = res.rstrip('\n\t')[:-2]
+                if len(layouts) > 0:
+                    res += f"\n{stabs}Co-embeddings:"
+                    res += '\n' + dtabs + ''.join([f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}" for n, x in
+                                                   enumerate(layouts, start=1)])
+                    res = res.rstrip('\n\t')[:-2]
         return res
 
 
@@ -1879,7 +1899,7 @@ class MappingDatastore(GraphDataStore):
                          feat_key: str = None, use_k: int = 3, target_weight: float = 0.5,
                          lambda_scale: float = 1.0, max_iter: int = 500, early_iter: int = 200, alpha: int = 10,
                          box_h: float = 0.7, temp_file_loc: str = '.', verbose: bool = True,
-                         ini_embed_with: str = 'kmeans', label: str = 'tSNE') -> None:
+                         ini_embed_with: str = 'kmeans', label: str = 'unified_tSNE') -> None:
         """
         Calculates the tSNE embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
         the same way as the graph as in ``run_tsne``
@@ -2822,7 +2842,7 @@ class DataStore(MappingDatastore):
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
-                            **heatmap_kwargs):
+                            savename: str = None, save_dpi: int =300, **heatmap_kwargs):
         """
         Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
         Z-scores are calculated for each marker gene before plotting them. The groups are subjected to hierarchical
@@ -2841,6 +2861,9 @@ class DataStore(MappingDatastore):
                            (Default value: True)
             vmin: z-scores lower than this value are ceiled to this value. (Default value: -1)
             vmax: z-scores higher than this value are floored to this value. (Default value: 2)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
             **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap
 
         Returns:
@@ -2883,4 +2906,4 @@ class DataStore(MappingDatastore):
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
         df[df > vmax] = vmax
-        plot_heatmap(df, **heatmap_kwargs)
+        plot_heatmap(df, savename=savename, save_dpi=save_dpi, **heatmap_kwargs)
