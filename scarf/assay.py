@@ -31,7 +31,7 @@ def norm_clr(_, counts: daskarr) -> daskarr:
 def norm_tf_idf(assay, counts: daskarr) -> daskarr:
     tf = counts / assay.n_term_per_doc.reshape(-1, 1)
     # TODO: Split TF and IDF functionality to make it similar to norml_lib and zscaling
-    idf = np.log2(assay.n_docs / (assay.n_docs_per_term + 1))
+    idf = np.log2(1 + (assay.n_docs / (assay.n_docs_per_term + 1)))
     return tf * idf
 
 
@@ -191,7 +191,7 @@ class Assay:
             return self.feats.get_index_by(i, 'names', None)
 
         def _calc_mean(i):
-            return self.normed(cell_idx=cell_idx, feat_idx=sorted(i)).mean(axis=1).compute()
+            return self.normed(cell_idx=cell_idx, feat_idx=np.array(sorted(i))).mean(axis=1).compute()
 
         feature_idx = _names_to_idx(feature_names)
         if len(feature_idx) == 0:

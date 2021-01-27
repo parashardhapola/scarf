@@ -203,7 +203,9 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Serie
     if v.dtype.name == 'category':
         iscat = True
         v = v.astype(object)
-    v[v.isin(mask_vals)] = mask_name
+    # There is a bug in pandas which causes failure above 1M rows
+    # v[v.isin(mask_vals)] = mask_name
+    v[np.isin(v, mask_vals)] = mask_name
     if iscat:
         v = v.astype('category')
     return v
