@@ -979,7 +979,7 @@ class GraphDataStore(BaseDataStore):
         return None
 
     def load_graph(self, *, from_assay: str, cell_key: str, feat_key: str,
-                   min_edge_weight: float, symmetric: bool, upper_only: bool) -> csr_matrix:
+                   symmetric: bool, upper_only: bool) -> csr_matrix:
         """
         Load the cell neighbourhood as a scipy sparse matrix
 
@@ -987,7 +987,6 @@ class GraphDataStore(BaseDataStore):
             from_assay: Name of the assay/
             cell_key: Cell key used to create the graph
             feat_key: Feature key used to create the graph
-            min_edge_weight: Edges with weights less than this value are removed.
             symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
                        used when symmetric is True
@@ -1014,20 +1013,21 @@ class GraphDataStore(BaseDataStore):
             graph = (graph + graph.T) / 2
             if upper_only:
                 graph = triu(graph)
-        idx = None
-        if min_edge_weight > 0:
-            idx = graph.data > min_edge_weight
-        # Following if-else block is for purpose for improving performance when no filtering is performed.
-        if idx is None:
-            return graph
-        elif idx.sum() == graph.data.shape[0]:
-            return graph
-        else:
-            graph = graph.tocoo()
-            return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
+        return graph
+        # idx = None
+        # if min_edge_weight > 0:
+        #     idx = graph.data > min_edge_weight
+        # # Following if-else block is for purpose for improving performance when no filtering is performed.
+        # if idx is None:
+        #     return graph
+        # elif idx.sum() == graph.data.shape[0]:
+        #     return graph
+        # else:
+        #     graph = graph.tocoo()
+        #     return csr_matrix((graph.data[idx], (graph.row[idx], graph.col[idx])), shape=(n_cells, n_cells))
 
     def run_tsne(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                 min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
+                 symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, tsne_dims: int = 2, lambda_scale: float = 1.0, max_iter: int = 500,
                  early_iter: int = 200, alpha: int = 10, box_h: float = 0.7, temp_file_loc: str = '.',
                  label: str = 'tSNE', verbose: bool = True, parallel: bool = False, nthreads: int = None) -> None:
@@ -1043,7 +1043,6 @@ class GraphDataStore(BaseDataStore):
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
@@ -1081,8 +1080,7 @@ class GraphDataStore(BaseDataStore):
         uid = str(uuid4())
         knn_mtx_fn = Path(temp_file_loc, f'{uid}.mtx').resolve()
         graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
-                                upper_only=graph_upper_only)
+                                symmetric=symmetric_graph, upper_only=graph_upper_only)
         export_knn_to_mtx(knn_mtx_fn, graph)
 
         ini_emb_fn = Path(temp_file_loc, f'{uid}.txt').resolve()
@@ -1116,7 +1114,7 @@ class GraphDataStore(BaseDataStore):
             Path.unlink(fn)
 
     def run_umap(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                 min_edge_weight: float = -1, symmetric_graph: bool = False, graph_upper_only: bool = False,
+                 symmetric_graph: bool = False, graph_upper_only: bool = False,
                  ini_embed: np.ndarray = None, umap_dims: int = 2, spread: float = 2.0, min_dist: float = 1,
                  fit_n_epochs: int = 200, tx_n_epochs: int = 100, set_op_mix_ratio: float = 1.0,
                  repulsion_strength: float = 1.0, initial_alpha: float = 1.0, negative_sample_rate: float = 5,
@@ -1130,7 +1128,6 @@ class GraphDataStore(BaseDataStore):
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
@@ -1175,8 +1172,7 @@ class GraphDataStore(BaseDataStore):
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
         graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
-                                upper_only=graph_upper_only)
+                                symmetric=symmetric_graph, upper_only=graph_upper_only)
 
         if ini_embed is None:
             ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
@@ -1193,8 +1189,7 @@ class GraphDataStore(BaseDataStore):
         return None
 
     def run_leiden_clustering(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                              resolution: int = 1, min_edge_weight: float = -1,
-                              symmetric_graph: bool = False, graph_upper_only: bool = False,
+                              resolution: int = 1, symmetric_graph: bool = False, graph_upper_only: bool = False,
                               label: str = 'leiden_cluster', random_seed: int = 4444) -> None:
         """
         Executes Leiden graph clustering algorithm on the cell-neighbourhood graph and saves cluster identities in the
@@ -1206,7 +1201,6 @@ class GraphDataStore(BaseDataStore):
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             resolution: Resolution parameter for `RBConfigurationVertexPartition` configuration
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             label: base label for cluster identity in the cell metadata column (Default value: 'leiden_cluster')
@@ -1228,8 +1222,7 @@ class GraphDataStore(BaseDataStore):
 
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         adj = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                              min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
-                              upper_only=graph_upper_only)
+                              symmetric=symmetric_graph, upper_only=graph_upper_only)
         sources, targets = adj.nonzero()
         g = igraph.Graph()
         g.add_vertices(adj.shape[0])
@@ -1243,7 +1236,7 @@ class GraphDataStore(BaseDataStore):
         return None
 
     def run_clustering(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                       n_clusters: int = None, min_edge_weight: float = -1, symmetric_graph: bool = False,
+                       n_clusters: int = None, symmetric_graph: bool = False,
                        graph_upper_only: bool = False, balanced_cut: bool = False,
                        max_size: int = None, min_size: int = None, max_distance_fc: float = 2,
                        force_recalc: bool = False, label: str = 'cluster') -> None:
@@ -1260,7 +1253,6 @@ class GraphDataStore(BaseDataStore):
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             n_clusters: Number of desired clusters (required if balanced_cut is False)
-            min_edge_weight: This parameter is forwarded to `load_graph` and is same as there. (Default value: -1)
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             balanced_cut: If True, then uses the balanced cut algorithm as implemented in ``BalancedCut`` to obtain
@@ -1290,7 +1282,7 @@ class GraphDataStore(BaseDataStore):
             if max_size is None or min_size is None:
                 raise ValueError("ERROR: Please provide value for max_size and min_size")
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        dendrogram_loc = f"{graph_loc}/dendrogram__{min_edge_weight}"
+        dendrogram_loc = f"{graph_loc}/dendrogram"
         # tuple are changed to list when saved as zarr attrs
         if dendrogram_loc in self.z and force_recalc is False:
             dendrogram = self.z[dendrogram_loc][:]
@@ -1298,8 +1290,7 @@ class GraphDataStore(BaseDataStore):
         else:
             paris = skn.hierarchy.Paris()
             graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                    min_edge_weight=min_edge_weight, symmetric=symmetric_graph,
-                                    upper_only=graph_upper_only)
+                                    symmetric=symmetric_graph, upper_only=graph_upper_only)
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
             g = create_zarr_dataset(self.z[graph_loc], dendrogram_loc.rsplit('/', 1)[1],
@@ -1316,12 +1307,14 @@ class GraphDataStore(BaseDataStore):
                           fill_value=-1, key=cell_key, overwrite=True)
 
     def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                             cluster_key: str = None, density_depth: int = 2,
-                             sampling_rate: float = 0.1, min_cells_per_group: int = 3,
-                             min_sr: float = 0.01, seed_reward: float = 3.0, non_seed_reward: float = 0,
+                             cluster_key: str = None, density_depth: int = 2, density_bandwidth: float = 5.0,
+                             max_sampling_rate: float = 0.05, min_sampling_rate: float = 0.01,
+                             min_cells_per_group: int = 3, snn_bandwidth: float = 5.0,
+                             seed_reward: float = 3.0, non_seed_reward: float = 0,
+                             edge_cost_multiplier: float = 1.0, edge_cost_bandwidth: float = 10.0,
                              save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
-                             save_seeds_key: str = 'sketch_seeds', rand_state: int = 4466,
-                             return_edges: bool = False) -> Union[None, List]:
+                             save_mean_snn_key: str = 'average_snn',  save_seeds_key: str = 'sketch_seeds',
+                             rand_state: int = 4466, return_edges: bool = False) -> Union[None, List]:
         """
         Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
         that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
@@ -1334,18 +1327,24 @@ class GraphDataStore(BaseDataStore):
                        used feature for the given assay will be used.
             cluster_key: Name of the column in cell metadata table where cluster information is stored.
             density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
-            sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
-                           than this value depending on the neighbourhood density of the cells.
-                           Should be greater than 0 and less than 1. (Default value: 0.1)
+            density_bandwidth:
+            max_sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
+                               than this value depending on the neighbourhood density of the cells.
+                               Should be greater than 0 and less than 1. (Default value: 0.1)
+            min_sampling_rate: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
+                               (Default value: 0.01)
             min_cells_per_group: Minimum number of cells to sample from each group. (Default value: 3)
-            min_sr: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
-                    (Default value: 0.01)
+            snn_bandwidth:
             seed_reward: Reward/prize value for seed nodes. (Default value: 3)
             non_seed_reward: Reward/prize for non-seed nodes. (Default value: 0.1)
+            edge_cost_multiplier:
+            edge_cost_bandwidth:
+            dendrogram_edge_weight:
             save_sampling_key: base label for marking the cells that were sampled into a cell metadata column
                                (Default value: 'sketched')
             save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
                               (Default value: 'cell_density')
+            save_mean_snn_key:
             save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
                             metadata column (Default value: 'sketch_seeds')
             rand_state: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
@@ -1366,13 +1365,17 @@ class GraphDataStore(BaseDataStore):
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
         graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                min_edge_weight=-1, symmetric=False, upper_only=False)
+                                symmetric=False, upper_only=False)
+        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        dendrogram = self.z[f"{graph_loc}/dendrogram"][:]
 
         if len(clusters) != graph.shape[0]:
             raise ValueError(f"ERROR: cluster information exists for {len(clusters)} cells while graph has "
                              f"{graph.shape[0]} cells.")
-        sampler = TopacedoSampler(graph, clusters.values, density_depth, sampling_rate, min_cells_per_group,
-                                  min_sr, seed_reward, non_seed_reward, 1, rand_state)
+        sampler = TopacedoSampler(graph, clusters.values, dendrogram, density_depth, density_bandwidth,
+                                  max_sampling_rate, min_sampling_rate, min_cells_per_group,
+                                  snn_bandwidth, seed_reward, non_seed_reward,
+                                  edge_cost_multiplier, edge_cost_bandwidth, rand_state)
         nodes, edges = sampler.run()
         a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[nodes] = True
@@ -1383,6 +1386,10 @@ class GraphDataStore(BaseDataStore):
         key = self._col_renamer(from_assay, cell_key, save_density_key)
         self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
         logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
+
+        key = self._col_renamer(from_assay, cell_key, save_mean_snn_key)
+        self.cells.insert(key, sampler.meanSnn, key=cell_key, overwrite=True)
+        logger.info(f"Mean SNN values saved under column: '{key}'")
 
         a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[sampler.seeds] = True
@@ -1446,7 +1453,7 @@ class GraphDataStore(BaseDataStore):
                     self._cachedMagicOperatorLoc = None
         else:
             graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                    min_edge_weight=-1, symmetric=True, upper_only=False)
+                                    symmetric=True, upper_only=False)
             diff_op = calc_diff_operator(graph, t)
             shape = diff_op.data.shape
             store = self.z.create_group(magic_loc, overwrite=True)
@@ -1504,7 +1511,7 @@ class GraphDataStore(BaseDataStore):
 
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
         graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                min_edge_weight=-1, symmetric=True, upper_only=False)
+                                symmetric=True, upper_only=False)
         inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
         if r_vec is None:
             r_vec = np.ones(inv_lap.shape[0])
