@@ -1,6 +1,5 @@
 from tqdm import tqdm
 import numpy as np
-from scipy import sparse
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute
 from numpy.linalg import LinAlgError
@@ -29,10 +28,6 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
             fixed_ind[n] = j
             fixed_dist[n] = k
     return fixed_ind, fixed_dist, n_mis
-
-
-def vec_to_bow(x):
-    return [[(j, k) for j, k in zip(i.indices, i.data)] for i in sparse.csr_matrix(x)]
 
 
 class AnnStream:
@@ -92,7 +87,7 @@ class AnnStream:
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
         if self.dims >= batch_size:
             self.dims = batch_size-1  # -1 because we will do PCA +1
-            logger.info(f"Number of PCA components reduced to batch size of {batch_size}")
+            logger.info(f"Number of PCA/LSI components reduced to batch size of {batch_size}")
         if self.nClusters > batch_size:
             self.nClusters = batch_size
             logger.info(f"Cluster number reduced to batch size of {batch_size}")
@@ -170,13 +165,15 @@ class AnnStream:
 
     def _fit_lsi(self) -> None:
         from gensim.models import LsiModel
+        from gensim.matutils import Dense2Corpus
 
-        self._lsiModel = LsiModel(vec_to_bow(controlled_compute(self.data.blocks[0], self.nthreads)),
-                                  num_topics=self.dims, chunksize=self.data.chunksize[0])
+        self._lsiModel = LsiModel(Dense2Corpus(controlled_compute(self.data.blocks[0], self.nthreads).T),
+                                  num_topics=self.dims, chunksize=self.data.chunksize[0],
+                                  id2word={x: x for x in range(self.data.shape[1])}, extra_samples=0)
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
             if n == 0:
                 continue
-            self._lsiModel.add_documents(vec_to_bow(i))
+            self._lsiModel.add_documents(Dense2Corpus(i.T))
         self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
