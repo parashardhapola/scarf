@@ -13,7 +13,7 @@ __all__ = ['fit', 'transform', 'fit_transform']
 def simplicial_set_embedding(
         g, embedding, n_epochs, a, b, random_seed, gamma,
         initial_alpha, negative_sample_rate, parallel, nthreads):
-    from numba import set_num_threads
+    import numba
     from threadpoolctl import threadpool_limits
     from umap.umap_ import make_epochs_per_sample
     from umap.layouts import optimize_layout_euclidean
@@ -28,7 +28,8 @@ def simplicial_set_embedding(
     rng_state = check_random_state(random_seed).randint(
         np.iinfo(np.int32).min + 1, np.iinfo(np.int32).max - 1, 3).astype(np.int64)
     # Since threadpool_limits doesnt work well with numba. We will use numba's set_num_threads to limit threads
-    set_num_threads(nthreads)
+    if numba.config.NUMBA_NUM_THREADS > nthreads:
+        numba.set_num_threads(nthreads)
     with threadpool_limits(limits=nthreads):
         embedding = optimize_layout_euclidean(
             embedding, embedding, head, tail, n_epochs, g.shape[1],
