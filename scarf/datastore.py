@@ -1313,7 +1313,7 @@ class GraphDataStore(BaseDataStore):
                              seed_reward: float = 3.0, non_seed_reward: float = 0,
                              edge_cost_multiplier: float = 1.0, edge_cost_bandwidth: float = 10.0,
                              save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
-                             save_mean_snn_key: str = 'average_snn',  save_seeds_key: str = 'sketch_seeds',
+                             save_mean_snn_key: str = 'snn_value',  save_seeds_key: str = 'sketch_seeds',
                              rand_state: int = 4466, return_edges: bool = False) -> Union[None, List]:
         """
         Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
@@ -1327,24 +1327,28 @@ class GraphDataStore(BaseDataStore):
                        used feature for the given assay will be used.
             cluster_key: Name of the column in cell metadata table where cluster information is stored.
             density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
-            density_bandwidth:
+            density_bandwidth: This value is used to scale the penalty affected by neighbourhood density. Higher values
+                               will lead to to larger penalty. (Default value: 5.0)
             max_sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
-                               than this value depending on the neighbourhood density of the cells.
+                               than this value depending on the neighbourhood degree and SNN density of cells.
                                Should be greater than 0 and less than 1. (Default value: 0.1)
-            min_sampling_rate: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this value.
-                               (Default value: 0.01)
+            min_sampling_rate: Minimum sampling rate. Effective sampling rate is not allowed to be lower than this
+                               value. Should be greater than 0 and less than 1. (Default value: 0.01)
             min_cells_per_group: Minimum number of cells to sample from each group. (Default value: 3)
-            snn_bandwidth:
-            seed_reward: Reward/prize value for seed nodes. (Default value: 3)
+            snn_bandwidth: Bandwidth for the shared nearest neighbour award. Clusters with higher mean SNN values get
+                           lower sampling penalty. This value, is raised to mean SNN value of the cluster to obtain
+                           sampling reward of the cluster. (Default value: 5.0)
+            seed_reward: Reward/prize value for seed nodes. (Default value: 3.0)
             non_seed_reward: Reward/prize for non-seed nodes. (Default value: 0.1)
-            edge_cost_multiplier:
-            edge_cost_bandwidth:
-            dendrogram_edge_weight:
+            edge_cost_multiplier: This value is multiplier to each edge's cost. Higher values will make graph traversal
+                                  costly and might lead to removal of poorly connected nodes (Default value: 1.0)
+            edge_cost_bandwidth: This value is raised to edge cost to get an adjusted edge cost (Default value: 1.0)
             save_sampling_key: base label for marking the cells that were sampled into a cell metadata column
                                (Default value: 'sketched')
             save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
                               (Default value: 'cell_density')
-            save_mean_snn_key:
+            save_mean_snn_key: base label for saving the SNN value for each cells (identified by topacedo sampler) into
+                               a cell metadata column (Default value: 'snn_value')
             save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
                             metadata column (Default value: 'sketch_seeds')
             rand_state: A random values to set seed while sampling cells from a cluster randomly. (Default value: 4466)
