@@ -35,8 +35,8 @@ class AnnStream:
                  dims: int, loadings: np.ndarray, use_for_pca: np.ndarray,
                  mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int,
-                 nthreads: int, rand_state: int, do_kmeans_fit: bool,
-                 scale_features: bool, ann_idx):
+                 nthreads: int, ann_parallel: bool, rand_state: int,
+                 do_kmeans_fit: bool, scale_features: bool, ann_idx):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -53,6 +53,10 @@ class AnnStream:
         self.annEf = ann_ef
         self.annM = ann_m
         self.nthreads = nthreads
+        if ann_parallel:
+            self.annThreads = self.nthreads
+        else:
+            self.annThreads = 1
         self.randState = rand_state
         self.batchSize = self._handle_batch_size()
         self.method = reduction_method
@@ -183,7 +187,7 @@ class AnnStream:
         ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
                            M=self.annM, random_seed=self.randState)
         ann_idx.set_ef(self.annEf)
-        ann_idx.set_num_threads(1)
+        ann_idx.set_num_threads(self.annThreads)
         for i in self.iter_blocks(msg='Fitting ANN'):
             ann_idx.add_items(self.reducer(i))
         return ann_idx

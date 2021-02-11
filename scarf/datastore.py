@@ -756,7 +756,7 @@ class GraphDataStore(BaseDataStore):
     def make_graph(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                    pca_cell_key: str = None, reduction_method: str = 'auto', dims: int = None, k: int = None,
                    ann_metric: str = None, ann_efc: int = None, ann_ef: int = None, ann_m: int = None,
-                   rand_state: int = None, n_centroids: int = None, batch_size: int = None,
+                   ann_parallel: bool = False, rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
                    update_keys: bool = True, return_ann_object: bool = False, feat_scaling: bool = True,
@@ -820,6 +820,8 @@ class GraphDataStore(BaseDataStore):
             ann_efc: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
             ann_ef: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
             ann_m: Refer to HNSWlib link above (Default value: min(max(48, int(dims * 1.5)), 64) )
+            ann_parallel: If True, then ANN graph is created in parallel mode using DataStore.nthreads number of
+                          threads. Results obtained in parallel mode will not be reproducible. (Defaul: False)
             rand_state: Random seed number (Default value: 4466)
             n_centroids: Number of centroids for Kmeans clustering. As a general idication, have a value of 1+ for every
                          100 cells. Small small (<2000 cells) and very small (<500 cells) use a ballpark number for max
@@ -926,7 +928,7 @@ class GraphDataStore(BaseDataStore):
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, use_for_pca=use_for_pca,
                             mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
-                            ann_ef=ann_ef, ann_m=ann_m, nthreads=self.nthreads,
+                            ann_ef=ann_ef, ann_m=ann_m, nthreads=self.nthreads, ann_parallel=ann_parallel,
                             rand_state=rand_state, do_kmeans_fit=fit_kmeans,
                             scale_features=feat_scaling, ann_idx=ann_idx)
 
