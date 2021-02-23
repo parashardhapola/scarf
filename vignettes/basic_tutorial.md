@@ -7,7 +7,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.2'
-      jupytext_version: 1.7.1
+      jupytext_version: 1.6.0
   kernelspec:
     display_name: Python 3
     language: python
@@ -34,7 +34,7 @@ cd ~
 Download the data from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
-# scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
+scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
 ```
 
 ---
@@ -71,7 +71,7 @@ NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HD
 
 ```python
 writer = scarf.CrToZarr(reader, zarr_fn='scarf_data/tenx_10k_pbmc_citeseq/data.zarr',
-                        chunk_size=(1000, 1000))
+                        chunk_size=(2000, 1000))
 ```
 
 We can inspect the Zarr hierarchy of the output file:
@@ -135,11 +135,7 @@ Scarf attempts to store most of the data on disk immediately after it is process
 ds.show_zarr_tree()
 ```
 
-```python
-ds.RNA.set_feature_stats('I', 20)
-```
-
-The data stored under the 'cellData' level can easily be accessed using the `cells.table` attribute of the `DataStore` object.
+The data stored under the 'cellData' level can easily be accessed using the `cells` attribute of the `DataStore` object.
 
 ```python
 ds.cells.head()
@@ -157,7 +153,7 @@ Similar to the cell table and the 'cellData' Zarr level, Scarf also saves the fe
 ```python
 ds.RNA.feats.head()
 ```
-The feature selection step is performed on normalized data. The default normalization method for `RNAassay`-type data is library-size normalization, wherein the count values are divided by the sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 10000. However, if the total counts in a cell are less than this value, then on multiplication with this scalar factor the values will be 'scaled up' (which is not a desired behaviour). In the filtering step above, we set the `low` threshold for `RNA_nCounts` at 1000, and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay. Let's print the default value of `sf`
+The feature selection step is performed on the normalized data. The default normalization method for `RNAassay`-type data is library-size normalization, wherein the count values are divided by the sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 1000. However, if the total counts in a cell are less than this value, then on multiplication with this scalar factor the values will be 'scaled up' (which is not a desired behaviour). In the filtering step above, we set the `low` threshold for `RNA_nCounts` at 1000, and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay. Let's print the default value of `sf`
 
 ```python
 ds.RNA.sf
@@ -169,7 +165,7 @@ The variance is corrected by first dividing genes into bins based on their mean 
 
 A plot is produced, that for each gene shows the corrected variance on the y-axis and the non-zero mean (means from cells where the gene had a non-zero value) on the x-axis. The genes are colored in two gradients which indicate the number of cells where the gene was expressed. The colors are yellow to dark red for HVGs, and blue to green for non-HVGs.
 
-The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to use to identify the HVGs. The default value of this parameter is `I`, which means it will use the non-filtered out cells.
+The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to use to identify the HVGs. The default value of this parameter is `I`, which means it will use all the cells that were not filtered out.
 
 ```python
 ds.mark_hvgs(min_cells=20, top_n=2000, max_mean=1.9, min_mean=-2, max_var=7)
@@ -180,7 +176,6 @@ As a result of running `mark_hvgs`, the feature table now has an extra column **
 ```python
 ds.RNA.feats.head()
 ```
----
 ### 4) Graph creation
 
 Creating a neighbourhood graph of cells is the most critical step in any Scarf workflow. This step internally involves multiple substeps: 
@@ -192,11 +187,13 @@ Creating a neighbourhood graph of cells is the most critical step in any Scarf w
 - edge weight computation using the `compute_membership_strengths` function from the UMAP package
 - fitting MiniBatch Kmeans (The kmeans centers are used later, for UMAP initialization)
 
+`make_graph` method is responsible for graph construction. It method takes a mandatory parameter: `feat_key`. This should be a column in the feature metadata table that indicates which genes to use to create the graph. Since, we have already identified the `hvgs` in the step above, we use those genes. Note that we do not need to write *I__hvgs* but just *hvgs* as the value of the parameter. We also supply values for two very important parameters here: `k` (number of nearest neighbours to be queried for each cell) and `dims` (number of PCA dimensions to use for graph construction). `n_centroids` parameter controls number of clusters to create for the data using Kmeans algorithm. We perform a more accurate clustering of data in the later steps.
+
 ```python
 ds.make_graph(feat_key='hvgs', k=21, dims=30, n_centroids=100)
 ```
 
-All the results of `make_graph` are saved under a name on the form '*normed\_\_{cell key}\_\_{feature key}*' (placeholders used in brackets here). In this case, since we did not provide a cell key it takes default value of `I`, which means all the non-filtered out cells. The feature key (`feat_key`) was set to `hvgs`. The Zarr directory is organized such that all the intermediate data is also saved. The intermediate data is organized in a hierarchy which triggers recomputation when upstream changes are detected. The parameter values are also saved in hierarchy level names. For example, 'reduction_pca_31_I' means that PCA linear dimension reduction with 31 PC axes was used and the PCA was fit across all the cells that have `True` value in column **I**.
+All the results of `make_graph` step are saved under a name on the form '*normed\_\_{cell key}\_\_{feature key}*' (placeholders used in brackets here). In this case, since we did not provide a cell key it takes default value of `I`, which means all the non-filtered out cells. The feature key (`feat_key`) was set to `hvgs`. The Zarr directory is organized such that all the intermediate data is also saved. The intermediate data is organized in a hierarchy which triggers recomputation when upstream changes are detected. The parameter values are also saved in hierarchy level names. For example, 'reduction_pca_31_I' means that PCA linear dimension reduction with 31 PC axes was used and the PCA was fit across all the cells that have `True` value in column **I**.
 
 ```python
 ds.show_zarr_tree()
@@ -209,8 +206,7 @@ Next, we show how the graph can be accessed if required. However, as stated abov
 Because Scarf saves all the intermediate data, it might be the case that a lot of graphs are stored in the Zarr hierachy. `load_graph` will load only the latest graph that was computed (for the given assay, cell key and feat key). 
 
 ```python
-ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs',
-              min_edge_weight=-1, symmetric=False, upper_only=False)
+ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', symmetric=False, upper_only=False)
 ```
 The location of the latest graph can be accessed by `_get_latest_graph_loc` method. The latest graph location is set using the parameters used in the latest call to `make_graph`. If one needs to set the latest graph to one that was previously calculated then one needs to call `make_graph` with the corresponding parameters.
 
@@ -223,7 +219,7 @@ ds._get_latest_graph_loc(from_assay='RNA', cell_key='I', feat_key='hvgs')
 Next we run UMAP on the graph calculated above. Here we will not provide which assay, cell key or feature key to be used, because we want the UMAP to run on the default assay with all the non-filtered out cells and with the feature key used to calculate the latest graph. We can provide the parameter values for the UMAP algorithm here.
 
 ```python
-ds.run_umap(fit_n_epochs=500, spread=5, min_dist=2)
+ds.run_umap(fit_n_epochs=200, spread=5, min_dist=2, parallel=True)
 ```
 
 The UMAP results are saved in the cell metadata table as seen below in columns: **RNA_UMAP1** and **RNA_UMAP2**
@@ -247,13 +243,13 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', cmap='coolwarm')
 
 Identifying clusters of cells is one of the central tenets of single cell approaches. Scarf includes two graph clustering methods and any (or even both) can be used on the dataset. The methods start with the same graph as the UMAP algorithm above to minimize the disparity between the UMAP and clustering results. The two clustering methods are:
 
-- **Paris**: This is the default clustering algorithm, that scales very well to millions of cells (yielding results in less than 10 mins for a million cells).
-- **Leiden**: Leiden is a widely used graph clustering algorithm in single-cell genomics and provides very good results, but is slower to run for larger datasets.
+- **Paris**: This is the default clustering algorithm.
+- **Leiden**: Leiden is a widely used graph clustering algorithm in single-cell genomics.
 
-Paris is the default algorithm in Scarf due to its low memory consumption and high scalability. [Paris](https://github.com/tbonald/paris) is a hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
+Paris is the default algorithm in Scarf due to its ability to highlight cluster relationships. [Paris](https://github.com/tbonald/paris) is a hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
 
 ```python
-ds.run_clustering(n_clusters=21)
+ds.run_clustering(n_clusters=20)
 ```
 
 The results of the clustering algorithm are saved in the cell metadata table. In this case, they have been saved under the column name **RNA_cluster**.
@@ -268,7 +264,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
 
 
-Leiden clustering, however, can give more accurate results for smaller datasets. 
+Leiden clustering provides very accurate results
 
 ```python
 ds.run_leiden_clustering(resolution=2)
@@ -281,7 +277,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 There has been a lot of discussion over the choice of non-linear dimensionality reduction for single-cell data. tSNE was initially considered an excellent solution, but has gradually lost out to UMAP because the magnitude of relations between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So, essentially the same data that was used to create the UMAP and clustering is used. Additionally, to minimize the differences between the UMAP and tSNE, we use the same initial coordinates of tSNE that were used for UMAP, i.e. the first two (in case of 2D) PC axes of PCA of kmeans cluster centers. We have found that tSNE is actually a complementary technique to UMAP. While UMAP focuses on highlighting the cluster relationship, tSNE highlights the heterogeneity of the dataset. As we show in the sample integration vignette, using tSNE can be better at visually accessing the extent of heterogeneity compared to UMAP. The biggest reason, however, to run Scarf's implementation of graph tSNE could be the runtime. It can be an order of magnitude faster than UMAP on large datasets.
 
 ```python
-ds.run_tsne(alpha=20, box_h=1)
+ds.run_tsne(alpha=10, box_h=1, early_iter=250, max_iter=500, parallel=True)
 ```
 
 ```python
@@ -293,7 +289,7 @@ except KeyError:
 ```
 
 
-We saw a 7x speedup compared to UMAP using tSNE with the given parameters. It is harder to compare the distances between the clusters here but easier to visually gauge the size of clusters and intra-cluster heterogeneity.
+We saw an over 2x speedup compared to UMAP using tSNE with the given parameters. It is harder to compare the distances between the clusters here but easier to visually gauge the size of clusters and intra-cluster heterogeneity.
 
 Discerning similarity between clusters can be difficult from visual inspection alone, especially for tSNE plots. `plot_cluster_tree` function plots the relationship between clusters as a binary tree. This tree is simply a condensation of the dendrogram obtained using Paris clustering.
 
@@ -301,7 +297,7 @@ Discerning similarity between clusters can be difficult from visual inspection a
 ds.plot_cluster_tree(cluster_key='RNA_cluster', width=1)
 ```
 
-The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). As an example, one can observe by looking at the branching pattern that cluster 1 is closer to cluster 8 than it is to cluster 4 since 1 and 8 share parent node whereas 4 is part of another branch. Cluster 4 is in turn closest to cluster 17. 
+The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). 
 
 
 ---
@@ -366,7 +362,7 @@ Run UMAP on the `ADT` graph:
 
 
 ```python
-ds.run_umap(from_assay='ADT', fit_n_epochs=500)
+ds.run_umap(from_assay='ADT', fit_n_epochs=200, parallel=True)
 ```
 
 One can check concordance between the RNA and ADT assays by visualizing the RNA cluster information on ADT data:
@@ -379,14 +375,14 @@ ds.plot_layout(layout_key='ADT_UMAP', color_by='RNA_cluster')
 We can also run the clustering directly on the `ADT` graph and visualize it on the UMAP plot:
 
 ```python
-ds.run_clustering(from_assay='ADT', n_clusters=20)
-ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_cluster')
+ds.run_leiden_clustering(from_assay='ADT', resolution=1.4)
+ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_leiden_cluster')
 ```
 
 Or another way, visualize the ADT clusters on the RNA UMAP:
 
 ```python
-ds.plot_layout(layout_key='RNA_UMAP', color_by='ADT_cluster')
+ds.plot_layout(layout_key='RNA_UMAP', color_by='ADT_leiden_cluster')
 ```
 
 
