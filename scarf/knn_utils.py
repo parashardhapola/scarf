@@ -34,8 +34,20 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
     return None
 
 
+def _is_umap_version_new():
+    import umap
+    from packaging import version
+
+    if version.parse(umap.__version__) >= version.parse('0.5.0'):
+        return True
+    else:
+        return False
+
+
 def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int = 100000):
     from umap.umap_ import smooth_knn_dist, compute_membership_strengths
+
+    umap_is_latest = _is_umap_version_new()
 
     n_cells, n_neighbors = z_idx.shape
     zge = create_zarr_dataset(store, f'edges', (chunk_size,), ('u8', 'u8'),
@@ -53,7 +65,10 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int =
         kv = kv.astype(np.float32, order='C')
         sigmas, rhos = smooth_knn_dist(kv, k=n_neighbors,
                                        local_connectivity=lc, bandwidth=bw)
-        rows, cols, vals = compute_membership_strengths(ki, kv, sigmas, rhos)
+        if umap_is_latest:
+            rows, cols, vals, _ = compute_membership_strengths(ki, kv, sigmas, rhos)
+        else:
+            rows, cols, vals = compute_membership_strengths(ki, kv, sigmas, rhos)
         rows = rows + last_row
         start = val_counts
         end = val_counts + len(rows)

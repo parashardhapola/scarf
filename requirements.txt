@@ -25,3 +25,4 @@ setuptools
 holoviews
 datashader
 leidenalg
+packaging
