@@ -480,7 +480,7 @@ class H5adReader:
     def consume_dataset(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
         dset = self.h5[self.dataKey]
         s = 0
-        for e in tqdm(range(batch_size, dset.shape[0] + batch_size, batch_size)):
+        for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
             if e > dset.shape[0]:
                 e = dset.shape[0]
             yield dset[s:e]
