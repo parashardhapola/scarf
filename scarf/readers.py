@@ -337,25 +337,14 @@ class H5adReader:
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
         self.dataKey = data_key
-        self._validate_data_group()
-        self.useGroup = {'obs': self._validate_group('obs'), 'var': self._validate_group('var')}
+        self.groupCodes = {'obs': self._validate_group('obs'),
+                         'var': self._validate_group('var'),
+                         'X': self._validate_group(self.dataKey)}
         self.nCells, self.nFeatures = self._get_n('obs'), self._get_n('var')
         self.cellIdsKey = self._fix_name_key('obs', cell_ids_key)
         self.featIdsKey = self._fix_name_key('var', feature_ids_key)
         self.featNamesKey = feature_name_key
         self.catNamesKey = category_names_key
-
-    def _validate_data_group(self) -> bool:
-        if self.dataKey not in self.h5:
-            raise KeyError(f"ERROR: {self.dataKey} group not found in the H5ad file")
-        if type(self.h5[self.dataKey]) != h5py.Group:
-            raise ValueError(f"ERROR: {self.dataKey} is not a group. This might mean that {self.dataKey} slot does not "
-                             f"contain a sparse matrix or you provided an incorrect group name.")
-        for i in ['data', 'indices', 'indptr']:
-            if i not in self.h5[self.dataKey]:
-                raise KeyError(f"{i} not found in {self.dataKey} group. {self.dataKey} group in H5ad must contain "
-                               f"three datasets: `data`, `indices` and `indptr`")
-        return True
 
     def _validate_group(self, group: str) -> int:
         if group not in self.h5:
@@ -379,12 +368,15 @@ class H5adReader:
         return ret_val
 
     def _check_exists(self, group: str, key: str) -> bool:
-        if group not in self.useGroup:
-            self._validate_group(group)
-        if self.useGroup[group] == 1:
+        if group in self.groupCodes:
+            group_code = self.groupCodes[group]
+        else:
+            group_code = self._validate_group(group)
+            self.groupCodes[group] = group_code
+        if group_code == 1:
             if key in list(self.h5[group].dtype.names):
                 return True
-        if self.useGroup[group] == 2:
+        if group_code == 2:
             if key in self.h5[group].keys():
                 return True
         return False
@@ -398,13 +390,13 @@ class H5adReader:
         return key
 
     def _get_n(self, group: str) -> int:
-        if self.useGroup[group] == 0:
+        if self.groupCodes[group] == 0:
             if self._check_exists(self.dataKey, 'shape'):
                 return self.h5[self.dataKey]['shape'][0]
             else:
                 raise KeyError(f"ERROR: `{group}` not found and `shape` key is missing in the {self.dataKey} group. "
                                f"Aborting read process.")
-        elif self.useGroup[group] == 1:
+        elif self.groupCodes[group] == 1:
             return self.h5[group].shape[0]
         else:
             for i in self.h5[group].keys():
@@ -415,7 +407,7 @@ class H5adReader:
 
     def cell_ids(self) -> np.ndarray:
         if self._check_exists('obs', self.cellIdsKey):
-            if self.useGroup['obs'] == 1:
+            if self.groupCodes['obs'] == 1:
                 return self.h5['obs'][self.cellIdsKey]
             else:
                 return self.h5['obs'][self.cellIdsKey][:]
@@ -425,7 +417,7 @@ class H5adReader:
     # noinspection DuplicatedCode
     def feat_ids(self) -> np.ndarray:
         if self._check_exists('var', self.featIdsKey):
-            if self.useGroup['var'] == 1:
+            if self.groupCodes['var'] == 1:
                 return self.h5['var'][self.featIdsKey]
             else:
                 return self.h5['var'][self.featIdsKey][:]
@@ -435,7 +427,7 @@ class H5adReader:
     # noinspection DuplicatedCode
     def feat_names(self) -> np.ndarray:
         if self._check_exists('var', self.featNamesKey):
-            if self.useGroup['var'] == 1:
+            if self.groupCodes['var'] == 1:
                 values = self.h5['var'][self.featNamesKey]
             else:
                 values = self.h5['var'][self.featNamesKey][:]
@@ -464,12 +456,12 @@ class H5adReader:
         return v
 
     def _get_col_data(self, group: str, ignore_keys: List[str]) -> Generator[Tuple[str, np.ndarray], None, None]:
-        if self.useGroup[group] == 1:
+        if self.groupCodes[group] == 1:
             for i in tqdm(self.h5[group].dtype.names, desc=f"Reading attributes from group {group}"):
                 if i in ignore_keys:
                     continue
                 yield i, self._replace_category_values(self.h5[group][i][:], i, group)
-        if self.useGroup[group] == 2:
+        if self.groupCodes[group] == 2:
             for i in tqdm(self.h5[group].keys(), desc=f"Reading attributes from group {group}"):
                 if i in ignore_keys:
                     continue
@@ -485,7 +477,16 @@ class H5adReader:
             yield i, j
 
     # noinspection DuplicatedCode
-    def consume(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
+    def consume_dataset(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
+        dset = self.h5[self.dataKey]
+        s = 0
+        for e in tqdm(range(batch_size, dset.shape[0] + batch_size, batch_size)):
+            if e > dset.shape[0]:
+                e = dset.shape[0]
+            yield dset[s:e]
+            s = e
+
+    def consume_group(self, batch_size: int) -> Generator[sparse.COO, None, None]:
         grp = self.h5[self.dataKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
@@ -499,8 +500,16 @@ class H5adReader:
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype('int32'))
             yield sparse.COO([nidx, grp['indices'][s: e]], grp['data'][s: e],
-                             shape=(n, self.nFeatures))
+                             shape=(n, self.nFeatures)).todense()
             s = e
+
+    def consume(self, batch_size: int = 1000):
+        if self.groupCodes[self.dataKey] == 1:
+            return self.consume_dataset(batch_size)
+        elif self.groupCodes[self.dataKey] == 2:
+            return self.consume_group(batch_size)
+        else:
+            raise ValueError("ERROR: Datakey is neither Dataset or Group type. Will not consume data")
 
 
 class NaboH5Reader:

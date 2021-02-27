@@ -170,7 +170,6 @@ class H5adToZarr:
         n_chunks = self.h5ad.nCells//batch_size + 1
         for a in tqdm(self.h5ad.consume(batch_size), total=n_chunks):
             e += a.shape[0]
-            a = a.todense()
             store[s:e] = a
             s = e
         if e != self.h5ad.nCells:
