@@ -399,8 +399,6 @@ class BaseDataStore:
 class GraphDataStore(BaseDataStore):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._cachedGraph = None
-        self._cachedGraphLoc = None
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
@@ -719,7 +717,7 @@ class GraphDataStore(BaseDataStore):
         clusters = self.z[kmeans_loc]['cluster_labels'][:].astype(np.uint32)
         return np.array([pc[x] for x in clusters]).astype(np.float32, order="C")
 
-    def _get_graph_ncells(self, graph_loc: str) -> int:
+    def _get_graph_ncells_k(self, graph_loc: str) -> Tuple[int, int]:
         """
 
         Args:
@@ -729,29 +727,39 @@ class GraphDataStore(BaseDataStore):
 
         """
         knn_loc = self.z[graph_loc.rsplit('/', 1)[0]]
-        return knn_loc['indices'].shape[0]
+        return knn_loc['indices'].shape
 
-    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr') -> tuple:
+    def _store_to_sparse(self, graph_loc: str, sparse_format: str = 'csr', use_k: int = None) -> tuple:
         """
 
         Args:
             graph_loc:
             sparse_format:
+            use_k:
 
         Returns:
 
         """
         store = self.z[graph_loc]
-        n_cells = self._get_graph_ncells(graph_loc)
+        n_cells, k = self._get_graph_ncells_k(graph_loc)
         # TODO: can we have a progress bar for graph loading. Append to coo matrix?
-        if sparse_format == 'csr':
-            return n_cells, csr_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
+        if use_k is None:
+            use_k = k
+        if use_k > k:
+            use_k = k
+        if use_k < 1:
+            use_k = 1
+        if use_k != k:
+            indexer = np.tile([True] * use_k + [False] * (k - use_k), n_cells)
         else:
-            return n_cells, coo_matrix((store['weights'][:],
-                                        (store['edges'][:, 0], store['edges'][:, 1])),
-                                       shape=(n_cells, n_cells))
+            indexer = None
+        w, e = store['weights'][:], store['edges'][:]
+        if indexer is not None:
+            w, e = w[indexer], e[indexer]
+        if sparse_format == 'csr':
+            return n_cells, csr_matrix((w, (e[:, 0], e[:, 1])), shape=(n_cells, n_cells))
+        else:
+            return n_cells, coo_matrix((w, (e[:, 0], e[:, 1])), shape=(n_cells, n_cells))
 
     def make_graph(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                    pca_cell_key: str = None, reduction_method: str = 'auto', dims: int = None, k: int = None,
@@ -759,8 +767,7 @@ class GraphDataStore(BaseDataStore):
                    ann_parallel: bool = False, rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
-                   update_keys: bool = True, return_ann_object: bool = False, feat_scaling: bool = True,
-                   cache_graph: bool = True):
+                   update_keys: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
 
@@ -855,8 +862,6 @@ class GraphDataStore(BaseDataStore):
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
-            cache_graph: Whether to save graph as an attribute of DataStore class. This can help prevent IO for graph
-                         loading. (Default value: True)
 
         Returns:
             Either None or `AnnStream` object
@@ -969,19 +974,12 @@ class GraphDataStore(BaseDataStore):
         self.z[reduction_loc].attrs['latest_kmeans'] = kmeans_loc
         self.z[ann_loc].attrs['latest_knn'] = knn_loc
         self.z[knn_loc].attrs['latest_graph'] = graph_loc
-        if cache_graph:
-            _, self._cachedGraph = self._store_to_sparse(graph_loc)
-            self._cachedGraphLoc = graph_loc
-        else:
-            # Making sure to overwrite the previous graph from cache
-            self._cachedGraph = None
-            self._cachedGraphLoc = None
         if return_ann_object:
             return ann_obj
         return None
 
     def load_graph(self, *, from_assay: str, cell_key: str, feat_key: str,
-                   symmetric: bool, upper_only: bool) -> csr_matrix:
+                   symmetric: bool, upper_only: bool, use_k: int = None) -> csr_matrix:
         """
         Load the cell neighbourhood as a scipy sparse matrix
 
@@ -992,6 +990,8 @@ class GraphDataStore(BaseDataStore):
             symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
                        used when symmetric is True
+            use_k: Number of top k-nearest neighbours to keep in the graph. This value must be greater than 0 and less
+                   the parameter k used. By default all neighbours are used (Default value: None)
 
         Returns:
             A scipy sparse matrix representing cell neighbourhood graph.
@@ -1000,17 +1000,10 @@ class GraphDataStore(BaseDataStore):
         from scipy.sparse import triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        if graph_loc == self._cachedGraphLoc and self._cachedGraph is not None:
-            logger.info(f"Loading cached graph from: {self._cachedGraphLoc}")
-            # This is done so that the changes in this copy graph does not affect cache
-            graph = self._cachedGraph.copy()
-            n_cells = self._get_graph_ncells(graph_loc)
-        else:
-            if graph_loc not in self.z:
-                raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
-                                 f"Run `make_graph` for assay {from_assay}")
-            n_cells, graph = self._store_to_sparse(graph_loc, 'csr')
-
+        if graph_loc not in self.z:
+            raise ValueError(f"{graph_loc} not found in zarr location {self._fn}. "
+                             f"Run `make_graph` for assay {from_assay}")
+        n_cells, graph = self._store_to_sparse(graph_loc, 'csr', use_k)
         if symmetric:
             graph = (graph + graph.T) / 2
             if upper_only:
@@ -1309,7 +1302,8 @@ class GraphDataStore(BaseDataStore):
                           fill_value=-1, key=cell_key, overwrite=True)
 
     def run_topacedo_sampler(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                             cluster_key: str = None, density_depth: int = 2, density_bandwidth: float = 5.0,
+                             cluster_key: str = None, use_k: int = None,
+                             density_depth: int = 2, density_bandwidth: float = 5.0,
                              max_sampling_rate: float = 0.05, min_sampling_rate: float = 0.01,
                              min_cells_per_group: int = 3, snn_bandwidth: float = 5.0,
                              seed_reward: float = 3.0, non_seed_reward: float = 0,
@@ -1328,6 +1322,8 @@ class GraphDataStore(BaseDataStore):
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             cluster_key: Name of the column in cell metadata table where cluster information is stored.
+            use_k: Number of top k-nearest neighbours to retain in the graph over which downsampling is performed.
+                   BY default all neighbours are used. (Default value: None)
             density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
             density_bandwidth: This value is used to scale the penalty affected by neighbourhood density. Higher values
                                will lead to to larger penalty. (Default value: 5.0)
@@ -1371,7 +1367,7 @@ class GraphDataStore(BaseDataStore):
             raise ValueError("ERROR: Please provide a value for cluster key")
         clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
         graph = self.load_graph(from_assay=from_assay, cell_key=cell_key, feat_key=feat_key,
-                                symmetric=False, upper_only=False)
+                                symmetric=False, upper_only=False, use_k=use_k)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram = self.z[f"{graph_loc}/dendrogram"][:]
 
@@ -1446,7 +1442,7 @@ class GraphDataStore(BaseDataStore):
             if self._cachedMagicOperatorLoc == magic_loc:
                 diff_op = self._cachedMagicOperator
             else:
-                n_cells = self._get_graph_ncells(graph_loc)
+                n_cells, _ = self._get_graph_ncells_k(graph_loc)
                 store = self.z[magic_loc]
                 diff_op = coo_matrix((store['data'][:],
                                       (store['row'][:], store['col'][:])),
@@ -2777,7 +2773,7 @@ class DataStore(MappingDatastore):
                           non_leaf_size: float = 10, do_label: bool = True, fontsize: float = 10,
                           node_color: str = None, root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20',
                           edgecolors: str = 'k', edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5),
-                          ax=None, show_fig: bool = True, savename: str = None, save_dpi=300):
+                          ax=None, show_fig: bool = True, savename: str = None, save_dpi: int = 300):
         """
         Plots a hierarchical layout of the clusters detected using `run_clustering` in a binary tree form. This helps
         evaluate the relationships between the clusters. This figure can complement embeddings likes tSNE where
@@ -2855,7 +2851,7 @@ class DataStore(MappingDatastore):
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
-                            savename: str = None, save_dpi: int =300, **heatmap_kwargs):
+                            savename: str = None, save_dpi: int = 300, **heatmap_kwargs):
         """
         Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
         Z-scores are calculated for each marker gene before plotting them. The groups are subjected to hierarchical
