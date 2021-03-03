@@ -151,33 +151,41 @@ class BaseDataStore:
                                                 "Just replace with actual assay names instead of assay1 and assay2"
         if 'assayTypes' not in self.z.attrs:
             self.z.attrs['assayTypes'] = {}
-        z_attrs = self.z.attrs['assayTypes']
+        z_attrs = dict(self.z.attrs['assayTypes'])
         if custom_assay_types is None:
             custom_assay_types = {}
         for i in self.assayNames:
             if i in custom_assay_types:
                 if custom_assay_types[i] in preset_assay_types:
                     assay = preset_assay_types[custom_assay_types[i]]
-                    z_attrs[i] = custom_assay_types[i]
+                    assay_name = custom_assay_types[i]
                 else:
                     logger.warning(f"{custom_assay_types[i]} is not a recognized assay type. Has to be one of "
                                    f"{', '.join(list(preset_assay_types.keys()))}\nPLease note that the names are"
                                    f" case-sensitive.")
                     logger.warning(caution_statement % i)
                     assay = Assay
-                    z_attrs[i] = 'Assay'
-                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                    assay_name = 'Assay'
+                if i in z_attrs and assay_name == z_attrs[i]:
+                    pass
+                else:
+                    z_attrs[i] = assay_name
+                    logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             elif i in z_attrs:
                 assay = preset_assay_types[z_attrs[i]]
             else:
                 if i in preset_assay_types:
                     assay = preset_assay_types[i]
-                    z_attrs[i] = i
+                    assay_name = i
                 else:
                     logger.warning(caution_statement % i)
                     assay = Assay
-                    z_attrs[i] = 'Assay'
-                logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                    assay_name = 'Assay'
+                if i in z_attrs and assay_name == z_attrs[i]:
+                    pass
+                else:
+                    z_attrs[i] = assay_name
+                    logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(self, i, assay(self.z, i, self.cells, min_cells_per_feature=min_cells, nthreads=self.nthreads))
         if self.z.attrs['assayTypes'] != z_attrs:
             self.z.attrs['assayTypes'] = z_attrs

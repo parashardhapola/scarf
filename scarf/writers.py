@@ -26,8 +26,11 @@ def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
 
 def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: Union[str, Any] = None, overwrite: bool = True) -> zarr.hierarchy:
+    data = np.array(data)
     if dtype is None or dtype == object:
         dtype = 'U' + str(max([len(x) for x in data]))
+    if np.issubdtype(data.dtype, np.dtype('S')):
+        data = data.astype('U')
     return g.create_dataset(name, data=data, chunks=(100000,),
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
