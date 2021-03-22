@@ -2458,6 +2458,52 @@ class DataStore(MappingDatastore):
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
+    def make_subset(self, cell_key: str, out_zarr_name: str) -> None:
+        """
+        Split Zarr file using a subset of cells
+
+        Args:
+            cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
+                      subset.
+            out_zarr_name: Path of output Zarr files containing only a subset of cells.
+
+        Returns:
+        """
+
+        from .writers import create_zarr_count_assay
+
+        cell_idx = self.cells.active_index(cell_key)
+        n_cells = len(cell_idx)
+
+        outz = zarr.open(out_zarr_name, mode='w')
+
+        for assay_name in self.assayNames:
+            assay = self._get_assay(assay_name)
+            create_zarr_count_assay(outz, assay_name, assay.rawData.chunksize, n_cells,
+                                    assay.feats.fetch_all('ids'), assay.feats.fetch_all('names'), assay.rawData.dtype)
+
+        g = outz.create_group('cellData')
+        create_zarr_obj_array(g, 'I', [True for _ in range(n_cells)], 'bool')
+        for i in self.cells.columns:
+            if i in ['I', cell_key]:
+                continue
+            if i not in ['ids', 'names']:
+                continue
+
+            v = self.cells.fetch(i, cell_key)
+            create_zarr_obj_array(g, i, v, dtype=v.dtype)
+
+        for assay_name in self.assayNames:
+            assay = self._get_assay(assay_name)
+            store = outz[f"{assay_name}/counts"]
+            s, e, = 0, 0
+            for a in tqdm(assay.rawData[cell_idx].blocks,
+                          desc=f"Subsetting assay: {assay_name}", total=assay.rawData.numblocks[0]):
+                if a.shape[0] > 0:
+                    e += a.shape[0]
+                    store[s:e] = a.compute()
+                    s = e
+
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
         """
