@@ -47,7 +47,7 @@ Assay
 A generic Assay class that contains methods to calculate feature level statistics. It also provides method for saving
 normalized subset of data for later KNN graph construction.
 
-.. autoclass:: scarf.Assay
+.. autoclass:: scarf.assay.Assay
     :members:
 
 RNAassay
@@ -55,7 +55,7 @@ RNAassay
 
 This assay is designed for feature selection and normalization of scRNA-Seq data
 
-.. autoclass:: scarf.RNAassay
+.. autoclass:: scarf.assay.RNAassay
     :members:
 
 ATACassay
@@ -63,7 +63,7 @@ ATACassay
 
 This assay is designed for feature selection and normalization of scATAC-Seq data
 
-.. autoclass:: scarf.ATACassay
+.. autoclass:: scarf.assay.ATACassay
     :members:
 
 
@@ -72,7 +72,7 @@ ADTassay
 
 This assay is designed for feature selection and normalization of ADTs from CITE-Seq data
 
-.. autoclass:: scarf.ADTassay
+.. autoclass:: scarf.assay.ADTassay
     :members:
 
 
@@ -80,4 +80,18 @@ MetaData
 --------
 
 .. autoclass:: scarf.metadata.MetaData
+    :members:
+
+
+Readers
+-------
+
+.. autoclass:: scarf.readers
+    :members:
+
+
+Writers
+-------
+
+.. autoclass:: scarf.writers
     :members:
