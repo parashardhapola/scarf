@@ -20,13 +20,13 @@ import sys
 # -- Project information -----------------------------------------------------
 
 project = 'Scarf'
-copyright = '2020, Parashar Dhapola, Göran Karlsson'
+copyright = '2021, Parashar Dhapola, Göran Karlsson'
 author = 'Parashar Dhapola, Göran Karlsson'
 
 # The short X.Y version
-version = '0.1.0'
+# version = '0.1.0'
 # The full version, including alpha/beta/rc tags
-release = ''
+# release = ''
 
 # -- General configuration ---------------------------------------------------
 
