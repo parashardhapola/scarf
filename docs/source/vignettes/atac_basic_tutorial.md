@@ -34,8 +34,8 @@ reader.assayFeats
 ```
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn=f'tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(5000, 2000))
-writer.dump(batch_size=1000)
+writer = scarf.CrToZarr(reader, zarr_fn=f'tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(2000, 5000))
+writer.dump(batch_size=2000)
 ```
 
 ```python
@@ -47,7 +47,7 @@ ds.auto_filter_cells()
 ```
 
 ```python
-ds.mark_prevalent_peaks(top_n=10000)
+ds.mark_prevalent_peaks(top_n=20000)
 ```
 
 ```python
@@ -55,7 +55,7 @@ ds
 ```
 
 ```python
-ds.make_graph(feat_key='prevalent_peaks', k=7, dims=51, n_centroids=1000)
+ds.make_graph(feat_key='prevalent_peaks', k=11, dims=51, n_centroids=1000)
 ```
 
 ```python
@@ -63,11 +63,11 @@ ds.run_umap(fit_n_epochs=500, min_dist=0.5)
 ```
 
 ```python
-ds.run_clustering(n_clusters=10)
+ds.run_leiden_clustering(resolution=1.5)
 ```
 
 ```python
-ds.plot_layout(layout_key='ATAC_UMAP', color_by='ATAC_cluster')
+ds.plot_layout(layout_key='ATAC_UMAP', color_by='ATAC_leiden_cluster')
 ```
 
 ```python

@@ -6,7 +6,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.2'
-      jupytext_version: 1.7.1
+      jupytext_version: 1.6.0
   kernelspec:
     display_name: Python 3
     language: python
@@ -18,6 +18,7 @@ jupyter:
 %config InlineBackend.figure_format = 'retina'
 
 import scarf
+scarf.__version__
 ```
 
 ```python
@@ -39,7 +40,8 @@ UMAP, clustering and marker identification together allow a good understanding o
 Now we are ready to perform down-sampling of cells. The extent of down sampling is primarily governed by the number of micro clusters, i.e. atleast 1 cell from each micro-cluster (*seed cells*) will be present in the down sampled data. However, this might not be sufficient to ensure that these will conserve the topology, i.e. are connected to each other. Hence, the `run_topacedo_sampler` method will our TopACeDo (Topology assisted cell downsampling) algorithm which employs a prize-collecting Steiner graph traveral (PCST) to ensure that *seed cells* are connected (to the extent that the full graph is connected). In order to do this we need to set a reward on each seed and non-seed cells. This is done using the parameter `seed_reward` and `non_seed_reward`. Low reward on seed cells might lead to them being excluded from the subsample (something that we should try to avoid). High reward on non-seed cells will lead to inflation of number of cells in the sample. We also set a value for parameter `sampling_rate` which is the fraction of cells that should be randomly sampled from each micro-cluster.
 
 ```python
-ds.run_topacedo_sampler(cluster_key='RNA_cluster', max_sampling_rate=0.2)
+ds.run_topacedo_sampler(cluster_key='RNA_cluster', min_sampling_rate=0, max_sampling_rate=0.05, snn_bandwidth=10,
+                        min_cells_per_group=3, density_bandwidth=500, use_k=5)
 ```
 
 As a result of subsampling the sub sampled cells are marked True under the cell metadata column `RNA_sketched`. We can visualize these cells using `plot_layout`
