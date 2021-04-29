@@ -3,8 +3,8 @@
 __pycache__
 data
 build
+dist
 scarf.egg-info
 dask-worker-space
 *.ipynb_checkpoints
 *.ipynb
-

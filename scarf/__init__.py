@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 try:
-    __version__ = metadata.version('scarf')
+    __version__ = metadata.version('scarf-toolkit')
 except ImportError:
     print("Scarf is not installed", flush=True)
 
