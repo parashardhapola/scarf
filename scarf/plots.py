@@ -3,7 +3,7 @@ import matplotlib as mpl
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, Optional
 from cmocean import cm
 from .logging_utils import logger
 
@@ -130,54 +130,6 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
     return None
 
 
-def plot_cluster_hierarchy(sg, clusts, width: float = 2, lvr_factor: float = 0.5, vert_gap: float = 0.2,
-                           min_node_size: float = 10, node_power: float = 1.2, root_size: float = 100,
-                           non_leaf_size: float = 10, do_label: bool = True, fontsize=10, node_color: str = None,
-                           root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', edgecolors: str = 'k',
-                           edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
-                           savename: str = None, save_dpi=300):
-    import networkx as nx
-    import EoN
-    import math
-
-    cmap = sns.color_palette(cmap, n_colors=len(set(clusts))).as_hex()
-    cs = pd.Series(clusts).value_counts().to_dict()
-    nc = []
-    ns = []
-    for i in sg.nodes():
-        if 'partition_id' in sg.nodes[i]:
-            v = sg.nodes[i]['partition_id']
-            if node_color is None:
-                nc.append(cmap[v - 1])
-            else:
-                nc.append(node_color)
-            ns.append((cs[v] ** node_power) + min_node_size)
-        else:
-            if sg.nodes[i]['nleaves'] == len(clusts):
-                nc.append(root_color)
-                ns.append(root_size)
-            else:
-                nc.append(non_leaf_color)
-                ns.append(non_leaf_size)
-    pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor, vert_gap=vert_gap)
-    new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
-    nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc, ax=ax, edgecolors=edgecolors, alpha=alpha,
-            linewidths=edgewidth)
-    if do_label:
-        for i in sg.nodes():
-            if 'partition_id' in sg.nodes[i]:
-                v = sg.nodes[i]['partition_id']
-                ax.text(new_pos[i][0], new_pos[i][1], v, fontsize=fontsize)
-    if savename:
-        plt.savefig(savename, dpi=save_dpi)
-    if show_fig:
-        plt.show()
-    else:
-        return ax
-
-
 def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
         vt = v.dtype
         if v.nunique() == 1:
@@ -211,7 +163,7 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Serie
     return v
 
 
-def _scatter_make_colors(v: pd.Series, cmap, color_key: dict, mask_color: str, mask_name: str):
+def _scatter_make_colors(v: pd.Series, cmap, color_key: Optional[dict], mask_color: str, mask_name: str):
         from matplotlib.cm import get_cmap
 
         if v.dtype.name != 'category':
@@ -344,6 +296,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
             df['c'] = [default_color for _ in v]
         else:
             v = v.copy().fillna(0)
+            # FIXME: Why have the following line?
             pal = color_map
             mmv = (v - v.min()) / (v.max() - v.min())
             df['c'] = [to_hex(pal(x)) for x in mmv]
@@ -414,3 +367,96 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
     if savename:
         fig.savefig(savename, dpi=dpi)
     display(fig)
+
+
+def _draw_pie(ax, dist, colors, xpos, ypos, size):
+    # https://stackoverflow.com/questions/56337732/how-to-plot-scatter-pie-chart-using-matplotlib
+    cumsum = np.cumsum(dist)
+    cumsum = cumsum / cumsum[-1]
+    pie = [0] + cumsum.tolist()
+    for r1, r2, c in zip(pie[:-1], pie[1:], colors):
+        angles = np.linspace(2 * np.pi * r1, 2 * np.pi * r2)
+        x = [0] + np.cos(angles).tolist()
+        y = [0] + np.sin(angles).tolist()
+        xy = np.column_stack([x, y])
+        ax.scatter([xpos], [ypos], marker=xy, s=size, c=c)
+
+
+def plot_cluster_hierarchy(sg, clusts, color_values=None, force_ints_as_cats: bool = True,
+                           width: float = 2, lvr_factor: float = 0.5, vert_gap: float = 0.2,
+                           min_node_size: float = 10, node_size_multiplier: float = 1e4, node_power: float = 1,
+                           root_size: float = 100, non_leaf_size: float = 10,
+                           show_labels: bool = False, fontsize=10,
+                           root_color: str = '#C0C0C0', non_leaf_color: str = 'k',
+                           cmap: str = None, color_key: bool = None, edgecolors: str = 'k',
+                           edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
+                           savename: str = None, save_dpi=300):
+    import networkx as nx
+    import EoN
+    import math
+    from matplotlib.colors import to_hex
+
+    if color_values is None:
+        color_values = pd.Series(clusts)
+        using_clust_for_colors = True
+    else:
+        color_values = pd.Series(color_values)
+        using_clust_for_colors = False
+    color_values = _scatter_fix_type(color_values, force_ints_as_cats)
+    cmap, color_key = _scatter_make_colors(color_values, cmap, color_key,
+                                           'k', 'longdummyvaluesofh3489hfpiqehdcbla')
+    pos = EoN.hierarchy_pos(sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor, vert_gap=vert_gap)
+    new_pos = {u: (r * math.cos(theta), r * math.sin(theta)) for u, (theta, r) in pos.items()}
+
+    if color_key is None:
+        cluster_values = pd.DataFrame({'clusters': clusts, 'v': color_values}).groupby('clusters').mean()['v']
+        mmv: pd.Series = (cluster_values - cluster_values.min()) / (cluster_values.max() - cluster_values.min())
+        color_key = {k: to_hex(cmap(v)) for k, v in mmv.to_dict().items()}
+    else:
+        cluster_values = None
+
+    cs = pd.Series(clusts).value_counts()
+    cs = (node_size_multiplier * ((cs / cs.sum()) ** node_power)).to_dict()
+    nc, ns = [], []
+
+    for i in sg.nodes():
+        if 'partition_id' in sg.nodes[i]:
+            clust_id = sg.nodes[i]['partition_id']
+            if cluster_values is not None or using_clust_for_colors:
+                nc.append(color_key[clust_id])
+                ns.append(max(cs[clust_id], min_node_size))
+            else:
+                nc.append('white')
+                ns.append(0)
+        else:
+            if sg.nodes[i]['nleaves'] == len(clusts):
+                nc.append(root_color)
+                ns.append(root_size)
+            else:
+                nc.append(non_leaf_color)
+                ns.append(non_leaf_size)
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+    nx.draw(sg, pos=new_pos, node_size=ns, node_color=nc, ax=ax, edgecolors=edgecolors, alpha=alpha,
+            linewidths=edgewidth)
+
+    if cluster_values is None and using_clust_for_colors is False:
+        for i in sg.nodes():
+            if 'partition_id' in sg.nodes[i]:
+                clust_id = sg.nodes[i]['partition_id']
+                idx = clusts == clust_id
+                counts = color_values[idx].value_counts()
+                _draw_pie(ax, counts.values, [color_key[x] for x in counts.index],
+                          new_pos[i][0], new_pos[i][1], max(cs[clust_id], min_node_size))
+
+    if show_labels:
+        for i in sg.nodes():
+            if 'partition_id' in sg.nodes[i]:
+                clust_id = sg.nodes[i]['partition_id']
+                ax.text(new_pos[i][0], new_pos[i][1], clust_id, fontsize=fontsize, ha='center', va='center')
+    if savename:
+        plt.savefig(savename, dpi=save_dpi)
+    if show_fig:
+        plt.show()
+    else:
+        return ax

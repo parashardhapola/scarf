@@ -70,7 +70,7 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
     def get_holding_nodes(g: nx.DiGraph, c):
         hn = {}
         s = calc_steps_to_top(g, c)
-        for i in set(c):
+        for i in tqdm(set(c), desc="Identifying the top node for cluster"):
             l = set(np.where(c == i)[0])
             nl = len(l)
             for j in iter_predecessors(g, s.reindex(l).idxmin()):
