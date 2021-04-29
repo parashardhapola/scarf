@@ -8,7 +8,6 @@ import pandas as pd
 from .utils import controlled_compute
 from .logging_utils import logger
 from scipy.sparse import csr_matrix
-# from .assay import Assay  # Disabled because of circular dependency
 
 __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
            'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge',
@@ -28,7 +27,7 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: Union[str, Any] = None, overwrite: bool = True) -> zarr.hierarchy:
     data = np.array(data)
     if dtype is None or dtype == object:
-        dtype = 'U' + str(max([len(x) for x in data]))
+        dtype = 'U' + str(max([len(str(x)) for x in data]))
     if np.issubdtype(data.dtype, np.dtype('S')):
         data = data.astype('U')
     return g.create_dataset(name, data=data, chunks=(100000,),
@@ -436,4 +435,3 @@ class ZarrMerge:
                 a[:, feat_order] = controlled_compute(i, nthreads)
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end
-
