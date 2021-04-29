@@ -1,3 +1,5 @@
+sphinx
 nbsphinx
 sphinx_autodoc_typehints
 ipython
+sphinx_rtd_theme
