@@ -1,6 +1,6 @@
 import warnings
 from dask.array import PerformanceWarning
-from importlib.metadata import version
+from importlib_metadata import version
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)

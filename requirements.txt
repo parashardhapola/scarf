@@ -26,3 +26,4 @@ holoviews
 datashader
 leidenalg
 packaging
+importlib_metadata
