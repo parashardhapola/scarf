@@ -1005,6 +1005,12 @@ class GraphDataStore(BaseDataStore):
             A scipy sparse matrix representing cell neighbourhood graph.
 
         """
+
+        def symmetrize(g):
+            t = g + g.T
+            t = t - g.multiply(g.T)
+            return t
+
         from scipy.sparse import triu
 
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
@@ -1013,7 +1019,7 @@ class GraphDataStore(BaseDataStore):
                              f"Run `make_graph` for assay {from_assay}")
         n_cells, graph = self._store_to_sparse(graph_loc, 'csr', use_k)
         if symmetric:
-            graph = (graph + graph.T) / 2
+            graph = symmetrize(graph)
             if upper_only:
                 graph = triu(graph)
         return graph
@@ -2822,10 +2828,12 @@ class DataStore(MappingDatastore):
                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
-                          cluster_key: str = None, width: float = 1, lvr_factor: float = 0.5, vert_gap: float = 0.2,
-                          min_node_size: float = 10, node_power: float = 1.2, root_size: float = 100,
-                          non_leaf_size: float = 10, do_label: bool = True, fontsize: float = 10,
-                          node_color: str = None, root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20',
+                          cluster_key: str = None, fill_by_value: str = None, force_ints_as_cats: bool = True,
+                          width: float = 1, lvr_factor: float = 0.5, vert_gap: float = 0.2,
+                          min_node_size: float = 10, node_size_multiplier: float = 1e4, node_power: float = 1.2,
+                          root_size: float = 100, non_leaf_size: float = 10,
+                          show_labels: bool = True, fontsize: float = 10,
+                          root_color: str = '#C0C0C0', non_leaf_color: str = 'k', cmap='tab20', color_key: dict = None,
                           edgecolors: str = 'k', edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5),
                           ax=None, show_fig: bool = True, savename: str = None, save_dpi: int = 300):
         """
@@ -2855,15 +2863,13 @@ class DataStore(MappingDatastore):
                         closer to the root and vice versa. (Default value: 0.5)
             vert_gap: Gap between levels of hierarchy (Default value: 0.2)
             min_node_size: Minimum size of a node (Default value: 10 )
+            node_size_multiplier: Size of each leaf node is increased by this factor (Default value: 1e4)
             node_power: The number of cells within each cluster is raised to this value to scale up the node size.
                         (Default value: 1.2)
             root_size: Size of the root node (Default value: 100)
             non_leaf_size: Size of the nodes that represent branch points in the tree (Default value: 10)
-            do_label: Whether to show the cluster labels on the cluster nodes (Default value: True)
+            show_labels: Whether to show the cluster labels on the cluster nodes (Default value: True)
             fontsize: Font size of cluster labels. Only used when `do_label` is True (Default value: 10)
-            node_color: A fixed colour for each cluster node. Acceptable values are  Matplotlib named colours or
-                       hexcodes for colours. By default each cluster node is coloured based on a colormap.
-                       (Default value : None)
             root_color: Colour for root node. Acceptable values are  Matplotlib named colours or hexcodes for colours.
                         (Default value: '#C0C0C0')
             non_leaf_color: Colour for branchpoint nodes. Acceptable values are  Matplotlib named colours or hexcodes
@@ -2887,6 +2893,7 @@ class DataStore(MappingDatastore):
 
         from .plots import plot_cluster_hierarchy
         from .dendrogram import CoalesceTree, make_digraph
+        from networkx import to_pandas_edgelist, DiGraph
 
         from_assay, cell_key, feat_key = self._get_latest_keys(from_assay, cell_key, feat_key)
 
@@ -2895,11 +2902,39 @@ class DataStore(MappingDatastore):
         clusts = self.cells.fetch(cluster_key, key=cell_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         dendrogram_loc = self.z[graph_loc].attrs['latest_dendrogram']
-        subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
-        plot_cluster_hierarchy(subgraph, clusts, width=width, lvr_factor=lvr_factor, vert_gap=vert_gap,
-                               min_node_size=min_node_size, node_power=node_power, root_size=root_size,
-                               non_leaf_size=non_leaf_size, do_label=do_label, fontsize=fontsize, node_color=node_color,
-                               root_color=root_color, non_leaf_color=non_leaf_color, cmap=cmap, edgecolors=edgecolors,
+        n_clusts = len(set(clusts))
+        coalesced_loc = dendrogram_loc + f"_coalesced_{n_clusts}"
+        if coalesced_loc in self.z:
+            subgraph = DiGraph()
+            subgraph.add_edges_from(self.z[coalesced_loc + '/edgelist'][:])
+            for i in self.z[coalesced_loc+'/nodelist'][:]:
+                subgraph.nodes[i[0]]['nleaves'] = i[1]
+                if i[2] != -1:
+                    subgraph.nodes[i[0]]['partition_id'] = i[2]
+        else:
+            subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
+            edge_list = to_pandas_edgelist(subgraph).values
+            store = create_zarr_dataset(self.z, coalesced_loc + '/edgelist', (100000,), 'u8', edge_list.shape)
+            store[:] = edge_list
+            node_list = []
+            for i in subgraph.nodes():
+                d = subgraph.nodes[i]
+                p = d['partition_id'] if 'partition_id' in d else -1
+                node_list.append((i, d['nleaves'], p))
+            node_list = np.array(node_list)
+            store = create_zarr_dataset(self.z, coalesced_loc + '/nodelist', (100000,), 'i8', node_list.shape)
+            store[:] = node_list
+        if fill_by_value is not None:
+            color_values = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=fill_by_value)
+        else:
+            color_values = None
+        plot_cluster_hierarchy(subgraph, clusts, color_values, force_ints_as_cats=force_ints_as_cats,
+                               width=width, lvr_factor=lvr_factor, vert_gap=vert_gap,
+                               min_node_size=min_node_size, node_size_multiplier=node_size_multiplier,
+                               node_power=node_power, root_size=root_size, non_leaf_size=non_leaf_size,
+                               show_labels=show_labels, fontsize=fontsize,
+                               root_color=root_color, non_leaf_color=non_leaf_color, cmap=cmap,
+                               color_key=color_key, edgecolors=edgecolors,
                                edgewidth=edgewidth, alpha=alpha, figsize=figsize, ax=ax, show_fig=show_fig,
                                savename=savename, save_dpi=save_dpi)
 
