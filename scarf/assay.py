@@ -38,6 +38,15 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 class Assay:
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData,
                  nthreads: int, min_cells_per_feature: int = 10):
+        """
+
+        Args:
+            z:
+            name:
+            cell_data:
+            nthreads:
+            min_cells_per_feature:
+        """
         self.name = name
         self.z = z[self.name]
         self.cells = cell_data
@@ -52,6 +61,16 @@ class Assay:
         self._ini_feature_props(min_cells_per_feature)
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
+        """
+
+        Args:
+            cell_idx:
+            feat_idx:
+            **kwargs:
+
+        Returns:
+
+        """
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
@@ -60,6 +79,14 @@ class Assay:
         return self.normMethod(self, counts)
 
     def to_raw_sparse(self, cell_key):
+        """
+
+        Args:
+            cell_key:
+
+        Returns:
+
+        """
         from tqdm import tqdm
 
         sm = None
@@ -73,6 +100,14 @@ class Assay:
         return sm
 
     def _ini_feature_props(self, min_cells: int) -> None:
+        """
+
+        Args:
+            min_cells:
+
+        Returns:
+
+        """
         if 'nCells' in self.feats.columns and 'dropOuts' in self.feats.columns:
             pass
         else:
@@ -83,6 +118,15 @@ class Assay:
             self.feats.update_key(ncells > min_cells, 'I')
 
     def add_percent_feature(self, feat_pattern: str, name: str) -> None:
+        """
+
+        Args:
+            feat_pattern:
+            name:
+
+        Returns:
+
+        """
         if name in self.attrs['percentFeatures']:
             if self.attrs['percentFeatures'][name] == feat_pattern:
                 return None
@@ -151,6 +195,20 @@ class Assay:
     def save_normalized_data(self, cell_key: str, feat_key: str, batch_size: int,
                              location: str, log_transform: bool, renormalize_subset: bool,
                              update_keys: bool) -> daskarr:
+        """
+
+        Args:
+            cell_key:
+            feat_key:
+            batch_size:
+            location:
+            log_transform:
+            renormalize_subset:
+            update_keys:
+
+        Returns:
+
+        """
 
         from .writers import dask_to_zarr
 
@@ -184,6 +242,18 @@ class Assay:
 
     def score_features(self, feature_names: List[str], cell_key: str,
                        ctrl_size: int, n_bins: int, rand_seed: int) -> np.ndarray:
+        """
+
+        Args:
+            feature_names:
+            cell_key:
+            ctrl_size:
+            n_bins:
+            rand_seed:
+
+        Returns:
+
+        """
 
         from .feat_utils import binned_sampling
 
@@ -211,6 +281,14 @@ class Assay:
 
 class RNAassay(Assay):
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        """
+
+        Args:
+            z:
+            name:
+            cell_data:
+            **kwargs:
+        """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
         if 'size_factor' in self.attrs:
@@ -222,6 +300,18 @@ class RNAassay(Assay):
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None,
                renormalize_subset: bool = False, log_transform: bool = False, **kwargs):
+        """
+
+        Args:
+            cell_idx:
+            feat_idx:
+            renormalize_subset:
+            log_transform:
+            **kwargs:
+
+        Returns:
+
+        """
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
@@ -359,6 +449,14 @@ class RNAassay(Assay):
 
 class ATACassay(Assay):
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        """
+
+        Args:
+            z:
+            name:
+            cell_data:
+            **kwargs:
+        """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
         self.n_term_per_doc = None
@@ -366,6 +464,16 @@ class ATACassay(Assay):
         self.n_docs_per_term = None
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
+        """
+
+        Args:
+            cell_idx:
+            feat_idx:
+            **kwargs:
+
+        Returns:
+
+        """
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
@@ -377,6 +485,14 @@ class ATACassay(Assay):
         return self.normMethod(self, counts)
 
     def set_feature_stats(self, cell_key: str) -> None:
+        """
+
+        Args:
+            cell_key:
+
+        Returns:
+
+        """
         feat_key = 'I'  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         identifier, stats_loc = self._get_summary_stats_loc(cell_key)
@@ -393,6 +509,16 @@ class ATACassay(Assay):
         return None
 
     def mark_prevalent_peaks(self, cell_key: str, top_n: int, prevalence_key_name: str) -> None:
+        """
+
+        Args:
+            cell_key:
+            top_n:
+            prevalence_key_name:
+
+        Returns:
+
+        """
         if top_n >= self.feats.N:
             raise ValueError(f"ERROR: n_top should be less than total number of features ({self.feats.N})]")
         if type(top_n) != int:
@@ -408,10 +534,28 @@ class ATACassay(Assay):
 
 class ADTassay(Assay):
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
+        """
+
+        Args:
+            z:
+            name:
+            cell_data:
+            **kwargs:
+        """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_clr
 
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs):
+        """
+
+        Args:
+            cell_idx:
+            feat_idx:
+            **kwargs:
+
+        Returns:
+
+        """
         if cell_idx is None:
             cell_idx = self.cells.active_index('I')
         if feat_idx is None:
