@@ -1,12 +1,12 @@
 import warnings
 from dask.array import PerformanceWarning
-from importlib import metadata
+from importlib.metadata import version
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 try:
-    __version__ = metadata.version('scarf-toolkit')
+    __version__ = version('scarf-toolkit')
 except ImportError:
     print("Scarf is not installed", flush=True)
 
