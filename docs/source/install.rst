@@ -10,7 +10,7 @@ Python version greater than 3.8.0
 Short version
 -------------
 
-``pip install scarf``
+``pip install scarf-toolkit``
 
 Long version
 ------------
@@ -46,5 +46,5 @@ Once installed, please confirm that you now have a Python version greater than 3
 
 **Step 4:**
 
-Now, in your terminal, type this to install the latest version of Nabo:
-``pip install scarf``
+Now, in your terminal, type this to install the latest version of Scarf:
+``pip install scarf-toolkit``
