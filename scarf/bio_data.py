@@ -23,8 +23,24 @@ g2m_phase_genes: List[str] = [
 datasets = {
     'tenx_10k_pbmc_citeseq': [
         {'name': 'data.h5',
-         'url': 'http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3'
-                 '/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5'}
+         'url': 'http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/'
+                 'pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5'}
+    ],
+    'tenx_1M_brain_rnaseq': [
+        {'name': 'data.h5',
+         'url': 'http://cf.10xgenomics.com/samples/cell-exp/1.3.0/1M_neurons/'
+                '1M_neurons_filtered_gene_bc_matrices_h5.h5'}
+    ],
+    'zheng_68k_pbmc-fresh_rnaseq': [
+        {'name': 'matrix.mtx.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '6089608fa9746602312f7347'},
+        {'name': 'features.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '60896084a9746602372f77dd'},
+        {'name': 'barcodes.tsv.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '60896085f1616002479cd02a'},
     ],
     'kang_ctrl_pbmc_rnaseq': [
         {'name': 'matrix.mtx.gz',
