@@ -10,4 +10,4 @@ Your browser should open a new window automatically. Navigate to the notebook lo
 .. toctree::
     :maxdepth: 1
     
-    vignettes/basic_tutorial.md
+    vignettes/public/basic_tutorial.md
