@@ -1,6 +1,7 @@
 ---
 jupyter:
   jupytext:
+    cell_metadata_filter: -all
     formats: ipynb,md
     text_representation:
       extension: .md
@@ -12,6 +13,8 @@ jupyter:
     language: python
     name: python3
 ---
+
+## Cell downsampling using TopACeDO
 
 ```python
 %load_ext autotime
