@@ -163,6 +163,10 @@ texinfo_documents = [
      'Miscellaneous'),
 ]
 
+nbsphinx_custom_formats = {
+    '.md': ['jupytext.reads', {'fmt': 'Rmd'}],
+}
+
 
 # -- Extension configuration -------------------------------------------------
 nbsphinx_execute = 'auto'
