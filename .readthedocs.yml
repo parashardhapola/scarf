@@ -2,14 +2,6 @@ version: 2
 
 build:
   image: latest
-  extras:
-    - libmetis-dev
-    - libtbb-dev
-    - libfftw3-dev
-    - lib32gcc-7-dev
-    - libflann-dev
-    - libcilkrts5
-
 
 sphinx:
   configuration: docs/source/conf.py
