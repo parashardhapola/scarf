@@ -1115,7 +1115,11 @@ class GraphDataStore(BaseDataStore):
             system_call(cmd)
         else:
             os.system(cmd)
-        emb = pd.read_csv(out_fn, header=None, sep=' ')[list(range(tsne_dims))].values.T
+        try:
+            emb = pd.read_csv(out_fn, header=None, sep=' ')[list(range(tsne_dims))].values.T
+        except FileNotFoundError:
+            logger.error("SG-tSNE failed, possibly due to missing libraries or file permissions. PLease check the error"
+                         " log for more details")
         for i in range(tsne_dims):
             self.cells.insert(self._col_renamer(from_assay, cell_key, f'{label}{i + 1}'),
                               emb[i], key=cell_key, overwrite=True)
