@@ -10,17 +10,17 @@ Scarf
 Scarf is a Python package to performs memory efficient analysis of single-cell genomics data.
 
 - Analyze atlas scale datasets on your laptop (tested with upto 4 million cells)
-- Perform analysis of scATAC-Seq data on laptop computers (test on dataset with 700K cells and 1 million peaks)
-- Make parallel implementations of UMAP and tSNE for quick cell embedding
+- Perform analysis of scATAC-Seq data (datasets with upto 700K cells with 1 million peaks tested) under 10 GB RAM
+- Make parallel implementations of UMAP and tSNE (SG-tSNE) for quick cell embedding
 - Perform hierarchical clustering that gives interpretable cluster relationships
-- Down-sample cells using state-of-the-art TopACeDo method
-- Perform quick and accurate projections of cells from one dataset onto another
+- Sub-sample hihgly representative cells using state-of-the-art TopACeDo method
+- Perform quick and accurate projections of cells from one dataset onto another or integrate multiple datasets.
 
 Install Scarf with::
 
     pip install scarf-toolkit
 
-Read documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
+Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
 
 .. _scarf.rtfd.io: scarf.rtfd.io
 .. _basic workflow of Scarf: scarf.rtfd.io/en/latest/vignettes/public/basic_tutorial.html
