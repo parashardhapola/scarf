@@ -6,3 +6,4 @@ sphinx_rtd_theme
 jupytext
 ipykernel
 ipython-autotime
+topacedo

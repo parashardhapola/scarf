@@ -1,6 +1,7 @@
 from setuptools import setup, find_packages
 from setuptools.command.install import install
 import os
+import glob
 
 
 def read(fname):
@@ -15,18 +16,17 @@ class PostInstallCommand(install):
     """
     def run(self):
         install.run(self)
-        source_dir = os.path.dirname(os.path.abspath(__file__))
-        build_dir = os.path.join(source_dir, "bin")
-        sgtsne_name = "sgtsne"
         if not os.path.isdir(self.install_scripts):
             os.makedirs(self.install_scripts)
-        source = os.path.join(build_dir, sgtsne_name)
-        target = os.path.join(self.install_scripts, sgtsne_name)
-        if os.path.isfile(target):
-            os.remove(target)
-        with open(source, 'rb') as src, open(target, 'wb') as dst:
-            dst.write(src.read())
-        os.chmod(target, 0o555)
+        source_dir = os.path.dirname(os.path.abspath(__file__))
+        source_files = glob.glob(os.path.join(source_dir, "bin")+'/*')
+        for source in source_files:
+            target = os.path.join(self.install_scripts, os.path.basename(source))
+            if os.path.isfile(target):
+                os.remove(target)
+            with open(source, 'rb') as src, open(target, 'wb') as dst:
+                dst.write(src.read())
+            os.chmod(target, 0o555)
 
 
 if __name__ == "__main__":
