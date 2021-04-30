@@ -11,3 +11,5 @@ Your browser should open a new window automatically. Navigate to the notebook lo
     :maxdepth: 1
     
     vignettes/public/basic_tutorial.ipynb
+    vignettes/public/topacedo_downsampling.ipynb
+
