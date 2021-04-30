@@ -164,7 +164,7 @@ texinfo_documents = [
 ]
 
 nbsphinx_custom_formats = {
-    '.md': ['jupytext.reads', {'fmt': 'Rmd'}],
+    '.md': ['jupytext.reads', {'fmt': 'md'}],
 }
 
 
