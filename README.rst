@@ -22,5 +22,5 @@ Install Scarf with::
 
 Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
 
-.. _scarf.rtfd.io: scarf.rtfd.io
-.. _basic workflow of Scarf: scarf.rtfd.io/en/latest/vignettes/public/basic_tutorial.html
+.. _scarf.rtfd.io: http://scarf.rtfd.io
+.. _basic workflow of Scarf: http://scarf.rtfd.io/en/latest/vignettes/public/basic_tutorial.html
