@@ -26,11 +26,6 @@ import scarf
 scarf.__version__
 ```
 
-
-```python
-cd ~
-```
-
 Download the data from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
