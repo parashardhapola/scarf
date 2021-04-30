@@ -32,8 +32,8 @@
    objecttolerance="10"
    borderopacity="1"
    inkscape:current-layer="g1128"
-   inkscape:cx="169.50993"
-   inkscape:cy="91.988721"
+   inkscape:cx="148.06458"
+   inkscape:cy="39.245977"
    inkscape:window-y="27"
    inkscape:window-x="72"
    inkscape:window-width="1848"
@@ -99,6 +99,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8443"><text
@@ -112,6 +113,7 @@
      x="2771.3943"
      y="16036.199"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1003.27246094px;line-height:3.25;font-family:'Century Schoolbook';-inkscape-font-specification:'Century Schoolbook';letter-spacing:0px;word-spacing:0.7524544px;stroke-width:0.7524544">c</tspan></text>
+
 
 
 
@@ -133,6 +135,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8455"><text
@@ -150,6 +153,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8461"><text
@@ -163,6 +167,7 @@
      x="2842.0269"
      id="tspan8463"
      sodipodi:role="line">f</tspan></text>
+
 
 
 
@@ -197,7 +202,7 @@
    id="metadata604"><rdf:RDF><cc:Work><dc:format>image/svg+xml</dc:format><dc:type
          rdf:resource="http://purl.org/dc/dcmitype/StillImage" /><cc:license
          rdf:resource="http://creativecommons.org/publicdomain/zero/1.0/" /><dc:publisher><cc:Agent
-           rdf:about="http://openclipart.org/"><dc:title>Openclipart</dc:title></cc:Agent></dc:publisher><dc:title /><dc:date>2013-02-04T15:56:25</dc:date><dc:description>Voronoi mathematical diagram with 3 attractor points</dc:description><dc:source>https://openclipart.org/detail/174821/voronoi-diagram-with-3-attractor-points-by-craftsmanspace-174821</dc:source><dc:creator><cc:Agent><dc:title>Craftsmanspace</dc:title></cc:Agent></dc:creator><dc:subject><rdf:Bag><rdf:li>Voronoi</rdf:li><rdf:li>attractor points</rdf:li><rdf:li>diagram</rdf:li></rdf:Bag></dc:subject></cc:Work><cc:License
+           rdf:about="http://openclipart.org/"><dc:title>Openclipart</dc:title></cc:Agent></dc:publisher><dc:title></dc:title><dc:date>2013-02-04T15:56:25</dc:date><dc:description>Voronoi mathematical diagram with 3 attractor points</dc:description><dc:source>https://openclipart.org/detail/174821/voronoi-diagram-with-3-attractor-points-by-craftsmanspace-174821</dc:source><dc:creator><cc:Agent><dc:title>Craftsmanspace</dc:title></cc:Agent></dc:creator><dc:subject><rdf:Bag><rdf:li>Voronoi</rdf:li><rdf:li>attractor points</rdf:li><rdf:li>diagram</rdf:li></rdf:Bag></dc:subject></cc:Work><cc:License
        rdf:about="http://creativecommons.org/publicdomain/zero/1.0/"><cc:permits
          rdf:resource="http://creativecommons.org/ns#Reproduction" /><cc:permits
          rdf:resource="http://creativecommons.org/ns#Distribution" /><cc:permits
@@ -758,6 +763,7 @@
 
 
 
+
 <text
    xml:space="preserve"
    style="font-style:normal;font-weight:normal;font-size:1406.51049805px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:75.34877014"
@@ -773,16 +779,18 @@
 
 
 
+
 </g><text
    xml:space="preserve"
-   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:167.50292969px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:8.97337246"
-   x="445.27588"
-   y="-11488.797"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:189.63331604px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:10.15892887"
+   x="406.02283"
+   y="-11472.553"
    id="text1132"><tspan
      sodipodi:role="line"
      id="tspan1130"
-     x="445.27588"
-     y="-11488.797"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:sans-serif;-inkscape-font-specification:sans-serif;stroke-width:8.97337246">Single-cell atlases refreshed</tspan></text>
+     x="406.02283"
+     y="-11472.553"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';stroke-width:10.15892887">Single-cell atlases refreshed</tspan></text>
+
 
 </g></g></svg>
