@@ -13,7 +13,7 @@ Scarf is a Python package to performs memory efficient analysis of single-cell g
 - Perform analysis of scATAC-Seq data (datasets with upto 700K cells with 1 million peaks tested) under 10 GB RAM
 - Make parallel implementations of UMAP and tSNE (SG-tSNE) for quick cell embedding
 - Perform hierarchical clustering that gives interpretable cluster relationships
-- Sub-sample hihgly representative cells using state-of-the-art TopACeDo method
+- Sub-sample highly representative cells using state-of-the-art TopACeDo method
 - Perform quick and accurate projections of cells from one dataset onto another or integrate multiple datasets.
 
 Install Scarf with::
