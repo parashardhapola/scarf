@@ -170,6 +170,7 @@ nbsphinx_custom_formats = {
 
 # -- Extension configuration -------------------------------------------------
 nbsphinx_execute = 'auto'
+nbsphinx_kernel_name = 'python'
 
 import matplotlib
 matplotlib.use('agg')
