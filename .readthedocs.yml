@@ -1,14 +1,27 @@
 version: 2
 
+build:
+  image: ubuntu20
+  system_packages:
+    - swig
+    - imagemagick
+  extras:
+    - libmetis-dev
+    - libtbb-dev
+    - libfftw3-dev
+    - lib32gcc-7-dev
+    - libflann-dev
+    - libcilkrts5
+
+
 sphinx:
   configuration: docs/source/conf.py
   builder: html
   fail_on_warning: false
 
-formats: []
 
 python:
-  version: 3.7
+  version: 3.9
   install:
     - requirements: requirements.txt
     - requirements: docs/source/requirements.txt
