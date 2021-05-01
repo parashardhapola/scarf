@@ -1,9 +1,12 @@
-=====
-Scarf
-=====
+|PyPI| |Docs|
 
 |IMG1|
 
+
+.. |PyPI| image:: https://img.shields.io/pypi/v/scarf-toolkit.svg
+        :target: https://pypi.org/project/scarf-toolkit
+.. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
+        :target: https://scarf.readthedocs.io
 .. |IMG1| image:: docs/source/_static/scarf_logo.svg
     :width: 75%
 
