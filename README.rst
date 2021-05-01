@@ -1,12 +1,14 @@
-|PyPI| |Docs|
+|PyPI| |Docs| |Gitter|
 
 |IMG1|
 
 
 .. |PyPI| image:: https://img.shields.io/pypi/v/scarf-toolkit.svg
-        :target: https://pypi.org/project/scarf-toolkit
+         :target: https://pypi.org/project/scarf-toolkit
 .. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
-        :target: https://scarf.readthedocs.io
+         :target: https://scarf.readthedocs.io
+.. |Gitter| image:: https://badges.gitter.im/scarf-toolkit/community.svg
+           :target: https://gitter.im/scarf-toolkit/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
 .. |IMG1| image:: docs/source/_static/scarf_logo.svg
     :width: 75%
 
