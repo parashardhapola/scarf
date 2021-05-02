@@ -15,22 +15,46 @@ Benefits of Scarf over Scanpy:
 Benefits of Scanpy over Scarf:
 
 - Faster performance on small and medium sized datasets
-- Has mutiple external tools integrated into API and provides seemless access to those tools, like sample integration and trajectory inference
+- Has multiple external tools integrated into API and provides seamless access to those tools, like sample integration
+  and trajectory inference
 - Anndata format is supported much more widely
 
-We see Scarf as a complementary tool to Scanpy and an analysis workflow for large data should make use of both these tools.
-For example make UMAP and clustering on Scarf and then bring the downsampled cells into Scanpy to perform other downstream analyses.
+We see Scarf as a complementary tool to Scanpy and an analysis workflow for large data should make use of both these
+tools. For example make UMAP and clustering on Scarf and then bring the downsampled cells into Scanpy to perform other
+downstream analyses.
 
 Should I use tSNE or UMAP
 -------------------------
 tSNE and UMAP are complementary data visualization tools. tSNE focuses on highlighting the largest differences in the
-dataset while tSNE highlights even the smaller ones. UMAP preserves the global structure which may sometimes come at cost
-of local resolution. We suggest using tSNE for large (>50k cells) and atlas scale datasets because of its quick runtime
-and ability to reveal the cellular diversity. UMAP is favoured when identification of relationship of clusters is
-important. UMAP runtime can span in hours on atlas scale datasets. In Scarf, UMAP and tSNE use the same initial
+dataset while tSNE highlights even the smaller ones. UMAP preserves the global structure which may sometimes come at
+cost of local resolution. We suggest using tSNE for large (>50k cells) and atlas scale datasets because of its quick
+runtime and ability to reveal the cellular diversity. UMAP is favoured when identification of relationship of clusters
+is important. UMAP runtime can span in hours on atlas scale datasets. In Scarf, UMAP and tSNE use the same initial
 embedding by default and have have the same input graph.
+
+
+Which clustering should we use Paris or Leiden?
+-----------------------------------------------
+Leiden clustering method is faster than Paris, especially when it comes to large scale scale datasets. On small
+datasets, that we have tested, Leiden clustering results seem to be more concordant with UMAP clustering. Paris,
+however, clearly shows relationship between clusters using, `plot_cluster_tree` method of the DataStore class. Due to
+low computational requirements of both the methods we suggest that you run both the clustering and visualize them
+together using `plot_cluster_tree` like this::
+
+    ds.plot_cluster_tree(cluster_key='RNA_cluster',
+                         fill_by_value='RNA_leiden_cluster')
+
+This will allow you test the robustness of clusters and visualize the relationship between Leiden clusters as well.
+
 
 Can I use Scarf from R
 ----------------------
-Unfortunately, not yet! Please let the developers know if you would like to create an R API for Scarf. For scATAC-Seq analysis archR is good alternative to Scarf
+Unfortunately, not yet! Please let the developers know if you would like to create an R API for Scarf.
 
+
+What does Scarf's logo signify?
+-------------------------------
+Scarf's logo is highly inspired by Human Cell Atlas's logo.
+Scarf' logo is composed of three circular fields each composed of Voronoi cells representing atlas-scale datasets
+composed of multiple cell types. The arrangement of these 'atlases' symbolizes Scarf's ability to downsample and
+integrate them.
