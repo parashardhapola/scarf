@@ -392,7 +392,3 @@ ds.plot_layout(from_assay='ADT', layout_key='RNA_UMAP', color_by='CD3_TotalSeqB'
 
 ---
 That is all for this vignette.
-
-```python
-
-```

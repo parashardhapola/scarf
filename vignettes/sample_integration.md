@@ -23,10 +23,6 @@ scarf.__version__
 ```
 
 ```python
-cd ~
-```
-
-```python
 scarf.fetch_dataset('kang_ctrl_pbmc_rnaseq', save_path='scarf_data')
 scarf.fetch_dataset('kang_stim_pbmc_rnaseq', save_path='scarf_data')
 ```
