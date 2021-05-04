@@ -30,12 +30,12 @@ reader.assayFeats
 ```
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn=f'tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(1000, 2000))
-writer.dump(batch_size=1000)
+writer = scarf.CrToZarr(reader, zarr_fn=f'tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(500, 1000))
+writer.dump(batch_size=500)
 ```
 
 ```python
-# ds = scarf.DataStore('tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
+ds = scarf.DataStore('tenx_10k_pbmc_atacseq/data.zarr', nthreads=1)
 ```
 
 ```python
