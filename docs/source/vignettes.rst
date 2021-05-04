@@ -10,6 +10,3 @@ Try basic workflow live on Google Colab `here`_:
 .. toctree::
     :maxdepth: 1
     
-    vignettes/public/basic_tutorial.ipynb
-    vignettes/public/topacedo_downsampling.ipynb
-    vignettes/public/atac_basic_tutorial.md
