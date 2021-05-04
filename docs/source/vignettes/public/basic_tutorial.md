@@ -14,7 +14,7 @@ jupyter:
     name: python3
 ---
 
-## Scarf workflow using 10K PBMC CITE-Seq data
+## Basic workflow of Scarf
 
 This workflow is meant to familiarize users with the Scarf API and how data is internally handled in Scarf. Please checkout the quick start guide if you are interested in the minimal steps required to run the analysis.
 

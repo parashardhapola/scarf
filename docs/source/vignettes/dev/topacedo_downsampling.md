@@ -13,6 +13,8 @@ jupyter:
     name: python3
 ---
 
+## Cell subsampling using TopACeDo
+
 ```python
 %load_ext autotime
 %config InlineBackend.figure_format = 'retina'
@@ -24,6 +26,7 @@ scarf.__version__
 Need to install the TopACeDo algorithm to perform subsampling
 
 ```python
+!pip install https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7
 !pip install -U topacedo
 ```
 
@@ -38,8 +41,6 @@ ds = scarf.DataStore('tenx_10k_pbmc_citeseq/data.zarr')
 ds.run_clustering(n_clusters=21)
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
-
-### Cell subsampling
 
 UMAP, clustering and marker identification together allow a good understanding of cellular diversity. However, one can still choose from a plethora of other analysis on the data. For example, identification of cell differentiation trajectories. One of the major challenges to run these analysis could be the size of the data. Scarf performs a topology conserving downsampling of the data based on the cell neighbourhood graph. This downsampling aims to maximize the heterogeneity while sampling the cells from the the data.
 
@@ -74,3 +75,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')
 ```
 
 ##### End of vignette
+
+```python
+
+```
