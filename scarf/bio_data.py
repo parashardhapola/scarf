@@ -24,7 +24,10 @@ datasets = {
     'tenx_10k_pbmc_citeseq': [
         {'name': 'data.h5',
          'url': 'http://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_protein_v3/'
-                 'pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5'}
+                 'pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5'},
+        {'name': 'data.zarr.tar.gz',
+         'url': 'https://files.de-1.osf.io/v1/resources/zeupv/providers/osfstorage/'
+                '609096075533b40325e1d205'}
     ],
     'tenx_1M_brain_rnaseq': [
         {'name': 'data.h5',

@@ -88,27 +88,57 @@ def handle_download(url, out_fn):
     logger.info(f"Download finished! File saved here: {out_fn}")
 
 
-def fetch_dataset(dataset_id: str, save_path: str = '.') -> None:
+def fetch_dataset(dataset_id: str, save_path: str = '.', as_zarr: bool = False) -> None:
     """
     Downloads datasets from online repositories and saves them in as-is format
 
     Args:
         dataset_id: Name of the dataset
         save_path: Save location without name of the file
+        as_zarr: If True, then a Zarr format file is downloaded instead
 
     Returns:
 
     """
 
     import os
+    import tarfile
     from .bio_data import datasets
+
+    zarr_ext = '.zarr.tar.gz'
+
+    def has_zarr(entry):
+        for e in entry:
+            if e['name'].endswith(zarr_ext):
+                return True
+        return False
+
+    def get_zarr_entry(entry):
+        for e in entry:
+            if e['name'].endswith(zarr_ext):
+                return e['name'], e['url']
+        return False, False
 
     if dataset_id not in datasets:
         dataset_list = '\n'.join(list(datasets.keys()))
         raise ValueError(f"ERROR: Dataset not found. Please choose one from the following:\n{dataset_list}\n")
+    if as_zarr:
+        if has_zarr(datasets[dataset_id]) is False:
+            logger.error(f"Zarr file does not exist for {dataset_id}. Nothing downloaded")
+            return None
+
     save_dir = os.path.join(save_path, dataset_id)
     if os.path.isdir(save_dir) is False:
         os.makedirs(save_dir)
-    for i in datasets[dataset_id]:
-        sp = os.path.join(save_dir, i['name'])
-        handle_download(i['url'], sp)
+
+    if as_zarr:
+        sp, url = get_zarr_entry(datasets[dataset_id])
+        sp = os.path.join(save_dir, sp)
+        handle_download(url, sp)
+        tar = tarfile.open(sp, "r:gz")
+        tar.extractall(save_dir)
+        tar.close()
+    else:
+        for i in datasets[dataset_id]:
+            sp = os.path.join(save_dir, i['name'])
+            handle_download(i['url'], sp)
