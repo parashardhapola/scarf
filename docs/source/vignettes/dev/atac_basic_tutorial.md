@@ -35,18 +35,12 @@ writer.dump(batch_size=1000)
 ```
 
 ```python
-ds = scarf.DataStore('tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
+# ds = scarf.DataStore('tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
 ```
 
 ```python
-ds.auto_filter_cells()
-```
-
-```python
-ds.mark_prevalent_peaks(top_n=20000)
-```
-
-```python
+# ds.auto_filter_cells()
+# ds.mark_prevalent_peaks(top_n=20000)
 # ds.make_graph(feat_key='prevalent_peaks', k=11, dims=21, n_centroids=1000)
 # ds.run_umap(fit_n_epochs=250, min_dist=0.5, parallel=True)
 # ds.run_leiden_clustering(resolution=1)
