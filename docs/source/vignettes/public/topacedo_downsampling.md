@@ -26,7 +26,7 @@ scarf.__version__
 Need to install the TopACeDo algorithm to perform subsampling
 
 ```python
-!pip install https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7
+!pip install git+https://github.com/fraenkel-lab/pcst_fast.git@deb3236cc26ee9fee77d5af40fac3f12bb753850
 !pip install -U topacedo
 ```
 
@@ -75,7 +75,3 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')
 ```
 
 ##### End of vignette
-
-```python
-
-```
