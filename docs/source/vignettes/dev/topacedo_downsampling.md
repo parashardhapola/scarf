@@ -74,4 +74,8 @@ The dowsampling algorithm also identififes regions of graph where cells form tig
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')
 ```
 
-##### End of vignette
+End of vignette
+
+```python
+
+```
