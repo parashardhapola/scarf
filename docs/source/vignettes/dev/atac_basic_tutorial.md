@@ -47,21 +47,8 @@ ds.mark_prevalent_peaks(top_n=20000)
 ```
 
 ```python
-ds.make_graph(feat_key='prevalent_peaks', k=11, dims=21, n_centroids=1000)
-```
-
-```python
-ds.run_umap(fit_n_epochs=250, min_dist=0.5, parallel=True)
-```
-
-```python
-ds.run_leiden_clustering(resolution=1)
-```
-
-```python
-ds.plot_layout(layout_key='ATAC_UMAP', color_by='ATAC_leiden_cluster')
-```
-
-```python
-
+# ds.make_graph(feat_key='prevalent_peaks', k=11, dims=21, n_centroids=1000)
+# ds.run_umap(fit_n_epochs=250, min_dist=0.5, parallel=True)
+# ds.run_leiden_clustering(resolution=1)
+# ds.plot_layout(layout_key='ATAC_UMAP', color_by='ATAC_leiden_cluster')
 ```
