@@ -1,6 +1,6 @@
-==========================
-Frequently asked questions
-==========================
+====
+FAQs
+====
 
 How does Scarf compare to Scanpy
 --------------------------------
