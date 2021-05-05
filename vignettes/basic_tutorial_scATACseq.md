@@ -35,7 +35,7 @@ writer.dump(batch_size=1000)
 ```
 
 ```python
-ds = scarf.DataStore('tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
+ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
 ```
 
 ```python
