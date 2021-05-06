@@ -37,5 +37,5 @@ Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Sc
 fixed in future updates.
 
 High memory consumption: If you are using a version of Scarf less than 0.7.0 and have dask version >2021.03.1
-then you might have face high memory consumption issues. The solution is to install dask==2021.03.1. The
+then you might face high memory consumption issues. The solution is to install dask==2021.03.1. The
 latest version of Scarf automatically solves this issue.
