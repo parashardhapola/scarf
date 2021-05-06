@@ -2,9 +2,9 @@
 
 #### Links to vignettes:
 
-   - Basic workflow of Scarf: Using 10K PBMC data (CITE-Seq): [Static](https://nbviewer.jupyter.org/github/parashardhapola/scarf_vignettes/blob/main/basic_tutorial.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial.ipynb)
-   - Workflow for working with sc-ATACSeq count matrices: [Static](https://nbviewer.jupyter.org/github/parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb)
-   - Performing cell subsampling with TopACeDo: [Static](https://nbviewer.jupyter.org/github/parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb)
+   - Basic workflow of Scarf: Using 10K PBMC data (CITE-Seq): [Static](https://github.com/parashardhapola/scarf_vignettes/blob/main/basic_tutorial.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial.ipynb)
+   - Workflow for working with sc-ATACSeq count matrices: [Static](https://github.com/parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb)
+   - Performing cell subsampling with TopACeDo: [Static](https://github.com/parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb) | [Live](https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb)
    - Data projection
    - Pseudotime ordering and imputation
 
