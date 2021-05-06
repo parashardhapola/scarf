@@ -51,7 +51,7 @@ class Assay:
         self.z = z[self.name]
         self.cells = cell_data
         self.nthreads = nthreads
-        self.rawData = daskarr.from_zarr(self.z['counts'])
+        self.rawData = daskarr.from_zarr(self.z['counts'], inline_array=True)
         self.feats = MetaData(self.z['featureData'])
         self.attrs = self.z.attrs
         if 'percentFeatures' not in self.attrs:
@@ -226,7 +226,7 @@ class Assay:
                 if update_keys:
                     self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
                     self.attrs['latest_cell_key'] = cell_key
-                return daskarr.from_zarr(self.z[location + '/data'])
+                return daskarr.from_zarr(self.z[location + '/data'], inline_array=True)
             else:
                 # Creating group here to overwrite all children
                 self.z.create_group(location, overwrite=True)
@@ -238,7 +238,7 @@ class Assay:
         if update_keys:
             self.attrs['latest_feat_key'] = feat_key.split('__', 1)[1] if feat_key != 'I' else 'I'
             self.attrs['latest_cell_key'] = cell_key
-        return daskarr.from_zarr(self.z[location + '/data'])
+        return daskarr.from_zarr(self.z[location + '/data'], inline_array=True)
 
     def score_features(self, feature_names: List[str], cell_key: str,
                        ctrl_size: int, n_bins: int, rand_seed: int) -> np.ndarray:

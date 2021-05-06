@@ -1625,11 +1625,12 @@ class MappingDatastore(GraphDataStore):
         if save_k > ann_obj.k:
             logger.warning(f"`save_k` was decreased to {ann_obj.k}")
             save_k = ann_obj.k
-        target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"])
+        target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data"], inline_array=True)
         if run_coral is True:
             # Reversing coral here to correct target data
             coral(target_data, ann_obj.data, target_assay, target_feat_key, self.nthreads)
-            target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"])
+            target_data = daskarr.from_zarr(target_assay.z[f"normed__I__{target_feat_key}/data_coral"],
+                                            inline_array=True)
         if ann_obj.method == 'pca' and run_coral is False:
             if ref_mu is False:
                 mu = show_progress(target_data.mean(axis=0),
