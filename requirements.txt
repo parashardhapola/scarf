@@ -27,3 +27,4 @@ datashader
 leidenalg
 packaging
 importlib_metadata
+requests
