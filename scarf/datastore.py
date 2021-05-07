@@ -15,6 +15,9 @@ from .logging_utils import logger
 __all__ = ['DataStore']
 
 
+# TODO: add docstring
+
+
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     """
     Test if an assay node in zarr object was created properly
@@ -23,7 +26,8 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
         z: Zarr hierarchy object
         assay_name: string value with name of assay
 
-    Returns: True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
+    Returns:
+        True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
 
     """
     if assay_name in z:
@@ -37,6 +41,7 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 
 
 class BaseDataStore:
+    # TODO: add docstring
     def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
                  min_features_per_cell: int, min_cells_per_feature: int,
                  mito_pattern: str, ribo_pattern: str, nthreads: int, zarr_mode: str, synchronizer):
@@ -193,7 +198,7 @@ class BaseDataStore:
 
     def _get_assay(self, from_assay: str) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """
-        This is convenience function used internally to quickly obtain the assay object that is linked to a assay name
+        This is a convenience function used internally to quickly obtain the assay object that is linked to a assay name
 
         Args:
             from_assay: Name of the assay whose object is to be returned
@@ -405,13 +410,14 @@ class BaseDataStore:
 
 
 class GraphDataStore(BaseDataStore):
+    # TODO: add docstring
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
         """
-        This is convenience function to determine the linear dimension reduction method to be used for a given assay.
+        This is a convenience function to determine the linear dimension reduction method to be used for a given assay.
         It is uses a predetermine rule to make this determination.
 
         Args:
@@ -1329,7 +1335,7 @@ class GraphDataStore(BaseDataStore):
                              seed_reward: float = 3.0, non_seed_reward: float = 0,
                              edge_cost_multiplier: float = 1.0, edge_cost_bandwidth: float = 10.0,
                              save_sampling_key: str = 'sketched', save_density_key: str = 'cell_density',
-                             save_mean_snn_key: str = 'snn_value',  save_seeds_key: str = 'sketch_seeds',
+                             save_mean_snn_key: str = 'snn_value', save_seeds_key: str = 'sketch_seeds',
                              rand_state: int = 4466, return_edges: bool = False) -> Union[None, List]:
         """
         Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
@@ -1544,6 +1550,7 @@ class GraphDataStore(BaseDataStore):
 
 
 class MappingDatastore(GraphDataStore):
+    # TODO: add docstring
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -2602,6 +2609,7 @@ class DataStore(MappingDatastore):
         Prints the Zarr hierarchy of the DataStore
 
         Returns:
+            None
 
         """
         print(self.z.tree(expand=True))
@@ -2640,7 +2648,8 @@ class DataStore(MappingDatastore):
             show_on_single_row: Show all subplots in a single row. It might be useful to set this to False if you have
                                 too many groups within each subplot (Default value: True)
 
-        Returns: None
+        Returns:
+            None
 
         """
 
@@ -2785,6 +2794,7 @@ class DataStore(MappingDatastore):
             scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
 
         Returns:
+            None
 
         """
 
@@ -2895,6 +2905,7 @@ class DataStore(MappingDatastore):
             save_dpi: DPI when saving figure (Default value: 300)
 
         Returns:
+            None
 
         """
 
@@ -2914,7 +2925,7 @@ class DataStore(MappingDatastore):
         if coalesced_loc in self.z:
             subgraph = DiGraph()
             subgraph.add_edges_from(self.z[coalesced_loc + '/edgelist'][:])
-            for i in self.z[coalesced_loc+'/nodelist'][:]:
+            for i in self.z[coalesced_loc + '/nodelist'][:]:
                 subgraph.nodes[i[0]]['nleaves'] = i[1]
                 if i[2] != -1:
                     subgraph.nodes[i[0]]['partition_id'] = i[2]
@@ -2972,6 +2983,7 @@ class DataStore(MappingDatastore):
             **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap
 
         Returns:
+            None
 
         """
         from .plots import plot_heatmap

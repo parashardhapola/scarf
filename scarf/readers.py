@@ -10,6 +10,7 @@ from tqdm import tqdm
 from .logging_utils import logger
 
 __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader', 'LoomReader']
+# TODO: add docstring
 
 
 def get_file_handle(fn: str) -> IO:
@@ -32,6 +33,18 @@ def read_file(fn: str):
 
 class CrReader(ABC):
     def __init__(self, grp_names, file_type):
+        # TODO: add docstring
+        """
+        A class to read in CellRanger (Cr) data.
+
+        Args:
+            grp_names (Dict):
+            file_type (str): Type of sequencing data ('rna' | 'atac')
+
+        Returns:
+            None
+
+        """
         if file_type == 'rna':
             self.autoNames = {'Gene Expression': 'RNA'}
         elif file_type == 'atac':
@@ -130,6 +143,7 @@ class CrReader(ABC):
 
 class CrH5Reader(CrReader):
     def __init__(self, h5_fn, file_type: str = None):
+        # TODO: add docstring
         self.h5obj = h5py.File(h5_fn, mode='r')
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -173,6 +187,7 @@ class CrH5Reader(CrReader):
 
 class CrDirReader(CrReader):
     def __init__(self, loc, file_type: str = None):
+        # TODO: add docstring
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -234,6 +249,7 @@ class CrDirReader(CrReader):
 
 class MtxDirReader(CrReader):
     def __init__(self, loc, file_type: str = None):
+        # TODO: add docstring (incl. subclassing info)
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -323,6 +339,7 @@ class H5adReader:
     def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
                  feature_name_key: str = 'gene_short_name',
                  data_key: str = 'X', category_names_key: str = '__categories'):
+        # TODO: add docstring description
         """
 
         Args:
@@ -513,6 +530,7 @@ class H5adReader:
 
 
 class NaboH5Reader:
+    # TODO: add docstring
     def __init__(self, h5_fn: str):
         """
 
