@@ -30,7 +30,7 @@ scarf.__version__
 Download the data from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
-scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
+scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets')
 ```
 
 ---
@@ -39,7 +39,7 @@ scarf.fetch_dataset('tenx_10k_pbmc_citeseq', save_path='scarf_data')
 The first step of the analysis workflow is to convert the file into the Zarr format that is supported by Scarf. We read in the data using `CrH5Reader` (stands for cellranger H5 reader). The reader object allows quick investigation of the file before the format is converted.
 
 ```python
-reader = scarf.CrH5Reader('scarf_data/tenx_10k_pbmc_citeseq/data.h5', 'rna')
+reader = scarf.CrH5Reader('scarf_datasets/tenx_8K_pbmc_citeseq/data.h5', 'rna')
 ```
 
 We can quickly check the number of cells and features (genes as well as ADT features in this case) present in the file.
@@ -66,7 +66,7 @@ NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HD
 </div>
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn='scarf_data/tenx_10k_pbmc_citeseq/data.zarr',
+writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
                         chunk_size=(2000, 1000))
 ```
 
@@ -87,7 +87,7 @@ writer.dump(batch_size=1000)
 The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. The first time a Zarr file is loaded, we need to set the default assay. Here we set the 'RNA' assay as the default assay. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell.
 
 ```python
-ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr',
+ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
                      default_assay='RNA',
                      nthreads=4)
 ```
@@ -392,7 +392,3 @@ ds.plot_layout(from_assay='ADT', layout_key='RNA_UMAP', color_by='CD3_TotalSeqB'
 
 ---
 That is all for this vignette.
-
-```python
-
-```

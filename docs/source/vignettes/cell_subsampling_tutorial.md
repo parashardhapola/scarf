@@ -32,11 +32,11 @@ Need to install the TopACeDo algorithm to perform subsampling
 
 ```python
 # Loading preanalyzed dataset that was processed in the `basic_tutorial` vignette
-scarf.fetch_dataset('tenx_10k_pbmc_citeseq', as_zarr=True, save_path='scarf_data')
+scarf.fetch_dataset('tenx_8K_pbmc_citeseq', as_zarr=True, save_path='scarf_datasets')
 ```
 
 ```python
-ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_citeseq/data.zarr')
+ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr')
 
 ds.run_clustering(n_clusters=21)
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')

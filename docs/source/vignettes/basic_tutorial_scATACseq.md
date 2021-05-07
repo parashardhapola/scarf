@@ -24,18 +24,18 @@ scarf.__version__
 ```
 
 ```python
-scarf.fetch_dataset('tenx_10k_pbmc_atacseq', save_path='scarf_data')
-reader = scarf.CrH5Reader('scarf_data/tenx_10k_pbmc_atacseq/data.h5', 'atac')
+scarf.fetch_dataset('tenx_10k_pbmc_atacseq', save_path='scarf_datasets')
+reader = scarf.CrH5Reader('scarf_datasets/tenx_10k_pbmc_atacseq/data.h5', 'atac')
 reader.assayFeats
 ```
 
 ```python
-writer = scarf.CrToZarr(reader, zarr_fn=f'scarf_data/tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(1000, 2000))
+writer = scarf.CrToZarr(reader, zarr_fn=f'scarf_datasets/tenx_10k_pbmc_atacseq/data.zarr', chunk_size=(1000, 2000))
 writer.dump(batch_size=1000)
 ```
 
 ```python
-ds = scarf.DataStore('scarf_data/tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
+ds = scarf.DataStore('scarf_datasets/tenx_10k_pbmc_atacseq/data.zarr', nthreads=4)
 ```
 
 ```python
