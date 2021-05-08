@@ -211,7 +211,9 @@ class CrDirReader(CrReader):
     # noinspection DuplicatedCode
     def to_sparse(self, a):
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
-        return sparse.COO([a[:, 1] - a[0, 1], a[:, 0] - 1], a[:, 2], shape=(len(idx) + 1, self.nFeatures))
+        return sparse.COO([(a[:, 1] - a[0, 1]).astype(int),
+                           (a[:, 0] - 1).astype(int)],
+                          a[:, 2], shape=(len(idx) + 1, self.nFeatures))
 
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
@@ -282,7 +284,8 @@ class MtxDirReader(CrReader):
     # noinspection DuplicatedCode
     def to_sparse(self, a):
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
-        return sparse.COO([a[:, 1] - a[0, 1], a[:, 0] - 1], a[:, 2], shape=(len(idx) + 1, self.nFeatures))
+        return sparse.COO([(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] - 1).astype(int)],
+                          a[:, 2], shape=(len(idx) + 1, self.nFeatures))
 
     def _subset_by_assay(self, v, assay) -> List:
         if assay is None:
