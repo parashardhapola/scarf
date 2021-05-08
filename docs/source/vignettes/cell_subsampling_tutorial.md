@@ -23,6 +23,10 @@ import scarf
 scarf.__version__
 ```
 
+---
+### 1) Installing dependencies
+
+
 Need to install the TopACeDo algorithm to perform subsampling
 
 ```python
@@ -30,17 +34,22 @@ Need to install the TopACeDo algorithm to perform subsampling
 !pip install -U topacedo
 ```
 
+---
+### 2) Fetching pre-processed data
+
 ```python
 # Loading preanalyzed dataset that was processed in the `basic_tutorial` vignette
-scarf.fetch_dataset('tenx_8K_pbmc_citeseq', as_zarr=True, save_path='scarf_datasets')
+scarf.fetch_dataset('tenx_5K_pbmc_rnaseq', as_zarr=True, save_path='scarf_datasets')
 ```
 
 ```python
-ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr')
-
-ds.run_clustering(n_clusters=21)
+ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr')
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
+
+---
+### 3) Run TopACeDo downsampler
+
 
 UMAP, clustering and marker identification together allow a good understanding of cellular diversity. However, one can still choose from a plethora of other analysis on the data. For example, identification of cell differentiation trajectories. One of the major challenges to run these analysis could be the size of the data. Scarf performs a topology conserving downsampling of the data based on the cell neighbourhood graph. This downsampling aims to maximize the heterogeneity while sampling the cells from the the data.
 
@@ -61,6 +70,10 @@ It may also be interesting to visualize the cells that were marked as `seed cell
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketch_seeds')
 ```
+
+---
+### 4) Intermediate parameters of downsampling
+
 
 To identify the seed cells, the subsampling algorithm calculates cell densities based on neighbourhood degrees. Regions of higher cell density get a sampling penalty. The neighbourhood degree of individual cells are stored under the column `RNA_cell_density`
 
