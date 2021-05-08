@@ -7,7 +7,7 @@ Vignettes
 
     vignettes/basic_tutorial_scRNAseq
     vignettes/basic_tutorial_scATACseq
-    vignette/download_conversion
+    vignettes/download_conversion
     vignettes/cell_subsampling_tutorial
 
 
@@ -28,9 +28,9 @@ Now you are free to execute rest of the notebook.
 
 Links:
 
-- `Basic workflow of Scarf: Using 10K PBMC data (CITE-Seq) <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scRNAseq.ipynb>`_
+- `Basic workflow of Scarf using scRNA-Seq data <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scRNAseq.ipynb>`_
+- `Workflow for analysis of scATAC-Seq count matrices <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb>`_
 - `Getting data in and out of Scarf <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/download_conversion.ipynb)>`_
-- `Workflow for analysis of sc-ATACSeq count matrices <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb>`_
 - `Cell subsampling using TopACeDo <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb)>`_
 - Data projection
 - Pseudotime ordering and imputation
