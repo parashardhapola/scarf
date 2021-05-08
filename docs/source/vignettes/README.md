@@ -1,1 +1,0 @@
-# scarf_vignettes
