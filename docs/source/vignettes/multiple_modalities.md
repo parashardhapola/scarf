@@ -13,7 +13,7 @@ jupyter:
     name: python3
 ---
 
-## Handling datasets with multiple modalities using Scarf
+## Handling datasets with multiple modalities
 
 ```python
 %load_ext autotime

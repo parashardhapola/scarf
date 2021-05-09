@@ -10,6 +10,7 @@ Vignettes
     vignettes/download_conversion
     vignettes/cell_subsampling_tutorial
     vignettes/multiple_modalities
+    vignettes/data_projection
 
 
 Running notebooks live on Google Colab
@@ -34,5 +35,7 @@ Live notebook links:
 - `Getting data in and out of Scarf <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/download_conversion.ipynb>`_
 - `Cell subsampling using TopACeDo <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb>`_
 - `Handling datasets with multiple modalities <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/multiple_modalities.ipynb>`_
-- Data projection
+- `Projection of cells across datasets <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/data_projection.ipynb>`_
 - Pseudotime ordering and imputation
+- Understanding Scarf's design
+- Merging datasets and partial training
