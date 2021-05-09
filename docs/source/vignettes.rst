@@ -9,6 +9,7 @@ Vignettes
     vignettes/basic_tutorial_scATACseq
     vignettes/download_conversion
     vignettes/cell_subsampling_tutorial
+    vignettes/multiple_modalities
 
 
 Running notebooks live on Google Colab
@@ -26,11 +27,12 @@ Google Colab has older versions of Numpy and Scipy which are not compatible with
 Once `scipy` and `numpy` have updated you will see a `RESTART RUNTIME` button. Click on it to activate latest versions.
 Now you are free to execute rest of the notebook.
 
-Links:
+Live notebook links:
 
 - `Basic workflow of Scarf using scRNA-Seq data <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scRNAseq.ipynb>`_
 - `Workflow for analysis of scATAC-Seq count matrices <https://colab.research.google.com/github//parashardhapola/scarf_vignettes/blob/main/basic_tutorial_scATACseq.ipynb>`_
 - `Getting data in and out of Scarf <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/download_conversion.ipynb>`_
 - `Cell subsampling using TopACeDo <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/cell_subsampling_tutorial.ipynb>`_
+- `Handling datasets with multiple modalities <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/multiple_modalities.ipynb>`_
 - Data projection
 - Pseudotime ordering and imputation

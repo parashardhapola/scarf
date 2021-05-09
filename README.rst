@@ -26,10 +26,11 @@ Install Scarf with::
     pip install scarf-toolkit
 
 Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
+Preprint describing Scarf is out on `Biorxiv`_
 
 .. _scarf.rtfd.io: http://scarf.rtfd.io
 .. _basic workflow of Scarf: https://scarf.readthedocs.io/en/latest/vignettes/basic_tutorial_scRNAseq.html
-
+.. _Biorxiv: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
 
 **Known issues**:
 

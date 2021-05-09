@@ -211,11 +211,10 @@ Paris is the default algorithm in Scarf due to its ability to highlight cluster 
 ds.run_leiden_clustering(resolution=0.5)
 ```
 
-We can visualize the results using the `plot_layout` method again. Here we plot both UMAP and tSNE and colour cells based on the their cluster identity, as obtained using Leiden clustering.
+We can visualize the results using the `plot_layout` method again. Here we plot both UMAP and colour cells based on the their cluster identity, as obtained using Leiden clustering.
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
-ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_leiden_cluster')
 ```
 
 The results of the clustering algorithm are saved in the cell metadata table. In this case, they have been saved under the column name **RNA_leiden_cluster**.
@@ -241,7 +240,6 @@ Visualizing Paris clusters
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
-ds.plot_layout(layout_key='RNA_tSNE', color_by='RNA_cluster')
 ```
 
 
