@@ -9,12 +9,16 @@ from .logging_utils import logger
 __all__ = ['meld_assay', 'make_bed_from_gff']
 
 
-# TODO: add docstring
+# TODO: add description in docstring
+"""
+Methods: 
+    meld_assay:
+    make_bed_from_gff: create pybedtools object for genes from a GFF file
+"""
 
 
 def make_bed_from_gff(gff: str, up_offset: int = 2000,
                       valid_ids: List[str] = None, flavour: str = 'body'):
-    # TODO: expand docstring to multi-line
     """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended"""
     try:
         from pybedtools import BedTool

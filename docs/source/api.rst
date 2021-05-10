@@ -25,7 +25,7 @@ MappingDatastore
 ----------------
 
 This class extends GraphDataStore by providing methods for mapping/ projection of cells from one DataStore onto another.
-It also contains the methods reuqired for label transfer, mapping score generation and co-embedding.
+It also contains the methods required for label transfer, mapping score generation and co-embedding.
 
 .. autoclass:: scarf.datastore.MappingDatastore
     :members:
@@ -44,7 +44,7 @@ that perform in-memory data exports.
 Assay
 -----
 
-A generic Assay class that contains methods to calculate feature level statistics. It also provides method for saving
+A generic Assay class that contains methods to calculate feature level statistics. It also provides a method for saving
 normalized subset of data for later KNN graph construction.
 
 .. autoclass:: scarf.assay.Assay

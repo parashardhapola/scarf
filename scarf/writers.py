@@ -14,12 +14,33 @@ __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_as
            'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
 
 
-# TODO: add docstring
+"""
+Methods and classes for writing data to disk.
+
+Methods:
+    create_zarr_dataset:
+    create_zarr_obj_array:
+    create_zarr_count_assay:
+    subset_assay_zarr:
+    dask_to_zarr:
+
+Classes:
+    ZarrMerge:
+    CrToZarr:
+    H5adToZarr:
+    MtxToZarr:
+    NaboH5ToZarr:
+    LoomToZarr:
+"""
 
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
-    # TODO: add docstring
+    # TODO: add description in docstring
+    """
+    Returns:
+        A Zarr Array.
+    """
     from numcodecs import Blosc
 
     compressor = Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE)

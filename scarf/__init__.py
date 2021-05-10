@@ -15,44 +15,13 @@ Scarf is a Python package that performs memory-efficient analysis of single-cell
 Exports:
 --------
 
-- assay:
-    - Assay
-    - RNAassay
-    - ATACassay
-    - ADTassay
-- datastore
-    - `DataStore`: DataStore objects provide primary interface to interact with the data.
-- readers
-    - `CrH5Reader`: A class to read in CellRanger (Cr) h5 data.
-    - CrDirReader
-    - `CrReader`: A class to read in CellRanger (Cr) data.
-    - H5adReader
-    - MtxDirReader
-    - NaboH5Reader
-    - LoomReader
-- utils
-    - fetch_dataset
-    - system_call
-    - rescale_array
-    - clean_array
-    - show_progress
-    - controlled_compute
-- writers
-    - create_zarr_dataset
-    - create_zarr_obj_array
-    - create_zarr_count_assay
-    - subset_assay_zarr
-    - dask_to_zarr
-    - ZarrMerge
-    - CrToZarr
-    - H5adToZarr
-    - MtxToZarr
-    - NaboH5ToZarr
-    - LoomToZarr
-    - SparseToZarr
-- meld_assay
-    - meld_assay
-    - make_bed_from_gff
+- Modules
+    - datastore: Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
+    - readers:
+    - writers:
+    - meld_assay:
+    - utils:
+    - downloader: Used to download datasets included in Scarf.
 
 GitHub: https://github.com/parashardhapola/scarf
 

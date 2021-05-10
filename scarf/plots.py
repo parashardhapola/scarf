@@ -131,20 +131,20 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
 
 
 def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
-        vt = v.dtype
-        if v.nunique() == 1:
-            return pd.Series(np.ones(len(v)), index=v.index).astype(np.float_)
-        if vt in [np.bool_]:
-            # converting first to int to handle bool
-            return v.astype(np.int_).astype('category')
-        if vt in [str, object] or vt.name == 'category':
-            return v.astype('category')
-        elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
-            if v.nunique() > 100:
-                logger.warning("Too many categories. set force_ints_as_cats to false")
-            return v.astype(np.int_).astype('category')
-        else:
-            return v.astype(np.float_)
+    vt = v.dtype
+    if v.nunique() == 1:
+        return pd.Series(np.ones(len(v)), index=v.index).astype(np.float_)
+    if vt in [np.bool_]:
+        # converting first to int to handle bool
+        return v.astype(np.int_).astype('category')
+    if vt in [str, object] or vt.name == 'category':
+        return v.astype('category')
+    elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
+        if v.nunique() > 100:
+            logger.warning("Too many categories. set force_ints_as_cats to false")
+        return v.astype(np.int_).astype('category')
+    else:
+        return v.astype(np.float_)
 
 
 def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Series:
@@ -164,32 +164,32 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Serie
 
 
 def _scatter_make_colors(v: pd.Series, cmap, color_key: Optional[dict], mask_color: str, mask_name: str):
-        from matplotlib.cm import get_cmap
+    from matplotlib.cm import get_cmap
 
-        if v.dtype.name != 'category':
-            if cmap is None:
-                return cm.deep, None
-            else:
-                return get_cmap(cmap), None
+    if v.dtype.name != 'category':
+        if cmap is None:
+            return cm.deep, None
         else:
-            if cmap is None:
-                cmap = 'tab20'
-        na_idx = v == mask_name
-        uv = v[~na_idx].unique()
-        if color_key is not None:
-            for i in uv:
-                if i not in color_key:
-                    raise KeyError(f"ERROR: key {i} missing in `color_key`")
-            if na_idx.sum() > 0:
-                if mask_name not in color_key:
-                    color_key[mask_name] = mpl.colors.to_hex(mask_color)
-            return None, color_key
-        else:
-            pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
-            color_key = dict(zip(sorted(uv), pal))
-            if na_idx.sum() > 0:
+            return get_cmap(cmap), None
+    else:
+        if cmap is None:
+            cmap = 'tab20'
+    na_idx = v == mask_name
+    uv = v[~na_idx].unique()
+    if color_key is not None:
+        for i in uv:
+            if i not in color_key:
+                raise KeyError(f"ERROR: key {i} missing in `color_key`")
+        if na_idx.sum() > 0:
+            if mask_name not in color_key:
                 color_key[mask_name] = mpl.colors.to_hex(mask_color)
-            return None, color_key
+        return None, color_key
+    else:
+        pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
+        color_key = dict(zip(sorted(uv), pal))
+        if na_idx.sum() > 0:
+            color_key[mask_name] = mpl.colors.to_hex(mask_color)
+        return None, color_key
 
 
 def _scatter_cleanup(ax, sw: float, sc: str, ds: tuple) -> None:

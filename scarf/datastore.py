@@ -14,8 +14,13 @@ from .logging_utils import logger
 
 __all__ = ['DataStore']
 
-
 # TODO: add docstring
+"""
+Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
+
+Classes: 
+    DataStore: DataStore objects provide the primary interface to interact with the data
+"""
 
 
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
@@ -41,10 +46,43 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 
 
 class BaseDataStore:
-    # TODO: add docstring
+    """
+    This is the base datastore class that deals with loading of assays from Zarr files and generating basic cell
+    statistics like nCounts and nFeatures. Superclass of the other DataStores.
+
+    Attributes:
+        cells: list of cell barcodes
+        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
+        nthreads: number of threads to use for this datastore instance
+        z: the Zarr file (directory) used for for this datastore instance
+
+    Methods:
+        get_cell_vals: fetches data from the Zarr file
+        set_default_assay: override assigning of default assay
+    """
+
     def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
                  min_features_per_cell: int, min_cells_per_feature: int,
                  mito_pattern: str, ribo_pattern: str, nthreads: int, zarr_mode: str, synchronizer):
+        """
+        Args:
+            zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+            assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+            default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                           when DataStore loads a Zarr file for the first time
+            min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                                   will be filtered out.
+            min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                                   less than this will be filtered out
+            mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
+            ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+            nthreads: Number of maximum threads to use in all multi-threaded functions
+            zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
+            synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
+                          more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
+                          ThreadSynchronizer will be used.
+        """
 
         self._fn: str = zarr_loc
         if type(self._fn) != str:
@@ -66,7 +104,7 @@ class BaseDataStore:
 
     def _load_cells(self) -> MetaData:
         """
-        This convenience function loads cellData level from Zarr hierarchy
+        This convenience function loads cellData level from the Zarr hierarchy.
 
         Returns:
             Metadata object
@@ -78,7 +116,7 @@ class BaseDataStore:
 
     def _get_assay_names(self) -> List[str]:
         """
-        Load all assay names present in the zarr file. Zarr writers create an 'is_assay' attribute in the assay level
+        Load all assay names present in the Zarr file. Zarr writers create an 'is_assay' attribute in the assay level
         and this function looks for presence of those attributes to load assay names.
 
         Returns:
@@ -335,7 +373,9 @@ class BaseDataStore:
 
     def get_cell_vals(self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0):
         """
-        This convenience function allows fetching values for cells from either cell metadata table or values of a given
+        Fetches data from the Zarr file.
+
+        This convenience function allows fetching values for cells from either cell metadata table or values of a
         given feature from normalized matrix.
 
         Args:
@@ -347,7 +387,7 @@ class BaseDataStore:
                             (Default value: 0 )
 
         Returns:
-
+    `       The requested values.
         """
         cell_idx = self.cells.active_index(cell_key)
         if k not in self.cells.columns:
@@ -409,8 +449,33 @@ class BaseDataStore:
         return res
 
 
+# Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
+# Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class GraphDataStore(BaseDataStore):
-    # TODO: add docstring
+    """
+    This class extends BaseDataStore by providing methods required to generate a cell-cell neighbourhood graph.
+
+    It also contains all the methods that use the KNN graphs as primary input like UMAP/tSNE embedding calculation,
+    clustering, down-sampling etc.
+
+    Attributes:
+        cells: list of cell barcodes
+        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
+        nthreads: number of threads to use for this datastore instance
+        z: the Zarr file (directory) used for for this datastore instance
+
+    Methods:
+        get_imputed:
+        load_graph:
+        make_graph:
+        run_clustering:
+        run_leiden_clustering:
+        run_pseutotime_scoring:
+        run_tpacedo_sampler:
+        run_tsne:
+        run_umap:
+    """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -1549,8 +1614,30 @@ class GraphDataStore(BaseDataStore):
         return None
 
 
+# Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
+# Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class MappingDatastore(GraphDataStore):
-    # TODO: add docstring
+    """
+    This class extends GraphDataStore by providing methods for mapping/ projection of cells from one DataStore
+    onto another.
+
+    It also contains the methods required for label transfer, mapping score generation and co-embedding.
+
+    Attributes:
+        cells: list of cell barcodes
+        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
+        nthreads: number of threads to use for this datastore instance
+        z: the Zarr file (directory) used for for this datastore instance
+
+    Methods:
+        get_mapping_score:
+        get_target_classes:
+        load_unified_graph:
+        plot_unified_layout:
+        run_mapping:
+        plot_unified_tsne:
+        plot_unified_umap:
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -2137,34 +2224,64 @@ class MappingDatastore(GraphDataStore):
                             lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
 
 
+# Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
+# Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class DataStore(MappingDatastore):
     """
-    DataStore objects provide primary interface to interact with the data.
+    This class extends MappingDatastore and consequently inherits methods of all the *DataStore classes.
 
-    Args:
-        zarr_loc: Path to Zarr file created using one of writer functions of Scarf
-        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'
-        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                       when DataStore loads a Zarr file for the first time
-        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
-                               will be filtered out.
-        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                               less than this will be filtered out
-        mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
-        ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
-        nthreads: Number of maximum threads to use in all multi-threaded functions
-        zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
-        synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for more
-                     details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default ThreadSynchronizer will
-                     be used.
+    This class is the main user facing class as it provides most of the plotting functions.
+    It also contains methods for cell filtering, feature selection, marker features identification,
+    subsetting and aggregating cells. This class also contains methods that perform in-memory data exports.
+    In other words, DataStore objects provide the primary interface to interact with the data.
 
+    Attributes:
+        cells: list of cell barcodes
+        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
+        nthreads: number of threads to use for this datastore instance
+        z: the Zarr file (directory) used for for this datastore instance
+
+    Methods:
+        auto_filter_cells:
+        filter_cells:
+        get_markers:
+        make_bulk:
+        make_subset:
+        mark_hvgs:
+        mark_prevalent_peaks:
+        plot_cells_dists:
+        plot_cluster_tree:
+        plot_layout:
+        plot_marker_heatmap:
+        run_cell_cycle_scoring:
+        run_marker_search:
+        show_zarr_tree: prints the Zarr hierarchy of the DataStore
+        to_anndata: writes an assay of the Zarr hierarchy to AnnData file format
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
                  min_features_per_cell: int = 10, min_cells_per_feature: int = 20,
                  mito_pattern: str = None, ribo_pattern: str = None, nthreads: int = 2, zarr_mode: str = 'r+',
                  synchronizer=None):
+        """
+        Args:
+            zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+            assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+            default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                           when DataStore loads a Zarr file for the first time
+            min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                                   will be filtered out.
+            min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                                   less than this will be filtered out
+            mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
+            ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+            nthreads: Number of maximum threads to use in all multi-threaded functions
+            zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
+            synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
+                          more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
+                          ThreadSynchronizer will be used.
+        """
         if zarr_mode not in ['r', 'r+']:
             raise ValueError("ERROR: Zarr file can only be accessed using either 'r' ot 'r+' mode")
         if synchronizer is None:
@@ -2572,6 +2689,7 @@ class DataStore(MappingDatastore):
 
     def to_anndata(self, from_assay: str = None, cell_key: str = None, layers: dict = None):
         """
+        Writes an assay of the Zarr hierarchy to AnnData file format.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2714,7 +2832,7 @@ class DataStore(MappingDatastore):
         rasterized image is `do_shading` is True. This can be useful when large number of cells are
         present to quickly render the plot and avoid over-plotting.
         The description of shading parameters has mostly been copied from the Datashader API that can be found here:
-        http://holoviews.org/_modules/holoviews/operation/datashader.html
+        https://holoviews.org/_modules/holoviews/operation/datashader.html
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2864,6 +2982,9 @@ class DataStore(MappingDatastore):
         https://epidemicsonnetworks.readthedocs.io/en/latest/functions/EoN.hierarchy_pos.html
 
         Args:
+            color_key:
+            force_ints_as_cats:
+            fill_by_value:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
                       Should be same as the one that was used in one of the `run_clustering` calls for the given assay.
