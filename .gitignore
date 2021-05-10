@@ -9,4 +9,4 @@ scarf_toolkit.egg-info
 dask-worker-space
 *.ipynb_checkpoints
 *.ipynb
-vignettes/scarf_data
+docs/source/vignettes/README.md

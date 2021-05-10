@@ -1,7 +1,7 @@
 import numpy as np
 from .logging_utils import logger
 
-__all__ = ['fetch_dataset', 'system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
+__all__ = ['system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
@@ -70,75 +70,3 @@ def system_call(command):
             logger.info(output.strip())
     process.poll()
     return None
-
-
-def handle_download(url, out_fn):
-    import sys
-
-    if sys.platform == 'win32':
-        cmd = 'powershell -command "& { iwr %s -OutFile %s }"' % (url, out_fn)
-    elif sys.platform in ['posix', 'linux']:
-        cmd = f"wget -O {out_fn} {url}"
-    else:
-        raise ValueError(f"This operating system is not supported in this function. "
-                         f"Please download the file manually from this URL:\n {url}\n "
-                         f"Please save as: {out_fn}")
-    logger.info("Download started...")
-    system_call(cmd)
-    logger.info(f"Download finished! File saved here: {out_fn}")
-
-
-def fetch_dataset(dataset_id: str, save_path: str = '.', as_zarr: bool = False) -> None:
-    """
-    Downloads datasets from online repositories and saves them in as-is format
-
-    Args:
-        dataset_id: Name of the dataset
-        save_path: Save location without name of the file
-        as_zarr: If True, then a Zarr format file is downloaded instead
-
-    Returns:
-
-    """
-
-    import os
-    import tarfile
-    from .bio_data import datasets
-
-    zarr_ext = '.zarr.tar.gz'
-
-    def has_zarr(entry):
-        for e in entry:
-            if e['name'].endswith(zarr_ext):
-                return True
-        return False
-
-    def get_zarr_entry(entry):
-        for e in entry:
-            if e['name'].endswith(zarr_ext):
-                return e['name'], e['url']
-        return False, False
-
-    if dataset_id not in datasets:
-        dataset_list = '\n'.join(list(datasets.keys()))
-        raise ValueError(f"ERROR: Dataset not found. Please choose one from the following:\n{dataset_list}\n")
-    if as_zarr:
-        if has_zarr(datasets[dataset_id]) is False:
-            logger.error(f"Zarr file does not exist for {dataset_id}. Nothing downloaded")
-            return None
-
-    save_dir = os.path.join(save_path, dataset_id)
-    if os.path.isdir(save_dir) is False:
-        os.makedirs(save_dir)
-
-    if as_zarr:
-        sp, url = get_zarr_entry(datasets[dataset_id])
-        sp = os.path.join(save_dir, sp)
-        handle_download(url, sp)
-        tar = tarfile.open(sp, "r:gz")
-        tar.extractall(save_dir)
-        tar.close()
-    else:
-        for i in datasets[dataset_id]:
-            sp = os.path.join(save_dir, i['name'])
-            handle_download(i['url'], sp)

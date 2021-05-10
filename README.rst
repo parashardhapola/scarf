@@ -1,4 +1,4 @@
-|PyPI| |Docs| |Gitter|
+|PyPI| |Docs| |Gitter| |commits-latest| |pypi-downloads|
 
 |IMG1|
 
@@ -9,8 +9,16 @@
          :target: https://scarf.readthedocs.io
 .. |Gitter| image:: https://badges.gitter.im/scarf-toolkit/community.svg
            :target: https://gitter.im/scarf-toolkit/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
+.. |commits-latest| image:: https://img.shields.io/github/last-commit/parashardhapola/scarf
+                   :target: https://github.com/parashardhapola/scarf/commit/master
+                   :alt: GitHub last commit
+.. |pypi-downloads| image:: https://img.shields.io/pypi/dm/scarf-toolkit
+                   :target: https://pypi.org/project/scarf-toolkit/
+                   :alt: PyPI - Downloads
+
 .. |IMG1| image:: docs/source/_static/scarf_logo.svg
-    :width: 75%
+         :width: 75%
+
 
 Scarf is a Python package that performs memory-efficient analysis of single-cell genomics data.
 
@@ -21,6 +29,8 @@ Scarf is a Python package that performs memory-efficient analysis of single-cell
 - Sub-sample highly representative cells using state-of-the-art TopACeDo method
 - Perform quick and accurate projections of cells from one dataset onto another or integrate multiple datasets.
 
+Preprint describing Scarf is out on `Biorxiv`_
+
 Install Scarf with::
 
     pip install scarf-toolkit
@@ -28,8 +38,8 @@ Install Scarf with::
 Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
 
 .. _scarf.rtfd.io: http://scarf.rtfd.io
-.. _basic workflow of Scarf: https://github.com/parashardhapola/scarf_vignettes/blob/main/basic_tutorial.ipynb
-
+.. _basic workflow of Scarf: https://scarf.readthedocs.io/en/latest/vignettes/basic_tutorial_scRNAseq.html
+.. _Biorxiv: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
 
 **Known issues**:
 

@@ -80,3 +80,5 @@ from .readers import *
 from .writers import *
 from .meld_assay import *
 from .utils import *
+from .downloader import *
+
