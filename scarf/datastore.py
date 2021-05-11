@@ -2697,7 +2697,7 @@ class DataStore(MappingDatastore):
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
                     cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                    ax=None, fig=None, force_ints_as_cats: bool = True,
+                    shuffle_df: bool = False, ax=None, fig=None, force_ints_as_cats: bool = True,
                     scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
@@ -2821,6 +2821,8 @@ class DataStore(MappingDatastore):
                 logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
             else:
                 df = df[idx]
+        if shuffle_df:
+            df = df.sample(frac=1)
         if do_shading:
             return shade_scatter(df, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,

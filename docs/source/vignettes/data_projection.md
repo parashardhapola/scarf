@@ -57,7 +57,7 @@ ds_stim.plot_layout(layout_key='RNA_UMAP', color_by='cluster_labels')
    <b>Reference cells</b>: The cells from the dataset that forms the basis of mapping. A KNN graph must already be calculated for this dataset.
 </p>
 <p>
-    <b>Target cells</b>: The cells to be projected onto reference cells. This dataset is not required to a graph calculated.
+    <b>Target cells</b>: The cells to be projected onto reference cells. This dataset is not required to have a graph calculated.
 </p>
 </div>
 
@@ -153,3 +153,7 @@ ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=True, le
 
 ---
 That is all for this vignette.
+
+```python
+
+```
