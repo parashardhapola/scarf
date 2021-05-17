@@ -1,3 +1,4 @@
+pip
 sphinx
 nbsphinx
 sphinx_autodoc_typehints
@@ -7,4 +8,3 @@ jupytext
 ipykernel
 ipython-autotime
 topacedo
-jinja2~=2.11
