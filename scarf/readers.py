@@ -341,8 +341,8 @@ class H5adReader:
         self.h5 = h5py.File(h5ad_fn, mode='r')
         self.dataKey = data_key
         self.groupCodes = {'obs': self._validate_group('obs'),
-                         'var': self._validate_group('var'),
-                         'X': self._validate_group(self.dataKey)}
+                           'var': self._validate_group('var'),
+                           self.dataKey: self._validate_group(self.dataKey)}
         self.nCells, self.nFeatures = self._get_n('obs'), self._get_n('var')
         self.cellIdsKey = self._fix_name_key('obs', cell_ids_key)
         self.featIdsKey = self._fix_name_key('var', feature_ids_key)
