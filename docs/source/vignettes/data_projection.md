@@ -153,7 +153,3 @@ ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=True, le
 
 ---
 That is all for this vignette.
-
-```python
-
-```

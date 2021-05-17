@@ -120,7 +120,7 @@ ds.cells.to_pandas_dataframe(['sample_id'], key='I').value_counts()
 ```
 
 ---
-### 2) Naive analysis of merged datasets
+### 3) Naive analysis of merged datasets
 
 By naive, we mean that we make no attempt to remove/account for the latent factors that might contribute to batch effect ot treatment specific effect.
 It is usually a good idea to perform a 'naive' pipeline to get an idea about the degree of batch effects.
@@ -157,7 +157,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='imported_labels', legend_ondata=
 ```
 
 ---
-### 3) Partial training
+### 4) Partial PCA training to reduce batch effects
 
 The plots above clearly show that the cells from the two samples are distinct on the UMAP space and have not integrated. This clearly indicates a treatment-specific or simply a batch effect between the cell from the two samples. Another interesting pattern in the UMAP plot above is the 'mirror effect', i.e. the equivalent clusters from the two samples look like mirror images. This is often seen in the datasets where the heterogenity/cell population composition is not strongly affected by the treatment.
 

@@ -95,10 +95,5 @@ This feature is coming soon..
 ds.ATAC.feats.head()
 ```
 
-```python
-# scf.meld_assay(ds.ATAC, gene_bed, out_name='GeneActivity', peaks_col='peak_coords',
-#                nthreads=6, ignore_ids=blacklist_peaks)
-```
-
 ---
 That is all for this vignette.

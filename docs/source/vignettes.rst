@@ -38,6 +38,5 @@ Live notebook links:
 - `Handling datasets with multiple modalities <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/multiple_modalities.ipynb>`_
 - `Projection of cells across datasets <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/data_projection.ipynb>`_
 - `Merging datasets and partial training <https://colab.research.google.com/github/parashardhapola/scarf_vignettes/blob/main/merging_datasets.ipynb>`_
-- Pseudotime ordering and imputation
 - Understanding Scarf's design
-- Merging datasets and partial training
+- Pseudotime ordering adn imputation
