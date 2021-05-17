@@ -7,3 +7,4 @@ jupytext
 ipykernel
 ipython-autotime
 topacedo
+jinja2~=2.11
