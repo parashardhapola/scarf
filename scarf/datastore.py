@@ -2597,14 +2597,20 @@ class DataStore(MappingDatastore):
                 adata.layers[layer] = self._get_assay(assay_name).to_raw_sparse(cell_key)
         return adata
 
-    def show_zarr_tree(self) -> None:
+    def show_zarr_tree(self, start='/', depth=None) -> None:
         """
-        Prints the Zarr hierarchy of the DataStore
+
+        Args:
+            start:
+            depth:
 
         Returns:
 
         """
-        print(self.z.tree(expand=True))
+        if depth is None:
+            print(self.z[start].tree(expand=True))
+        else:
+            print(self.z[start].tree(expand=True, level=depth))
 
     def plot_cells_dists(self, from_assay: str = None, cols: List[str] = None, cell_key: str = None,
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
