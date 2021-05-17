@@ -2702,9 +2702,9 @@ class DataStore(MappingDatastore):
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
                     legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                    shuffle_df: bool = False, ax=None, fig=None, force_ints_as_cats: bool = True,
-                    scatter_kwargs: dict = None):
+                    cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
+                    savename: str = None, save_dpi: int = 300,
+                    ax=None, fig=None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
         the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
@@ -2780,6 +2780,10 @@ class DataStore(MappingDatastore):
             savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
+            shuffle_df: Shuffle the order of cells in the plot (Default value: False)
+            sort_values: Sort the values before plotting. Setting True will cause the datapoints with
+                         (cells) with larger values to be plotted over the ones with lower values.
+                         (Default value: False)
             ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
                 created axes. It is ignored if `do_shading` is set to True. (Default value: None)
             fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values. It is
@@ -2815,7 +2819,7 @@ class DataStore(MappingDatastore):
                                    clip_fraction=clip_fraction)
         else:
             color_by = 'vc'
-            v = np.ones(len(x))
+            v = np.ones(len(x)).astype(int)
         df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, color_by: v})
         if size_vals is not None:
             if len(size_vals) != len(x):
@@ -2829,6 +2833,8 @@ class DataStore(MappingDatastore):
                 df = df[idx]
         if shuffle_df:
             df = df.sample(frac=1)
+        if sort_values:
+            df = df.sort_values(by=color_by)
         if do_shading:
             return shade_scatter(df, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
