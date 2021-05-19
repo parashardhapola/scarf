@@ -1,3 +1,4 @@
+pip
 sphinx
 nbsphinx
 sphinx_autodoc_typehints

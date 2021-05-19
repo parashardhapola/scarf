@@ -14,7 +14,7 @@ jupyter:
     name: python3
 ---
 
-## Basic workflow of Scarf
+## Scarf's basic workflow for scRNA-Seq
 
 This workflow is meant to familiarize users with the Scarf API and how data is internally handled in Scarf. Please checkout the quick start guide if you are interested in the minimal steps required to run the analysis.
 
@@ -27,7 +27,7 @@ scarf.__version__
 ```
 
 
-Download the data from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
+Download the count matrix from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
 ```python
 scarf.fetch_dataset('tenx_5K_pbmc_rnaseq', save_path='scarf_datasets')
@@ -60,11 +60,11 @@ writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_5K_pbmc_rnaseq/data
 writer.dump(batch_size=1000)
 ```
 
-The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell.
+The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell. When we creat a DataStore instance, we can decide to filter out low abundance genes with parameter `min_features_per_cell`. For example the value of 10 for `min_features_per_cell` below means that those genes that are present in less than 100 cells will be filtered out.
 
 ```python
 ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
-                     nthreads=4)
+                     nthreads=4, min_features_per_cell=10)
 ```
 
 ---
@@ -273,6 +273,12 @@ Using the `plot_marker_heatmap` method, we can also plot a heatmap with the top 
 
 ```python
 ds.plot_marker_heatmap(group_key='RNA_cluster', topn=5, figsize=(5, 9))
+```
+
+The markers list for specific clusters can be obtained like this:
+
+```python
+ds.get_markers(group_key='RNA_cluster', group_id='1')
 ```
 
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
