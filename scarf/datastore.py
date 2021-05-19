@@ -1,3 +1,10 @@
+"""
+Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
+
+Classes:
+    DataStore: DataStore objects provide the primary interface to interact with the data
+"""
+
 import os
 import numpy as np
 from typing import List, Iterable, Tuple, Generator, Union
@@ -13,14 +20,6 @@ from .utils import show_progress, system_call, clean_array, controlled_compute
 from .logging_utils import logger
 
 __all__ = ['DataStore']
-
-# TODO: add docstring
-"""
-Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
-
-Classes: 
-    DataStore: DataStore objects provide the primary interface to interact with the data
-"""
 
 
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:

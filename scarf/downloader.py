@@ -1,11 +1,3 @@
-import requests
-import os
-import tarfile
-from .logging_utils import logger
-from .utils import system_call
-
-__all__ = ['show_available_datasets', 'fetch_dataset']
-
 """
 Used to download datasets included in Scarf.
 
@@ -17,6 +9,14 @@ Methods:
     show_available_datasets: list datasets offered through Scarf
     fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
 """
+
+import requests
+import os
+import tarfile
+from .logging_utils import logger
+from .utils import system_call
+
+__all__ = ['show_available_datasets', 'fetch_dataset']
 
 
 class OSFdownloader:

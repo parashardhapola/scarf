@@ -1,3 +1,10 @@
+"""
+Methods:
+    meld_assay:
+    make_bed_from_gff: create pybedtools object for genes from a GFF file
+"""
+# TODO: add description in docstring
+
 from tqdm import tqdm
 from typing import List, Dict
 import pandas as pd
@@ -7,14 +14,6 @@ from .utils import controlled_compute
 from .logging_utils import logger
 
 __all__ = ['meld_assay', 'make_bed_from_gff']
-
-
-# TODO: add description in docstring
-"""
-Methods: 
-    meld_assay:
-    make_bed_from_gff: create pybedtools object for genes from a GFF file
-"""
 
 
 def make_bed_from_gff(gff: str, up_offset: int = 2000,

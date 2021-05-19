@@ -1,11 +1,5 @@
-import numpy as np
-from .logging_utils import logger
-
-__all__ = ['system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
-
-# TODO: add docstring
 """
-Utility methods. 
+Utility methods.
 
 Methods:
     clean_array: returns input array with nan and infinite values removed
@@ -14,6 +8,11 @@ Methods:
     show_progress: performs computation with Dask and shows progress bar
     system_call: executes a command in the underlying operative system
 """
+
+import numpy as np
+from .logging_utils import logger
+
+__all__ = ['system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:

@@ -1,3 +1,12 @@
+"""
+Classes:
+    Assay:
+    RNAassay:
+    ATACassay:
+    ADTassay:
+"""
+# TODO: add description to docstring
+
 import numpy as np
 import dask.array as daskarr
 import zarr
@@ -9,15 +18,6 @@ from typing import Tuple, List
 import pandas as pd
 
 __all__ = ['Assay', 'RNAassay', 'ATACassay', 'ADTassay']
-
-# TODO: add description to docstring
-"""
-Classes:
-    Assay:
-    RNAassay:
-    ATACassay:
-    ADTassay:
-"""
 
 
 def norm_dummy(_, counts: daskarr) -> daskarr:
