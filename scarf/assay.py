@@ -1,3 +1,12 @@
+"""
+Classes:
+    Assay:
+    RNAassay:
+    ATACassay:
+    ADTassay:
+"""
+# TODO: add description to docstring
+
 import numpy as np
 import dask.array as daskarr
 import zarr
@@ -36,6 +45,30 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 
 
 class Assay:
+    # TODO: finish docstring
+    """
+    A generic Assay class that contains methods to calculate feature level statistics.
+
+    It also provides a method for saving normalized subset of data for later KNN graph construction.
+
+    Attributes:
+        name:
+        z:
+        cells:
+        nthreads:
+        rawData:
+        feats:
+        attrs:
+        normMethod:
+        sf:
+
+    Methods:
+        normed:
+        to_raw_sparse:
+        add_percent_feature:
+        save_normalized_data:
+        score_features:
+    """
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData,
                  nthreads: int, min_cells_per_feature: int = 10):
         """
@@ -280,6 +313,12 @@ class Assay:
 
 
 class RNAassay(Assay):
+    # TODO: add docstring
+    """
+    This assay is designed for feature selection and normalization of scRNA-Seq data.
+
+    Subclass of Assay.
+    """
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         """
 
@@ -388,9 +427,6 @@ class RNAassay(Assay):
             hvg_key_name:
             show_plot:
             **plot_kwargs:
-
-        Returns:
-
         """
         self.set_feature_stats(cell_key, min_cells)
         identifier = self._load_stats_loc(cell_key)
@@ -448,6 +484,7 @@ class RNAassay(Assay):
 
 
 class ATACassay(Assay):
+    # TODO: add docstring
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         """
 
@@ -533,6 +570,7 @@ class ATACassay(Assay):
 
 
 class ADTassay(Assay):
+    # TODO: add docstring
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         """
 

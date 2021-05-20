@@ -1,3 +1,10 @@
+"""
+Methods:
+    meld_assay:
+    make_bed_from_gff: create pybedtools object for genes from a GFF file
+"""
+# TODO: add description in docstring
+
 from tqdm import tqdm
 from typing import List, Dict
 import pandas as pd
@@ -141,6 +148,7 @@ def _create_counts_mat(assay, out_store, feat_order: list, cross_idx_map: dict, 
 
 def meld_assay(assay, reference_bed, out_name: str, nthreads: int,
                peaks_col: str = 'ids', ignore_ids: List[str] = None):
+    # TODO: add docstring
     if ignore_ids is None:
         ignore_ids = {}
     else:

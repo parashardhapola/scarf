@@ -1,3 +1,16 @@
+"""
+A collection of classes for reading in different data formats.
+
+- CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
+- CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
+- CrReader: A class to read in CellRanger (Cr) data.
+- H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
+- MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file and its accompanying files.
+- NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
+- LoomReader: A class to read in data in the form of a Loom file.
+"""
+# TODO: add description in docstring
+
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
 import numpy as np
@@ -32,6 +45,18 @@ def read_file(fn: str):
 
 class CrReader(ABC):
     def __init__(self, grp_names, file_type):
+        # TODO: add docstring
+        """
+        A class to read in CellRanger (Cr) data.
+
+        Args:
+            grp_names (Dict):
+            file_type (str): Type of sequencing data ('rna' | 'atac')
+
+        Returns:
+            None
+
+        """
         if file_type == 'rna':
             self.autoNames = {'Gene Expression': 'RNA'}
         elif file_type == 'atac':
@@ -130,6 +155,7 @@ class CrReader(ABC):
 
 class CrH5Reader(CrReader):
     def __init__(self, h5_fn, file_type: str = None):
+        # TODO: add docstring
         self.h5obj = h5py.File(h5_fn, mode='r')
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -173,6 +199,7 @@ class CrH5Reader(CrReader):
 
 class CrDirReader(CrReader):
     def __init__(self, loc, file_type: str = None):
+        # TODO: add docstring
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -236,6 +263,7 @@ class CrDirReader(CrReader):
 
 class MtxDirReader(CrReader):
     def __init__(self, loc, file_type: str = None):
+        # TODO: add docstring (incl. subclassing info)
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -326,6 +354,7 @@ class H5adReader:
     def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
                  feature_name_key: str = 'gene_short_name',
                  data_key: str = 'X', category_names_key: str = '__categories'):
+        # TODO: add docstring description
         """
 
         Args:
@@ -516,6 +545,7 @@ class H5adReader:
 
 
 class NaboH5Reader:
+    # TODO: add docstring
     def __init__(self, h5_fn: str):
         """
 

@@ -14,8 +14,33 @@ __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_as
            'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
 
 
+"""
+Methods and classes for writing data to disk.
+
+Methods:
+    create_zarr_dataset:
+    create_zarr_obj_array:
+    create_zarr_count_assay:
+    subset_assay_zarr:
+    dask_to_zarr:
+
+Classes:
+    ZarrMerge:
+    CrToZarr:
+    H5adToZarr:
+    MtxToZarr:
+    NaboH5ToZarr:
+    LoomToZarr:
+"""
+
+
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
+    # TODO: add description in docstring
+    """
+    Returns:
+        A Zarr Array.
+    """
     from numcodecs import Blosc
 
     compressor = Blosc(cname='lz4', clevel=5, shuffle=Blosc.BITSHUFFLE)
@@ -25,6 +50,7 @@ def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
 
 def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: Union[str, Any] = None, overwrite: bool = True) -> zarr.hierarchy:
+    # TODO: add docstring
     data = np.array(data)
     if dtype is None or dtype == object:
         dtype = 'U' + str(max([len(str(x)) for x in data]))
@@ -37,6 +63,7 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
 def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
                             feat_ids: Union[np.ndarray, List[str]], feat_names: Union[np.ndarray, List[str]],
                             dtype: str = 'uint32') -> zarr.hierarchy:
+    # TODO: add docstring
     g = z.create_group(assay_name, overwrite=True)
     g.attrs['is_assay'] = True
     g.attrs['misc'] = {}
@@ -50,6 +77,7 @@ def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tupl
 
 class CrToZarr:
     def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        # TODO: add docstring
         self.cr = cr
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -66,6 +94,7 @@ class CrToZarr:
         create_zarr_obj_array(g, 'I', [True for _ in range(self.cr.nCells)], 'bool')
 
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
+        # TODO: add docstring
         stores = [self.z["%s/counts" % x] for x in self.cr.assayFeats.columns]
         spidx = [0] + list(self.cr.assayFeats.T.nFeatures.cumsum().values)
         spidx = [(spidx[x - 1], spidx[x]) for x in range(1, len(spidx))]
@@ -84,6 +113,7 @@ class CrToZarr:
 
 class MtxToZarr:
     def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        # TODO: add docstring
         self.cr = cr
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -113,6 +143,7 @@ class MtxToZarr:
         return ret_val
 
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
+        # TODO: add docstring
         stores = {x: self.z["%s/counts" % x] for x in set(self.cr.assayFeats.columns)}
         assay_ranges = self._prep_assay_ranges()
         s, e, = 0, 0
@@ -142,6 +173,7 @@ class H5adToZarr:
     def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
         # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
+        # TODO: add docstring
         self.h5ad = h5ad
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -168,6 +200,7 @@ class H5adToZarr:
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
+        # TODO: add docstring
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.h5ad.nCells//batch_size + 1
@@ -183,6 +216,7 @@ class H5adToZarr:
 class NaboH5ToZarr:
     def __init__(self, h5: NaboH5Reader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        # TODO: add docstring
         self.h5 = h5
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -252,6 +286,7 @@ class LoomToZarr:
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
+        # TODO: add docstring
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.loom.nCells//batch_size + 1
@@ -267,6 +302,7 @@ class LoomToZarr:
 class SparseToZarr:
     def __init__(self, csr_mat: csr_matrix, zarr_fn: str, cell_ids: List[str], feature_ids: List[str],
                  assay_name: str = None, chunk_size=(1000, 1000), ):
+        # TODO: add docstring
         self.mat = csr_mat
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -293,6 +329,7 @@ class SparseToZarr:
         create_zarr_obj_array(g, 'I', [True for _ in range(self.nCells)], 'bool')
 
     def dump(self, batch_size: int = 1000) -> None:
+        # TODO: add docstring
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.nCells//batch_size + 1
@@ -312,6 +349,7 @@ class SparseToZarr:
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       cells_idx: np.ndarray, feat_idx: np.ndarray,
                       chunk_size: tuple):
+    # TODO: add docstring
     z = zarr.open(zarr_fn, 'r+')
     ig = z[in_grp]
     og = create_zarr_dataset(z, out_grp, chunk_size, 'uint32', (len(cells_idx), len(feat_idx)))
@@ -324,6 +362,7 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
+    # TODO: add docstring
     if msg is None:
         msg = f"Writing data to {loc}"
     og = create_zarr_dataset(z, loc, chunk_size, 'float64', df.shape)
@@ -339,6 +378,7 @@ class ZarrMerge:
 
     def __init__(self, zarr_path: str, assays: list, names: List[str], merge_assay_name: str,
                  chunk_size=(1000, 1000), dtype: str = 'uint32', overwrite: bool = False):
+        # TODO: add docstring
         self.assays = assays
         self.names = names
         self.mergedCells = self._merge_cell_table()
@@ -426,6 +466,7 @@ class ZarrMerge:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
     def write(self, nthreads=2):
+        # TODO: add docstring
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0],

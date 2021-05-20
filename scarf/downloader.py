@@ -1,3 +1,15 @@
+"""
+Used to download datasets included in Scarf.
+
+Classes:
+    OSFdownloader: A class for downloading datasets from OSF.
+
+Methods:
+    handle_download: carry out the download of a specified dataset
+    show_available_datasets: list datasets offered through Scarf
+    fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
+"""
+
 import requests
 import os
 import tarfile
@@ -8,7 +20,26 @@ __all__ = ['show_available_datasets', 'fetch_dataset']
 
 
 class OSFdownloader:
+    """
+    A class for downloading datasets from OSF.
+
+    Attributes:
+        projectId:
+        url:
+        datasets:
+
+    Methods:
+        get_json:
+        get_all_pages:
+        show_datasets:
+        get_dataset_file_ids:
+    """
+
     def __init__(self, project_id):
+        """
+        Args:
+            project_id: the ID of a project, e. g. zeupv
+        """
         self.projectId = project_id
         self.url = f"https://api.osf.io/v2/nodes/{self.projectId}/files/osfstorage/"
         self.datasets = {}
@@ -52,6 +83,12 @@ osfd = None
 
 
 def handle_download(url, out_fn):
+    """
+    Carry out the download of a specified dataset.
+
+    Args:
+        out_fn: the file name (aka path) for the downloaded file(s)
+    """
     import sys
 
     if sys.platform == 'win32':
@@ -68,6 +105,9 @@ def handle_download(url, out_fn):
 
 
 def show_available_datasets():
+    """
+    List datasets offered through Scarf.
+    """
     global osfd
     if osfd is None:
         osfd = OSFdownloader('zeupv')
@@ -76,7 +116,7 @@ def show_available_datasets():
 
 def fetch_dataset(dataset_name: str, save_path: str = '.', as_zarr: bool = False) -> None:
     """
-    Downloads datasets from online repositories and saves them in as-is format
+    Downloads datasets from online repositories and saves them in as-is format.
 
     Args:
         dataset_name: Name of the dataset
@@ -84,7 +124,6 @@ def fetch_dataset(dataset_name: str, save_path: str = '.', as_zarr: bool = False
         as_zarr: If True, then a Zarr format file is downloaded instead
 
     Returns:
-
     """
 
     zarr_ext = '.zarr.tar.gz'
