@@ -97,7 +97,7 @@ class MetaData:
                 col_map[j] = (loc, i)
         return col_map
 
-    def _get_array(self, column: str) -> zarr_array:
+    def _get_loc(self, column: str) -> Tuple[str, str]:
         """
 
         Args:
@@ -110,6 +110,18 @@ class MetaData:
         if column not in col_map:
             raise KeyError(f"{column} does not exist in the metadata columns.")
         loc, col = col_map[column]
+        return loc, col
+
+    def _get_array(self, column: str) -> zarr_array:
+        """
+
+        Args:
+            column:
+
+        Returns:
+
+        """
+        loc, col = self._get_loc(column)
         return self.locations[loc][col]
 
     def get_dtype(self, column: str) -> type:
@@ -395,8 +407,8 @@ class MetaData:
         if column in ['I', 'ids', 'names']:
             raise ValueError(f"ERROR: {column} is a protected name in MetaData class. Cannot be deleted")
         # noinspection PyUnusedLocal
-        col = self._get_array(column)
-        del col
+        loc, col = self._get_loc(column)
+        del self.locations[loc][col]
         return None
 
     def sift(self, column: str, min_v: float = -np.Inf, max_v: float = np.Inf) -> np.ndarray:
