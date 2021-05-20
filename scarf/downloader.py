@@ -2,7 +2,7 @@
 Used to download datasets included in Scarf.
 
 Classes:
-    OSFdownloader:
+    OSFdownloader: A class for downloading datasets from OSF.
 
 Methods:
     handle_download: carry out the download of a specified dataset
@@ -38,7 +38,7 @@ class OSFdownloader:
     def __init__(self, project_id):
         """
         Args:
-            project_id: the ID of a project, e. g.
+            project_id: the ID of a project, e. g. zeupv
         """
         self.projectId = project_id
         self.url = f"https://api.osf.io/v2/nodes/{self.projectId}/files/osfstorage/"

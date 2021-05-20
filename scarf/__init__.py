@@ -17,10 +17,10 @@ Exports:
 
 - Modules
     - datastore: Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
-    - readers:
-    - writers:
+    - readers: A collection of classes for reading in different data formats.
+    - writers: Methods and classes for writing data to disk.
     - meld_assay:
-    - utils:
+    - utils: Utility methods.
     - downloader: Used to download datasets included in Scarf.
 
 GitHub: https://github.com/parashardhapola/scarf

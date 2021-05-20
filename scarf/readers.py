@@ -1,3 +1,16 @@
+"""
+A collection of classes for reading in different data formats.
+
+- CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
+- CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
+- CrReader: A class to read in CellRanger (Cr) data.
+- H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
+- MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file and its accompanying files.
+- NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
+- LoomReader: A class to read in data in the form of a Loom file.
+"""
+# TODO: add description in docstring
+
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
 import numpy as np
@@ -10,17 +23,6 @@ from tqdm import tqdm
 from .logging_utils import logger
 
 __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader', 'NaboH5Reader', 'LoomReader']
-
-# TODO: add docstring
-"""
-- CrH5Reader: A class to read in CellRanger (Cr) h5 data.
-- CrDirReader
-- CrReader: A class to read in CellRanger (Cr) data.
-- H5adReader
-- MtxDirReader
-- NaboH5Reader
-- LoomReader
-"""
 
 
 def get_file_handle(fn: str) -> IO:
