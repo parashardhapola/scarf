@@ -2530,6 +2530,43 @@ class DataStore(MappingDatastore):
         df['names'] = assay.feats.fetch_all('names')[id_idx]
         return df
 
+    def export_markers_to_csv(self, *, from_assay: str = None, cell_key: str = None, group_key: str = None,
+                              csv_filename: str = None) -> None:
+        """
+        Export markers of each cluster/group to a CSV file where each column contains the marker names sorted by
+        score (descending order, highest first). This function does not export the scores of markers as they can be
+        obtained using `get_markers` function
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table.
+            group_key: Required parameter. This has to be a column name from cell metadata table.
+                       Usually this would be a column denoting cell clusters. Please use the same value as used
+                       when ran `run_marker_search`
+            csv_filename: Required parameter. Name, with path, of CSV file where the maker table is to be saved.
+
+        Returns:
+
+        """
+        # Not testing the values of from_assay and cell_key because they will be tested in `get_markers`
+        if group_key is None:
+            raise ValueError(f"ERROR: Please provide a value for group_key. "
+                             f"This should be same as used for `run_marker_search`")
+        if csv_filename is None:
+            raise ValueError("ERROR: Please provide a value for parameter `csv_filename`")
+        clusters = self.cells.fetch(group_key)
+        markers_table = {}
+        for group_id in sorted(set(clusters)):
+            try:
+                m = self.get_markers(from_assay=from_assay, cell_key=cell_key,
+                                     group_key=group_key, group_id=group_id)
+                markers_table[group_id] = m['names'].reset_index(drop=True)
+            except KeyError:
+                markers_table[group_id] = pd.Series([])
+        pd.DataFrame(markers_table).fillna('').to_csv(csv_filename, index=False)
+        return None
+
     def run_cell_cycle_scoring(self, *, from_assay: str = None, cell_key: str = None,
                                s_genes: List[str] = None, g2m_genes: List[str] = None,
                                n_bins: int = 50, rand_seed: int = 4466, s_score_label: str = 'S_score',
