@@ -9,7 +9,6 @@ A collection of classes for reading in different data formats.
 - NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
 - LoomReader: A class to read in data in the form of a Loom file.
 """
-# TODO: add description in docstring
 
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
@@ -44,18 +43,21 @@ def read_file(fn: str):
 
 
 class CrReader(ABC):
-    def __init__(self, grp_names, file_type):
-        # TODO: add docstring
-        """
-        A class to read in CellRanger (Cr) data.
+    """
+    A class to read in CellRanger (Cr) data.
 
+    Attributes:
+        autoNames: Specifies if the data is from RNA or ATAC sequencing.
+        grpNames:
+        nFeatures: Number of features in dataset.
+        nCells: Number of cells in dataset.
+        assayFeats:
+    """
+    def __init__(self, grp_names, file_type):
+        """
         Args:
             grp_names (Dict):
             file_type (str): Type of sequencing data ('rna' | 'atac')
-
-        Returns:
-            None
-
         """
         if file_type == 'rna':
             self.autoNames = {'Gene Expression': 'RNA'}
@@ -128,13 +130,31 @@ class CrReader(ABC):
             self.rename_assays({main_assay: main_name_v})
 
     def rename_assays(self, name_map: Dict[str, str]) -> None:
+        """
+        Renames specified assays in the Reader.
+
+        Args:
+            name_map: A Dictionary containing current name as key and new name as value.
+        """
         self.assayFeats.rename(columns=name_map, inplace=True)
 
     def feature_ids(self, assay: str = None) -> List[str]:
+        """
+        Returns a list of feature IDs in a specified assay.
+
+        Args:
+            assay: Select which assay to retrieve feature IDs from.
+        """
         return self._subset_by_assay(
             self._read_dataset('feature_ids'), assay)
 
     def feature_names(self, assay: str = None) -> List[str]:
+        """
+        Returns a list of features in the dataset.
+
+        Args:
+            assay: Select which assay to retrieve features from.
+        """
         vals = self._read_dataset('feature_names')
         if vals is None:
             logger.warning('Feature names extraction failed using feature IDs')
@@ -142,6 +162,7 @@ class CrReader(ABC):
         return self._subset_by_assay(vals, assay)
 
     def feature_types(self) -> List[str]:
+        # TODO: add docstring
         if self.grpNames['feature_types'] is not None:
             ret_val = self._read_dataset('feature_types')
             if ret_val is not None:
@@ -150,12 +171,33 @@ class CrReader(ABC):
         return [default_name for _ in range(self.nFeatures)]
 
     def cell_names(self) -> List[str]:
+        """
+        Returns a list of names of the cells in the dataset.
+        """
         return self._read_dataset('cell_names')
 
 
 class CrH5Reader(CrReader):
+    """
+    A class to read in CellRanger (Cr) data, in the form of an H5 file.
+
+    Subclass of CrReader.
+
+    Attributes:
+        autoNames: Specifies if the data is from RNA or ATAC sequencing.
+        grpNames:
+        nFeatures: Number of features in dataset.
+        nCells: Number of cells in dataset.
+        assayFeats:
+        h5obj: A File object from the h5py package.
+        grp:
+    """
     def __init__(self, h5_fn, file_type: str = None):
-        # TODO: add docstring
+        """
+        Args:
+            h5_fn: File name for the h5 file.
+            file_type (str): Type of sequencing data ('rna' | 'atac')
+        """
         self.h5obj = h5py.File(h5_fn, mode='r')
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -178,6 +220,7 @@ class CrH5Reader(CrReader):
 
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int):
+        # TODO: add docstring
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = self.grp['indptr'][ind_n:ind_n + batch_size]
@@ -194,12 +237,29 @@ class CrH5Reader(CrReader):
             s = e
 
     def close(self) -> None:
+        """
+        Closes file connection.
+        """
         self.h5obj.close()
 
 
 class CrDirReader(CrReader):
+    # TODO: copy attributes from base class to docstring here (when done)
+    """
+    A class to read in CellRanger (Cr) data, in the form of a directory.
+
+    Subclass of CrReader.
+
+    Attributes:
+        loc: Path for the directory containing the cellranger output.
+        matFn: The file name for the matrix file.
+    """
     def __init__(self, loc, file_type: str = None):
-        # TODO: add docstring
+        """
+        Args:
+            loc (str): Path for the directory containing the cellranger output.
+            file_type (str): Type of sequencing data ('rna' | 'atac')
+        """
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -237,6 +297,13 @@ class CrDirReader(CrReader):
 
     # noinspection DuplicatedCode
     def to_sparse(self, a):
+        # TODO: specify type of a
+        """
+        Returns the input data as a sparse (COO) matrix.
+
+        Args:
+            a:
+        """
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([(a[:, 1] - a[0, 1]).astype(int),
                            (a[:, 0] - 1).astype(int)],
@@ -245,6 +312,7 @@ class CrDirReader(CrReader):
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
+        # TODO: add docstring
         stream = pd.read_csv(self.matFn, skiprows=3, sep=' ',
                              header=None, chunksize=lines_in_mem)
         start = 1
@@ -262,8 +330,21 @@ class CrDirReader(CrReader):
 
 
 class MtxDirReader(CrReader):
+    """
+    A class to read a directory with a Matrix Market file and its accompanying files.
+
+    Subclass of CrReader.
+
+    Attributes:
+        loc: Path for the directory containing the cellranger output.
+        matFn: The file name for the matrix file.
+    """
     def __init__(self, loc, file_type: str = None):
-        # TODO: add docstring (incl. subclassing info)
+        """
+        Args:
+            loc (str): Path for the directory containing the cellranger output.
+            file_type (str): Type of sequencing data ('rna' | 'atac')
+        """
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
         super().__init__(self._handle_version(), file_type)
@@ -311,6 +392,13 @@ class MtxDirReader(CrReader):
 
     # noinspection DuplicatedCode
     def to_sparse(self, a):
+        # TODO: specify type of a
+        """
+        Returns the input data as a sparse (COO) matrix.
+
+        Args:
+            a:
+        """
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] - 1).astype(int)],
                           a[:, 2], shape=(len(idx) + 1, self.nFeatures))
@@ -334,6 +422,7 @@ class MtxDirReader(CrReader):
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
+        # TODO: add docstring
         stream = pd.read_csv(self.matFn, skiprows=3, sep='\t',
                              header=None, chunksize=lines_in_mem)
         start = 1
@@ -351,12 +440,25 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
+    """
+    A class to read in data from a H5ad file (h5 file with AnnData information).
+
+    Attributes:
+        h5: A File object from the h5py package.
+        dataKey: Group where in the sparse matrix resides (default: 'X')
+        groupCodes:
+        nFeatures: Number of features in dataset.
+        nCells: Number of cells in dataset.
+        cellIdsKey: Key in `obs` group that contains unique cell IDs. By default the index will be used.
+        featIdsKey: Key in `var` group that contains unique feature IDs. By default the index will be used.
+        featNamesKey: Key in `var` group that contains feature names. (Default: gene_short_name)
+        catNamesKey: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
+                     corresponding index value within this group.
+    """
     def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
                  feature_name_key: str = 'gene_short_name',
                  data_key: str = 'X', category_names_key: str = '__categories'):
-        # TODO: add docstring description
         """
-
         Args:
             h5ad_fn: Path to H5AD file
             cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
