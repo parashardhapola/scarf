@@ -5,8 +5,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -27,7 +27,7 @@ scarf.__version__
 ### 1) Installing dependencies
 
 
-Need to install the TopACeDo algorithm to perform subsampling
+We need to install the TopACeDo algorithm to perform subsampling
 
 ```python
 !pip install git+https://github.com/fraenkel-lab/pcst_fast.git@deb3236cc26ee9fee77d5af40fac3f12bb753850
@@ -51,21 +51,21 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ### 3) Run TopACeDo downsampler
 
 
-UMAP, clustering and marker identification together allow a good understanding of cellular diversity. However, one can still choose from a plethora of other analysis on the data. For example, identification of cell differentiation trajectories. One of the major challenges to run these analysis could be the size of the data. Scarf performs a topology conserving downsampling of the data based on the cell neighbourhood graph. This downsampling aims to maximize the heterogeneity while sampling the cells from the the data.
+UMAP, clustering and marker identification together allow a good understanding of cellular diversity. However, one can still choose from a plethora of other analysis on the data. For example, identification of cell differentiation trajectories. One of the major challenges to run these analysis could be the size of the data. Scarf performs a topology conserving downsampling of the data based on the cell neighbourhood graph. This downsampling aims to maximize the heterogeneity while sampling cells from the data.
 
-Here we TopACeDo downsampling algorithm that leverages Scarf's KNN graph to perform a manifold preserving subsampling of cells. The subsampler can be invoked directly from Scarf's DataStore object.
+Here we run the TopACeDo downsampling algorithm that leverages Scarf's KNN graph to perform a manifold preserving subsampling of cells. The subsampler can be invoked directly from Scarf's DataStore object.
 
 ```python
 ds.run_topacedo_sampler(cluster_key='RNA_cluster', max_sampling_rate=0.1)
 ```
 
-As a result of subsampling the sub sampled cells are marked True under the cell metadata column `RNA_sketched`. We can visualize these cells using `plot_layout`
+As a result of subsampling the subsampled cells are marked True under the cell metadata column `RNA_sketched`. We can visualize these cells using `plot_layout`
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketched')
 ```
 
-It may also be interesting to visualize the cells that were marked as `seed cells` useing using PCST was run. These cells are marked under the column `RNA_sketch_seeds`
+It may also be interesting to visualize the cells that were marked as `seed cells` used when PCST was run. These cells are marked under the column `RNA_sketch_seeds`
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketch_seeds')
@@ -81,7 +81,7 @@ To identify the seed cells, the subsampling algorithm calculates cell densities 
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cell_density')
 ```
 
-The dowsampling algorithm also identififes regions of graph where cells form tightly connected groups by calculating mean shared nearest neighbours of each cell's nieghbours. The tightly connected regions get a sampling award. These values can be accessed from under the cell metadata column `RNA_snn_value`
+The dowsampling algorithm also identififes regions of the graph where cells form tightly connected groups by calculating mean shared nearest neighbours of each cell's nieghbours. The tightly connected regions get a sampling award. These values can be accessed from under the cell metadata column `RNA_snn_value`
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')

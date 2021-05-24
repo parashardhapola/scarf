@@ -44,6 +44,15 @@ If you are confused about 64-bit or 32-bit see this nice `post <https://www.tech
 Once you have downloaded Miniconda please follow their instructions `here <https://conda.io/projects/conda/en/latest/user-guide/install/index.html#regular-installation>`_ to install it.
 Once installed, please confirm that you now have a Python version greater than 3.8.0 by typing ``python --version`` in your terminal.
 
+**Step 3.5 (Optional)**
+We recommend that you first create an environment that you then install scarf into. 
+If you have followed the steps above and you are using conda you create an environment by typing ``conda create --name myenv python=3.8``.
+
+This will also install python 3.8 into that environment. One of the benefits of working with environments is that you minimize the risk of some required package that you are using for something different (e.g. if you have another package that requires numpy to be of an older version) is being updated without you wanting it to. This way you can keep the installation contained.
+
+To activate the environment type ``conda activate myenv``. To deactivate it again type ``conda deactivate``.
+
+
 **Step 4:**
 
 Now, in your terminal, type this to install the latest version of Scarf:

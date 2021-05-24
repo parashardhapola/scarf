@@ -5,8 +5,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -50,7 +50,7 @@ ds_stim
 ---
 ### 2) Merging datasets
 
-The merging step will make sure that the features are in the same order as in the merged file. Th merged data will be dumped into a new a Zarr file. `ZarrMerge` class allows merging multiple samples at the same time. Though only kind of assays can be added at a point, other modalities for the same cells can be added at a later point. 
+The merging step will make sure that the features are in the same order as in the merged file. The merged data will be dumped into a new a Zarr file. `ZarrMerge` class allows merging multiple samples at the same time. Though only one kind of assays can be added at a time, other modalities for the same cells can be added at a later point. 
 
 ```python
 #Can be used to merge multiple assays
@@ -72,7 +72,7 @@ So now we print the megred datastore. The merging removed all the precalculated 
 ds
 ```
 
-If we have a look at the cell attributes table, we can clearly see the that the sample identity is shown in the `ids` coloumn. preapend to the barcode.
+If we have a look at the cell attributes table, we can clearly see the that the sample identity is shown in the `ids` coloumn, prepended to the barcode.
 
 ```python
 ds.cells.head()
@@ -101,7 +101,7 @@ ds.cells.insert(
 )
 ```
 
-Rather than running filtering step again, we import the information about which cells where kept and which ones where filtered out.
+Rather than running the filtering step again, we import the information about which cells where kept and which ones where filtered out.
 
 ```python
 ctrl_valid_cells = list(ds_ctrl.cells.fetch_all('I'))
@@ -113,16 +113,16 @@ ds.cells.update_key(
 )
 ```
 
-Now we can check the number of cells from each of the sample
+Now we can check the number of cells from each of the samples.
 
 ```python
-ds.cells.to_pandas_dataframe(['sample_id'], key='I').value_counts()
+ds.cells.to_pandas_dataframe(['sample_id'], key='I')['sample_id'].value_counts()
 ```
 
 ---
 ### 3) Naive analysis of merged datasets
 
-By naive, we mean that we make no attempt to remove/account for the latent factors that might contribute to batch effect ot treatment specific effect.
+By naive, we mean that we make no attempt to remove/account for the latent factors that might contribute to batch effect or treatment specific effect.
 It is usually a good idea to perform a 'naive' pipeline to get an idea about the degree of batch effects.
 
 
@@ -159,9 +159,9 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='imported_labels', legend_ondata=
 ---
 ### 4) Partial PCA training to reduce batch effects
 
-The plots above clearly show that the cells from the two samples are distinct on the UMAP space and have not integrated. This clearly indicates a treatment-specific or simply a batch effect between the cell from the two samples. Another interesting pattern in the UMAP plot above is the 'mirror effect', i.e. the equivalent clusters from the two samples look like mirror images. This is often seen in the datasets where the heterogenity/cell population composition is not strongly affected by the treatment.
+The plots above clearly show that the cells from the two samples are distinct on the UMAP space and have not integrated. This clearly indicates a treatment-specific or simply a batch effect between the cells from the two samples. Another interesting pattern in the UMAP plot above is the 'mirror effect', i.e. the equivalent clusters from the two samples look like mirror images. This is often seen in the datasets where the heterogenity/cell population composition is not strongly affected by the treatment.
 
-We will now attempt to integrate the cells from the two samples so that we obtain same cell types do not form separate clusters. One can do this by training the PCA on cells from only one of samples. Training PCA on cells from only one of the samples will diminish the contribution of genes differentially expresed between the two samples.
+We will now attempt to integrate the cells from the two samples so that we obtain same cell types that do not form separate clusters. One can do this by training the PCA on cells from only one of samples. Training PCA on cells from only one of the samples will diminish the contribution of genes differentially expresed between the two samples.
 
 
 First, we need to create a boolean column in the cell attribute table. This column will indicate whether a cell belongs to one of the samples. Here we will create a new column `is_ctrl` and mark the values as True when a cell belongs to the `ctrl` sample
