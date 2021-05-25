@@ -6,8 +6,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -49,7 +49,7 @@ ds_stim.plot_layout(layout_key='RNA_UMAP', color_by='cluster_labels')
 ---
 ### 2) K-Nearest Neighbours (KNN) mapping
 
-``run_mapping`` method of DataStore class performs KNN mapping/projection of target cells over reference cells. Reference cells are the ones that are present in the object where `run_mapping` is being called. The `Assay` object of target cells is provided as an argument to `run_mapping`. This step will load the latest graph of the reference cells and query the Approximate Nearest Neighbour (ANN) index of the reference cells for nearest neighbours of each target cell. Since the ANN index doesn't contain any target cells, nearest neighbours of target cells will exclusively be reference cells. Under the hood, `run_mapping` method makes sure that the feature order in the target cells is same as that in the reference cells. By default, `run_mapping` will impute zero values for missing features in the target order to preserve the feature order. Here we have set `run_coral` parameter to True which activates CORAL normalization of target data. CORAL aligns the the feature distribution between reference and target cells thus removing systemic difference between reference and target cells. Read more about CORAL [here](https://arxiv.org/pdf/1612.01939.pdf). Here we use control PMBCs as reference because we invoke `run_mapping` on control PBMCs' DataStore object and provide stimulated PBMC's `RNA` assay as target.
+The ``run_mapping`` method of DataStore class performs KNN mapping/projection of target cells over reference cells. Reference cells are the ones that are present in the object where `run_mapping` is being called. The `Assay` object of target cells is provided as an argument to `run_mapping`. This step will load the latest graph of the reference cells and query the Approximate Nearest Neighbour (ANN) index of the reference cells for nearest neighbours of each target cell. Since the ANN index doesn't contain any target cells, nearest neighbours of target cells will exclusively be reference cells. Under the hood, `run_mapping` method makes sure that the feature order in the target cells is same as that in the reference cells. By default, `run_mapping` will impute zero values for missing features in the target order to preserve the feature order. Here we have set `run_coral` parameter to True which activates CORAL normalization of target data. CORAL aligns the the feature distribution between reference and target cells thus removing systemic difference between reference and target cells. Read more about CORAL [here](https://arxiv.org/pdf/1612.01939.pdf). Here we use control PMBCs as reference because we invoke `run_mapping` on control PBMCs' DataStore object and provide stimulated PBMC's `RNA` assay as target.
 
 
 <div class="alert alert-block alert-info">
@@ -138,7 +138,7 @@ ds_ctrl.run_unified_umap(target_names=['stim'], ini_embed_with='RNA_UMAP', targe
                          use_k=5, fit_n_epochs=100, tx_n_epochs=10)
 ```
 
-Since, the results of unified embedding contain 'foreign' cells, `plot_layout` function cannot be used to visualize all the cell. A specialized method, `plot_unified_layout` takes care of this issue. The following example shows co-embedded control (reference) and stimulated  (target) PBMCs.
+Since the results of unified embedding contain 'foreign' cells, `plot_layout` function cannot be used to visualize all the cells. A specialized method, `plot_unified_layout` takes care of this issue. The following example shows co-embedded control (reference) and stimulated  (target) PBMCs.
 
 ```python
 ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=False, ref_name='ctrl')

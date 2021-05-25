@@ -6,8 +6,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -60,7 +60,7 @@ writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_5K_pbmc_rnaseq/data
 writer.dump(batch_size=1000)
 ```
 
-The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell. When we creat a DataStore instance, we can decide to filter out low abundance genes with parameter `min_features_per_cell`. For example the value of 10 for `min_features_per_cell` below means that those genes that are present in less than 100 cells will be filtered out.
+The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell. When we create a DataStore instance, we can decide to filter out low abundance genes with parameter `min_features_per_cell`. For example the value of 10 for `min_features_per_cell` below means that those genes that are present in less than 10 cells will be filtered out.
 
 ```python
 ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
@@ -187,6 +187,10 @@ There has been a lot of discussion over the choice of non-linear dimensionality 
 ds.run_tsne(alpha=10, box_h=1, early_iter=250, max_iter=500, parallel=True)
 ```
 
+<div class="alert alert-block alert-info">
+NOTE: The tSNE implementation is currently not supported on Windows.
+</div>
+
 ```python
 # Here we run plot_layout under exception catching because if you are not on Linux then the `run_tnse` would have failed.
 try:
@@ -281,7 +285,7 @@ The markers list for specific clusters can be obtained like this:
 ds.get_markers(group_key='RNA_cluster', group_id='1')
 ```
 
-We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the the gene expression pattern across the cells atleast this way.
+We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells atleast this way.
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')
