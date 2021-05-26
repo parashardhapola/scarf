@@ -5,8 +5,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -42,7 +42,7 @@ We can also quickly check the different kinds of assays present in the file and 
 reader.assayFeats
 ```
 
-The **nFeatures** column shows the number of features present in each assay. `CrH5Reader` will automatically pull this information from H5 file will rename the 'Gene Expression' assay to **RNA**. Here it also found another assay: 'Antibody Capture' and named it to **assay2**. We will rename this to **ADT**.
+The **nFeatures** column shows the number of features present in each assay. `CrH5Reader` will automatically pull this information from H5 file and rename the 'Gene Expression' assay to **RNA**. Here it also found another assay: 'Antibody Capture' and named it to **assay2**. We will rename this to **ADT**.
 
 ```python
 reader.rename_assays({'assay2': 'ADT'})
@@ -58,7 +58,7 @@ writer.dump(batch_size=1000)
 ```
 
 ---
-### 2) Create multimodal DataStore
+### 2) Create a multimodal DataStore
 
 The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. The first time a Zarr file is loaded, we need to set the default assay. Here we set the 'RNA' assay as the default assay. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell.
 
@@ -84,7 +84,7 @@ ds.RNA.feats.head()
 ds.ADT.feats.head()
 ```
 
-Cell filtering is performed based on the default assay. Here we `auto_filter_cells` method of the `DataStore` to filter low quality cells.
+Cell filtering is performed based on the default assay. Here we use the `auto_filter_cells` method of the `DataStore` to filter low quality cells.
 
 ```python
 ds.auto_filter_cells()
@@ -110,7 +110,7 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 ### 4) Process protein surface abundance modality
 
 
-We will now perform similar steps as RNA for the ADT data. Since, ADT panels are often custom designed, we will not perform any feature selection step. This particular data contains some control antibodies which we should filter out before downstream analysis. 
+We will now perform similar steps as RNA for the ADT data. Since ADT panels are often custom designed, we will not perform any feature selection step. This particular data contains some control antibodies which we should filter out before downstream analysis. 
 
 ```python
 ds.ADT.feats.head(n=ds.ADT.feats.N)
@@ -194,7 +194,7 @@ df = pd.crosstab(ds.cells.fetch('RNA_leiden_cluster'),
 df
 ```
 
-There are possible many interesting strategies to analyze this further. One simple way to summarize the above table can be quantify the transcriptomics 'purity' of ADT clusters:
+There are possibly many interesting strategies to analyze this further. One simple way to summarize the above table can be quantify the transcriptomics 'purity' of ADT clusters:
 
 ```python
 (100 * df.max()/df.sum()).sort_values(ascending=False)
