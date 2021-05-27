@@ -57,10 +57,10 @@ class Assay:
         cells:
         nthreads:
         rawData:
-        feats:
+        feats: a dataframe with info about each feature in the dataset
         attrs:
         normMethod:
-        sf:
+        sf: scaling factor for doing library-size normalization
 
     Methods:
         normed:
@@ -405,21 +405,41 @@ class RNAassay(Assay):
         self.feats.unmount_location(identifier)
         return None
 
+    # maybe we should return plot here? If one wants to modify it. /raz
     def mark_hvgs(self, cell_key: str, min_cells: int, top_n: int,
                   min_var: float, max_var: float, min_mean: float, max_mean: float,
                   n_bins: int, lowess_frac: float, blacklist: str, hvg_key_name: str,
                   show_plot: bool, **plot_kwargs) -> None:
         """
+        Identifies highly variable genes in the dataset.
+        
+        The parameters govern the min/max variance (corrected) and mean expression threshold for calling genes highly
+        variable. The variance is corrected by first dividing genes into bins based on their mean expression values.
+        Genes with minimum variance is selected from each bin and a Lowess curve is fitted to
+        the mean-variance trend of these genes. mark_hvgs will by default run on the default assay.
+
+        A plot is produced, that for each gene shows the corrected variance on the y-axis and the non-zero mean
+        (means from cells where the gene had a non-zero value) on the x-axis. The genes are colored in two gradients
+        which indicate the number of cells where the gene was expressed. The colors are yellow to dark red for HVGs,
+        and blue to green for non-HVGs.
+
+        The mark_hvgs function has a parameter cell_key that dictates which cells to use to identify the HVGs.
+        The default value of this parameter is I, which means it will use all the cells that were not filtered out.
+        
+        *Modifies the feats table*: adds a column named `<cell_key>__hvgs` to the feature table,
+        which contains a True value for genes marked HVGs. The prefix comes from the `cell_key` parameter,
+        the naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name
+        (with a double underscore delimiter).
 
         Args:
-            cell_key:
+            cell_key: Specify which cells to use to identify the HVGs. Default value `I` (use all non-filtered out cells).
             min_cells:
             top_n:
             min_var:
             max_var:
             min_mean:
             max_mean:
-            n_bins:
+            n_bins: Number of bins
             lowess_frac:
             blacklist:
             hvg_key_name:

@@ -50,7 +50,7 @@ class BaseDataStore:
     statistics like nCounts and nFeatures. Superclass of the other DataStores.
 
     Attributes:
-        cells: list of cell barcodes
+        cells: dataframe with cells and info about each cell (e. g. RNA_nCounts ids)
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
         nthreads: number of threads to use for this datastore instance
         z: the Zarr file (directory) used for for this datastore instance
@@ -2291,20 +2291,26 @@ class DataStore(MappingDatastore):
                          mito_pattern=mito_pattern, ribo_pattern=ribo_pattern, nthreads=nthreads,
                          zarr_mode=zarr_mode, synchronizer=synchronizer)
 
-    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int]) -> None:
+    def filter_cells(self, *, attrs: Iterable[str], lows: Iterable[int], highs: Iterable[int],
+                     reset_previous: bool = False) -> None:
         """
         Filter cells based on the cell metadata column values. Filtering triggers `update` method on  'I' column of
         cell metadata which uses 'and' operation. This means that cells that are not within the filtering thresholds
-        will have value set as False in 'I' column of cell metadata table
+        will have value set as False in 'I' column of cell metadata table. When performing filtering repeatedly, the
+        cells that were previously filtered out remain filtered out and 'I' column is updated only for those cells that
+        are filtered out due to the latest filtering attempt.
 
         Args:
             attrs: Names of columns to be used for filtering
             lows: Lower bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
             highs: Upper bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
+            reset_previous: If True, then results of previous filtering will be undone completely.
+                            (Default value: False)
 
         Returns:
 
         """
+        new_bool = np.ones(self.cells.N).astype(bool)
         for i, j, k in zip(attrs, lows, highs):
             # Checking here to avoid hard error from metadata class
             if i not in self.cells.columns:
@@ -2315,8 +2321,11 @@ class DataStore(MappingDatastore):
             if k is None:
                 k = np.Inf
             x = self.cells.sift(i, j, k)
-            self.cells.update_key(x, key='I')
             logger.info(f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}")
+            new_bool = new_bool & x
+        if reset_previous:
+            self.cells.reset_key(key='I')
+        self.cells.update_key(new_bool, key='I')
 
     def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
                           show_qc_plots: bool = True) -> None:

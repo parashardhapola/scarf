@@ -560,11 +560,29 @@ def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
 class ZarrMerge:
 
     def __init__(self, zarr_path: str, assays: list, names: List[str], merge_assay_name: str,
-                 chunk_size=(1000, 1000), dtype: str = 'uint32', overwrite: bool = False):
-        # TODO: add docstring
+                 chunk_size=(1000, 1000), dtype: str = None, overwrite: bool = False,
+                 reset_cell_filter: bool = True):
+        """
+        Merge multiple Zarr files into a single Zarr file
+
+        Args:
+            zarr_path: Name of the new, merged Zarr file with path
+            assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA]
+            names: Names of the each assay objects in the `assays` parameter. They should be in the same order as in
+                   `assays` parameter.
+            merge_assay_name: Name of assay in the merged Zarr file. For example, for scRNA-Seq it could be simply,
+                              'RNA'
+            chunk_size: Tuple of cell and feature chunk size. (Default value: (1000, 1000))
+            dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
+                   assays have different dtypes then a float type is used.
+            overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False)
+            reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
+                               are set as True as in the 'I' column. To keep the filtering information set the value for
+                               this parameter to False. (Default value: True)
+        """
         self.assays = assays
         self.names = names
-        self.mergedCells = self._merge_cell_table()
+        self.mergedCells = self._merge_cell_table(reset_cell_filter)
         self.nCells = self.mergedCells.shape[0]
         self.featCollection = self._get_feat_ids(assays)
         self.mergedFeats = self._merge_order_feats()
@@ -572,22 +590,34 @@ class ZarrMerge:
         self.featOrder = self._ref_order_feat_idx()
         self.z = self._use_existing_zarr(zarr_path, merge_assay_name, overwrite)
         self._ini_cell_data()
+        if dtype is None:
+            if len(set([str(x.rawData.dtype) for x in self.assays])) == 1:
+                dtype = str(self.assays[0].rawData.dtype)
+            else:
+                dtype = 'float'
         self.assayGroup = create_zarr_count_assay(
             self.z['/'], merge_assay_name, chunk_size, self.nCells, list(self.mergedFeats.index),
             list(self.mergedFeats.names.values), dtype
         )
 
-    def _merge_cell_table(self):
+    def _merge_cell_table(self, reset):
         ret_val = []
         if len(self.assays) != len(set(self.names)):
             raise ValueError("ERROR: A unique name should be provided for each of the assay")
         for assay, name in zip(self.assays, self.names):
             a = pd.DataFrame({
-                'names': assay.cells.fetch_all('names'),
-                'ids': [f"{name}__{x}" for x in assay.cells.fetch_all('ids')]
+                'ids': [f"{name}__{x}" for x in assay.cells.fetch_all('ids')],
+                'names': assay.cells.fetch_all('names')
             })
+            for i in assay.cells.columns:
+                if i not in ['ids', 'I', 'names']:
+                    a[f"orig_{i}"] = assay.cells.fetch_all(i)
+            if reset:
+                a['I'] = np.ones(len(a['ids'])).astype(bool)
+            else:
+                a['I'] = assay.cells.fetch_all('I')
             ret_val.append(a)
-        return pd.concat(ret_val).reset_index().drop(columns='index')
+        return pd.concat(ret_val).reset_index(drop=True)
 
     @staticmethod
     def _get_feat_ids(assays):
@@ -642,9 +672,9 @@ class ZarrMerge:
     def _ini_cell_data(self):
         if 'cellData' not in self.z:
             g = self.z.create_group('cellData')
-            create_zarr_obj_array(g, 'ids', list(self.mergedCells['ids'].values))
-            create_zarr_obj_array(g, 'names', list(self.mergedCells['names']))
-            create_zarr_obj_array(g, 'I', [True for _ in range(self.mergedCells.shape[0])], 'bool')
+            for i in self.mergedCells:
+                vals = self.mergedCells[i].values
+                create_zarr_obj_array(g, i, vals, vals.dtype)
         else:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
