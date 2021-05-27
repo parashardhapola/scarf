@@ -1,19 +1,3 @@
-import zarr
-from typing import Any, Tuple, List, Union
-import numpy as np
-from tqdm import tqdm
-from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
-import os
-import pandas as pd
-from .utils import controlled_compute
-from .logging_utils import logger
-from scipy.sparse import csr_matrix
-
-__all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge',
-           'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
-
-
 """
 Methods and classes for writing data to disk.
 
@@ -33,11 +17,27 @@ Classes:
     LoomToZarr:
 """
 
+import zarr
+from typing import Any, Tuple, List, Union
+import numpy as np
+from tqdm import tqdm
+from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
+import os
+import pandas as pd
+from .utils import controlled_compute
+from .logging_utils import logger
+from scipy.sparse import csr_matrix
+
+__all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge',
+           'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
+
 
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
-    # TODO: add description in docstring
     """
+    Creates and returns a Zarr hierarchy/dataset.
+
     Returns:
         A Zarr Array.
     """
@@ -76,8 +76,23 @@ def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tupl
 
 
 class CrToZarr:
+    """
+    A class for converting data in the Cellranger format to a Zarr hierarchy.
+
+    Attributes:
+        cr: A CrReader object, containing the Cellranger data.
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        z: The Zarr hierarchy (array or group).
+    """
     def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
-        # TODO: add docstring
+        """
+        Args:
+            cr: A CrReader object, containing the Cellranger data.
+            zarr_fn: The file name for the Zarr hierarchy.
+            chunk_size: The requested size of chunks to load into memory and process.
+            dtype: the dtype of the data.
+        """
         self.cr = cr
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -94,7 +109,14 @@ class CrToZarr:
         create_zarr_obj_array(g, 'I', [True for _ in range(self.cr.nCells)], 'bool')
 
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
-        # TODO: add docstring
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         stores = [self.z["%s/counts" % x] for x in self.cr.assayFeats.columns]
         spidx = [0] + list(self.cr.assayFeats.T.nFeatures.cumsum().values)
         spidx = [(spidx[x - 1], spidx[x]) for x in range(1, len(spidx))]
@@ -112,8 +134,23 @@ class CrToZarr:
 
 
 class MtxToZarr:
+    """
+    A class for converting data in the Cellranger Matrix Market format to a Zarr hierarchy.
+
+    Attributes:
+        cr: A CrReader object, containing the Cellranger data.
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        z: The Zarr hierarchy (array or group).
+    """
     def __init__(self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = 'uint32'):
-        # TODO: add docstring
+        """
+        Args:
+            cr: A CrReader object, containing the Cellranger data.
+            zarr_fn: The file name for the Zarr hierarchy.
+            chunk_size: The requested size of chunks to load into memory and process.
+            dtype: the dtype of the data.
+        """
         self.cr = cr
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -143,7 +180,14 @@ class MtxToZarr:
         return ret_val
 
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
-        # TODO: add docstring
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         stores = {x: self.z["%s/counts" % x] for x in set(self.cr.assayFeats.columns)}
         assay_ranges = self._prep_assay_ranges()
         s, e, = 0, 0
@@ -170,10 +214,27 @@ class MtxToZarr:
 
 
 class H5adToZarr:
+    """
+    A class for converting data in the Cellranger Matrix Market format to a Zarr hierarchy.
+
+    Attributes:
+        h5ad: A h5ad object (h5 file with added AnnData structure).
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        assayName: The Zarr hierarchy (array or group).
+        z: The Zarr hierarchy (array or group).
+    """
     def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
+        """
+        Args:
+            h5ad: A H5adReader object, containing the Cellranger data.
+            zarr_fn: The file name for the Zarr hierarchy.
+            assay_name: the name of the assay (e. g. 'RNA')
+            chunk_size: The requested size of chunks to load into memory and process.
+            dtype: the dtype of the data.
+        """
         # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
-        # TODO: add docstring
         self.h5ad = h5ad
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -200,7 +261,14 @@ class H5adToZarr:
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
-        # TODO: add docstring
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.h5ad.nCells//batch_size + 1
@@ -214,9 +282,26 @@ class H5adToZarr:
 
 
 class NaboH5ToZarr:
+    """
+    A class for converting data in a h5 file generated by Nabo, to a Zarr hierarchy.
+
+    Attributes:
+        h5: A Nabo h5 object.
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        assayName: The Zarr hierarchy (array or group).
+        z: The Zarr hierarchy (array or group).
+    """
     def __init__(self, h5: NaboH5Reader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000), dtype: str = 'uint32'):
-        # TODO: add docstring
+        """
+        Args:
+            h5: A Nabo h5 object containing the data.
+            zarr_fn: The file name for the Zarr hierarchy.
+            assay_name: the name of the assay (e. g. 'RNA')
+            chunk_size: The requested size of chunks to load into memory and process.
+            dtype: the dtype of the data.
+        """
         self.h5 = h5
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -237,6 +322,14 @@ class NaboH5ToZarr:
         create_zarr_obj_array(g, 'I', [True for _ in range(self.h5.nCells)], 'bool')
 
     def dump(self, batch_size: int = 500) -> None:
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.h5.nCells // batch_size + 1
@@ -250,11 +343,21 @@ class NaboH5ToZarr:
 
 
 class LoomToZarr:
+    """
+    A class for converting data in a Loom file to a Zarr hierarchy.
+
+    Converts a Loom file read using scarf.LoomReader into Scarf's Zarr format.
+    
+    Attributes:
+        loom: A scarf.LoomReader object used to open Loom format file.
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        assayName: The Zarr hierarchy (array or group).
+        z: The Zarr hierarchy (array or group).
+    """
     def __init__(self, loom: LoomReader, zarr_fn: str, assay_name: str = None,
                  chunk_size=(1000, 1000)):
         """
-        Converts Loom file read using scarf.LoomReader into Scarf's Zarr format
-
         Args:
             loom: LoomReader object used to open Loom format file
             zarr_fn: Output Zarr filename with path
@@ -286,7 +389,14 @@ class LoomToZarr:
             create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
-        # TODO: add docstring
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.loom.nCells//batch_size + 1
@@ -300,9 +410,34 @@ class LoomToZarr:
 
 
 class SparseToZarr:
+    """
+    A class for converting data in a sparse matrix to a Zarr hierarchy.
+
+    Converts a Loom file read using scarf.LoomReader into Scarf's Zarr format.
+
+    Attributes:
+        csr_mat:
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to load into memory and process.
+        assayName: The Zarr hierarchy (array or group).
+        z: The Zarr hierarchy (array or group).
+    """
+
     def __init__(self, csr_mat: csr_matrix, zarr_fn: str, cell_ids: List[str], feature_ids: List[str],
                  assay_name: str = None, chunk_size=(1000, 1000), ):
-        # TODO: add docstring
+        """
+        Args:
+            csr_mat:
+            zarr_fn: Output Zarr filename with path
+            cell_ids: Cell IDs for the cells in the dataset.
+            feature_ids: Feature IDs for the features in the dataset.
+            assay_name: Name for the output assay. If not provided then automatically set to RNA.
+            chunk_size: The requested size of chunks to load into memory and process.
+
+        Raises:
+            ValueError: Raised if number of input cell or feature IDs does not match the matrix.
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+        """
         self.mat = csr_mat
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
@@ -329,7 +464,15 @@ class SparseToZarr:
         create_zarr_obj_array(g, 'I', [True for _ in range(self.nCells)], 'bool')
 
     def dump(self, batch_size: int = 1000) -> None:
-        # TODO: add docstring
+        # TODO: add informed description to docstring
+        """
+        Raises:
+            ValueError: Raised if there is any unexpected errors when writing to the Zarr hierarchy.
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+        """
         store = self.z["%s/counts" % self.assayName]
         s, e, = 0, 0
         n_chunks = self.nCells//batch_size + 1
@@ -349,7 +492,47 @@ class SparseToZarr:
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       cells_idx: np.ndarray, feat_idx: np.ndarray,
                       chunk_size: tuple):
-    # TODO: add docstring
+    # TODO: add informed description to docstring
+    # TODO: since *_idx args are not obvious, maybe add small usage example to docstring
+    """
+    Selects a subset of the data in an assay in the specified Zarr hierarchy.
+
+    For the arguments `cells_idx` and `feat_idx`, refer to the documentation for numpy.split and especially
+    its argument `indices_or_sections` (which corresponds to arguments *_idx here):
+
+    "If indices_or_sections is an integer, N, the array will be divided into N equal arrays along axis.
+    If such a split is not possible, an error is raised.
+    If indices_or_sections is a 1-D array of sorted integers, the entries indicate where along axis the array is split.
+    For example, [2, 3] would, for axis=0, result in
+
+            ary[:2]
+
+            ary[2:3]
+
+            ary[3:]
+
+    If an index exceeds the dimension of the array along axis, an empty sub-array is returned correspondingly."
+    - https://numpy.org/doc/stable/reference/generated/numpy.split.html
+
+    Combined with documentation for `numpy.array_split`:
+
+    "Please refer to the split documentation. The only difference between these functions is that array_split allows
+    indices_or_sections to be an integer that does not equally divide the axis.
+    For an array of length l that should be split into n sections, it returns l % n sub-arrays of size l//n + 1
+    and the rest of size l//n."
+    - https://numpy.org/doc/stable/reference/generated/numpy.array_split.html?highlight=array_split
+
+    Args:
+        zarr_fn: The file name for the Zarr hierarchy.
+        in_grp: Group in Zarr hierarchy to subset.
+        out_grp: Group name in Zarr hierarchy to write subsetted assay to.
+        cells_idx: A list of cell indices to (keep | drop ?).
+        feat_idx: A list of feature indices to (keep | drop ?).
+        chunk_size: The requested size of chunks to load into memory and process.
+
+    Returns:
+        None
+    """
     z = zarr.open(zarr_fn, 'r+')
     ig = z[in_grp]
     og = create_zarr_dataset(z, out_grp, chunk_size, 'uint32', (len(cells_idx), len(feat_idx)))

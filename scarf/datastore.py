@@ -1681,6 +1681,7 @@ class MappingDatastore(GraphDataStore):
                           if `run_coral` is True (Default value: True). Setting this to False is not recommended.
 
         Returns:
+            None
 
         """
         from .mapping_utils import align_features, coral

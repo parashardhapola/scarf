@@ -313,7 +313,6 @@ class Assay:
 
 
 class RNAassay(Assay):
-    # TODO: add docstring
     """
     This assay is designed for feature selection and normalization of scRNA-Seq data.
 
@@ -340,7 +339,6 @@ class RNAassay(Assay):
     def normed(self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None,
                renormalize_subset: bool = False, log_transform: bool = False, **kwargs):
         """
-
         Args:
             cell_idx:
             feat_idx:

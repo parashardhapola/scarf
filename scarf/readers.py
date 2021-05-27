@@ -177,7 +177,6 @@ class CrReader(ABC):
         return self._subset_by_assay(vals, assay)
 
     def feature_types(self) -> List[str]:
-        # TODO: add docstring
         """
         Returns a list of feature types in the dataset.
         """
@@ -686,7 +685,6 @@ class H5adReader:
 
 
 class NaboH5Reader:
-    # TODO: add docstring
     """
     A class to read in data in the form of a Nabo H5 file.
 
