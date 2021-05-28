@@ -1,3 +1,6 @@
+"""
+Contains the MetaData class, which is used for storing metadata about cells and features.
+"""
 from zarr import hierarchy as zarr_hierarchy
 from zarr import array as zarr_array
 import numpy as np
@@ -27,16 +30,21 @@ def _all_true(bools: np.ndarray) -> np.ndarray:
 
 class MetaData:
     """
-    MetaData class for cells and features
+    MetaData class for cells and features.
+
+    This class provides an interface to perform CRUD operations on metadata, saved in the Zarr hierarchy.
+    All the changes at the metadata are synchronized on disk.
+
+    Attributes:
+        locations: The locations for where the metadata is stored.
+        N: The size of the primary data.
+        index: A numpy array with the indices of the cells/features.
     """
 
     def __init__(self, zgrp: zarr_hierarchy):
         """
-        This class provides an interface to perform CRUD operations on metadata, saved in the Zarr hierarchy.
-         All the changes ot the metadata are synchronized on disk.
-
         Args:
-            zgrp: Zarr hierarchy object wherein metadata arrays are saved
+            zgrp: Zarr hierarchy object wherein metadata arrays are saved.
         """
         self.locations: Dict[str, zarr_hierarchy] = {'primary': zgrp}
         self.N = self._get_size(self.locations['primary'], strict_mode=True)
@@ -126,12 +134,10 @@ class MetaData:
 
     def get_dtype(self, column: str) -> type:
         """
+        Returns the dtype for the given column.
 
         Args:
-            column: Column name of the table
-
-        Returns:
-
+            column: Column name of the table.
         """
         return self._get_array(column).dtype
 
@@ -339,19 +345,19 @@ class MetaData:
     def insert(self, column_name: str, values: np.array, fill_value: Any = np.NaN,
                key: str = 'I', overwrite: bool = False, location: str = 'primary', force: bool = False) -> None:
         """
-        add
+        Insert a column into the table.
 
         Args:
-            column_name:
-            values:
-            fill_value:
-            key:
-            overwrite:
-            location:
-            force:
+            column_name (str): Name of column to modify.
+            values (np.array): Values the column should contain.
+            fill_value (Any = np.NaN): Value to fill unassigned slots with.
+            key (str = 'I'):
+            overwrite (bool = False): Should function overwrite column if it already exists?
+            location (str = 'primary'):
+            force (bool = False): Enforce change to column, even if column is a protected column name ('I' or 'ids').
 
         Returns:
-
+            None
         """
         col = self._col_renamer(location, column_name)
         if col in ['I', 'ids'] and force is False:
@@ -368,14 +374,14 @@ class MetaData:
 
     def update_key(self, values: np.array, key) -> None:
         """
-
+        Modify a column in the metadata table, specified with `key`.
 
         Args:
-            values:
-            key:
+            values: The values to update the column with.
+            key: Which column in the metadata table to update.
 
         Returns:
-
+            None
         """
         v = self._fill_to_index(values, False, key)
         v = _all_true(np.array([v, self.fetch_all(key)]))
@@ -456,13 +462,7 @@ class MetaData:
 
     def to_pandas_dataframe(self, columns: List[str], key: str = None) -> pd.DataFrame:
         """
-
-        Args:
-            columns:
-            key:
-
-        Returns:
-
+        Returns the requested columns as a Pandas dataframe, sorted on key.
         """
         valid_cols = self.columns
         df = pd.DataFrame({x: self.fetch_all(x) for x in columns if x in valid_cols})

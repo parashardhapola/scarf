@@ -1,7 +1,7 @@
 """
 Classes:
-    Assay:
-    RNAassay:
+    Assay: A generic Assay class that contains methods to calculate feature level statistics.
+    RNAassay: This assay is designed for feature selection and normalization of scRNA-Seq data.
     ATACassay:
     ADTassay:
 """
@@ -45,7 +45,6 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 
 
 class Assay:
-    # TODO: finish docstring
     """
     A generic Assay class that contains methods to calculate feature level statistics.
 
@@ -59,7 +58,7 @@ class Assay:
         rawData:
         feats: a dataframe with info about each feature in the dataset
         attrs:
-        normMethod:
+        normMethod: Which normalization method to use.
         sf: scaling factor for doing library-size normalization
 
     Methods:
@@ -72,11 +71,10 @@ class Assay:
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData,
                  nthreads: int, min_cells_per_feature: int = 10):
         """
-
         Args:
-            z:
-            name:
-            cell_data:
+            z (zarr.hierarchy): Zarr hierarchy to use.
+            name (str): Name for assay.
+            cell_data: Metadata for the cells.
             nthreads:
             min_cells_per_feature:
         """

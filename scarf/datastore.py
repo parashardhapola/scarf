@@ -50,10 +50,10 @@ class BaseDataStore:
     statistics like nCounts and nFeatures. Superclass of the other DataStores.
 
     Attributes:
-        cells: dataframe with cells and info about each cell (e. g. RNA_nCounts ids)
-        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
-        nthreads: number of threads to use for this datastore instance
-        z: the Zarr file (directory) used for for this datastore instance
+        cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
+        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        nthreads: number of threads to use for this datastore instance.
+        z: the Zarr file (directory) used for for this datastore instance.
 
     Methods:
         get_cell_vals: fetches data from the Zarr file
@@ -1352,7 +1352,7 @@ class GraphDataStore(BaseDataStore):
             label: Base label for cluster identity in the cell metadata column (Default value: 'cluster')
 
         Returns:
-
+            None
         """
         import sknetwork as skn
 
@@ -1755,9 +1755,11 @@ class MappingDatastore(GraphDataStore):
                           multiplier: float = 1000, weighted: bool = True, fixed_weight: float = 0.1) -> \
             Generator[Tuple[str, np.ndarray], None, None]:
         """
+        Yields the mapping scores that were a result of a mapping.
+
         Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
-        The more often a reference cell is found in the nearest neighbour list of the target cells, the higher will be
-        the mapping score for that cell.
+        The more often a reference cell is found in the nearest neighbour list of the target cells, the higher
+        the mapping score will be for that cell.
 
         Args:
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
@@ -1820,7 +1822,7 @@ class MappingDatastore(GraphDataStore):
                            cell_key: str = 'I', reference_class_group: str = None, threshold_fraction: int = 0.5,
                            target_subset: List[int] = None, na_val='NA') -> pd.Series:
         """
-        Perform classification of target cells using a reference group
+        Perform classification of target cells using a reference group.
 
         Args:
             target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
@@ -1829,10 +1831,11 @@ class MappingDatastore(GraphDataStore):
             reference_class_group: Group/cluster identity of the reference cells. These are the target labels for the
                                    classifier. The value here should be a column from cell metadata table. For
                                    example, to use default clustering identity one could use `RNA_cluster`
-            threshold_fraction: This value (Default value: 0.5)
+            threshold_fraction: The threshold for deciding if a cell belongs to a group or not.
+                                Constrained between 0 and 1. (Default value: 0.5)
             target_subset: Choose only a subset of target cells to be classified. The value should be a list of
-                           indices of the target cells (Default: None)
-            na_val: Value to be used if a cell is not classified to any of the `reference_class_group`
+                           indices of the target cells. (Default: None)
+            na_val: Value to be used if a cell is not classified to any of the `reference_class_group`.
                     (Default value: 'NA')
 
         Returns: A pandas Series containing predicted class for each cell in the projected sample (`target_name`).
@@ -1956,8 +1959,9 @@ class MappingDatastore(GraphDataStore):
                          initial_alpha: float = 1.0, negative_sample_rate: float = 5, random_seed: int = 4444,
                          ini_embed_with: str = 'kmeans', label: str = 'unified_UMAP') -> None:
         """
-        Calculates the UMAP embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
-        the same way as the graph as in ``run_umap``
+        Calculates the UMAP embedding for graph obtained using ``load_unified_graph``.
+
+        The loaded graph is processed the same way as the graph as in ``run_umap``.
 
         Args:
             target_names: Names of target datasets to be included in the unified UMAP.
@@ -1999,7 +2003,7 @@ class MappingDatastore(GraphDataStore):
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
 
         Returns:
-
+            None
         """
         from .umap import fit_transform
 
@@ -2100,6 +2104,8 @@ class MappingDatastore(GraphDataStore):
                             ax=None, fig=None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None,
                             shuffle_zorder: bool = True):
         """
+        Plots the reference and target cells in their unified space.
+
         This function helps plotting the reference and target cells the coordinates for which were obtained from
         either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
         but rather in the projections slot of the Zarr hierarchy, this function is needed to correctly fetch the values
@@ -2156,7 +2162,7 @@ class MappingDatastore(GraphDataStore):
             shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
 
         Returns:
-
+            None
         """
 
         from .plots import plot_scatter
@@ -2330,10 +2336,12 @@ class DataStore(MappingDatastore):
     def auto_filter_cells(self, *, attrs: Iterable[str] = None, min_p: float = 0.01, max_p: float = 0.99,
                           show_qc_plots: bool = True) -> None:
         """
-        Filter cells based on columns of the cell metadata table. This is wrapper function for `filer_cells` and
-        determines the threshold values to be used for each column. For each cell metadata column, the function models a
-        normal distribution using the median value and std. dev. of the column and then determines the point estimates
-        of values at `min_p` and `max_p` fraction of densities.
+        Automatically filter cells based on columns of the cell metadata table.
+
+        This is a wrapper function for `filer_cells` and determines the threshold values to be used for each column.
+        For each cell metadata column, the function models a normal distribution using the median value and standard
+        deviation of the column and then determines the point estimates of values at `min_p` and `max_p`
+        fraction of densities.
 
         Args:
             attrs: column names to be used for filtering
@@ -2343,7 +2351,7 @@ class DataStore(MappingDatastore):
                        not have an effect if `auto_filter` is False
 
         Returns:
-
+            None
         """
         from scipy.stats import norm
 
@@ -2408,7 +2416,7 @@ class DataStore(MappingDatastore):
             plot_kwargs: These named parameters are passed to plotting.plot_mean_var
 
         Returns:
-
+            None
         """
 
         if cell_key is None:
@@ -2427,9 +2435,10 @@ class DataStore(MappingDatastore):
     def mark_prevalent_peaks(self, *, from_assay: str = None, cell_key: str = None, top_n: int = 10000,
                              prevalence_key_name: str = 'prevalent_peaks') -> None:
         """
-        Feature selection method for ATACassay type assays. This method first calculates prevalence of each peak by
-        computing sum of TF-IDF normalized values for each peak and then marks `top_n` peaks with highest prevalence
-        as prevalent peaks.
+        Feature selection method for ATACassay type assays.
+
+        This method first calculates prevalence of each peak by computing sum of TF-IDF normalized values for each peak
+        and then marks `top_n` peaks with highest prevalence as prevalent peaks.
 
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
@@ -2442,7 +2451,7 @@ class DataStore(MappingDatastore):
                                 'cell_key' parameter is prepended to this value. (Default value: 'prevalent_peaks')
 
         Returns:
-
+            None
         """
         if cell_key is None:
             cell_key = 'I'
@@ -2455,9 +2464,10 @@ class DataStore(MappingDatastore):
     def run_marker_search(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                           threshold: float = 0.25, gene_batch_size: int = 50) -> None:
         """
-        Identifies group specific features for a given assay. Please check out the ``find_markers_by_rank`` function
-        for further details of how marker features for groups are identified. The results are saved into the Zarr
-        hierarchy under `markers` group.
+        Identifies group specific features for a given assay.
+
+        Please check out the ``find_markers_by_rank`` function for further details of how marker features for groups
+        are identified. The results are saved into the Zarr hierarchy under `markers` group.
 
         Args:
             from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
@@ -2470,8 +2480,9 @@ class DataStore(MappingDatastore):
                        (Default value: 0.25)
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
-        Returns:
 
+        Returns:
+            None
         """
         from .markers import find_markers_by_rank
 
@@ -2499,8 +2510,9 @@ class DataStore(MappingDatastore):
     def get_markers(self, *, from_assay: str = None, cell_key: str = None, group_key: str = None,
                     group_id: Union[str, int] = None) -> pd.DataFrame:
         """
-        Returns a table of markers features obtained through `run_maker_search` for a given group. The table
-        contains names of marker features and feature ids are used as table index.
+        Returns a table of markers features obtained through `run_maker_search` for a given group.
+
+        The table contains names of marker features and feature ids are used as table index.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2514,7 +2526,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             Pandas dataframe with marker feature names and scores
-
         """
 
         if cell_key is None:
@@ -3142,6 +3153,7 @@ class DataStore(MappingDatastore):
                             savename: str = None, save_dpi: int = 300, **heatmap_kwargs):
         """
         Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
+
         Z-scores are calculated for each marker gene before plotting them. The groups are subjected to hierarchical
         clustering to bring groups with similar expression pattern in proximity.
 
@@ -3165,7 +3177,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
         from .plots import plot_heatmap
 
