@@ -1,11 +1,13 @@
 """
 A collection of classes for reading in different data formats.
 
+Containing classes:
+
 - CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
 - CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
 - CrReader: A class to read in CellRanger (Cr) data.
 - H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
-- MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file and its accompanying files.
+- MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file + accompanying files.
 - NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
 - LoomReader: A class to read in data in the form of a Loom file.
 """
@@ -25,6 +27,12 @@ __all__ = ['CrH5Reader', 'CrDirReader', 'CrReader', 'H5adReader', 'MtxDirReader'
 
 
 def get_file_handle(fn: str) -> IO:
+    """
+    Returns a file object for the given file name.
+
+    Args:
+        fn: The path to the file (file name).
+    """
     import gzip
 
     try:
@@ -33,10 +41,16 @@ def get_file_handle(fn: str) -> IO:
         else:
             return open(fn, 'r')
     except (OSError, IOError, FileNotFoundError):
-        raise FileNotFoundError("ERROR: FILE NOT FOUND: %s" % fn)
+        raise FileNotFoundError("ERROR: FILE NOT FOUND: %s" % f)
 
 
 def read_file(fn: str):
+    """
+    Yields the lines from the file the given file name points to.
+
+    Args:
+        fn: The path to the file (file name).
+    """
     fh = get_file_handle(fn)
     for line in fh:
         yield line.rstrip()
@@ -54,6 +68,7 @@ class CrReader(ABC):
         assayFeats:
     """
     def __init__(self, grp_names, file_type):
+        # TODO: docstring, description for grp_names
         """
         Args:
             grp_names (Dict):
@@ -163,6 +178,9 @@ class CrReader(ABC):
 
     def feature_types(self) -> List[str]:
         # TODO: add docstring
+        """
+        Returns a list of feature types in the dataset.
+        """
         if self.grpNames['feature_types'] is not None:
             ret_val = self._read_dataset('feature_types')
             if ret_val is not None:
@@ -178,6 +196,7 @@ class CrReader(ABC):
 
 
 class CrH5Reader(CrReader):
+    # TODO: copy attributes from base class to docstring here (when done)
     """
     A class to read in CellRanger (Cr) data, in the form of an H5 file.
 
@@ -297,7 +316,7 @@ class CrDirReader(CrReader):
 
     # noinspection DuplicatedCode
     def to_sparse(self, a):
-        # TODO: specify type of a
+        # TODO: specify type of a plus description
         """
         Returns the input data as a sparse (COO) matrix.
 
@@ -330,6 +349,7 @@ class CrDirReader(CrReader):
 
 
 class MtxDirReader(CrReader):
+    # TODO: copy attributes from base class to docstring here (when done)
     """
     A class to read a directory with a Matrix Market file and its accompanying files.
 
@@ -392,7 +412,7 @@ class MtxDirReader(CrReader):
 
     # noinspection DuplicatedCode
     def to_sparse(self, a):
-        # TODO: specify type of a
+        # TODO: specify type of a plus description
         """
         Returns the input data as a sparse (COO) matrix.
 
@@ -440,6 +460,7 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
+    # TODO: docstring, description for groupCodes
     """
     A class to read in data from a H5ad file (h5 file with AnnData information).
 
@@ -540,6 +561,9 @@ class H5adReader:
                            f"Aborting because unexpected H5ad format.")
 
     def cell_ids(self) -> np.ndarray:
+        """
+        Returns a list of cell IDs.
+        """
         if self._check_exists('obs', self.cellIdsKey):
             if self.groupCodes['obs'] == 1:
                 return self.h5['obs'][self.cellIdsKey]
@@ -550,6 +574,9 @@ class H5adReader:
 
     # noinspection DuplicatedCode
     def feat_ids(self) -> np.ndarray:
+        """
+        Returns a list of feature IDs.
+        """
         if self._check_exists('var', self.featIdsKey):
             if self.groupCodes['var'] == 1:
                 return self.h5['var'][self.featIdsKey]
@@ -560,6 +587,9 @@ class H5adReader:
 
     # noinspection DuplicatedCode
     def feat_names(self) -> np.ndarray:
+        """
+        Returns a list of feature names.
+        """
         if self._check_exists('var', self.featNamesKey):
             if self.groupCodes['var'] == 1:
                 values = self.h5['var'][self.featNamesKey]
@@ -603,15 +633,22 @@ class H5adReader:
                     yield i, self._replace_category_values(self.h5[group][i][:], i, group)
 
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        """
+        Creates a Generator that yields the cell columns.
+        """
         for i, j in self._get_col_data('obs', [self.cellIdsKey]):
             yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        """
+        Creates a Generator that yields the feature columns.
+        """
         for i, j in self._get_col_data('var', [self.featIdsKey, self.featNamesKey]):
             yield i, j
 
     # noinspection DuplicatedCode
     def consume_dataset(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
+        # TODO: add docstring
         dset = self.h5[self.dataKey]
         s = 0
         for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
@@ -621,6 +658,7 @@ class H5adReader:
             s = e
 
     def consume_group(self, batch_size: int) -> Generator[sparse.COO, None, None]:
+        # TODO: add docstring
         grp = self.h5[self.dataKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
@@ -638,6 +676,7 @@ class H5adReader:
             s = e
 
     def consume(self, batch_size: int = 1000):
+        # TODO: add docstring
         if self.groupCodes[self.dataKey] == 1:
             return self.consume_dataset(batch_size)
         elif self.groupCodes[self.dataKey] == 2:
@@ -648,14 +687,19 @@ class H5adReader:
 
 class NaboH5Reader:
     # TODO: add docstring
+    """
+    A class to read in data in the form of a Nabo H5 file.
+
+    Attributes:
+        h5: A File object from the h5py package.
+        nCells: Number of cells in dataset.
+        nFeatures: Number of features in dataset.
+    """
     def __init__(self, h5_fn: str):
         """
-
         Args:
-            h5_fn: Path to H5 file
-
+            h5_fn: Path to H5 file.
         """
-
         self.h5 = h5py.File(h5_fn, mode='r')
         self._check_integrity()
         self.nCells = self.h5['names']['cells'].shape[0]
@@ -668,15 +712,25 @@ class NaboH5Reader:
         return True
 
     def cell_ids(self) -> List[str]:
+        """
+        Returns a list of cell IDs.
+        """
         return [x.decode('UTF-8') for x in self.h5['names']['cells'][:]]
 
     def feat_ids(self) -> np.ndarray:
+        """
+        Returns a list of feature IDs.
+        """
         return np.array([f'feature_{x}' for x in range(self.nFeatures)])
 
     def feat_names(self) -> List[str]:
+        """
+        Returns a list of feature names.
+        """
         return [x.decode('UTF-8').rsplit('_', 1)[0] for x in self.h5['names']['genes'][:]]
 
     def consume(self, batch_size: int = 100) -> Generator[np.ndarray, None, None]:
+        # TODO: add docstring
         batch = []
         for i in self.h5['cell_data']:
             a = np.zeros(self.nFeatures).astype(int)
@@ -692,15 +746,28 @@ class NaboH5Reader:
 
 
 class LoomReader:
+    """
+    A class to read in data in the form of a Loom file.
+
+    Attributes:
+        h5: A File object from the h5py package.
+        matrixKey: Child node under HDF5 file root wherein the chunked matrix is stored.
+        cellAttrsKey: Child node under the HDF5 file wherein the cell attributes are stored.
+        featureAttrsKey: Child node under the HDF5 file wherein the feature/gene attributes are stored.
+        cellNamesKey: Child node under the `cell_attrs_key` wherein the cell names are stored.
+        featureNamesKey: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
+        featureIdsKey: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
+        matrixDtype: Numpy dtype of the matrix data.
+        nFeatures: Number of features in dataset.
+        nCells: Number of cells in dataset.
+    """
     def __init__(self, loom_fn: str, matrix_key: str = 'matrix',
                  cell_attrs_key='col_attrs', cell_names_key: str = 'obs_names',
                  feature_attrs_key: str = 'row_attrs', feature_names_key: str = 'var_names',
                  feature_ids_key: str = None, dtype: str = 'int64') -> None:
         """
-        This class enables reading of the Loom files.
-
         Args:
-            loom_fn: Path to loom format file
+            loom_fn: Path to loom format file.
             matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
                         This matrix is expected to be of form (nFeatures x nCells)
             cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
@@ -716,7 +783,6 @@ class LoomReader:
             dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
                    method. (Default value: int64)
         """
-
         self.h5 = h5py.File(loom_fn, mode='r')
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
@@ -736,6 +802,9 @@ class LoomReader:
         return True
 
     def cell_names(self) -> List[str]:
+        """
+        Returns a list of names of the cells in the dataset.
+        """
         if self.cellAttrsKey not in self.h5:
             pass
         elif self.cellNamesKey not in self.h5[self.cellAttrsKey]:
@@ -745,9 +814,15 @@ class LoomReader:
         return [f"cell_{x}" for x in range(self.nCells)]
 
     def cell_ids(self) -> List[str]:
+        """
+        Returns a list of cell IDs.
+        """
         return self.cell_names()
 
     def get_cell_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        """
+        Returns a Generator that yields the cells' attributes.
+        """
         if self.cellAttrsKey in self.h5:
             for i in tqdm(self.h5[self.cellAttrsKey].keys(), desc=f"Reading cell attributes"):
                 if i == self.cellNamesKey:
@@ -755,6 +830,9 @@ class LoomReader:
                 yield i, self.h5[self.cellAttrsKey][i][:]
 
     def feature_names(self) -> List[str]:
+        """
+        Returns a list of feature names.
+        """
         if self.featureAttrsKey not in self.h5:
             pass
         elif self.featureNamesKey not in self.h5[self.featureAttrsKey]:
@@ -764,6 +842,9 @@ class LoomReader:
         return [f"feature_{x}" for x in range(self.nFeatures)]
 
     def feature_ids(self) -> List[str]:
+        """
+        Returns a list of feature IDs.
+        """
         if self.featureAttrsKey not in self.h5:
             pass
         elif self.featureIdsKey is None:
@@ -775,6 +856,9 @@ class LoomReader:
         return [f"feature_{x}" for x in range(self.nFeatures)]
 
     def get_feature_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
+        """
+        Returns a Generator that yields the features' attributes.
+        """
         if self.featureAttrsKey in self.h5:
             for i in tqdm(self.h5[self.featureAttrsKey].keys(), desc=f"Reading feature attributes"):
                 if i in [self.featureIdsKey, self.featureNamesKey]:
@@ -782,6 +866,7 @@ class LoomReader:
                 yield i, self.h5[self.featureAttrsKey][i][:]
 
     def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
+        # TODO: add docstring
         last_n = 0
         for i in range(batch_size, self.nCells, batch_size):
             yield self.h5[self.matrixKey][:, last_n:i].astype(self.matrixDtype).T
