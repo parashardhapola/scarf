@@ -2,11 +2,11 @@
 Methods and classes for writing data to disk.
 
 Methods:
-    create_zarr_dataset:
-    create_zarr_obj_array:
-    create_zarr_count_assay:
-    subset_assay_zarr:
-    dask_to_zarr:
+    create_zarr_dataset: Creates and returns a Zarr hierarchy/dataset.
+    create_zarr_obj_array: Creates and returns a Zarr object array.
+    create_zarr_count_assay: Creates and returns a Zarr array with name 'counts'.
+    subset_assay_zarr: Selects a subset of the data in an assay in the specified Zarr hierarchy.
+    dask_to_zarr: Creates a Zarr hierarchy from a Dask array.
 
 Classes:
     ZarrMerge:
@@ -36,7 +36,15 @@ __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_as
 def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
     """
-    Creates and returns a Zarr hierarchy/dataset.
+    Creates and returns a Zarr array.
+
+    Args:
+        g (zarr.hierarchy):
+        name (str):
+        chunks (tuple):
+        dtype (Any):
+        shape (Tuple):
+        overwrite (bool):
 
     Returns:
         A Zarr Array.
@@ -50,7 +58,22 @@ def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
 
 def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
                           dtype: Union[str, Any] = None, overwrite: bool = True) -> zarr.hierarchy:
-    # TODO: add docstring
+    """
+    Creates and returns a Zarr object array.
+
+    A Zarr object array can contain any type of object.
+    https://zarr.readthedocs.io/en/stable/tutorial.html#object-arrays
+
+    Args:
+        g (zarr.hierarchy):
+        name (str):
+        data ():
+        dtype (Union[str, Any]):
+        overwrite (bool):
+
+    Returns:
+        A Zarr object Array.
+    """
     data = np.array(data)
     if dtype is None or dtype == object:
         dtype = 'U' + str(max([len(str(x)) for x in data]))
@@ -63,7 +86,21 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
 def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
                             feat_ids: Union[np.ndarray, List[str]], feat_names: Union[np.ndarray, List[str]],
                             dtype: str = 'uint32') -> zarr.hierarchy:
-    # TODO: add docstring
+    """
+    Creates and returns a Zarr array with name 'counts'.
+
+    Args:
+        z (zarr.hierarchy):
+        assay_name (str):
+        chunk_size (Tuple[int, int]):
+        n_cells (int):
+        feat_ids (Union[np.ndarray, List[str]]):
+        feat_names (Union[np.ndarray, List[str]]):
+        dtype (str = 'uint32'):
+
+    Returns:
+        A Zarr array.
+    """
     g = z.create_group(assay_name, overwrite=True)
     g.attrs['is_assay'] = True
     g.attrs['misc'] = {}
@@ -494,6 +531,7 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       chunk_size: tuple):
     # TODO: add informed description to docstring
     # TODO: since *_idx args are not obvious, maybe add small usage example to docstring
+    # This docstring is really messy right now. Maybe we need to talk about this one. /RO
     """
     Selects a subset of the data in an assay in the specified Zarr hierarchy.
 
@@ -545,7 +583,18 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
-    # TODO: add docstring
+    # TODO: docstring, correct that param df is a dask array?
+    """
+    Creates a Zarr hierarchy from a Dask array.
+
+    Args:
+        df (): Dask array.
+        z (): Zarr hierarchy.
+        loc (): Location to write data/Zarr hierarchy to.
+        chunk_size (): Size of chunks to load into memory and process.
+        nthreads (int): Number of threads to use.
+        msg (str): Message to use with progress bar (Default: f"Writing data to {loc}").
+    """
     if msg is None:
         msg = f"Writing data to {loc}"
     og = create_zarr_dataset(z, loc, chunk_size, 'float64', df.shape)
@@ -558,24 +607,36 @@ def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
 
 
 class ZarrMerge:
+    """
+    Merge multiple Zarr files into a single Zarr file.
 
+    Attributes:
+        assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
+        names: Names of the each assay objects in the `assays` parameter.
+        mergedCells:
+        nCells: Number of cells in dataset.
+        featCollection:
+        mergedFeats:
+        nFeats: Number of features in the dataset.
+        featOrder:
+        z: The merged Zarr file.
+        assayGroup:
+    """
     def __init__(self, zarr_path: str, assays: list, names: List[str], merge_assay_name: str,
                  chunk_size=(1000, 1000), dtype: str = None, overwrite: bool = False,
                  reset_cell_filter: bool = True):
         """
-        Merge multiple Zarr files into a single Zarr file
-
         Args:
-            zarr_path: Name of the new, merged Zarr file with path
-            assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA]
+            zarr_path: Name of the new, merged Zarr file with path.
+            assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
             names: Names of the each assay objects in the `assays` parameter. They should be in the same order as in
                    `assays` parameter.
             merge_assay_name: Name of assay in the merged Zarr file. For example, for scRNA-Seq it could be simply,
-                              'RNA'
-            chunk_size: Tuple of cell and feature chunk size. (Default value: (1000, 1000))
+                              'RNA'.
+            chunk_size: Tuple of cell and feature chunk size. (Default value: (1000, 1000)).
             dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
                    assays have different dtypes then a float type is used.
-            overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False)
+            overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False).
             reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
                                are set as True as in the 'I' column. To keep the filtering information set the value for
                                this parameter to False. (Default value: True)
@@ -693,13 +754,14 @@ class ZarrMerge:
 
 def to_h5ad(assay, h5ad_filename: str) -> None:
     """
+    Save an assay as an h5ad file.
 
     Args:
-        assay:
-        h5ad_filename:
+        assay: Assay to save.
+        h5ad_filename: Name for the h5ad file to be created.
 
     Returns:
-
+        None
     """
     import h5py
 
@@ -761,6 +823,7 @@ def to_h5ad(assay, h5ad_filename: str) -> None:
 
 def to_mtx(assay, mtx_directory: str, compress: bool = False):
     """
+    Save an assay as a Matrix Market directory.
 
     Args:
         assay: Scarf assay. For example: `ds.RNA`
@@ -768,7 +831,7 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
         compress: If True, then the files are compressed and saved with .gz extension. (Default value: False).
 
     Returns:
-
+        None
     """
     from scipy.sparse import coo_matrix
     import gzip
