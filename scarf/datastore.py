@@ -50,7 +50,7 @@ class BaseDataStore:
     statistics like nCounts and nFeatures. Superclass of the other DataStores.
 
     Attributes:
-        cells: list of cell barcodes
+        cells: dataframe with cells and info about each cell (e. g. RNA_nCounts ids)
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
         nthreads: number of threads to use for this datastore instance
         z: the Zarr file (directory) used for for this datastore instance
