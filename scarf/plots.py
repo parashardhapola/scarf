@@ -315,7 +315,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                      legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     if in_ax is None:
         if savename:
-            plt.savefig(savename, dpi=dpi)
+            plt.savefig(savename, dpi=dpi, bbox_inches='tight')
         plt.show()
     else:
         return ax

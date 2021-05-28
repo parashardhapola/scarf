@@ -5,8 +5,8 @@ jupyter:
     text_representation:
       extension: .md
       format_name: markdown
-      format_version: '1.2'
-      jupytext_version: 1.6.0
+      format_version: '1.3'
+      jupytext_version: 1.11.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -51,7 +51,7 @@ ds.auto_filter_cells()
 ---
 ### 3) Feature selection
 
-For scATAC-Seq data, the features are ranked by their TF-DF normalized values, summed across all cells. The top n features are marked as `prevalent_peaks` and are used for downstream step.
+For scATAC-Seq data, the features are ranked by their TF-IDF normalized values, summed across all cells. The top n features are marked as `prevalent_peaks` and are used for downstream steps.
 
 ```python
 ds.mark_prevalent_peaks(top_n=20000)
@@ -71,7 +71,7 @@ ds.make_graph(feat_key='prevalent_peaks', k=11, dims=21, n_centroids=1000)
 ### 5) UMAP reduction and clustering
 
 
-Non-linear dimension reduction using UMAP and tSNE are performed in the same way as for scRNA-Seq data. SImilarly the clustering step is also performed in the same way as fr scRNA-Seq data.
+Non-linear dimension reduction using UMAP and tSNE are performed in the same way as for scRNA-Seq data. Similarly the clustering step is also performed in the same way as for scRNA-Seq data.
 <!-- #endregion -->
 
 ```python
