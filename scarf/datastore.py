@@ -846,7 +846,7 @@ class GraphDataStore(BaseDataStore):
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
                    update_keys: bool = True, return_ann_object: bool = False, custom_loadings: np.array = None,
-                   feat_scaling: bool = True):
+                   feat_scaling: bool = True, show_elbow_plot: bool = False):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
 
@@ -944,6 +944,8 @@ class GraphDataStore(BaseDataStore):
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
+            show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
+                            existing PCA loadings or custom loadings. (Default value: False)
 
         Returns:
             Either None or `AnnStream` object
@@ -1093,6 +1095,15 @@ class GraphDataStore(BaseDataStore):
         self.z[knn_loc].attrs['latest_graph'] = graph_loc
         if return_ann_object:
             return ann_obj
+        if show_elbow_plot:
+            from .plots import plot_elbow
+
+            try:
+                var_exp = 100 * ann_obj._pca.explained_variance_ratio_
+            except AttributeError:
+                logger.warning("PCA was not fitted so not showing an Elbow plot")
+            else:
+                plot_elbow(var_exp)
         return None
 
     def load_graph(self, *, from_assay: str, cell_key: str, feat_key: str,
