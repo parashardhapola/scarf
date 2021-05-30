@@ -1012,6 +1012,7 @@ class GraphDataStore(BaseDataStore):
                 if data.shape[1] != loadings.shape[0]:
                     logger.warning("Consistency breached in loading pre-cached loadings. Will perform fresh reduction.")
                     loadings = None
+
                     del self.z[reduction_loc]
         else:
             if reduction_method in ['pca', 'manual']:
@@ -1032,7 +1033,8 @@ class GraphDataStore(BaseDataStore):
                 loadings = custom_loadings
                 logger.info(f"Using custom loadings with {dims} dims. Will overwrite any "
                             f"previously used custom loadings")
-                del self.z[reduction_loc]
+                if reduction_loc in self.z:
+                    del self.z[reduction_loc]
 
         if ann_loc in self.z:
             import hnswlib

@@ -96,7 +96,7 @@ class AnnStream:
                     self.reducer = lambda x: x
                 else:
                     self.reducer = lambda x: x.dot(self.loadings)
-            elif self.method == 'manual':
+            elif self.method == 'custom':
                 if self.loadings is None or len(self.loadings) == 0:
                     logger.warning("No loadings provided for manual dimension reduction")
                 else:
