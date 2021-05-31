@@ -496,10 +496,10 @@ class GraphDataStore(BaseDataStore):
 
         """
         reduction_method = reduction_method.lower()
-        if reduction_method not in ['pca', 'lsi', 'auto']:
+        if reduction_method not in ['pca', 'lsi', 'auto', 'custom']:
             raise ValueError("ERROR: Please choose either 'pca' or 'lsi' as reduction method")
-        assay_type = str(assay.__class__).split('.')[-1][:-2]
         if reduction_method == 'auto':
+            assay_type = str(assay.__class__).split('.')[-1][:-2]
             if assay_type == 'ATACassay':
                 logger.info("Using LSI for dimension reduction")
                 reduction_method = 'lsi'
@@ -845,7 +845,8 @@ class GraphDataStore(BaseDataStore):
                    ann_parallel: bool = False, rand_state: int = None, n_centroids: int = None, batch_size: int = None,
                    log_transform: bool = None, renormalize_subset: bool = None,
                    local_connectivity: float = None, bandwidth: float = None,
-                   update_keys: bool = True, return_ann_object: bool = False, feat_scaling: bool = True):
+                   update_keys: bool = True, return_ann_object: bool = False, custom_loadings: np.array = None,
+                   feat_scaling: bool = True, show_elbow_plot: bool = False):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
 
@@ -936,10 +937,15 @@ class GraphDataStore(BaseDataStore):
             return_ann_object: If True then returns the ANNStream object. This allows one to directly interact with the
                                PCA transformer and HNSWlib index. Check out ANNStream documentation to know more.
                                (Default: False)
+            custom_loadings: Custom loadings/transformer for linear dimension reduction. If provided, should have a form
+                             (d x p) where d is same the number of active features in feat_key and p is the number of
+                            reduced dimensions. `dims` parameter is ignored when this is provided. (Default value: None)
             feat_scaling: If True (default) then the feature will be z-scaled otherwise not. It is highly recommended to
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
+            show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
+                            existing PCA loadings or custom loadings. (Default value: False)
 
         Returns:
             Either None or `AnnStream` object
@@ -966,6 +972,12 @@ class GraphDataStore(BaseDataStore):
                              f"metadata of assay {from_assay} which you can choose from: {bool_cols}\n The values in "
                              f"brackets indicate the cell_key for which the feat_key is available. Choosing 'I' "
                              f"as `feat_key` means that you will use all the genes for graph creation.")
+        if custom_loadings is not None:
+            reduction_method = 'custom'
+            dims = custom_loadings.shape[1]
+            logger.info(f"`dims` parameter and its default value ignored as using custom loadings "
+                        f"with {dims} dims")
+
         (log_transform, renormalize_subset, reduction_method, dims, pca_cell_key, ann_metric, ann_efc, ann_ef, ann_m,
          rand_state, k, n_centroids, local_connectivity, bandwidth) = self._set_graph_params(
             from_assay, cell_key, feat_key, log_transform, renormalize_subset, reduction_method, dims, pca_cell_key,
@@ -981,22 +993,49 @@ class GraphDataStore(BaseDataStore):
 
         data = assay.save_normalized_data(cell_key, feat_key, batch_size, normed_loc.split('/')[-1],
                                           log_transform, renormalize_subset, update_keys)
+        if custom_loadings is not None and data.shape[1] != custom_loadings.shape[0]:
+            raise ValueError(f"Provided custom loadings has {custom_loadings.shape[0]} features while the data "
+                             f"has {data.shape[1]} features.")
         loadings = None
         fit_kmeans = True
         mu, sigma = np.ndarray([]), np.ndarray([])
         use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
         if reduction_loc in self.z:
-            loadings = self.z[reduction_loc]['reduction'][:]
-            if reduction_method == 'pca':
+            # TODO: In future move 'mu' and 'sigma' to normed_loc rather than reduction_loc. This may however introduce
+            # breaking changes.
+            if 'mu' in self.z[reduction_loc]:
                 mu = self.z[reduction_loc]['mu'][:]
+            if 'sigma' in self.z[reduction_loc]:
                 sigma = self.z[reduction_loc]['sigma'][:]
-            logger.info(f"Using existing loadings for {reduction_method} with {dims} dims")
+            if 'reduction' in self.z[reduction_loc]:
+                loadings = self.z[reduction_loc]['reduction'][:]
+                if data.shape[1] != loadings.shape[0]:
+                    logger.warning("Consistency breached in loading pre-cached loadings. Will perform fresh reduction.")
+                    loadings = None
+
+                    del self.z[reduction_loc]
         else:
-            if reduction_method == 'pca':
+            if reduction_method in ['pca', 'manual']:
                 mu = clean_array(show_progress(data.mean(axis=0),
                                                'Calculating mean of norm. data', self.nthreads))
                 sigma = clean_array(show_progress(data.std(axis=0),
                                                   'Calculating std. dev. of norm. data', self.nthreads), 1)
+
+        if custom_loadings is None:
+            if loadings is None:
+                pass  # Will compute fresh loadings
+            else:
+                logger.info(f"Using existing loadings for {reduction_method} with {dims} dims")
+        else:
+            if loadings is not None and np.array_equal(loadings, custom_loadings):
+                logger.info("Custom loadings same as used before. Loading from cache")
+            else:
+                loadings = custom_loadings
+                logger.info(f"Using custom loadings with {dims} dims. Will overwrite any "
+                            f"previously used custom loadings")
+                if reduction_loc in self.z:
+                    del self.z[reduction_loc]
+
         if ann_loc in self.z:
             import hnswlib
 
@@ -1008,19 +1047,23 @@ class GraphDataStore(BaseDataStore):
         if kmeans_loc in self.z:
             fit_kmeans = False
             logger.info(f"using existing kmeans cluster centers")
+        disable_scaling = True if feat_scaling is False else False
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, use_for_pca=use_for_pca,
                             mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
                             ann_ef=ann_ef, ann_m=ann_m, nthreads=self.nthreads, ann_parallel=ann_parallel,
                             rand_state=rand_state, do_kmeans_fit=fit_kmeans,
-                            scale_features=feat_scaling, ann_idx=ann_idx)
+                            disable_scaling=disable_scaling, ann_idx=ann_idx)
 
-        if loadings is None:
+        if reduction_loc not in self.z:
             logger.info(f"Saving loadings to {reduction_loc}")
             self.z.create_group(reduction_loc, overwrite=True)
-            g = create_zarr_dataset(self.z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
-            g[:, :] = ann_obj.loadings
-            if reduction_method == 'pca':
+            if ann_obj.loadings is not None:
+                # can be None when no dimred is performed
+                g = create_zarr_dataset(self.z[reduction_loc], 'reduction', (1000, 1000), 'f8', ann_obj.loadings.shape)
+                g[:, :] = ann_obj.loadings
+            # TODO: This belongs better in normed_loc
+            if reduction_method in ['pca', 'manual']:
                 g = create_zarr_dataset(self.z[reduction_loc], 'mu', (100000,), 'f8', mu.shape)
                 g[:] = mu
                 g = create_zarr_dataset(self.z[reduction_loc], 'sigma', (100000,), 'f8', sigma.shape)
@@ -1054,6 +1097,15 @@ class GraphDataStore(BaseDataStore):
         self.z[knn_loc].attrs['latest_graph'] = graph_loc
         if return_ann_object:
             return ann_obj
+        if show_elbow_plot:
+            from .plots import plot_elbow
+
+            try:
+                var_exp = 100 * ann_obj._pca.explained_variance_ratio_
+            except AttributeError:
+                logger.warning("PCA was not fitted so not showing an Elbow plot")
+            else:
+                plot_elbow(var_exp)
         return None
 
     def load_graph(self, *, from_assay: str, cell_key: str, feat_key: str,
@@ -2652,7 +2704,8 @@ class DataStore(MappingDatastore):
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
-    def make_subset(self, cell_key: str, out_zarr_name: str) -> None:
+    def make_subset(self, cell_key: str, out_zarr_name: str, overwrite_existing: bool = False,
+                    reset_cell_filter: bool = True) -> None:
         """
         Split Zarr file using a subset of cells
 
@@ -2660,6 +2713,10 @@ class DataStore(MappingDatastore):
             cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
                       subset.
             out_zarr_name: Path of output Zarr files containing only a subset of cells.
+            overwrite_existing: If True, then overwrites the existing data. (Default value: False)
+            reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
+                               are set as True as in the 'I' column. To keep the filtering information set the value for
+                               this parameter to False. (Default value: True)
 
         Returns:
         """
@@ -2669,6 +2726,17 @@ class DataStore(MappingDatastore):
         cell_idx = self.cells.active_index(cell_key)
         n_cells = len(cell_idx)
 
+        if self.z.store.path == os.path.abspath(out_zarr_name):
+            logger.error("You are trying to overwrite the current Zarr file itself with the subset. "
+                         "This is not allowed. Please change the name/path of output file, by supplying a different "
+                         "value to `out_zarr_name` parameter. No subsetting was performed")
+            return None
+
+        if os.path.isdir(out_zarr_name) and overwrite_existing is False:
+            logger.error("Zarr file with name: {} already exists.\nIf you want to overwrite it then please set "
+                         "overwrite_existing to True. No subsetting was performed.")
+            return None
+
         outz = zarr.open(out_zarr_name, mode='w')
 
         for assay_name in self.assayNames:
@@ -2677,15 +2745,17 @@ class DataStore(MappingDatastore):
                                     assay.feats.fetch_all('ids'), assay.feats.fetch_all('names'), assay.rawData.dtype)
 
         g = outz.create_group('cellData')
-        create_zarr_obj_array(g, 'I', [True for _ in range(n_cells)], 'bool')
-        for i in self.cells.columns:
-            if i in ['I', cell_key]:
-                continue
-            if i not in ['ids', 'names']:
-                continue
 
+        for i in self.cells.columns:
+            if i in ['I'] and reset_cell_filter:
+                create_zarr_obj_array(g, 'I', [True for _ in range(n_cells)], 'bool')
+                continue
+            if i not in ['ids', 'I', 'names']:
+                name = f"orig_{i}"
+            else:
+                name = i
             v = self.cells.fetch(i, cell_key)
-            create_zarr_obj_array(g, i, v, dtype=v.dtype)
+            create_zarr_obj_array(g, name, v, dtype=v.dtype)
 
         for assay_name in self.assayNames:
             assay = self._get_assay(assay_name)

@@ -125,6 +125,25 @@ def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.
     plt.show()
 
 
+def plot_elbow(var_exp, figsize: Tuple[float, float] = (None, 2)):
+    from kneed import KneeLocator
+
+    x = range(len(var_exp))
+    kneedle = KneeLocator(x, var_exp, S=1.0, curve="convex", direction="decreasing")
+    if figsize[0] is None:
+        figsize = (0.25 * len(var_exp), figsize[1])
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.plot(x, var_exp, lw=1)
+    ax.set_xticks(x)
+    ax.axvline(kneedle.elbow, lw=1, c='r', label='Elbow')
+    ax.set_ylabel("% Variance explained", fontsize=9)
+    ax.set_xlabel("Principal components", fontsize=9)
+    clean_axis(ax, ts=8)
+    ax.legend(frameon=False, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
                  cmap=cm.matter_r, savename: str = None, save_dpi: int = 300, figsize=None):
     """
