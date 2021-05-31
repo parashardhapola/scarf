@@ -1,3 +1,6 @@
+"""
+Utility functions for running the KNN algorithm.
+"""
 import numpy as np
 from .writers import create_zarr_dataset
 from .ann import AnnStream
@@ -9,6 +12,18 @@ __all__ = ['self_query_knn', 'smoothen_dists', 'export_knn_to_mtx']
 
 
 def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> None:
+    """
+    Constructs KNN graph.
+
+    Args:
+        ann_obj ():
+        store ():
+        chunk_size ():
+        nthreads (): Number of threads to use.
+
+    Returns:
+        None
+    """
     from threadpoolctl import threadpool_limits
 
     n_cells, n_neighbors = ann_obj.nCells, ann_obj.k
@@ -45,6 +60,21 @@ def _is_umap_version_new():
 
 
 def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int = 100000):
+    """
+    Smoothens KNN distances.
+
+    Args:
+        store ():
+        z_idx ():
+        z_dist ():
+        lc ():
+        bw ():
+        chunk_size ():
+
+    Returns:
+        None
+
+    """
     from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 
     umap_is_latest = _is_umap_version_new()
@@ -88,6 +118,7 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int =
 
 def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
     """
+    Exports KNN matrix in Matrix Market format.
 
     Args:
         mtx:
@@ -95,6 +126,7 @@ def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
         batch_size:
 
     Returns:
+        None
 
     """
     n_cells = csr_graph.shape[0]
