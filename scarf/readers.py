@@ -41,7 +41,7 @@ def get_file_handle(fn: str) -> IO:
         else:
             return open(fn, 'r')
     except (OSError, IOError, FileNotFoundError):
-        raise FileNotFoundError("ERROR: FILE NOT FOUND: %s" % f)
+        raise FileNotFoundError("ERROR: FILE NOT FOUND: %s" % fn)
 
 
 def read_file(fn: str):
@@ -411,12 +411,11 @@ class MtxDirReader(CrReader):
 
     # noinspection DuplicatedCode
     def to_sparse(self, a):
-        # TODO: specify type of a plus description
         """
         Returns the input data as a sparse (COO) matrix.
 
         Args:
-            a:
+            a: a dense numpy matrix
         """
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] - 1).astype(int)],

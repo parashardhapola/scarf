@@ -56,7 +56,7 @@ class Assay:
         cells:
         nthreads:
         rawData:
-        feats: a dataframe with info about each feature in the dataset
+        feats: a MetaData object with info about each feature in the dataset
         attrs:
         normMethod: Which normalization method to use.
         sf: scaling factor for doing library-size normalization
