@@ -60,13 +60,6 @@ class Assay:
         attrs:
         normMethod: Which normalization method to use.
         sf: scaling factor for doing library-size normalization
-
-    Methods:
-        normed:
-        to_raw_sparse:
-        add_percent_feature:
-        save_normalized_data:
-        score_features:
     """
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData,
                  nthreads: int, min_cells_per_feature: int = 10):

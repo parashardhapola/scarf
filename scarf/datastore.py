@@ -54,10 +54,6 @@ class BaseDataStore:
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: number of threads to use for this datastore instance.
         z: the Zarr file (directory) used for for this datastore instance.
-
-    Methods:
-        get_cell_vals: fetches data from the Zarr file
-        set_default_assay: override assigning of default assay
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
@@ -353,7 +349,7 @@ class BaseDataStore:
 
     def set_default_assay(self, assay_name: str) -> None:
         """
-        Override default assay
+        Override assigning of default assay.
 
         Args:
             assay_name: Name of the assay that should be set as default
@@ -379,14 +375,14 @@ class BaseDataStore:
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      The values in the chosen column should be boolean (Default value: 'I')
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used. The values in
+                      the chosen column should be boolean (Default value: 'I')
             k: A cell metadata column or name of a feature.
             clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
-                            (Default value: 0 )
+                           (Default value: 0 )
 
         Returns:
-    `       The requested values.
+            The requested values.
         """
         cell_idx = self.cells.active_index(cell_key)
         if k not in self.cells.columns:
@@ -462,17 +458,6 @@ class GraphDataStore(BaseDataStore):
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
         nthreads: number of threads to use for this datastore instance
         z: the Zarr file (directory) used for for this datastore instance
-
-    Methods:
-        get_imputed:
-        load_graph:
-        make_graph:
-        run_clustering:
-        run_leiden_clustering:
-        run_pseutotime_scoring:
-        run_tpacedo_sampler:
-        run_tsne:
-        run_umap:
     """
 
     def __init__(self, **kwargs):
@@ -932,14 +917,15 @@ class GraphDataStore(BaseDataStore):
                        more about `smooth_knn_dist` function here:
                        https://umap-learn.readthedocs.io/en/latest/api.html#umap.umap_.smooth_knn_dist
             update_keys: If True (default) then `latest_feat_key` zarr attribute of the assay will be updated.
-                             Choose False if you are experimenting with a `feat_key` do not want to override existing
-                             `latest_feat_key` and by extension `latest_graph`.
+                         Choose False if you are experimenting with a `feat_key` do not want to override existing
+                         `latest_feat_key` and by extension `latest_graph`.
             return_ann_object: If True then returns the ANNStream object. This allows one to directly interact with the
                                PCA transformer and HNSWlib index. Check out ANNStream documentation to know more.
                                (Default: False)
             custom_loadings: Custom loadings/transformer for linear dimension reduction. If provided, should have a form
                              (d x p) where d is same the number of active features in feat_key and p is the number of
-                            reduced dimensions. `dims` parameter is ignored when this is provided. (Default value: None)
+                             reduced dimensions. `dims` parameter is ignored when this is provided.
+                             (Default value: None)
             feat_scaling: If True (default) then the feature will be z-scaled otherwise not. It is highly recommended to
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
@@ -949,7 +935,6 @@ class GraphDataStore(BaseDataStore):
 
         Returns:
             Either None or `AnnStream` object
-
         """
         from .ann import AnnStream
 
@@ -1679,15 +1664,6 @@ class MappingDatastore(GraphDataStore):
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
         nthreads: number of threads to use for this datastore instance
         z: the Zarr file (directory) used for for this datastore instance
-
-    Methods:
-        get_mapping_score:
-        get_target_classes:
-        load_unified_graph:
-        plot_unified_layout:
-        run_mapping:
-        plot_unified_tsne:
-        plot_unified_umap:
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2177,7 +2153,7 @@ class MappingDatastore(GraphDataStore):
                   (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
             color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
                        dictionary should be the category label as present in the `color_by` column and values should be
-                        valid matplotlib colour names or hex codes of colours. (Default value: None)
+                       valid matplotlib colour names or hex codes of colours. (Default value: None)
             mask_color: Color to be used for masked values. This should be a valid matplotlib named colour or a hexcode
                         of a colour. (Default value: 'k')
             point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
@@ -2286,7 +2262,7 @@ class MappingDatastore(GraphDataStore):
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class DataStore(MappingDatastore):
     """
-    This class extends MappingDatastore and consequently inherits methods of all the *DataStore classes.
+    This class extends MappingDatastore and consequently inherits methods of all the \*DataStore classes.
 
     This class is the main user facing class as it provides most of the plotting functions.
     It also contains methods for cell filtering, feature selection, marker features identification,
@@ -2298,23 +2274,6 @@ class DataStore(MappingDatastore):
         assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
         nthreads: number of threads to use for this datastore instance
         z: the Zarr file (directory) used for for this datastore instance
-
-    Methods:
-        auto_filter_cells:
-        filter_cells:
-        get_markers:
-        make_bulk:
-        make_subset:
-        mark_hvgs:
-        mark_prevalent_peaks:
-        plot_cells_dists:
-        plot_cluster_tree:
-        plot_layout:
-        plot_marker_heatmap:
-        run_cell_cycle_scoring:
-        run_marker_search:
-        show_zarr_tree: prints the Zarr hierarchy of the DataStore
-        to_anndata: writes an assay of the Zarr hierarchy to AnnData file format
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
@@ -2461,7 +2420,7 @@ class DataStore(MappingDatastore):
                          (Default: 0.1)
             blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
                        as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
-                       HLA genes. (Default: "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST" )
+                       HLA genes. (Default: "^MT- | ^RPS | ^RPL | ^MRPS | ^MRPL | ^CCN | ^HLA- | ^H2- | ^HIST" )
             show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
             hvg_key_name: Base label for HVGs in the features metadata column. The value for
                           'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
@@ -2496,7 +2455,7 @@ class DataStore(MappingDatastore):
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
             cell_key: Cells to use for selection of most prevalent peaks. By default all cells with True value in
                       'I' will be used. The provided value for `cell_key` should be a column in cell metadata table
-                       with boolean values.
+                      with boolean values.
             top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
                    for `min_var` parameter. (Default: 500)
             prevalence_key_name: Base label for marking prevalent peaks in the features metadata column. The value for
@@ -2852,6 +2811,7 @@ class DataStore(MappingDatastore):
 
     def show_zarr_tree(self, start='/', depth=None) -> None:
         """
+        Prints the Zarr hierarchy of the DataStore.
 
         Args:
             start:
@@ -2990,7 +2950,7 @@ class DataStore(MappingDatastore):
                   (Default value: tab20 for categorical variables and cmocean.deep for continuous variables)
             color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
                        dictionary should be the category label as present in the `color_by` column and values should be
-                        valid matplotlib colour names or hex codes of colours. (Default value: None)
+                       valid matplotlib colour names or hex codes of colours. (Default value: None)
             mask_values: These can a subset of categorical variables that are present in `color_by` which you would like
                          to mask away. These values would be combined under a same label (`mask_name`) and will be given
                          same colour (`mask_color`)
@@ -3005,7 +2965,7 @@ class DataStore(MappingDatastore):
                         (Default value: False)
             shade_npixels: Number of pixels to rasterize (for both height and width). This controls the resolution of
                            the figure. Adjust this according to the size of the image you want to generate.
-                            (Default value: 1000)
+                           (Default value: 1000)
             shade_sampling: Specifies the smallest allowed sampling interval along the x and y axis. Larger values will
                             lead loss of resolution (Default value: 0.1)
             shade_min_alpha: The minimum alpha value to use for non-empty pixels when doing colormapping, in [0, 255].
@@ -3124,9 +3084,14 @@ class DataStore(MappingDatastore):
         https://epidemicsonnetworks.readthedocs.io/en/latest/functions/EoN.hierarchy_pos.html
 
         Args:
-            color_key:
-            force_ints_as_cats:
-            fill_by_value:
+            color_key: A custom colour map for cells. These can be used for categorical variables only. The keys in this
+                       dictionary should be the category label as present in the `color_by` column and values should be
+                       valid matplotlib colour names or hex codes of colours. (Default value: None)
+            force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
+                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                are chosen and how legends are rendered. Set this to False if you are large number of
+                                unique integer entries (Default: True)
+            fill_by_value: ..
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
                       Should be same as the one that was used in one of the `run_clustering` calls for the given assay.
@@ -3135,7 +3100,7 @@ class DataStore(MappingDatastore):
                       given assay. By default the latest used feature for the given assay will be used.
             cluster_key: Should be one of the columns from cell metadata table that contains the output of
                          `run_clustering` method. For example if chosen assay is `RNA` and default value for `label`
-                        parameter was used in `run_clustering` then `cluster_key` can be 'RNA_cluster'
+                         parameter was used in `run_clustering` then `cluster_key` can be 'RNA_cluster'
             width: Horizontal space allocated for the branches. Larger values may disrupt the hierarchical layout of
                    the cells (Default value: 1)
             lvr_factor: Leaf vs root factor. Controls the relative nodes horizontal spacing between as one moves up or
@@ -3169,7 +3134,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
 
         from .plots import plot_cluster_hierarchy
