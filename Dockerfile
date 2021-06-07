@@ -24,7 +24,7 @@ ENV PATH=$PATH:/root/miniconda3/bin:/workspace/bin
 # Installing numpy and pybind11 beforehand because sometimes they don't install so well from requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -U numpy pybind11
-RUN pip install --no-cache-dir -U dask
+RUN pip install --no-cache-dir -U dask<=2021.03.1
 
 # Needed for dask
 RUN conda install -c conda-forge 'fsspec>=0.3.3'
