@@ -1,7 +1,7 @@
 """
-Methods:
-    meld_assay:
-    make_bed_from_gff: create pybedtools object for genes from a GFF file
+- Methods:
+    - meld_assay:
+    - make_bed_from_gff: create pybedtools object for genes from a GFF file
 """
 # TODO: add description in docstring
 
@@ -18,7 +18,7 @@ __all__ = ['meld_assay', 'make_bed_from_gff']
 
 def make_bed_from_gff(gff: str, up_offset: int = 2000,
                       valid_ids: List[str] = None, flavour: str = 'body'):
-    """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended"""
+    """Create pybedtools object for genes from a GFF file. Gene coordinates are promoter extended."""
     try:
         from pybedtools import BedTool
     except ImportError:
@@ -118,7 +118,7 @@ def _get_merging_map(a, b, b_name_pos: int = 7) -> dict:
 
 def _convert_ids_to_idx(ids: pd.Series, cross_id_map: dict) -> dict:
     """
-    convert ids to indices from scarf feats table
+    Convert ids to indices from scarf feats table.
     """
     ref = {v: k for k, v in ids.to_dict().items()}
     idx = {x: [] for x in cross_id_map}

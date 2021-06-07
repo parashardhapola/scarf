@@ -1,15 +1,14 @@
 """
 A collection of classes for reading in different data formats.
 
-Containing classes:
-
-- CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
-- CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
-- CrReader: A class to read in CellRanger (Cr) data.
-- H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
-- MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file + accompanying files.
-- NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
-- LoomReader: A class to read in data in the form of a Loom file.
+- Classes:
+    - CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
+    - CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
+    - CrReader: A class to read in CellRanger (Cr) data.
+    - H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
+    - MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file + accompanying files.
+    - NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
+    - LoomReader: A class to read in data in the form of a Loom file.
 """
 
 from abc import ABC, abstractmethod

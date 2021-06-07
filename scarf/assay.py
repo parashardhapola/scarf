@@ -1,9 +1,9 @@
 """
-Classes:
-    Assay: A generic Assay class that contains methods to calculate feature level statistics.
-    RNAassay: This assay is designed for feature selection and normalization of scRNA-Seq data.
-    ATACassay:
-    ADTassay:
+- Classes:
+    - Assay: A generic Assay class that contains methods to calculate feature level statistics.
+    - RNAassay: This assay is designed for feature selection and normalization of scRNA-Seq data.
+    - ATACassay:
+    - ADTassay:
 """
 # TODO: add description to docstring
 

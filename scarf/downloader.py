@@ -4,10 +4,10 @@ Used to download datasets included in Scarf.
 Classes:
     OSFdownloader: A class for downloading datasets from OSF.
 
-Methods:
-    handle_download: carry out the download of a specified dataset
-    show_available_datasets: list datasets offered through Scarf
-    fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
+- Methods:
+    - handle_download: carry out the download of a specified dataset
+    - show_available_datasets: list datasets offered through Scarf
+    - fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
 """
 
 import requests

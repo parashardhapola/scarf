@@ -1,8 +1,8 @@
 """
 Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
 
-Classes:
-    DataStore: DataStore objects provide the primary interface to interact with the data
+- Classes:
+    - DataStore: DataStore objects provide the primary interface to interact with the data.
 """
 
 import os
@@ -24,11 +24,11 @@ __all__ = ['DataStore']
 
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     """
-    Test if an assay node in zarr object was created properly
+    Test if an assay node in zarr object was created properly.
 
     Args:
         z: Zarr hierarchy object
-        assay_name: string value with name of assay
+        assay_name: String value with name of assay.
 
     Returns:
         True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
@@ -51,9 +51,9 @@ class BaseDataStore:
 
     Attributes:
         cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
-        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
-        nthreads: number of threads to use for this datastore instance.
-        z: the Zarr file (directory) used for for this datastore instance.
+        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        nthreads: Number of threads to use for this datastore instance.
+        z: The Zarr file (directory) used for for this datastore instance.
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict, default_assay: str,
@@ -131,7 +131,7 @@ class BaseDataStore:
         top-level directory attributes in the Zarr file are looked up for presence of previously used default assay.
 
         Args:
-            assay_name: Name of the assay to be considered for setting as default
+            assay_name: Name of the assay to be considered for setting as default.
 
         Returns:
             Name of the assay to be set as default assay
@@ -231,10 +231,10 @@ class BaseDataStore:
 
     def _get_assay(self, from_assay: str) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """
-        This is a convenience function used internally to quickly obtain the assay object that is linked to a assay name
+        This is a convenience function used internally to quickly obtain the assay object that is linked to a assay name.
 
         Args:
-            from_assay: Name of the assay whose object is to be returned
+            from_assay: Name of the assay whose object is to be returned.
 
         Returns:
 
@@ -245,10 +245,10 @@ class BaseDataStore:
 
     def _get_latest_feat_key(self, from_assay: str) -> str:
         """
-        Looks up the the value in assay level attributes for key 'latest_feat_key'
+        Looks up the the value in assay level attributes for key 'latest_feat_key'.
 
         Args:
-            from_assay: Assay whose latest feature is to be returned
+            from_assay: Assay whose latest feature is to be returned.
 
         Returns:
             Name of the latest feature that was used to run `save_normalized_data`
@@ -259,10 +259,10 @@ class BaseDataStore:
 
     def _get_latest_cell_key(self, from_assay: str) -> str:
         """
-        Looks up the the value in assay level attributes for key 'latest_cell_key'
+        Looks up the the value in assay level attributes for key 'latest_cell_key'.
 
         Args:
-            from_assay: Assay whose latest feature is to be returned
+            from_assay: Assay whose latest feature is to be returned.
 
         Returns:
             Name of the latest feature that was used to run `save_normalized_data`
@@ -274,12 +274,12 @@ class BaseDataStore:
     def _ini_cell_props(self, min_features: int, mito_pattern: str, ribo_pattern: str) -> None:
         """
         This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
-        nFeatures, percentMito and percentRibo. These statistics are then populated into the cell metadata table
+        nFeatures, percentMito and percentRibo. These statistics are then populated into the cell metadata table.
 
         Args:
-            min_features: Minimum features that a cell must have non-zero value before being filtered out
-            mito_pattern: Regex pattern for identification of mitochondrial genes
-            ribo_pattern: Regex pattern for identification of ribosomal genes
+            min_features: Minimum features that a cell must have non-zero value before being filtered out.
+            mito_pattern: Regex pattern for identification of mitochondrial genes.
+            ribo_pattern: Regex pattern for identification of ribosomal genes.
 
         Returns:
 
@@ -330,12 +330,12 @@ class BaseDataStore:
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
         """
-        A convenience function for internal usage that creates naming rule for the metadata columns
+        A convenience function for internal usage that creates naming rule for the metadata columns.
 
         Args:
-            from_assay: name of the assay
-            cell_key: cell key to use
-            suffix: base name for the column
+            from_assay: Name of the assay.
+            cell_key: Cell key to use.
+            suffix: Base name for the column.
 
         Returns:
             column name updated as per the naming rule
@@ -352,7 +352,7 @@ class BaseDataStore:
         Override assigning of default assay.
 
         Args:
-            assay_name: Name of the assay that should be set as default
+            assay_name: Name of the assay that should be set as default.
 
         Returns:
 
@@ -379,10 +379,10 @@ class BaseDataStore:
                       the chosen column should be boolean (Default value: 'I')
             k: A cell metadata column or name of a feature.
             clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
-                           (Default value: 0 )
+                           (Default value: 0)
 
         Returns:
-            The requested values.
+            The requested values
         """
         cell_idx = self.cells.active_index(cell_key)
         if k not in self.cells.columns:
@@ -454,10 +454,10 @@ class GraphDataStore(BaseDataStore):
     clustering, down-sampling etc.
 
     Attributes:
-        cells: list of cell barcodes
-        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
-        nthreads: number of threads to use for this datastore instance
-        z: the Zarr file (directory) used for for this datastore instance
+        cells: List of cell barcodes.
+        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        nthreads: Number of threads to use for this datastore instance.
+        z: The Zarr file (directory) used for for this datastore instance.
     """
 
     def __init__(self, **kwargs):
@@ -470,8 +470,8 @@ class GraphDataStore(BaseDataStore):
         It is uses a predetermine rule to make this determination.
 
         Args:
-            assay: Assay object
-            reduction_method: name of reduction method to use. It can be one from either: 'pca', 'lsi', 'auto'
+            assay: Assay object.
+            reduction_method: Name of reduction method to use. It can be one from either: 'pca', 'lsi', 'auto'.
 
         Returns:
             The name of dimension reduction method to be used. Either 'pca' or 'lsi'
@@ -738,9 +738,9 @@ class GraphDataStore(BaseDataStore):
         Convenience function to identify location of latest graph in the Zarr hierarchy.
 
         Args:
-            from_assay: Name of the assay
-            cell_key: Cell key used to create the graph
-            feat_key: Feature key used to create the graph
+            from_assay: Name of the assay.
+            cell_key: Cell key used to create the graph.
+            feat_key: Feature key used to create the graph.
 
         Returns:
             Path of graph in the Zarr hierarchy
@@ -759,9 +759,9 @@ class GraphDataStore(BaseDataStore):
         to reduce the magnitude of extreme values.
 
         Args:
-            from_assay: Name fo the assay for which Kmeans was fit
-            cell_key: Cell key used
-            feat_key: Feature key used
+            from_assay: Name fo the assay for which Kmeans was fit.
+            cell_key: Cell key used.
+            feat_key: Feature key used.
             n_comps: Number of PC components to use
 
         Returns:
@@ -1099,14 +1099,14 @@ class GraphDataStore(BaseDataStore):
         Load the cell neighbourhood as a scipy sparse matrix
 
         Args:
-            from_assay: Name of the assay/
-            cell_key: Cell key used to create the graph
-            feat_key: Feature key used to create the graph
+            from_assay: Name of the assay.
+            cell_key: Cell key used to create the graph.
+            feat_key: Feature key used to create the graph.
             symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
-                       used when symmetric is True
+                       used when symmetric is True.
             use_k: Number of top k-nearest neighbours to keep in the graph. This value must be greater than 0 and less
-                   the parameter k used. By default all neighbours are used (Default value: None)
+                   the parameter k used. By default all neighbours are used. (Default value: None)
 
         Returns:
             A scipy sparse matrix representing cell neighbourhood graph.
@@ -1243,7 +1243,7 @@ class GraphDataStore(BaseDataStore):
                  random_seed: int = 4444, label='UMAP', parallel: bool = False, nthreads: int = None) -> None:
         """
         Runs UMAP algorithm using the precomputed cell-neighbourhood graph. The calculated UMAP coordinates are saved
-        in the cell metadata table
+        in the cell metadata table.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -1543,9 +1543,10 @@ class GraphDataStore(BaseDataStore):
                can slow down the algorithm and cause over-smoothening. (Default value: 2)
             cache_operator: Whether to keep the diffusion operator in memory after the method returns. Can be useful
                             to set to True if many features are to imputed in a batch but can lead to increased memory
-                            usage (Default value: True)
+                            usage. (Default value: True)
 
-        Returns: An array of imputed values for the given feature
+        Returns:
+            An array of imputed values for the given feature
 
         """
 
@@ -1613,7 +1614,7 @@ class GraphDataStore(BaseDataStore):
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                         used feature for the given assay will be used.
-            k_singular: Number of smallest singular values to save
+            k_singular: Number of smallest singular values to save.
             r_vec: Same as parameter R in the above said reference.
             label:
 
@@ -1660,10 +1661,10 @@ class MappingDatastore(GraphDataStore):
     It also contains the methods required for label transfer, mapping score generation and co-embedding.
 
     Attributes:
-        cells: list of cell barcodes
-        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
-        nthreads: number of threads to use for this datastore instance
-        z: the Zarr file (directory) used for for this datastore instance
+        cells: List of cell barcodes.
+        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        nthreads: Number of threads to use for this datastore instance.
+        z: The Zarr file (directory) used for for this datastore instance.
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2058,7 +2059,7 @@ class MappingDatastore(GraphDataStore):
                          ini_embed_with: str = 'kmeans', label: str = 'unified_tSNE') -> None:
         """
         Calculates the tSNE embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
-        the same way as the graph as in ``run_tsne``
+        the same way as the graph as in ``run_tsne``.
 
         Args:
             target_names: Names of target datasets to be included in the unified tSNE.
@@ -2068,12 +2069,12 @@ class MappingDatastore(GraphDataStore):
                        used feature for the given assay will be used.
             use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
                    than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
-                   'save_k'
+                   'save_k'.
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
-            lambda_scale: λ rescaling parameter (Default value: 1.0)
-            max_iter: Maximum number of iterations (Default value: 500)
-            early_iter: Number of early exaggeration iterations (Default value: 200)
-            alpha: Early exaggeration multiplier (Default value: 10)
+            lambda_scale: λ rescaling parameter. (Default value: 1.0)
+            max_iter: Maximum number of iterations. (Default value: 500)
+            early_iter: Number of early exaggeration iterations. (Default value: 200)
+            alpha: Early exaggeration multiplier. (Default value: 10)
             box_h: Grid side length (accuracy control). Lower values might drastically slow down
                    the algorithm (Default value: 0.7)
             temp_file_loc: Location of temporary file. By default these files will be created in the current working
@@ -2081,8 +2082,8 @@ class MappingDatastore(GraphDataStore):
             verbose: If True (default) then the full log from SGtSNEpi algorithm is shown.
             ini_embed_with: Initial embedding coordinates for the cells in cell_key. Should have same number of columns
                             as tsne_dims. If not value is provided then the initial embedding is obtained using
-                            `get_ini_embed`
-            label: base label for tSNE dimensions in the cell metadata column (Default value: 'tSNE')
+                            `get_ini_embed`.
+            label: Base label for tSNE dimensions in the cell metadata column. (Default value: 'tSNE')
 
         Returns:
 
@@ -2262,7 +2263,7 @@ class MappingDatastore(GraphDataStore):
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class DataStore(MappingDatastore):
     """
-    This class extends MappingDatastore and consequently inherits methods of all the \*DataStore classes.
+    This class extends MappingDatastore and consequently inherits methods of all the other DataStore classes.
 
     This class is the main user facing class as it provides most of the plotting functions.
     It also contains methods for cell filtering, feature selection, marker features identification,
@@ -2270,10 +2271,10 @@ class DataStore(MappingDatastore):
     In other words, DataStore objects provide the primary interface to interact with the data.
 
     Attributes:
-        cells: list of cell barcodes
-        assayNames: list of assay names in Zarr file, e. g. 'RNA' or 'ATAC'
-        nthreads: number of threads to use for this datastore instance
-        z: the Zarr file (directory) used for for this datastore instance
+        cells: List of cell barcodes.
+        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        nthreads: Number of threads to use for this datastore instance.
+        z: The Zarr file (directory) used for for this datastore instance.
     """
 
     def __init__(self, zarr_loc: str, assay_types: dict = None, default_assay: str = None,
@@ -2282,19 +2283,19 @@ class DataStore(MappingDatastore):
                  synchronizer=None):
         """
         Args:
-            zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+            zarr_loc: Path to Zarr file created using one of writer functions of Scarf.
             assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'.
             default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                           when DataStore loads a Zarr file for the first time
+                           when DataStore loads a Zarr file for the first time.
             min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
                                    will be filtered out.
             min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                                   less than this will be filtered out
-            mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
-            ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+                                   less than this will be filtered out.
+            mito_pattern: Regex pattern to capture mitochondrial genes. (default: 'MT-')
+            ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
             nthreads: Number of maximum threads to use in all multi-threaded functions
-            zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
+            zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
             synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
                           more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
                           ThreadSynchronizer will be used.
@@ -2355,11 +2356,11 @@ class DataStore(MappingDatastore):
         fraction of densities.
 
         Args:
-            attrs: column names to be used for filtering
-            min_p: fractional density point to be used for calculating lower bounds of threshold
-            max_p: fractional density point to be used for calculating lower bounds of threshold
+            attrs: Column names to be used for filtering.
+            min_p: Fractional density point to be used for calculating lower bounds of threshold.
+            max_p: Fractional density point to be used for calculating lower bounds of threshold.
             show_qc_plots: If True then violin plots with per cell distribution of features will be shown. This does
-                       not have an effect if `auto_filter` is False
+                       not have an effect if `auto_filter` is False.
 
         Returns:
             None
@@ -2420,7 +2421,7 @@ class DataStore(MappingDatastore):
                          (Default: 0.1)
             blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
                        as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
-                       HLA genes. (Default: "^MT- | ^RPS | ^RPL | ^MRPS | ^MRPL | ^CCN | ^HLA- | ^H2- | ^HIST" )
+                       HLA genes. (Default: '^MT- | ^RPS | ^RPL | ^MRPS | ^MRPL | ^CCN | ^HLA- | ^H2- | ^HIST' )
             show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
             hvg_key_name: Base label for HVGs in the features metadata column. The value for
                           'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
@@ -2521,7 +2522,7 @@ class DataStore(MappingDatastore):
     def get_markers(self, *, from_assay: str = None, cell_key: str = None, group_key: str = None,
                     group_id: Union[str, int] = None) -> pd.DataFrame:
         """
-        Returns a table of markers features obtained through `run_maker_search` for a given group.
+        Returns a table of markers features obtained through `run_marker_search` for a given group.
 
         The table contains names of marker features and feature ids are used as table index.
 
@@ -2567,7 +2568,7 @@ class DataStore(MappingDatastore):
         """
         Export markers of each cluster/group to a CSV file where each column contains the marker names sorted by
         score (descending order, highest first). This function does not export the scores of markers as they can be
-        obtained using `get_markers` function
+        obtained using `get_markers` function.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2576,7 +2577,7 @@ class DataStore(MappingDatastore):
             group_key: Required parameter. This has to be a column name from cell metadata table.
                        Usually this would be a column denoting cell clusters. Please use the same value as used
                        when ran `run_marker_search`
-            csv_filename: Required parameter. Name, with path, of CSV file where the maker table is to be saved.
+            csv_filename: Required parameter. Name, with path, of CSV file where the marker table is to be saved.
 
         Returns:
 
@@ -3207,8 +3208,8 @@ class DataStore(MappingDatastore):
             vmax: z-scores higher than this value are floored to this value. (Default value: 2)
             savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
                       the extension present in the parameter value. (Default value: None)
-            save_dpi: DPI when saving figure (Default value: 300)
-            **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap
+            save_dpi: DPI when saving figure. (Default value: 300)
+            **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap.
 
         Returns:
             None
