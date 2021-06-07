@@ -2707,7 +2707,7 @@ class DataStore(MappingDatastore):
     def make_subset(self, cell_key: str, out_zarr_name: str, overwrite_existing: bool = False,
                     reset_cell_filter: bool = True) -> None:
         """
-        Split Zarr file using a subset of cells
+        Split Zarr file using a subset of cells.
 
         Args:
             cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
@@ -2719,6 +2719,7 @@ class DataStore(MappingDatastore):
                                this parameter to False. (Default value: True)
 
         Returns:
+            None
         """
 
         from .writers import create_zarr_count_assay

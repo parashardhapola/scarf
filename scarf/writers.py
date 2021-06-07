@@ -529,36 +529,11 @@ class SparseToZarr:
 def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
                       cells_idx: np.ndarray, feat_idx: np.ndarray,
                       chunk_size: tuple):
-    # TODO: add informed description to docstring
-    # TODO: since *_idx args are not obvious, maybe add small usage example to docstring
-    # This docstring is really messy right now. Maybe we need to talk about this one. /RO
     """
     Selects a subset of the data in an assay in the specified Zarr hierarchy.
 
-    For the arguments `cells_idx` and `feat_idx`, refer to the documentation for numpy.split and especially
-    its argument `indices_or_sections` (which corresponds to arguments *_idx here):
-
-    "If indices_or_sections is an integer, N, the array will be divided into N equal arrays along axis.
-    If such a split is not possible, an error is raised.
-    If indices_or_sections is a 1-D array of sorted integers, the entries indicate where along axis the array is split.
-    For example, [2, 3] would, for axis=0, result in
-
-            ary[:2]
-
-            ary[2:3]
-
-            ary[3:]
-
-    If an index exceeds the dimension of the array along axis, an empty sub-array is returned correspondingly."
-    - https://numpy.org/doc/stable/reference/generated/numpy.split.html
-
-    Combined with documentation for `numpy.array_split`:
-
-    "Please refer to the split documentation. The only difference between these functions is that array_split allows
-    indices_or_sections to be an integer that does not equally divide the axis.
-    For an array of length l that should be split into n sections, it returns l % n sub-arrays of size l//n + 1
-    and the rest of size l//n."
-    - https://numpy.org/doc/stable/reference/generated/numpy.array_split.html?highlight=array_split
+    For the arguments `cells_idx` and `feat_idx`, refer to the documentation for numpy.split:
+    https://numpy.org/doc/stable/reference/generated/numpy.split.html
 
     Args:
         zarr_fn: The file name for the Zarr hierarchy.
@@ -583,7 +558,7 @@ def subset_assay_zarr(zarr_fn: str, in_grp: str, out_grp: str,
 
 
 def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
-    # TODO: docstring, correct that param df is a dask array?
+    # TODO: perhaps change name of Dask array so it does not get confused with a dataframe
     """
     Creates a Zarr hierarchy from a Dask array.
 

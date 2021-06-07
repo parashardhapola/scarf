@@ -14,6 +14,7 @@ Containing classes:
 
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
 import os
@@ -62,16 +63,15 @@ class CrReader(ABC):
 
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
-        grpNames:
+        grpNames: A dictionary that specifies where to find the matrix, features and barcodes.
         nFeatures: Number of features in dataset.
         nCells: Number of cells in dataset.
-        assayFeats:
+        assayFeats: A DataFrame with information about the features in the assay.
     """
     def __init__(self, grp_names, file_type):
-        # TODO: docstring, description for grp_names
         """
         Args:
-            grp_names (Dict):
+            grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
             file_type (str): Type of sequencing data ('rna' | 'atac')
         """
         if file_type == 'rna':
@@ -98,6 +98,9 @@ class CrReader(ABC):
 
     @abstractmethod
     def consume(self, batch_size: int, lines_in_mem: int):
+        """
+        Returns a generator that yield chunks of data.
+        """
         pass
 
     def _subset_by_assay(self, v, assay) -> List:
@@ -195,7 +198,6 @@ class CrReader(ABC):
 
 
 class CrH5Reader(CrReader):
-    # TODO: copy attributes from base class to docstring here (when done)
     """
     A class to read in CellRanger (Cr) data, in the form of an H5 file.
 
@@ -203,12 +205,12 @@ class CrH5Reader(CrReader):
 
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
-        grpNames:
+        grpNames: A dictionary that specifies where to find the matrix, features and barcodes.
         nFeatures: Number of features in dataset.
         nCells: Number of cells in dataset.
-        assayFeats:
+        assayFeats: A DataFrame with information about the features in the assay.
         h5obj: A File object from the h5py package.
-        grp:
+        grp: Current active group in the hierarchy.
     """
     def __init__(self, h5_fn, file_type: str = None):
         """
@@ -238,7 +240,6 @@ class CrH5Reader(CrReader):
 
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int):
-        # TODO: add docstring
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = self.grp['indptr'][ind_n:ind_n + batch_size]
@@ -262,7 +263,6 @@ class CrH5Reader(CrReader):
 
 
 class CrDirReader(CrReader):
-    # TODO: copy attributes from base class to docstring here (when done)
     """
     A class to read in CellRanger (Cr) data, in the form of a directory.
 
@@ -314,13 +314,12 @@ class CrDirReader(CrReader):
         return vals
 
     # noinspection DuplicatedCode
-    def to_sparse(self, a):
-        # TODO: specify type of a plus description
+    def to_sparse(self, a: np.ndarray) -> sparse.COO:
         """
         Returns the input data as a sparse (COO) matrix.
 
         Args:
-            a:
+            a: Sparse matrix, contains a chunk of data from the MTX file.
         """
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO([(a[:, 1] - a[0, 1]).astype(int),
@@ -330,7 +329,6 @@ class CrDirReader(CrReader):
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
-        # TODO: add docstring
         stream = pd.read_csv(self.matFn, skiprows=3, sep=' ',
                              header=None, chunksize=lines_in_mem)
         start = 1
@@ -348,7 +346,6 @@ class CrDirReader(CrReader):
 
 
 class MtxDirReader(CrReader):
-    # TODO: copy attributes from base class to docstring here (when done)
     """
     A class to read a directory with a Matrix Market file and its accompanying files.
 
@@ -440,7 +437,6 @@ class MtxDirReader(CrReader):
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
-        # TODO: add docstring
         stream = pd.read_csv(self.matFn, skiprows=3, sep='\t',
                              header=None, chunksize=lines_in_mem)
         start = 1
@@ -458,14 +454,13 @@ class MtxDirReader(CrReader):
 
 
 class H5adReader:
-    # TODO: docstring, description for groupCodes
     """
     A class to read in data from a H5ad file (h5 file with AnnData information).
 
     Attributes:
         h5: A File object from the h5py package.
         dataKey: Group where in the sparse matrix resides (default: 'X')
-        groupCodes:
+        groupCodes: Used to ensure compatibility with different AnnData versions.
         nFeatures: Number of features in dataset.
         nCells: Number of cells in dataset.
         cellIdsKey: Key in `obs` group that contains unique cell IDs. By default the index will be used.
@@ -646,7 +641,9 @@ class H5adReader:
 
     # noinspection DuplicatedCode
     def consume_dataset(self, batch_size: int = 1000) -> Generator[sparse.COO, None, None]:
-        # TODO: add docstring
+        """
+        Returns a generator that yield chunks of data.
+        """
         dset = self.h5[self.dataKey]
         s = 0
         for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
@@ -656,7 +653,9 @@ class H5adReader:
             s = e
 
     def consume_group(self, batch_size: int) -> Generator[sparse.COO, None, None]:
-        # TODO: add docstring
+        """
+        Returns a generator that yield chunks of data.
+        """
         grp = self.h5[self.dataKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
@@ -674,7 +673,9 @@ class H5adReader:
             s = e
 
     def consume(self, batch_size: int = 1000):
-        # TODO: add docstring
+        """
+        Returns a generator that yield chunks of data.
+        """
         if self.groupCodes[self.dataKey] == 1:
             return self.consume_dataset(batch_size)
         elif self.groupCodes[self.dataKey] == 2:
@@ -727,7 +728,9 @@ class NaboH5Reader:
         return [x.decode('UTF-8').rsplit('_', 1)[0] for x in self.h5['names']['genes'][:]]
 
     def consume(self, batch_size: int = 100) -> Generator[np.ndarray, None, None]:
-        # TODO: add docstring
+        """
+        Returns a generator that yield chunks of data.
+        """
         batch = []
         for i in self.h5['cell_data']:
             a = np.zeros(self.nFeatures).astype(int)
@@ -863,7 +866,9 @@ class LoomReader:
                 yield i, self.h5[self.featureAttrsKey][i][:]
 
     def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
-        # TODO: add docstring
+        """
+        Returns a generator that yield chunks of data.
+        """
         last_n = 0
         for i in range(batch_size, self.nCells, batch_size):
             yield self.h5[self.matrixKey][:, last_n:i].astype(self.matrixDtype).T
