@@ -29,7 +29,7 @@ from .logging_utils import logger
 from scipy.sparse import csr_matrix
 
 __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
-           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge',
+           'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'SubsetZarr',
            'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
 
 
@@ -579,6 +579,118 @@ def dask_to_zarr(df, z, loc, chunk_size, nthreads: int, msg: str = None):
         og[pos_start:pos_end, :] = controlled_compute(i, nthreads)
         pos_start = pos_end
     return None
+
+
+class SubsetZarr:
+
+    def __init__(self, in_zarr: str, out_zarr: str, cell_key: str = None, cell_idx: np.ndarray = None,
+                 reset_cell_filter: bool = True, overwrite_existing_file: bool = False,
+                 overwrite_cell_data: bool = False) -> None:
+
+        """
+        Split Zarr file using a subset of cells
+
+        Args:
+            in_zarr: Path of input Zarr file to be subsetted.
+            out_zarr: Path of output Zarr files containing only a subset of cells.
+            cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
+                      subset.
+            cell_idx: Indices of the cells to be included in the subsetted. Only used when cell_key is None.
+            reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
+                               are set as True as in the 'I' column. To keep the filtering information set the value for
+                               this parameter to False. (Default value: True)
+            overwrite_existing_file: If True, then overwrites the existing data. (Default value: False)
+            overwrite_cell_data: If True, then overwrites cell data (Default value: True)
+        Returns:
+        """
+
+        if cell_key is None and cell_idx is None:
+            raise ValueError("Both 'cell_key' and 'cell_idx' parameters cannot be None")
+        self.iZname = in_zarr
+        self.oZname = out_zarr
+        self.cellKey = cell_key
+        self.cellIdx = cell_idx
+
+        self.resetCells = reset_cell_filter
+        self.overFn = overwrite_existing_file
+        self.overcells = overwrite_cell_data
+
+        self._check_files()
+        self.iz = zarr.open(self.iZname)
+        self._check_idx()
+        self.oz = zarr.open(self.oZname, mode='w')
+        self._prep_cell_data()
+        self.assays = self._get_assays()
+        self._prep_counts()
+
+    def _check_files(self):
+        if self.iZname == self.oZname:
+            raise ValueError("You are trying to overwrite the current Zarr file itself with the subset. "
+                             "This is not allowed. Please change the name/path of output file, by supplying a "
+                             "different value to `out_zarr` parameter. No subsetting was performed")
+
+        if os.path.isdir(self.oZname) and self.overFn is False:
+            logger.error(f"Zarr file with name: {self.oZname} already exists.\nIf you want to overwrite it then please "
+                         f"set overwrite_existing_file to True. No subsetting was performed.")
+            return None
+
+    def _check_idx(self):
+        if self.cellIdx is None:
+            idx = self.iz['cellData'][self.cellKey][:]
+            if idx.dtype != bool:
+                raise ValueError(f"ERROR: {self.cellKey} is not of boolean type. Cannot perform subsetting")
+            self.cellIdx = np.where(idx)[0]
+
+    def _prep_cell_data(self):
+        n_cells = len(self.cellIdx)
+        if 'cellData' in self.oz:
+            g = self.oz['cellData']
+        else:
+            g = self.oz.create_group('cellData')
+
+        for i in self.iz['cellData'].keys():
+            if i in g and self.overcells is False:
+                continue
+            if i in ['I'] and self.resetCells:
+                create_zarr_obj_array(g, 'I', [True for _ in range(n_cells)], 'bool')
+                continue
+            v = self.iz['cellData'][i][:][self.cellIdx]
+            create_zarr_obj_array(g, i, v, dtype=v.dtype)
+
+    def _get_assays(self):
+        assays = []
+        for i in self.iz.group_keys():
+            if 'is_assay' in self.iz[i].attrs.keys():
+                assays.append(i)
+        return assays
+
+    def _get_raw_data(self, assay_name):
+        import dask.array as daskarr
+
+        return daskarr.from_zarr(self.iz[assay_name]['counts'], inline_array=True)
+
+    def _prep_counts(self):
+        n_cells = len(self.cellIdx)
+        for assay_name in self.assays:
+            print (assay_name)
+            raw_data = self._get_raw_data(assay_name)
+            print (self.iz[assay_name]['featureData']['ids'][:])
+            print (self.iz[assay_name]['featureData']['names'][:])
+            create_zarr_count_assay(self.oz, assay_name, raw_data.chunksize, n_cells,
+                                    self.iz[assay_name]['featureData']['ids'][:],
+                                    self.iz[assay_name]['featureData']['names'][:], raw_data.dtype)
+
+    def write(self):
+        for assay_name in self.assays:
+            raw_data = self._get_raw_data(assay_name)
+            store = self.oz[f"{assay_name}/counts"]
+            s, e, = 0, 0
+            for a in tqdm(raw_data[self.cellIdx].blocks,
+                          desc=f"Subsetting assay: {assay_name}", total=raw_data.numblocks[0]):
+                if a.shape[0] > 0:
+                    e += a.shape[0]
+                    store[s:e] = a.compute()
+                    s = e
 
 
 class ZarrMerge:
