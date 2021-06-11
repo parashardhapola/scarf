@@ -2297,7 +2297,6 @@ class DataStore(MappingDatastore):
         filter_cells:
         get_markers:
         make_bulk:
-        make_subset:
         mark_hvgs:
         mark_prevalent_peaks:
         plot_cells_dists:
@@ -2691,70 +2690,6 @@ class DataStore(MappingDatastore):
         phase[(g2m_score < 0) & (s_score < 0)] = 'G1'
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
-
-    def make_subset(self, cell_key: str, out_zarr_name: str, overwrite_existing: bool = False,
-                    reset_cell_filter: bool = True) -> None:
-        """
-        Split Zarr file using a subset of cells
-
-        Args:
-            cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
-                      subset.
-            out_zarr_name: Path of output Zarr files containing only a subset of cells.
-            overwrite_existing: If True, then overwrites the existing data. (Default value: False)
-            reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
-                               are set as True as in the 'I' column. To keep the filtering information set the value for
-                               this parameter to False. (Default value: True)
-
-        Returns:
-        """
-
-        from .writers import create_zarr_count_assay
-
-        cell_idx = self.cells.active_index(cell_key)
-        n_cells = len(cell_idx)
-
-        if self.z.store.path == os.path.abspath(out_zarr_name):
-            logger.error("You are trying to overwrite the current Zarr file itself with the subset. "
-                         "This is not allowed. Please change the name/path of output file, by supplying a different "
-                         "value to `out_zarr_name` parameter. No subsetting was performed")
-            return None
-
-        if os.path.isdir(out_zarr_name) and overwrite_existing is False:
-            logger.error("Zarr file with name: {} already exists.\nIf you want to overwrite it then please set "
-                         "overwrite_existing to True. No subsetting was performed.")
-            return None
-
-        outz = zarr.open(out_zarr_name, mode='w')
-
-        for assay_name in self.assayNames:
-            assay = self._get_assay(assay_name)
-            create_zarr_count_assay(outz, assay_name, assay.rawData.chunksize, n_cells,
-                                    assay.feats.fetch_all('ids'), assay.feats.fetch_all('names'), assay.rawData.dtype)
-
-        g = outz.create_group('cellData')
-
-        for i in self.cells.columns:
-            if i in ['I'] and reset_cell_filter:
-                create_zarr_obj_array(g, 'I', [True for _ in range(n_cells)], 'bool')
-                continue
-            if i not in ['ids', 'I', 'names']:
-                name = f"orig_{i}"
-            else:
-                name = i
-            v = self.cells.fetch(i, cell_key)
-            create_zarr_obj_array(g, name, v, dtype=v.dtype)
-
-        for assay_name in self.assayNames:
-            assay = self._get_assay(assay_name)
-            store = outz[f"{assay_name}/counts"]
-            s, e, = 0, 0
-            for a in tqdm(assay.rawData[cell_idx].blocks,
-                          desc=f"Subsetting assay: {assay_name}", total=assay.rawData.numblocks[0]):
-                if a.shape[0] > 0:
-                    e += a.shape[0]
-                    store[s:e] = a.compute()
-                    s = e
 
     def make_bulk(self, from_assay: str = None, group_key: str = None, pseudo_reps: int = 3, null_vals: list = None,
                   random_seed: int = 4466) -> pd.DataFrame:
