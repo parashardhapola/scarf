@@ -1,3 +1,6 @@
+"""
+Module to find biomarkers.
+"""
 from .assay import Assay
 from .utils import controlled_compute
 from numba import jit
@@ -27,12 +30,18 @@ def find_markers_by_rank(assay: Assay, group_key: str, cell_key: str,
 
     @jit(nopython=True)
     def calc_mean_rank(v):
+        """
+        Calculates the mean rank of the data.
+        """
         r = np.ones(n_groups)
         for x in range(n_groups):
             r[x] = v[int_indices == x].mean()
         return r / r.sum()
 
     def mean_rank_wrapper(v):
+        """
+        Wraps `calc_mean_rank` function.
+        """
         return calc_mean_rank(v.values)
 
     groups = assay.cells.fetch(group_key, cell_key)

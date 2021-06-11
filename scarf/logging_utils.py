@@ -1,3 +1,6 @@
+"""
+Utility functions for logging.
+"""
 from loguru import logger
 import sys
 

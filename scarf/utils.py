@@ -1,12 +1,12 @@
 """
 Utility methods.
 
-Methods:
-    clean_array: returns input array with nan and infinite values removed
-    controlled_compute: performs computation with Dask
-    rescale_array: performs edge trimming on values of the input vector
-    show_progress: performs computation with Dask and shows progress bar
-    system_call: executes a command in the underlying operative system
+- Methods:
+    - clean_array: returns input array with nan and infinite values removed
+    - controlled_compute: performs computation with Dask
+    - rescale_array: performs edge trimming on values of the input vector
+    - show_progress: performs computation with Dask and shows progress bar
+    - system_call: executes a command in the underlying operative system
 """
 
 import numpy as np

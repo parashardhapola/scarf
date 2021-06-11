@@ -1,3 +1,6 @@
+"""
+Utility functions for features.
+"""
 import pandas as pd
 import numpy as np
 from typing import List, Sequence
@@ -7,6 +10,7 @@ __all__ = ['fit_lowess', 'binned_sampling']
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
     """
+    Fits a LOWESS (Locally Weighted Scatterplot Smoothing) curve.
 
     Args:
         a:
@@ -57,14 +61,14 @@ def binned_sampling(values: pd.Series, feature_list: List[str], ctrl_size: int,
     This function is adapted from Scanpy's `score_genes`.
 
     Args:
-        values:
-        feature_list:
-        ctrl_size:
-        n_bins:
-        rand_seed:
+        values: The values for the features.
+        feature_list: The list of features to use for score calculation.
+        ctrl_size: Number of reference features to be sampled from each bin.
+        n_bins: Number of bins for sampling.
+        rand_seed: The seed to use for the random number generation.
 
     Returns:
-
+        A list of sampled features.
     """
     n_items = int(np.round(len(values) / (n_bins - 1)))
     feature_list = set(feature_list)

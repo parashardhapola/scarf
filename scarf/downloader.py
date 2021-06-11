@@ -4,10 +4,10 @@ Used to download datasets included in Scarf.
 Classes:
     OSFdownloader: A class for downloading datasets from OSF.
 
-Methods:
-    handle_download: carry out the download of a specified dataset
-    show_available_datasets: list datasets offered through Scarf
-    fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
+- Methods:
+    - handle_download: carry out the download of a specified dataset
+    - show_available_datasets: list datasets offered through Scarf
+    - fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
 """
 
 import requests
@@ -131,6 +131,11 @@ def handle_download(url, out_fn):
 def show_available_datasets():
     """
     List datasets offered through Scarf.
+
+    Prints the list of datasets.
+
+    Returns:
+        None
     """
     global osfd
     if osfd is None:
@@ -148,6 +153,7 @@ def fetch_dataset(dataset_name: str, save_path: str = '.', as_zarr: bool = False
         as_zarr: If True, then a Zarr format file is downloaded instead
 
     Returns:
+        None
     """
 
     zarr_ext = '.zarr.tar.gz'

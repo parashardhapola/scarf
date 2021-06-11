@@ -1,3 +1,6 @@
+"""
+Utility functions for the mapping.
+"""
 import dask.array as daskarr
 import numpy as np
 from typing import Tuple
@@ -30,6 +33,16 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
 
 
 def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
+    """
+    Applies CORAL error correction to the input data.
+
+    Args:
+        source_data ():
+        target_data ():
+        assay ():
+        feat_key ():
+        nthreads ():
+    """
     from .writers import dask_to_zarr
     from .utils import clean_array
 
@@ -78,6 +91,22 @@ def _order_features(s_assay, t_assay, s_feat_ids: np.ndarray, filter_null: bool,
 def align_features(source_assay: Assay, target_assay: Assay, source_cell_key: str,
                    source_feat_key: str, target_feat_key: str, filter_null: bool,
                    exclude_missing: bool, nthreads: int) -> np.ndarray:
+    """
+    Aligns target features to source features.
+
+    Args:
+        source_assay ():
+        target_assay ():
+        source_cell_key ():
+        source_feat_key ():
+        target_feat_key ():
+        filter_null ():
+        exclude_missing ():
+        nthreads ():
+
+    Returns:
+
+    """
     from .writers import create_zarr_dataset
     from tqdm import tqdm
 
