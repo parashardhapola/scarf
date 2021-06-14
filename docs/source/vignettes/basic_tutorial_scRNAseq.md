@@ -284,11 +284,7 @@ The markers list for specific clusters can be obtained like this:
 ds.get_markers(group_key='RNA_cluster', group_id='1')
 ```
 
-<<<<<<< HEAD
-We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells atleast this way.
-=======
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells at least this way.
->>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')

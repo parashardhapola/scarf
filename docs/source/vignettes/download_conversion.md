@@ -25,17 +25,10 @@ scarf.__version__
 ---
 ### 1) Fetch datsets from cloud repository
 
-<<<<<<< HEAD
-Scarf stores many single-cell datasets online on [OSF](https://osf.io/zeupv/). Herein datasets are stored in many different formats including MTX, 10x HDF5 and H5ad(anndata). These files can readily be downlaoded using Scarf's `fetch_dataset` command.
-
-
-To check which datasets are available to download, use the `show_available_datasets` function
-=======
 Scarf stores many single-cell datasets online on [OSF](https://osf.io/zeupv/). Herein datasets are stored in many different formats including MTX, 10x HDF5 and H5ad(anndata). These files can readily be downloaded using Scarf's `fetch_dataset` command.
 
 
 To check which datasets are available to download, use the `show_available_datasets` function:
->>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 scarf.show_available_datasets()
@@ -65,11 +58,7 @@ scarf.fetch_dataset('bastidas-ponce_4K_pancreas-d15_rnaseq', save_path='./scarf_
 ---
 ### 2) Conversion to Scarf's Zarr format file
 
-<<<<<<< HEAD
-Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.readers` and `scarf.writers` modules contain classes that allow reading many different file formats and convert them to Zarr. There are oftent complementary reader and writer classes. Let's explore them below.
-=======
 Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.readers` and `scarf.writers` modules contain classes that allow reading many different file formats and convert them to Zarr. There are often complementary reader and writer classes. Let's explore them below.
->>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 
 #### From 10x's HDF5 file format

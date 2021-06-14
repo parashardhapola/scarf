@@ -51,11 +51,7 @@ ds.auto_filter_cells()
 ---
 ### 3) Feature selection
 
-<<<<<<< HEAD
-For scATAC-Seq data, the features are ranked by their TF-IDF normalized values, summed across all cells. The top n features are marked as `prevalent_peaks` and are used for downstream steps.
-=======
 For scATAC-Seq data, the features are ranked by their [TF-IDF](https://en.wikipedia.org/wiki/Tf-idf) normalized values, summed across all cells. The top n features are marked as `prevalent_peaks` and are used for downstream steps.
->>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 ds.mark_prevalent_peaks(top_n=20000)
