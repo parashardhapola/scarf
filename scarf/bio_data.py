@@ -1,3 +1,6 @@
+"""
+Contains definitions of biological information (e. g. cell cycle genes).
+"""
 from typing import List
 
 __all__ = ['s_phase_genes', 'g2m_phase_genes']

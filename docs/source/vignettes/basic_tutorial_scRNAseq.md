@@ -131,7 +131,7 @@ The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to
 ds.mark_hvgs(min_cells=20, top_n=500, min_mean=-3, max_mean=2, max_var=6)
 ```
 
-As a result of running `mark_hvgs`, the feature table now has an extra column **I__hvgs** which contains a `True` value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name (with a double underscore delimiter). Since we did not provide any `cell_key` parameter the default value was used, i.e. the filtered cells. This resulted in **I** becoming the prefix.
+As a result of running `mark_hvgs`, the feature table now has an extra column **I\_\_hvgs** which contains a `True` value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name (with a double underscore delimiter). Since we did not provide any `cell_key` parameter the default value was used, i.e. the filtered cells. This resulted in **I** becoming the prefix.
 
 ```python
 ds.RNA.feats.head()
@@ -147,7 +147,7 @@ Creating a neighbourhood graph of cells is the most critical step in any Scarf w
 - edge weight computation using the `compute_membership_strengths` function from the UMAP package
 - fitting MiniBatch Kmeans (The kmeans centers are used later, for UMAP initialization)
 
-`make_graph` method is responsible for graph construction. It method takes a mandatory parameter: `feat_key`. This should be a column in the feature metadata table that indicates which genes to use to create the graph. Since, we have already identified the `hvgs` in the step above, we use those genes. Note that we do not need to write *I__hvgs* but just *hvgs* as the value of the parameter. We also supply values for two very important parameters here: `k` (number of nearest neighbours to be queried for each cell) and `dims` (number of PCA dimensions to use for graph construction). `n_centroids` parameter controls number of clusters to create for the data using Kmeans algorithm. We perform a more accurate clustering of data in the later steps.
+The `make_graph` method is responsible for graph construction. Its method takes a mandatory parameter: `feat_key`. This should be a column in the feature metadata table that indicates which genes to use to create the graph. Since we have already identified the `hvgs` in the step above, we use those genes. Note that we do not need to write *I\_\_hvgs* but just *hvgs* as the value of the parameter. We also supply values for two very important parameters here: `k` (number of nearest neighbours to be queried for each cell) and `dims` (number of PCA dimensions to use for graph construction). `n_centroids` parameter controls number of clusters to create for the data using the Kmeans algorithm. We perform a more accurate clustering of data in the later steps.
 
 ```python
 ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
@@ -215,7 +215,7 @@ Paris is the default algorithm in Scarf due to its ability to highlight cluster 
 ds.run_leiden_clustering(resolution=0.5)
 ```
 
-We can visualize the results using the `plot_layout` method again. Here we plot both UMAP and colour cells based on the their cluster identity, as obtained using Leiden clustering.
+We can visualize the results using the `plot_layout` method again. Here we plot both UMAP and colour cells based on their cluster identity, as obtained using Leiden clustering.
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
@@ -246,7 +246,6 @@ Visualizing Paris clusters
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
 
-
 Discerning similarity between clusters can be difficult from visual inspection alone, especially for tSNE plots. `plot_cluster_tree` function plots the relationship between clusters as a binary tree. This tree is simply a condensation of the dendrogram obtained using Paris clustering.
 
 ```python
@@ -259,11 +258,11 @@ The tree is free form (i.e the position of clusters doesn't convey any meaning) 
 ---
 ### 7) Marker gene identification
 
-Now we can identify the genes that are differentially expressed between the clusters using the `run_marker_search` method. The method to identify the differentially expressed genes in Scarf is optimized to obtain quick results. We have not compared the sensitivity of our method to other differential expression detecting methods. We expect specialized methods to be more sensitive and accurate to varying degrees. Our method is designed to quickly obtain key marker genes for populations from a large dataset. For each gene individually, following steps are carried out:
+Now we can identify the genes that are differentially expressed between the clusters using the `run_marker_search` method. The method to identify the differentially expressed genes in Scarf is optimized to obtain quick results. We have not compared the sensitivity of our method to other differential expression-detecting methods. We expect specialized methods to be more sensitive and accurate to varying degrees. Our method is designed to quickly obtain key marker genes for populations from a large dataset. For each gene individually, following steps are carried out:
 
 - Expression values are converted to ranks (dense format) across cells.
-- A mean of ranks is calculated for each group of cells
-- The mean value for each group is divided by the sum of mean values to obtain the 'specificity score'
+- A mean of ranks is calculated for each group of cells.
+- The mean value for each group is divided by the sum of mean values to obtain the 'specificity score'.
 - The gene is saved as a marker gene if it's specificity score is higher than a given threshold.
 
 This method does not perform any statistical test of significance and uses 'specificity score' as a measure of importance of each gene for a cluster.
@@ -285,7 +284,11 @@ The markers list for specific clusters can be obtained like this:
 ds.get_markers(group_key='RNA_cluster', group_id='1')
 ```
 
+<<<<<<< HEAD
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells atleast this way.
+=======
+We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells at least this way.
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')

@@ -73,7 +73,7 @@ ds_ctrl.run_mapping(target_assay=ds_stim.RNA, target_name='stim',
 ### 3) Mapping scores
 
 
-We can use `mapping scores` to perform cross dataset cluster similarity inspection. `mapping scores` are scores assigned to each reference cell based on how frequently it was identified as one of the nearest neighbour of the target cells. ``get_mapping_score`` method allows generating these scores. We use an optional parameter of `get_mapping_score`, `target_groups`. `target_groups` takes grouping information for target cells such that mapping scores are calculated for one group at a time. Here we provide the cluster information of stimulated cells as group information and mapping scores will be obtained for each target cluster independently. The UMAPs below show how much mapping score each control cell received upon mapping from cells from one of the IFN-B stimulated cell clusters
+We can use `mapping scores` to perform cross-dataset cluster similarity inspection. `mapping scores` are scores assigned to each reference cell based on how frequently it was identified as one of the nearest neighbour of the target cells. ``get_mapping_score`` method allows generating these scores. We use an optional parameter of `get_mapping_score`, `target_groups`. `target_groups` takes grouping information for target cells such that mapping scores are calculated for one group at a time. Here we provide the cluster information of stimulated cells as group information and mapping scores will be obtained for each target cluster independently. The UMAPs below show how much mapping score each control cell received upon mapping from cells from one of the IFN-B stimulated cell clusters.
 
 ```python
 # Here we will generate plots for IFB-B stimulated cells from NK  and CD14 monocyte clusters.
@@ -92,7 +92,7 @@ for g, ms in ds_ctrl.get_mapping_score(target_name='stim',
 
 Using the nearest neighbours of the target cells in the reference data, we can transfer labels from reference cells to target cells based on majority voting. This means that if a target cell has 'most' of its total edge weight shared with cells from one cell type, then that cell type label is tranferred to the target cell. The default threshold for 'most' is 0.5, i.e. half of all edge weight. `get_target_classes` method returns the transferred labels for each cell from a given mapped target dataset.
 
-`reference_class_group` parameter decides which labels to transfer. This can be any column from the cell attribute table that has categorical values, generally users would use `RNA_leiden_cluster` or `RNA_cluster` but they can also use other labels. Here, for example, we use the custom labels stored under `cluster_labels` column.
+The `reference_class_group` parameter decides which labels to transfer. This can be any column from the cell attribute table that has categorical values, generally users would use `RNA_leiden_cluster` or `RNA_cluster` but they can also use other labels. Here, for example, we use the custom labels stored under `cluster_labels` column.
 
 ```python
 transferred_labels = ds_ctrl.get_target_classes(target_name='stim',
@@ -112,7 +112,7 @@ ds_stim.cells.insert('transferred_labels',
 ds_stim.plot_layout(layout_key='RNA_UMAP', color_by='transferred_labels')
 ```
 
-It can be quite interesting to check how the predicted/transferred labels compare to the actual labels of the target cells.
+It can be quite interesting to check how the predicted/transferred labels compare to the actual labels of the target cells:
 
 ```python
 import pandas as pd
@@ -131,7 +131,7 @@ This cross-tabulation can be presented as percentage accuracy, where the values 
 ---
 ### 5) Unified UMAPs
 
-Scarf introduces Unified UMAPs, a strategy to embed target cells onto the reference manifold. To do so, we take the results of KNN projection and spike the graph of reference cells with target cells. We can control the weight of target-reference edges also and also the number of edges per target to retain. We rerun UMAP on this 'unified graph' to obtain a unified embdding. Following code shows how to call `run_unified_umap` method.
+Scarf introduces Unified UMAPs, a strategy to embed target cells onto the reference manifold. To do so, we take the results of KNN projection and spike the graph of reference cells with target cells. We can control the weight of target-reference edges also, as well as the number of edges per target to retain. We rerun UMAP on this 'unified graph' to obtain a unified embdding. Following code shows how to call `run_unified_umap` method.
 
 ```python
 ds_ctrl.run_unified_umap(target_names=['stim'], ini_embed_with='RNA_UMAP', target_weight=1,

@@ -79,19 +79,19 @@ This assay is designed for feature selection and normalization of ADTs from CITE
 MetaData
 --------
 
-.. autoclass:: scarf.metadata.MetaData
+.. automodule:: scarf.metadata
     :members:
 
 
 Readers
 -------
 
-.. autoclass:: scarf.readers
+.. automodule:: scarf.readers
     :members:
 
 
 Writers
 -------
 
-.. autoclass:: scarf.writers
+.. automodule:: scarf.writers
     :members:

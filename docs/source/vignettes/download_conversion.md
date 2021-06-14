@@ -25,16 +25,23 @@ scarf.__version__
 ---
 ### 1) Fetch datsets from cloud repository
 
+<<<<<<< HEAD
 Scarf stores many single-cell datasets online on [OSF](https://osf.io/zeupv/). Herein datasets are stored in many different formats including MTX, 10x HDF5 and H5ad(anndata). These files can readily be downlaoded using Scarf's `fetch_dataset` command.
 
 
 To check which datasets are available to download, use the `show_available_datasets` function
+=======
+Scarf stores many single-cell datasets online on [OSF](https://osf.io/zeupv/). Herein datasets are stored in many different formats including MTX, 10x HDF5 and H5ad(anndata). These files can readily be downloaded using Scarf's `fetch_dataset` command.
+
+
+To check which datasets are available to download, use the `show_available_datasets` function:
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 scarf.show_available_datasets()
 ```
 
-**Naming format**: Datasets are named using this rule: \<author\>_\<number of cells\>_\<cell/tissue type or species\>_\<single-cell method>
+**Naming format**: Datasets are named using this rule: \<author\>\_\<number of cells\>\_\<cell/tissue type or species\>\_\<single-cell method>
 
 Now using any of these dataset names we can download the dataset of our choice:
 
@@ -43,7 +50,7 @@ Now using any of these dataset names we can download the dataset of our choice:
 scarf.fetch_dataset('tenx_10K_pbmc_atacseq', save_path='./scarf_datasets')
 ```
 
-The above dataset gets saved under the directory `scarf_datasets` in our current working directory. You can modify `save_path` parameter to save data in location of your choice. The dataset above was downloaded in 10x' HDF5 format. Let download few more datasets that are in differnet file formats.
+The above dataset gets saved under the directory `scarf_datasets` in our current working directory. You can modify `save_path` parameter to save data in location of your choice. The dataset above was downloaded in 10x's HDF5 format. Let download few more datasets that are in differnet file formats.
 
 ```python
 # This dataset is in MTX format along with barcodes and features TSV files.
@@ -58,7 +65,11 @@ scarf.fetch_dataset('bastidas-ponce_4K_pancreas-d15_rnaseq', save_path='./scarf_
 ---
 ### 2) Conversion to Scarf's Zarr format file
 
+<<<<<<< HEAD
 Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.readers` and `scarf.writers` modules contain classes that allow reading many different file formats and convert them to Zarr. There are oftent complementary reader and writer classes. Let's explore them below.
+=======
+Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.readers` and `scarf.writers` modules contain classes that allow reading many different file formats and convert them to Zarr. There are often complementary reader and writer classes. Let's explore them below.
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 
 #### From 10x's HDF5 file format
@@ -96,7 +107,7 @@ writer = scarf.H5adToZarr(reader, zarr_fn='scarf_datasets/differentiating_pancre
 writer.dump()
 ```
 
-Conversion from **Loom** file formats is also supported using `scarf.LoomReader` and `scarf.LoomToZarr` which can be used in similar fashion as other readers and writers.
+Conversion from [Loom](https://loompy.org/) file formats is also supported using `scarf.LoomReader` and `scarf.LoomToZarr` which can be used in similar fashion as other readers and writers.
 
 
 ---
@@ -115,7 +126,7 @@ scarf.writers.to_mtx(ds.RNA, mtx_directory='scarf_datasets/diff_pancreas')
 
 #### To H5ad format
 
-Conversion to H5ad is the preferred mode as it runs much faster and produces files with smaller footprints. Updates are underway to include all the data from Zarr file like,  UMAP, PCA and graph into anndata
+Conversion to H5ad is the preferred mode as it runs much faster and produces files with smaller footprints. Updates are underway to include all the data from Zarr file like UMAP, PCA and graph, into anndata.
 
 ```python
 ds = scarf.DataStore('scarf_datasets/differentiating_pancreatic_cells.zarr')
@@ -125,7 +136,7 @@ ds = scarf.DataStore('scarf_datasets/differentiating_pancreatic_cells.zarr')
 scarf.writers.to_h5ad(ds.RNA, h5ad_filename='scarf_datasets/diff_pancreas.h5ad')
 ```
 
-Finally, let's have a look at all the files that now exist in the our previously empty scarf_datasets directory
+Finally, let's have a look at all the files that now exist in our previously empty scarf_datasets directory:
 
 ```python
 ls -d scarf_datasets

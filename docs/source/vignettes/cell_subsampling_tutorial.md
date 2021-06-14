@@ -27,7 +27,11 @@ scarf.__version__
 ### 1) Installing dependencies
 
 
+<<<<<<< HEAD
 We need to install the TopACeDo algorithm to perform subsampling
+=======
+We need to install the TopACeDo algorithm to perform subsampling:
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 !pip install git+https://github.com/fraenkel-lab/pcst_fast.git@deb3236cc26ee9fee77d5af40fac3f12bb753850
@@ -65,7 +69,11 @@ As a result of subsampling the subsampled cells are marked True under the cell m
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketched')
 ```
 
+<<<<<<< HEAD
 It may also be interesting to visualize the cells that were marked as `seed cells` used when PCST was run. These cells are marked under the column `RNA_sketch_seeds`
+=======
+It may also be interesting to visualize the cells that were marked as `seed cells` used when PCST was run. These cells are marked under the column `RNA_sketch_seeds`.
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketch_seeds')
@@ -75,13 +83,17 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='
 ### 4) Intermediate parameters of downsampling
 
 
-To identify the seed cells, the subsampling algorithm calculates cell densities based on neighbourhood degrees. Regions of higher cell density get a sampling penalty. The neighbourhood degree of individual cells are stored under the column `RNA_cell_density`
+To identify the seed cells, the subsampling algorithm calculates cell densities based on neighbourhood degrees. Regions of higher cell density get a sampling penalty. The neighbourhood degree of individual cells are stored under the column `RNA_cell_density`.
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cell_density')
 ```
 
+<<<<<<< HEAD
 The dowsampling algorithm also identififes regions of the graph where cells form tightly connected groups by calculating mean shared nearest neighbours of each cell's nieghbours. The tightly connected regions get a sampling award. These values can be accessed from under the cell metadata column `RNA_snn_value`
+=======
+The dowsampling algorithm also identifies regions of the graph where cells form tightly connected groups by calculating mean shared nearest neighbours of each cell's nieghbours. The tightly connected regions get a sampling award. These values can be accessed from under the cell metadata column `RNA_snn_value`.
+>>>>>>> 4d0f181b87f12bf0e9e17e05178d697066e5104b
 
 ```python
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')

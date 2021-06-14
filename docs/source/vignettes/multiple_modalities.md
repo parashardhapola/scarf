@@ -26,7 +26,7 @@ scarf.__version__
 ---
 ### 1) Fetch and convert data
 
-For this tutorial we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance. Throughout this tutorial we will refer to gene expression modality as `RNA` and surface protein as `ADT`. We start by downloading the data and converting it into Zarr format
+For this tutorial we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance. Throughout this tutorial we will refer to gene expression modality as `RNA` and surface protein as `ADT`. We start by downloading the data and converting it into Zarr format:
 
 ```python
 scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets')
@@ -49,7 +49,7 @@ reader.rename_assays({'assay2': 'ADT'})
 reader.assayFeats
 ```
 
-Now the data is converted into Zarr format. Like single assay datasets all the data is saved under one Zarr file.
+Now the data is converted into Zarr format. Like single assay datasets, all the data is saved under one Zarr file.
 
 ```python
 writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
@@ -150,20 +150,20 @@ Now we are ready to create a KNN graph of cells using only ADT data. Here we wil
 ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100)
 ```
 
-UMAP and clustering can be run on ADT assay by simply providing setting `from_assay` parameter value to 'ADT'
+UMAP and clustering can be run on ADT assay by simply setting `from_assay` parameter value to 'ADT':
 
 ```python
 ds.run_umap(from_assay='ADT', fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
 ds.run_leiden_clustering(from_assay='ADT', resolution=1)
 ```
 
-If we now check the cell attribute table, we will find the UMAP coordinates and clusters calculated using `ADT` assay
+If we now check the cell attribute table, we will find the UMAP coordinates and clusters calculated using `ADT` assay:
 
 ```python
 ds.cells.head()
 ```
 
-Visualizing the UMAP and clustering calcualted using `ADT` only
+Visualizing the UMAP and clustering calcualted using `ADT` only:
 
 ```python
 ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_leiden_cluster')
@@ -172,7 +172,7 @@ ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_leiden_cluster')
 ---
 ### 5) Cross modality comparison
 
-It is generally of quite interest to see how different modalities coroborate each other.
+It is generally of interest to see how different modalities corroborate each other.
 
 ```python
 # UMAP on RNA and coloured with clusters calculated on ADT
@@ -207,7 +207,7 @@ ds.plot_layout(from_assay='ADT', layout_key='ADT_UMAP', color_by='CD16_TotalSeqB
 ds.plot_layout(from_assay='ADT', layout_key='RNA_UMAP', color_by='CD16_TotalSeqB')
 ```
 
-We can also query gene expression and visualize it on both RNA and ADT UMAPs. Here we query gene FCGR3A which codes for CD16.
+We can also query gene expression and visualize it on both RNA and ADT UMAPs. Here we query gene FCGR3A which codes for CD16:
 
 ```python
 ds.plot_layout(from_assay='RNA', layout_key='RNA_UMAP', color_by='FCGR3A')

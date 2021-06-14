@@ -6,7 +6,7 @@ sparse
 networkx
 hnswlib
 numba
-dask
+dask<=2021.03.1
 pandas
 zarr
 h5py
@@ -29,3 +29,4 @@ packaging
 importlib_metadata
 requests
 jinja2~=2.11
+kneed

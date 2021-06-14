@@ -19,8 +19,8 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
             if len(p) > 0:
                 # p is the position of self loop. We exclude this position
                 p = p[0]
-                j = np.array(list(j[:p]) + list(j[p+1:]))
-                k = np.array(list(k[:p]) + list(k[p+1:]))
+                j = np.array(list(j[:p]) + list(j[p + 1:]))
+                k = np.array(list(k[:p]) + list(k[p + 1:]))
             else:
                 # No self found at all. Poor recall? simply remove the last k neighbour
                 j = j[:-1]
@@ -36,16 +36,14 @@ class AnnStream:
                  mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int,
                  nthreads: int, ann_parallel: bool, rand_state: int,
-                 do_kmeans_fit: bool, scale_features: bool, ann_idx):
+                 do_kmeans_fit: bool, disable_scaling: bool, ann_idx):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
-            self.k = self.data.shape[0]-1
+            self.k = self.data.shape[0] - 1
         self.nClusters = max(n_cluster, 2)
         self.dims = dims
         self.loadings = loadings
-        if self.dims > self.data.shape[0]:
-            self.dims = self.data.shape[0]
         if self.dims is None and self.loadings is None:
             raise ValueError("ERROR: Provide either value for atleast one: 'dims' or 'loadings'")
         self.annMetric = ann_metric
@@ -62,23 +60,53 @@ class AnnStream:
         self.method = reduction_method
         self.nCells, self.nFeats = self.data.shape
         self.clusterLabels: np.ndarray = np.repeat(-1, self.nCells)
+        disable_reduction = False
+        if self.dims < 1:
+            disable_reduction = True
         with threadpool_limits(limits=self.nthreads):
             if self.method == 'pca':
                 self.mu, self.sigma = mu, sigma
                 if self.loadings is None or len(self.loadings) == 0:
                     if len(use_for_pca) != self.nCells:
                         raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells")
-                    self._fit_pca(scale_features, use_for_pca)
-                if scale_features:
-                    self.reducer = lambda x: self.transform_pca(self.transform_z(x))
+                    if disable_reduction is False:
+                        self._fit_pca(disable_scaling, use_for_pca)
                 else:
-                    self.reducer = lambda x: self.transform_pca(x)
+                    # Even though the dims might have been already adjusted according to loadings before calling
+                    # AnnStream, it could still be overwritten by _handle_batch_size. Hence need to hard set it here.
+                    self.dims = self.loadings.shape[1]
+                    # it is okay for dimensions to be larger than batch size here because we will not fit the PCA
+                if disable_scaling:
+                    if disable_reduction:
+                        self.reducer = lambda x: x
+                    else:
+                        self.reducer = lambda x: x.dot(self.loadings)
+                else:
+                    if disable_reduction:
+                        self.reducer = lambda x: self.transform_z(x)
+                    else:
+                        self.reducer = lambda x: self.transform_z(x).dot(self.loadings)
             elif self.method == 'lsi':
                 if self.loadings is None or len(self.loadings) == 0:
-                    self._fit_lsi()
-                self.reducer = self.transform_lsi
+                    if disable_reduction is False:
+                        self._fit_lsi()
+                else:
+                    self.dims = self.loadings.shape[1]
+                if disable_reduction:
+                    self.reducer = lambda x: x
+                else:
+                    self.reducer = lambda x: x.dot(self.loadings)
+            elif self.method == 'custom':
+                if self.loadings is None or len(self.loadings) == 0:
+                    logger.warning("No loadings provided for manual dimension reduction")
+                else:
+                    self.dims = self.loadings.shape[1]
+                if disable_reduction:
+                    self.reducer = lambda x: x
+                else:
+                    self.reducer = lambda x: x.dot(self.loadings)
             else:
-                raise ValueError("ERROR: Unknown reduction method")
+                raise ValueError(f"ERROR: Unknown reduction method: {self.method}")
             if ann_idx is None:
                 self.annIdx = self._fit_ann()
             else:
@@ -88,9 +116,11 @@ class AnnStream:
             self.kmeans = self._fit_kmeans(do_kmeans_fit)
 
     def _handle_batch_size(self):
+        if self.dims > self.data.shape[0]:
+            self.dims = self.data.shape[0]
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
         if self.dims >= batch_size:
-            self.dims = batch_size-1  # -1 because we will do PCA +1
+            self.dims = batch_size - 1  # -1 because we will do PCA +1
             logger.info(f"Number of PCA/LSI components reduced to batch size of {batch_size}")
         if self.nClusters > batch_size:
             self.nClusters = batch_size
@@ -104,14 +134,6 @@ class AnnStream:
     def transform_z(self, a: np.ndarray) -> np.ndarray:
         return (a - self.mu) / self.sigma
 
-    def transform_pca(self, a: np.ndarray) -> np.ndarray:
-        ret_val = a.dot(self.loadings)
-        return ret_val
-
-    def transform_lsi(self, a: np.ndarray) -> np.ndarray:
-        ret_val = a.dot(self.loadings)
-        return ret_val
-
     def transform_ann(self, a: np.ndarray, k: int = None, self_indices: np.ndarray = None) -> tuple:
         if k is None:
             k = self.k
@@ -120,10 +142,10 @@ class AnnStream:
             i, d = self.annIdx.knn_query(a, k=k)
             return i, d
         else:
-            i, d = self.annIdx.knn_query(a, k=k+1)
+            i, d = self.annIdx.knn_query(a, k=k + 1)
             return fix_knn_query(i, d, self_indices)
 
-    def _fit_pca(self, scale_features, use_for_pca) -> None:
+    def _fit_pca(self, disable_scaling, use_for_pca) -> None:
         from sklearn.decomposition import IncrementalPCA
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
@@ -141,7 +163,7 @@ class AnnStream:
                 e = s + i.shape[0]
                 i = i[use_for_pca[s:e]]
                 s = e
-            if scale_features:
+            if disable_scaling is False:
                 i = self.transform_z(i)
             if len(carry_over) > 0:
                 i = np.vstack((carry_over, i))
@@ -183,7 +205,10 @@ class AnnStream:
     def _fit_ann(self):
         import hnswlib
 
-        ann_idx = hnswlib.Index(space=self.annMetric, dim=self.dims)
+        dims = self.dims
+        if dims < 1:
+            dims = self.data.shape[1]
+        ann_idx = hnswlib.Index(space=self.annMetric, dim=dims)
         ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
                            M=self.annM, random_seed=self.randState)
         ann_idx.set_ef(self.annEf)

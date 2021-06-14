@@ -1,3 +1,6 @@
+"""
+Contains the code for plotting in Scarf.
+"""
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
@@ -12,6 +15,9 @@ plt.rcParams['svg.fonttype'] = 'none'
 
 
 def clean_axis(ax, ts=11, ga=0.4):
+    """
+    Cleans a given matplotlib axis.
+    """
     ax.xaxis.set_tick_params(labelsize=ts)
     ax.yaxis.set_tick_params(labelsize=ts)
     for i in ['top', 'bottom', 'left', 'right']:
@@ -23,6 +29,7 @@ def clean_axis(ax, ts=11, ga=0.4):
 
 
 def plot_graph_qc(g):
+    # TODO: add docstring description. Is this for qc of a graph, or for plotting a qc plot of a graph?
     _, axis = plt.subplots(1, 2, figsize=(12, 4))
     ax = axis[0]
     x = np.array((g != 0).sum(axis=0))[0]
@@ -48,6 +55,7 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
             fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
             sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
             max_points: int = 10000, show_on_single_row: bool = True):
+    # TODO: add docstring description. Is this for qc of a plot, or for plotting a qc plot?
     n_plots = data.shape[1] - 1
     n_groups = data['groups'].nunique()
     if n_groups > 5 and show_on_single_row is True:
@@ -102,6 +110,9 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
 def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.ndarray,
                   ax_label_fs: float = 12, fig_size: Tuple[float, float] = (4.5, 4.0),
                   ss: Tuple[float, float] = (3, 30), cmaps: Tuple[str, str] = ('winter', 'magma_r')):
+    """
+    Shows a mean-variance plot.
+    """
     _, ax = plt.subplots(1, 1, figsize=fig_size)
     nzm = np.log2(nzm)
     fv = np.log2(fv)
@@ -114,8 +125,30 @@ def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.
     plt.show()
 
 
+def plot_elbow(var_exp, figsize: Tuple[float, float] = (None, 2)):
+    from kneed import KneeLocator
+
+    x = range(len(var_exp))
+    kneedle = KneeLocator(x, var_exp, S=1.0, curve="convex", direction="decreasing")
+    if figsize[0] is None:
+        figsize = (0.25 * len(var_exp), figsize[1])
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.plot(x, var_exp, lw=1)
+    ax.set_xticks(x)
+    ax.axvline(kneedle.elbow, lw=1, c='r', label='Elbow')
+    ax.set_ylabel("% Variance explained", fontsize=9)
+    ax.set_xlabel("Principal components", fontsize=9)
+    clean_axis(ax, ts=8)
+    ax.legend(frameon=False, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
                  cmap=cm.matter_r, savename: str = None, save_dpi: int = 300, figsize=None):
+    """
+    Shows a heatmap plot.
+    """
     if figsize is None:
         figsize = (cdf.shape[1]*fontsize*width_factor, fontsize*cdf.shape[0]*height_factor)
     cgx = sns.clustermap(cdf, yticklabels=cdf.index, xticklabels=cdf.columns, method='ward',
@@ -265,7 +298,9 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  legend_size: float = 12, legends_per_col: int = 20,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                  savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
-
+    """
+    Shows a scatter plot.
+    """
     from matplotlib.colors import to_hex
 
     def _handle_scatter_kwargs(sk):
@@ -315,7 +350,7 @@ def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                      legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     if in_ax is None:
         if savename:
-            plt.savefig(savename, dpi=dpi)
+            plt.savefig(savename, dpi=dpi, bbox_inches='tight')
         plt.show()
     else:
         return ax
@@ -331,7 +366,9 @@ def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 
                   legend_size: float = 12, legends_per_col: int = 20,
                   marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                   savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True):
-    
+    """
+    Shows a shaded scatter plot.
+    """
     from holoviews.plotting import mpl as hmpl
     from holoviews.operation.datashader import datashade, dynspread
     import holoviews as hv
@@ -391,6 +428,13 @@ def plot_cluster_hierarchy(sg, clusts, color_values=None, force_ints_as_cats: bo
                            cmap: str = None, color_key: bool = None, edgecolors: str = 'k',
                            edgewidth: float = 1, alpha: float = 0.7, figsize=(5, 5), ax=None, show_fig: bool = True,
                            savename: str = None, save_dpi=300):
+    """
+    Shows a plot showing cluster hierarchy.
+
+    Returns:
+        If requested (with parameter `show_fig`) a matplotlib Axes object containing the plot
+        (which is the modified `ax` parameter if given).
+    """
     import networkx as nx
     import EoN
     import math
