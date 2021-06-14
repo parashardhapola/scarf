@@ -257,12 +257,15 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                      n_per_col: int, scale: float, ls: float, cs: float) -> None:
         from matplotlib.colors import Normalize
         from matplotlib.colorbar import ColorbarBase
+        from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+
 
         x, y, vc = df.columns[:3]
         v = df[vc]
         if v.nunique() <= 1:
             return None
         if v.dtype.name == 'category':
+            ax.title.set_text(vc)
             centers = df[[x, y, vc]].groupby(vc).median().T
             for i in centers:
                 if ondata:
@@ -279,15 +282,89 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                           markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
             if fig is not None:
-                cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
+                ax_divider = make_axes_locatable(ax)
+                cax = ax_divider.append_axes("top", size="7%", pad="5%")
+                # cbaxes = fig.add_axes([0.2, 1, 0.6, 0.05])
                 norm = Normalize(vmin=v.min(), vmax=v.max())
-                cb = ColorbarBase(cbaxes, cmap=cmap, norm=norm, orientation='horizontal')
+                cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='horizontal')
                 cb.set_label(vc, fontsize=fontsize)
                 cb.ax.xaxis.set_label_position('top')
             else:
                 logger.warning("Not plotting the colorbar because fig object was not passed")
         return None
 
+def plot_scatter_grid(df_dict, in_ax=None, fig=None, width: float = 6, height: float = 6,
+                      default_color: str = 'steelblue', color_map=None, color_key: dict = None,
+                      mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
+                      point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
+                      spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
+                      legend_ondata: bool = True, legend_onside: bool = True,
+                      legend_size: float = 12, legends_per_col: int = 20,
+                      marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
+                      savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
+    """
+    Shows scatter plots in a grid.
+    """
+    from matplotlib.colors import to_hex
+
+    def _handle_scatter_kwargs(sk):
+        if sk is None:
+            sk = {}
+        if 'c' in sk:
+            logger.warning('scatter_kwarg value `c` will be ignored')
+            del sk['c']
+        if 's' in sk:
+            logger.warning('scatter_kwarg value `s` will be ignored')
+            del sk['s']
+        if 'lw' not in sk:
+            sk['lw'] = 0.1
+        if 'edgecolors' not in sk:
+            sk['edgecolors'] = 'k'
+        return sk
+    
+    # make a grid to display multiple plots in one figure
+    # layout key by row and color by column
+    # e.g. if layout_key=['RNA', 'ADT'] and color_by=['CD14', 'CD4'] then plot[0, 0] = (rna + cd14) plot[0, 1] = (rna + cd4) plot[1, 0] = (adt + cd14) plot[1, 1] = (adt + cd4)
+    fig, axs = plt.subplots(1, len(df_dict), figsize=(width * len(df_dict), height), squeeze=False)
+
+    for i, key in enumerate(df_dict):
+        df = df_dict[key]
+        dim1, dim2, vc = df.columns[:3]
+        v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
+        v = _scatter_fix_type(v, force_ints_as_cats)
+        df[vc] = v
+        col_map, col_key = _scatter_make_colors(v, color_map, color_key,
+                                                    mask_color, mask_name)
+        if v.dtype.name == 'category':
+            df['c'] = [col_key[x] for x in v]
+        else:
+            if v.nunique() == 1:
+                df['c'] = [default_color for _ in v]
+            else:
+                v = v.copy().fillna(0)
+                # FIXME: Why have the following line?
+                pal = col_map
+                mmv = (v - v.min()) / (v.max() - v.min())
+                df['c'] = [to_hex(pal(x)) for x in mmv]
+        if 's' not in df:
+            df['s'] = [point_size for _ in df.index]
+        scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
+
+        ax = axs[0, i]
+
+        ax.scatter(df[dim1].values, df[dim2].values, c=df['c'].values, s=df['s'].values,
+                rasterized=True, **scatter_kwargs)
+        _scatter_label_axis(df, ax, ax_label_size, frame_offset)
+        _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+        _scatter_legends(df, ax, fig, col_map, col_key, legend_ondata, legend_onside,
+                        legend_size, legends_per_col, marker_scale, lspacing, cspacing)
+    if in_ax is None:
+        if savename:
+            plt.savefig(savename, dpi=dpi, bbox_inches='tight')
+        plt.tight_layout(pad=3.0)
+        plt.show()
+    else:
+        return axs
 
 def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
                  default_color: str = 'steelblue', color_map=None, color_key: dict = None,

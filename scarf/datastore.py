@@ -2951,7 +2951,7 @@ class DataStore(MappingDatastore):
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
 
-        from .plots import plot_scatter, shade_scatter
+        from .plots import plot_scatter, shade_scatter, plot_scatter_grid
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2963,35 +2963,56 @@ class DataStore(MappingDatastore):
             raise ValueError("ERROR: clip_fraction cannot be larger than or equal to 0.5")
         x = self.cells.fetch(f'{layout_key}1', cell_key)
         y = self.cells.fetch(f'{layout_key}2', cell_key)
+        color_val_dict = {}
+        df_dict = {}
         if color_by is not None:
-            v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=color_by,
-                                   clip_fraction=clip_fraction)
+            if isinstance(color_by, str):
+                color_by = [color_by]
+            for c in color_by:
+                v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=c,
+                                clip_fraction=clip_fraction)
+                color_val_dict[c] = v
         else:
             color_by = 'vc'
             v = np.ones(len(x)).astype(int)
-        df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, color_by: v})
-        if size_vals is not None:
-            if len(size_vals) != len(x):
-                raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
-            df['s'] = size_vals
-        if subselection_key is not None:
-            idx = self.cells.fetch(subselection_key, cell_key)
-            if idx.dtype != bool:
-                logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
-            else:
-                df = df[idx]
-        if shuffle_df:
-            df = df.sample(frac=1)
-        if sort_values:
-            df = df.sort_values(by=color_by)
+            color_val_dict['vc'] = v
+
+        
+        for key in color_val_dict:
+            v = color_val_dict[key]
+            df = pd.DataFrame({f'{layout_key} 1': x, f'{layout_key} 2': y, key: v})
+            
+            if size_vals is not None:
+                if len(size_vals) != len(x):
+                    raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
+                df['s'] = size_vals
+            if subselection_key is not None:
+                idx = self.cells.fetch(subselection_key, cell_key)
+                if idx.dtype != bool:
+                    logger.warning(f"`subselection_key` {subselection_key} is not bool type. Will not sub-select")
+                else:
+                    df = df[idx]
+            if shuffle_df:
+                df = df.sample(frac=1)
+            if sort_values:
+                df = df.sort_values(by=color_by)
+            df_dict[key] = df
+
         if do_shading:
             return shade_scatter(df, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                  legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
                                  lspacing, cspacing, savename, save_dpi, force_ints_as_cats)
+        elif len(df_dict) > 0:
+            return plot_scatter_grid(df_dict, ax, fig, width, height, default_color, cmap, color_key,
+                    mask_values, mask_name, mask_color, point_size,
+                    ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
+                    legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                    lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
+
         else:
-            return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
+            return plot_scatter(df_dict[color_by], ax, fig, width, height, default_color, cmap, color_key,
                                 mask_values, mask_name, mask_color, point_size,
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
