@@ -313,7 +313,7 @@ def _make_grid(width, height, w_pad, h_pad, n_panels, n_columns):
     return fig, axes
 
 
-def plot_scatter_grid(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
+def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
                       default_color: str = 'steelblue', color_map=None, color_key: dict = None,
                       mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
                       point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
@@ -384,125 +384,8 @@ def plot_scatter_grid(dfs, in_ax=None, fig=None, width: float = 6, height: float
     else:
         return axs
 
-def plot_scatter(df, in_ax=None, fig=None, width: float = 6, height: float = 6,
-                 default_color: str = 'steelblue', color_map=None, color_key: dict = None,
-                 mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
-                 point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
-                 spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
-                 legend_ondata: bool = True, legend_onside: bool = True,
-                 legend_size: float = 12, legends_per_col: int = 20,
-                 marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                 savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True, scatter_kwargs: dict = None):
-    """
-    Shows a scatter plot.
-    """
-    from matplotlib.colors import to_hex
 
-    def _handle_scatter_kwargs(sk):
-        if sk is None:
-            sk = {}
-        if 'c' in sk:
-            logger.warning('scatter_kwarg value `c` will be ignored')
-            del sk['c']
-        if 's' in sk:
-            logger.warning('scatter_kwarg value `s` will be ignored')
-            del sk['s']
-        if 'lw' not in sk:
-            sk['lw'] = 0.1
-        if 'edgecolors' not in sk:
-            sk['edgecolors'] = 'k'
-        return sk
-    
-    dim1, dim2, vc = df.columns[:3]
-    v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
-    v = _scatter_fix_type(v, force_ints_as_cats)
-    df[vc] = v
-    color_map, color_key = _scatter_make_colors(v, color_map, color_key,
-                                                mask_color, mask_name)
-    if v.dtype.name == 'category':
-        df['c'] = [color_key[x] for x in v]
-    else:
-        if v.nunique() == 1:
-            df['c'] = [default_color for _ in v]
-        else:
-            v = v.copy().fillna(0)
-            # FIXME: Why have the following line?
-            pal = color_map
-            mmv = (v - v.min()) / (v.max() - v.min())
-            df['c'] = [to_hex(pal(x)) for x in mmv]
-    if 's' not in df:
-        df['s'] = [point_size for _ in df.index]
-    scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
-    if in_ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(width, height))
-    else:
-        ax = in_ax
-    ax.scatter(df[dim1].values, df[dim2].values, c=df['c'].values, s=df['s'].values,
-               rasterized=True, **scatter_kwargs)
-    _scatter_label_axis(df, ax, ax_label_size, frame_offset)
-    _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
-    _scatter_legends(df, ax, fig, color_map, color_key, legend_ondata, legend_onside,
-                     legend_size, legends_per_col, marker_scale, lspacing, cspacing)
-                     
-    if in_ax is None:
-        if savename:
-            plt.savefig(savename, dpi=dpi, bbox_inches='tight')
-        plt.show()
-    else:
-        return ax
-
-
-def shade_scatter(df, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
-                  spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10, 
-                  color_map=None, color_key: dict = None,
-                  mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
-                  ax_label_size: float = 12, frame_offset: float = 0.05,
-                  spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
-                  legend_ondata: bool = True, legend_onside: bool = True,
-                  legend_size: float = 12, legends_per_col: int = 20,
-                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                  savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True):
-    """
-    Shows a shaded scatter plot.
-    """
-    from holoviews.plotting import mpl as hmpl
-    from holoviews.operation.datashader import datashade, dynspread
-    import holoviews as hv
-    import datashader as dsh
-    from IPython.display import display
-
-    dim1, dim2, vc = df.columns[:3]
-    v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
-    v = _scatter_fix_type(v, force_ints_as_cats)
-    df[vc] = v
-    color_map, color_key = _scatter_make_colors(v, color_map, color_key,
-                                                mask_color, mask_name)
-    if v.dtype.name == 'category':
-        agg = dsh.count_cat(vc)
-    else:
-        if v.nunique() == 1:
-            agg = dsh.count(vc)
-        else:
-            agg = dsh.mean(vc)
-    
-    points = hv.Points(df, kdims=[dim1, dim2], vdims=vc)
-    shader = datashade(points, aggregator=agg, cmap=color_map, color_key=color_key,
-                       height=pixels, width=pixels,
-                       x_sampling=sampling, y_sampling=sampling, min_alpha=min_alpha)
-    shader = dynspread(shader, threshold=spread_threshold, max_px=spread_px)
-    renderer = hmpl.MPLRenderer.instance()
-    fig = renderer.get_plot(shader.opts(fig_inches=(figsize, figsize))).state
-    ax = fig.gca()
-    _scatter_label_axis(df, ax, ax_label_size, frame_offset)
-    _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
-    _scatter_legends(df, ax, fig, color_map, color_key, legend_ondata, legend_onside,
-                     legend_size, legends_per_col, marker_scale, lspacing, cspacing)
-    if savename:
-        fig.savefig(savename, dpi=dpi)
-    display(fig)
-
-
-def shade_scatter_new(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
+def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
                   spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10, 
                   color_map=None, color_key: dict = None,
                   mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 

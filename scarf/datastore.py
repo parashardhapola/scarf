@@ -2195,7 +2195,7 @@ class MappingDatastore(GraphDataStore):
             None
         """
 
-        from .plots import plot_scatter_grid
+        from .plots import plot_scatter
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2253,7 +2253,7 @@ class MappingDatastore(GraphDataStore):
             df = df[ref_n_cells:]
         if shuffle_zorder:
             df = df.sample(frac=1)
-        return plot_scatter_grid([df], ax, fig, width, height, mask_color, cmap, color_key,
+        return plot_scatter([df], ax, fig, width, height, mask_color, cmap, color_key,
                             mask_values, mask_name, mask_color, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                             legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
@@ -2963,7 +2963,7 @@ class DataStore(MappingDatastore):
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
 
-        from .plots import plot_scatter, shade_scatter, shade_scatter_new, plot_scatter_grid
+        from .plots import shade_scatter, plot_scatter
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2993,7 +2993,6 @@ class DataStore(MappingDatastore):
                     v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=c,
                     clip_fraction=clip_fraction)
                 df = pd.DataFrame({f'{lk} 1': x, f'{lk} 2': y, c : v})
-                dfs.append(df)
                 if size_vals is not None:
                     if len(size_vals) != len(x):
                         raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
@@ -3008,18 +3007,19 @@ class DataStore(MappingDatastore):
                     df = df.sample(frac=1)
                 if sort_values:
                     df = df.sort_values(by=c)
+                dfs.append(df)
 
         if n_columns > len(dfs):
             n_columns = len(dfs)
 
         if do_shading:
-            return shade_scatter_new(dfs, ax, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
+            return shade_scatter(dfs, ax, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                  legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
                                  lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad)
         else:
-            return plot_scatter_grid(dfs, ax, fig, width, height, default_color, cmap, color_key,
+            return plot_scatter(dfs, ax, fig, width, height, default_color, cmap, color_key,
                                 mask_values, mask_name, mask_color, point_size,
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
