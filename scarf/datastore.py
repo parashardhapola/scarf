@@ -2131,7 +2131,7 @@ class MappingDatastore(GraphDataStore):
                             legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
                             legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
                             cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                            ax=None, fig=None, force_ints_as_cats: bool = True, scatter_kwargs: dict = None,
+                            ax=None, fig=None, force_ints_as_cats: bool = True, n_columns: int = 1, scatter_kwargs: dict = None,
                             shuffle_zorder: bool = True):
         """
         Plots the reference and target cells in their unified space.
@@ -2257,7 +2257,7 @@ class MappingDatastore(GraphDataStore):
                             mask_values, mask_name, mask_color, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                             legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
+                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, scatter_kwargs)
 
 
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
@@ -2854,7 +2854,7 @@ class DataStore(MappingDatastore):
                     cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
                     savename: str = None, save_dpi: int = 300,
                     ax=None, fig=None, force_ints_as_cats: bool = True,
-                    n_columns: int = 0, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
+                    n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
         the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
@@ -2868,8 +2868,9 @@ class DataStore(MappingDatastore):
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
                       The values in the chosen column should be boolean (Default value: 'I')
             layout_key: A prefix to cell metadata columns that contains the coordinates for the 2D layout of the cells.
-                        For example, 'RNA_UMAP' or 'RNA_tSNE'
-            color_by: One of the columns of the metadata table or a feature names (for example gene, GATA2).
+                        For example, 'RNA_UMAP' or 'RNA_tSNE'. If a list of prefixes is provided a grid of plots will be made.
+            color_by: One (or a list) of the columns of the metadata table or a feature name (for example gene, GATA2).
+                      If a list of names is provided a grid of plots will be made.
                       (Default: None)
             subselection_key: A column from cell metadata table to be used to show only a subselection of cells. This
                               key can be used to hide certain cells from a 2D layout. (Default value: None)
@@ -2942,6 +2943,14 @@ class DataStore(MappingDatastore):
                                 treated as continuous variables otherwise as categories. This effects how colourmaps
                                 are chosen and how legends are rendered. Set this to False if you are large number of
                                 unique integer entries (Default: True)
+            n_columns: If plotting several plots in a grid this argument decides the layout by how many columns in the grid.
+                       Defaults to 4 but if the total amount of plots are less than 4 it will default to that number. 
+            w_pad: When plotting in multiple plots in a grid this decides the width padding between the plots. 
+                   If None is provided the padding will be automatically added to avoid overlap.
+                   Ignored if only plotting one scatterplot. 
+            h_pad: When plotting in multiple plots in a grid this decides the height padding between the plots. 
+                   If None is provided the padding will be automatically added to avoid overlap.
+                   Ignored if only plotting one scatterplot. 
             scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
 
         Returns:
@@ -2950,6 +2959,7 @@ class DataStore(MappingDatastore):
         """
 
         # TODO: add support for subplots
+        # TODO: add support for providing a list of subselections, from_assay and cell_keys
         # TODO: add support for different kinds of point markers
         # TODO: add support for cell zorder randomization
 
@@ -2965,6 +2975,8 @@ class DataStore(MappingDatastore):
             raise ValueError("ERROR: clip_fraction cannot be larger than or equal to 0.5")
         if isinstance(layout_key, str):
             layout_key = [layout_key]
+        # If a list of layout keys and color_by (e.g. layout_key=['UMAP', 'tSNE'], color_by=['gene1', 'gene2'] the grid layout will be:
+        # plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2 
         dfs = []
         for lk in layout_key:
             x = self.cells.fetch(f'{lk}1', cell_key)
@@ -2997,7 +3009,7 @@ class DataStore(MappingDatastore):
                 if sort_values:
                     df = df.sort_values(by=c)
 
-        if n_columns == 0:
+        if n_columns > len(dfs):
             n_columns = len(dfs)
 
         if do_shading:
@@ -3005,20 +3017,8 @@ class DataStore(MappingDatastore):
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                  legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns)
-        # elif len(df_dict) > 0:
-        #     return plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
-        #             mask_values, mask_name, mask_color, point_size,
-        #             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-        #             legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-        #             lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
-
+                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad)
         else:
-            plot_scatter(df, ax, fig, width, height, default_color, cmap, color_key,
-                         mask_values, mask_name, mask_color, point_size,
-                         ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-                         legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                         lspacing, cspacing, savename, save_dpi, force_ints_as_cats, scatter_kwargs)
             return plot_scatter_grid(dfs, ax, fig, width, height, default_color, cmap, color_key,
                                 mask_values, mask_name, mask_color, point_size,
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
