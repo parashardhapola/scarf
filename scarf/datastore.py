@@ -6,7 +6,6 @@ Contains the primary interface to interact with data (i. e. DataStore) and its s
 """
 
 import os
-from re import L
 import numpy as np
 from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
