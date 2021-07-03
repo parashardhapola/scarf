@@ -1,4 +1,4 @@
-|PyPI| |Docs| |Gitter| |commits-latest| |pypi-downloads|
+|PyPI| |Docs| |Tests| |Gitter| |commits-latest| |pypi-downloads|
 
 |IMG1|
 
@@ -7,6 +7,8 @@
          :target: https://pypi.org/project/scarf-toolkit
 .. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
          :target: https://scarf.readthedocs.io
+.. |Tests| image:: https://circleci.com/gh/parashardhapola/scarf/tree/master.svg?style=svg
+          :target: https://circleci.com/gh/parashardhapola/scarf/tree/master
 .. |Gitter| image:: https://badges.gitter.im/scarf-toolkit/community.svg
            :target: https://gitter.im/scarf-toolkit/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
 .. |commits-latest| image:: https://img.shields.io/github/last-commit/parashardhapola/scarf
