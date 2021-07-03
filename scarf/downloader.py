@@ -118,7 +118,7 @@ def handle_download(url, out_fn):
     if sys.platform == 'win32':
         cmd = 'powershell -command "& { iwr %s -OutFile %s }"' % (url, out_fn)
     elif sys.platform in ['posix', 'linux']:
-        cmd = f"wget -O {out_fn} {url}"
+        cmd = f"wget -O --no-verbose {out_fn} {url}"
     else:
         raise ValueError(f"This operating system is not supported in this function. "
                          f"Please download the file manually from this URL:\n {url}\n "
