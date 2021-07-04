@@ -79,6 +79,7 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
         dtype = 'U' + str(max([len(str(x)) for x in data]))
     if np.issubdtype(data.dtype, np.dtype('S')):
         data = data.astype('U')
+        dtype = data.dtype
     return g.create_dataset(name, data=data, chunks=(100000,),
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
