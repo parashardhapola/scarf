@@ -35,7 +35,4 @@ def test_metadata_verify_bool(dummy_metadata):
 
 def test_metadata_active_index(dummy_metadata):
     a = np.array([0, 1, 2, 3, 6, 7, 8])
-    assert np.all(dummy_metadata.active_index == a)
-
-
-
+    assert np.all(dummy_metadata.active_index(key='I') == a)
