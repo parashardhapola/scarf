@@ -283,12 +283,15 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                           markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
             if fig is not None:
+                # ax.title.set_text(vc)
                 ax_divider = make_axes_locatable(ax)
-                cax = ax_divider.append_axes("top", size="7%", pad="5%")
+                cax = ax_divider.append_axes("top", size="7%", pad="7%")
                 norm = Normalize(vmin=v.min(), vmax=v.max())
                 cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='horizontal')
                 cb.set_label(vc, fontsize=fontsize)
                 cb.ax.xaxis.set_label_position('top')
+                fig.set_constrained_layout_pads(wspace=0.1, hspace=0.05)
+                
             else:
                 logger.warning("Not plotting the colorbar because fig object was not passed")
         return None
@@ -377,6 +380,7 @@ def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
         _scatter_legends(df, ax, fig, col_map, col_key, legend_ondata, legend_onside,
                         legend_size, legends_per_col, marker_scale, lspacing, cspacing)
 
+
     if in_ax is None:
         if savename:
             plt.savefig(savename, dpi=dpi, bbox_inches='tight')
@@ -410,8 +414,8 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
     else:
         fig, axs = plt.subplots(1, 1, figsize=(figsize, figsize), squeeze=False)
     
-    wpixels = int(pixels / np.shape(axs)[0])
-    hpixels = int(pixels / np.shape(axs)[1])
+    #wpixels = int(pixels / np.shape(axs)[0])
+    #hpixels = int(pixels / np.shape(axs)[1])
     for i, df in enumerate(dfs):
         dim1, dim2, vc = df.columns[:3]
         v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
@@ -431,7 +435,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
         artist = dsshow(df, dsh.Point(dim1, dim2), aggregator=agg, norm='eq_hist', 
                         color_key=col_key, cmap=col_map, alpha_range=(min_alpha, 255),
                         shade_hook=partial(tf.dynspread, threshold=spread_threshold, max_px=spread_px), 
-                        plot_height=hpixels, plot_width=wpixels, aspect='equal', width_scale=1, height_scale=1,
+                        plot_height=pixels, plot_width=pixels, aspect='equal', width_scale=1, height_scale=1,
                         ax=ax)
 
         _scatter_label_axis(df, ax, ax_label_size, frame_offset) 
@@ -440,7 +444,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
                         legend_size, legends_per_col, marker_scale, lspacing, cspacing)
     
     if savename:
-        fig.savefig(savename, dpi=dpi)
+        plt.savefig(savename, dpi=dpi, bbox_inches='tight')
     if in_ax is not None:
         return axs
 

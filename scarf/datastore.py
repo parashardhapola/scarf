@@ -2936,8 +2936,7 @@ class DataStore(MappingDatastore):
                          (Default value: False)
             ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
                 created axes. It is ignored if `do_shading` is set to True. (Default value: None)
-            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values. It is
-                 ignored if `do_shading` is set to True. (Default value: None)
+            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values. (Default value: None)
             force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
                                 treated as continuous variables otherwise as categories. This effects how colourmaps
                                 are chosen and how legends are rendered. Set this to False if you are large number of
