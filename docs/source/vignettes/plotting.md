@@ -13,10 +13,6 @@ jupyter:
 ---
 
 ```python
-!pip install D:/scarf
-```
-
-```python
 %load_ext autotime
 %config InlineBackend.figure_format = 'retina'
 
@@ -41,6 +37,8 @@ This vignette will go through scarfs scatter plot functionality in more detail. 
 First we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance.
 
 ```python
+# Preprocess data 
+
 #scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets')
 #reader = scarf.CrH5Reader('D:/scarf_datasets/tenx_8K_pbmc_citeseq/data.h5', 'rna')
 #reader.rename_assays({'assay2': 'ADT'})
@@ -99,27 +97,25 @@ In the example below we first plot the umap without any coloring by the empty st
 ds.plot_layout(layout_key="RNA_UMAP", color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"])
 ```
 
-## Padding
+<!-- #region tags=[] -->
+## Modifying the grid
+<!-- #endregion -->
+
+### Padding
 By default the padding between the plots will be automatically decided to avoid overlap. However, if you prefer to decide the padding yourself you can change it with `w_pad` and `h_pad`.
 
 ```python
 ds.plot_layout(layout_key="RNA_UMAP", color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"], w_pad=10, h_pad=10)
 ```
 
-<!-- #region tags=[] -->
-## Modifying the grid
-<!-- #endregion -->
-
-## Plot different layouts
+### Plot different layouts
 You can also give a list of values in the `layout_key` argument. This can be for example if you have calculated more then one set dimension reduction coordinates (UMAP and tSNE).
 Or, as in the CITEseq dataset we use, if you multiple modalities. You can then plot multiple layouts if you have calculated one UMAP using the RNA data and one using the ADT (surface protein) data.
 
 The function will go through each layout_key and for each value go through each value in the color_by. This means that if you give `layout_key=['key1', 'key2'], color_by=["gene1", "gene2"]` the order will be:
-
 plot1 = key1 + gene1, plot2 = key1 + gene2, plot3 = key2 + gene1, plot3 = key2 + gene2
 
 In the example below we also modify the width and height of the figure. The `width` and `height` arguments are per plot which means that if you create a grid plot the total width will be `width` * `n_columns` and the total height will be `height` * number of rows.
-
 We will also increase the size of some other things to go along with the increased width and height.
 
 Using the `legend_size` you can increase the size of the cluster legend and labels on top of the graph, default value is 12.
@@ -152,13 +148,9 @@ fig = plt.imshow(img)
 ```
 
 To avoid the problem of overplotting and other issues that come with larger dataset sizes scarf uses the datashader library. A shaded scatter plot is created by setting `do_shading=True` which otherwise defaults to False.
-
-Note: To read more in depth about problems that can occur when plotting and how the datashader deals with them read here: [Plotting Pitfalls](https://datashader.org/user_guide/Plotting_Pitfalls.html)
-
-To demonstrate the value of the shaded scatter plots we will need a larger dataset. To download and analyze this dataset takes more time so if you want to run this for yourself be prepared for that.
+Read more in depth about problems that can occur when plotting and how the datashader deals with them read here: [Plotting Pitfalls](https://datashader.org/user_guide/Plotting_Pitfalls.html)
 
 The `shade_npixels` decides the resolution of the output image (width and height). 
-
 These shaded scatter plots can be grid plotted just as the normal scatter plots.
 
 ```python
