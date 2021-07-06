@@ -33,7 +33,7 @@ __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_as
            'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
 
 
-def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
+def create_zarr_dataset(g: zarr.Group, name: str, chunks: tuple,
                         dtype: Any, shape: Tuple, overwrite: bool = True) -> zarr.hierarchy:
     """
     Creates and returns a Zarr array.
@@ -56,7 +56,7 @@ def create_zarr_dataset(g: zarr.hierarchy, name: str, chunks: tuple,
                             shape=shape, compressor=compressor, overwrite=overwrite)
 
 
-def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
+def create_zarr_obj_array(g: zarr.Group, name: str, data,
                           dtype: Union[str, Any] = None, overwrite: bool = True) -> zarr.hierarchy:
     """
     Creates and returns a Zarr object array.
@@ -79,18 +79,19 @@ def create_zarr_obj_array(g: zarr.hierarchy, name: str, data,
         dtype = 'U' + str(max([len(str(x)) for x in data]))
     if np.issubdtype(data.dtype, np.dtype('S')):
         data = data.astype('U')
+        dtype = data.dtype
     return g.create_dataset(name, data=data, chunks=(100000,),
                             shape=len(data), dtype=dtype, overwrite=overwrite)
 
 
-def create_zarr_count_assay(z: zarr.hierarchy, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
+def create_zarr_count_assay(z: zarr.Group, assay_name: str, chunk_size: Tuple[int, int], n_cells: int,
                             feat_ids: Union[np.ndarray, List[str]], feat_names: Union[np.ndarray, List[str]],
                             dtype: str = 'uint32') -> zarr.hierarchy:
     """
     Creates and returns a Zarr array with name 'counts'.
 
     Args:
-        z (zarr.hierarchy):
+        z (zarr.Group):
         assay_name (str):
         chunk_size (Tuple[int, int]):
         n_cells (int):

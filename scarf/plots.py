@@ -284,7 +284,7 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
         else:
             if fig is not None:
                 ax_divider = make_axes_locatable(ax)
-                cax = ax_divider.append_axes("top", size="7%", pad="7%")
+                cax = ax_divider.append_axes("top", size="7%", pad="5%")
                 norm = Normalize(vmin=v.min(), vmax=v.max())
                 cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='horizontal')
                 cb.set_label(vc, fontsize=fontsize)
@@ -378,7 +378,6 @@ def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
         _scatter_legends(df, ax, fig, col_map, col_key, legend_ondata, legend_onside,
                         legend_size, legends_per_col, marker_scale, lspacing, cspacing)
 
-
     if in_ax is None:
         if savename:
             plt.savefig(savename, dpi=dpi, bbox_inches='tight')
@@ -411,9 +410,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
         fig, axs = _make_grid(figsize, figsize, w_pad, h_pad, len(dfs), n_columns)
     else:
         fig, axs = plt.subplots(1, 1, figsize=(figsize, figsize), squeeze=False)
-    
-    #wpixels = int(pixels / np.shape(axs)[0])
-    #hpixels = int(pixels / np.shape(axs)[1])
+
     for i, df in enumerate(dfs):
         dim1, dim2, vc = df.columns[:3]
         v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)

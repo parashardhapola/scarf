@@ -13,3 +13,6 @@ docs/source/vignettes/README.md
 docs/source/vignettes/scarf_datasets
 docs/source/vignettes/*.txt
 docs/source/vignettes/*.mtx
+.coverage
+.pytest_cache
+scarf/tests/datasets/dummy*
