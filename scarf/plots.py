@@ -283,7 +283,6 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                           markerscale=scale, labelspacing=ls, columnspacing=cs)
         else:
             if fig is not None:
-                # ax.title.set_text(vc)
                 ax_divider = make_axes_locatable(ax)
                 cax = ax_divider.append_axes("top", size="7%", pad="7%")
                 norm = Normalize(vmin=v.min(), vmax=v.max())
@@ -291,7 +290,6 @@ def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize
                 cb.set_label(vc, fontsize=fontsize)
                 cb.ax.xaxis.set_label_position('top')
                 fig.set_constrained_layout_pads(wspace=0.1, hspace=0.05)
-                
             else:
                 logger.warning("Not plotting the colorbar because fig object was not passed")
         return None
