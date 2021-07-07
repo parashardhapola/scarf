@@ -711,7 +711,7 @@ class ZarrMerge:
         assayGroup:
     """
     def __init__(self, zarr_path: str, assays: list, names: List[str], merge_assay_name: str,
-                 chunk_size=(1000, 1000), dtype: str = None, overwrite: bool = False,
+                 chunk_size=(1000, 1000), dtype: str = None, overwrite: bool = False, prepend_text: str = 'orig',
                  reset_cell_filter: bool = True):
         """
         Args:
@@ -725,13 +725,14 @@ class ZarrMerge:
             dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
                    assays have different dtypes then a float type is used.
             overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False).
+            prepend_text: This text is pre-appended to each column name.
             reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
                                are set as True as in the 'I' column. To keep the filtering information set the value for
                                this parameter to False. (Default value: True)
         """
         self.assays = assays
         self.names = names
-        self.mergedCells = self._merge_cell_table(reset_cell_filter)
+        self.mergedCells = self._merge_cell_table(reset_cell_filter, prepend_text)
         self.nCells = self.mergedCells.shape[0]
         self.featCollection = self._get_feat_ids(assays)
         self.mergedFeats = self._merge_order_feats()
@@ -749,22 +750,18 @@ class ZarrMerge:
             list(self.mergedFeats.names.values), dtype
         )
 
-    def _merge_cell_table(self, reset):
-        ret_val = []
+    def _merge_cell_table(self, reset, prepend_text):
         if len(self.assays) != len(set(self.names)):
             raise ValueError("ERROR: A unique name should be provided for each of the assay")
+        ret_val = []
         for assay, name in zip(self.assays, self.names):
-            a = pd.DataFrame({
-                'ids': [f"{name}__{x}" for x in assay.cells.fetch_all('ids')],
-                'names': assay.cells.fetch_all('names')
-            })
-            for i in assay.cells.columns:
-                if i not in ['ids', 'I', 'names']:
-                    a[f"orig_{i}"] = assay.cells.fetch_all(i)
+            a = assay.cells.to_pandas_dataframe(assay.cells.columns)
+            for i in a.columns:
+                if i not in ['ids', 'I', 'names'] and prepend_text is not None:
+                    a[f"{prepend_text}_{i}"] = assay.cells.fetch_all(i)
+                    a = a.drop(columns=[i])
             if reset:
                 a['I'] = np.ones(len(a['ids'])).astype(bool)
-            else:
-                a['I'] = assay.cells.fetch_all('I')
             ret_val.append(a)
         return pd.concat(ret_val).reset_index(drop=True)
 
