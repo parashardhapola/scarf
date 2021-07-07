@@ -474,7 +474,7 @@ class H5adReader:
     def __init__(self, h5ad_fn: str, cell_attrs_key: str = 'obs', cell_ids_key: str = '_index',
                  feature_attrs_key: str = 'var', feature_ids_key: str = '_index',
                  feature_name_key: str = 'gene_short_name',  matrix_key: str = 'X',
-                 category_names_key: str = '__categories'):
+                 category_names_key: str = '__categories', dtype: str = None):
         """
         Args:
             h5ad_fn: Path to H5AD file
@@ -486,6 +486,8 @@ class H5adReader:
             matrix_key: Group where in the sparse matrix resides (default: 'X')
             category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
                                 corresponding index value within this group.
+            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+                   method. (Default value: Automatically determined)
         """
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
@@ -499,7 +501,7 @@ class H5adReader:
         self.featIdsKey = self._fix_name_key(self.featureAttrsKey, feature_ids_key)
         self.featNamesKey = feature_name_key
         self.catNamesKey = category_names_key
-        self.matrixDtype = self._get_matrix_dtype()
+        self.matrixDtype = self._get_matrix_dtype() if dtype is None else dtype
 
     def _validate_group(self, group: str) -> int:
         if group not in self.h5:
@@ -778,7 +780,7 @@ class LoomReader:
     def __init__(self, loom_fn: str, matrix_key: str = 'matrix',
                  cell_attrs_key='col_attrs', cell_names_key: str = 'obs_names',
                  feature_attrs_key: str = 'row_attrs', feature_names_key: str = 'var_names',
-                 feature_ids_key: str = None, dtype: str = 'int64') -> None:
+                 feature_ids_key: str = None, dtype: str = None) -> None:
         """
         Args:
             loom_fn: Path to loom format file.
@@ -795,14 +797,14 @@ class LoomReader:
             feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
                                (Default value: None)
             dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
-                   method. (Default value: int64)
+                   method. (Default value: Automatically determined)
         """
         self.h5 = h5py.File(loom_fn, mode='r')
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
         self.cellNamesKey, self.featureNamesKey = cell_names_key, feature_names_key
         self.featureIdsKey = feature_ids_key
-        self.matrixDtype = dtype
+        self.matrixDtype = self.h5[self.matrixKey].dtype if dtype is None else dtype
         self._check_integrity()
         self.nFeatures, self.nCells = self.h5[self.matrixKey].shape
 
