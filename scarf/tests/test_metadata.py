@@ -16,7 +16,8 @@ def dummy_metadata():
     data = np.array([1, 1, 1, 1, 0, 0, 1, 1, 1]).astype(bool)
     g.create_dataset('I', data=data, chunks=(100000,),
                      shape=len(data), dtype=data.dtype)
-    return MetaData(g)
+    yield MetaData(g)
+    shutil.rmtree(fn)
 
 
 def test_metadata_attrs(dummy_metadata):
