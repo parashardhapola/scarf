@@ -26,7 +26,7 @@ class PostInstallCommand(install):
                 os.remove(target)
             with open(source, 'rb') as src, open(target, 'wb') as dst:
                 dst.write(src.read())
-            os.chmod(target, 0o555)
+            os.chmod(target, 0o655)
 
 
 if __name__ == "__main__":
