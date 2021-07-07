@@ -458,7 +458,9 @@ class H5adReader:
 
     Attributes:
         h5: A File object from the h5py package.
-        dataKey: Group where in the sparse matrix resides (default: 'X')
+        matrix_key: Group where in the sparse matrix resides (default: 'X')
+        cellAttrsKey: Group wherein the cell attributes are present
+        featureAttrsKey: Group wherein the feature attributes are present
         groupCodes: Used to ensure compatibility with different AnnData versions.
         nFeatures: Number of features in dataset.
         nCells: Number of cells in dataset.
@@ -467,31 +469,37 @@ class H5adReader:
         featNamesKey: Key in `var` group that contains feature names. (Default: gene_short_name)
         catNamesKey: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
                      corresponding index value within this group.
+        matrixDtype: dtype of the matrix containing the data (as indicated by matrix_key)
     """
-    def __init__(self, h5ad_fn: str, cell_ids_key: str = '_index', feature_ids_key: str = '_index',
-                 feature_name_key: str = 'gene_short_name',
-                 data_key: str = 'X', category_names_key: str = '__categories'):
+    def __init__(self, h5ad_fn: str, cell_attrs_key: str = 'obs', cell_ids_key: str = '_index',
+                 feature_attrs_key: str = 'var', feature_ids_key: str = '_index',
+                 feature_name_key: str = 'gene_short_name',  matrix_key: str = 'X',
+                 category_names_key: str = '__categories'):
         """
         Args:
             h5ad_fn: Path to H5AD file
+            cell_attrs_key: H5 group under which cell attributes are saved.(Default value: 'obs')
+            feature_attrs_key: H5 group under which feature attributes are saved.(Default value: 'var')
             cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
             feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
             feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
-            data_key: Group where in the sparse matrix resides (default: 'X')
+            matrix_key: Group where in the sparse matrix resides (default: 'X')
             category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
                                 corresponding index value within this group.
         """
 
         self.h5 = h5py.File(h5ad_fn, mode='r')
-        self.dataKey = data_key
-        self.groupCodes = {'obs': self._validate_group('obs'),
-                           'var': self._validate_group('var'),
-                           self.dataKey: self._validate_group(self.dataKey)}
-        self.nCells, self.nFeatures = self._get_n('obs'), self._get_n('var')
-        self.cellIdsKey = self._fix_name_key('obs', cell_ids_key)
-        self.featIdsKey = self._fix_name_key('var', feature_ids_key)
+        self.matrixKey = matrix_key
+        self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
+        self.groupCodes = {self.cellAttrsKey: self._validate_group(self.cellAttrsKey),
+                           self.featureAttrsKey: self._validate_group(self.featureAttrsKey),
+                           self.matrixKey: self._validate_group(self.matrixKey)}
+        self.nCells, self.nFeatures = self._get_n(self.cellAttrsKey), self._get_n(self.featureAttrsKey)
+        self.cellIdsKey = self._fix_name_key(self.cellAttrsKey, cell_ids_key)
+        self.featIdsKey = self._fix_name_key(self.featureAttrsKey, feature_ids_key)
         self.featNamesKey = feature_name_key
         self.catNamesKey = category_names_key
+        self.matrixDtype = self._get_matrix_dtype()
 
     def _validate_group(self, group: str) -> int:
         if group not in self.h5:
@@ -511,8 +519,17 @@ class H5adReader:
                 ret_val = 0
             elif len(set([self.h5[group][x].shape[0] for x in self.h5[group].keys() if
                           type(self.h5[group][x]) == h5py.Dataset])) > 1:
-                logger.info(f"`{group}` slot in H5ad file has unequal sized child groups")
+                if sorted(self.h5[group].keys()) != ['data', 'indices', 'indptr']:
+                    logger.info(f"`{group}` slot in H5ad file has unequal sized child groups")
         return ret_val
+
+    def _get_matrix_dtype(self):
+        if self.groupCodes[self.matrixKey] == 1:
+            return self.h5[self.matrixKey].dtype
+        elif self.groupCodes[self.matrixKey] == 2:
+            return self.h5[self.matrixKey]['data'].dtype
+        else:
+            raise ValueError(f"ERROR: {self.matrixKey} is neither Dataset or Group type. Will not consume data")
 
     def _check_exists(self, group: str, key: str) -> bool:
         if group in self.groupCodes:
@@ -529,7 +546,7 @@ class H5adReader:
         return False
 
     def _fix_name_key(self, group: str, key: str) -> str:
-        if self._check_exists(group, key):
+        if self._check_exists(group, key) is False:
             if key.startswith('_'):
                 temp_key = key[1:]
                 if self._check_exists(group, temp_key):
@@ -538,10 +555,10 @@ class H5adReader:
 
     def _get_n(self, group: str) -> int:
         if self.groupCodes[group] == 0:
-            if self._check_exists(self.dataKey, 'shape'):
-                return self.h5[self.dataKey]['shape'][0]
+            if self._check_exists(self.matrixKey, 'shape'):
+                return self.h5[self.matrixKey]['shape'][0]
             else:
-                raise KeyError(f"ERROR: `{group}` not found and `shape` key is missing in the {self.dataKey} group. "
+                raise KeyError(f"ERROR: `{group}` not found and `shape` key is missing in the {self.matrixKey} group. "
                                f"Aborting read process.")
         elif self.groupCodes[group] == 1:
             return self.h5[group].shape[0]
@@ -556,11 +573,11 @@ class H5adReader:
         """
         Returns a list of cell IDs.
         """
-        if self._check_exists('obs', self.cellIdsKey):
-            if self.groupCodes['obs'] == 1:
-                return self.h5['obs'][self.cellIdsKey]
+        if self._check_exists(self.cellAttrsKey, self.cellIdsKey):
+            if self.groupCodes[self.cellAttrsKey] == 1:
+                return self.h5[self.cellAttrsKey][self.cellIdsKey]
             else:
-                return self.h5['obs'][self.cellIdsKey][:]
+                return self.h5[self.cellAttrsKey][self.cellIdsKey][:]
         logger.warning(f"Could not find cells ids key: {self.cellIdsKey} in `obs`.")
         return np.array([f'cell_{x}' for x in range(self.nCells)])
 
@@ -569,12 +586,12 @@ class H5adReader:
         """
         Returns a list of feature IDs.
         """
-        if self._check_exists('var', self.featIdsKey):
-            if self.groupCodes['var'] == 1:
-                return self.h5['var'][self.featIdsKey]
+        if self._check_exists(self.featureAttrsKey, self.featIdsKey):
+            if self.groupCodes[self.featureAttrsKey] == 1:
+                return self.h5[self.featureAttrsKey][self.featIdsKey]
             else:
-                return self.h5['var'][self.featIdsKey][:]
-        logger.warning(f"Could not find feature ids key: {self.featIdsKey} in `var`.")
+                return self.h5[self.featureAttrsKey][self.featIdsKey][:]
+        logger.warning(f"Could not find feature ids key: {self.featIdsKey} in {self.featureAttrsKey}.")
         return np.array([f'feature_{x}' for x in range(self.nFeatures)])
 
     # noinspection DuplicatedCode
@@ -582,13 +599,13 @@ class H5adReader:
         """
         Returns a list of feature names.
         """
-        if self._check_exists('var', self.featNamesKey):
-            if self.groupCodes['var'] == 1:
-                values = self.h5['var'][self.featNamesKey]
+        if self._check_exists(self.featureAttrsKey, self.featNamesKey):
+            if self.groupCodes[self.featureAttrsKey] == 1:
+                values = self.h5[self.featureAttrsKey][self.featNamesKey]
             else:
-                values = self.h5['var'][self.featNamesKey][:]
-            return self._replace_category_values(values, self.featNamesKey, 'var').astype(object)
-        logger.warning(f"Could not find feature names key: {self.featNamesKey} in `var`.")
+                values = self.h5[self.featureAttrsKey][self.featNamesKey][:]
+            return self._replace_category_values(values, self.featNamesKey, self.featureAttrsKey).astype(object)
+        logger.warning(f"Could not find feature names key: {self.featNamesKey} in self.featureAttrsKey.")
         return self.feat_ids()
 
     def _replace_category_values(self, v: np.ndarray, key: str, group: str):
@@ -628,14 +645,14 @@ class H5adReader:
         """
         Creates a Generator that yields the cell columns.
         """
-        for i, j in self._get_col_data('obs', [self.cellIdsKey]):
+        for i, j in self._get_col_data(self.cellAttrsKey, [self.cellIdsKey]):
             yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         """
         Creates a Generator that yields the feature columns.
         """
-        for i, j in self._get_col_data('var', [self.featIdsKey, self.featNamesKey]):
+        for i, j in self._get_col_data(self.featureAttrsKey, [self.featIdsKey, self.featNamesKey]):
             yield i, j
 
     # noinspection DuplicatedCode
@@ -643,7 +660,7 @@ class H5adReader:
         """
         Returns a generator that yield chunks of data.
         """
-        dset = self.h5[self.dataKey]
+        dset = self.h5[self.matrixKey]
         s = 0
         for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
             if e > dset.shape[0]:
@@ -655,7 +672,7 @@ class H5adReader:
         """
         Returns a generator that yield chunks of data.
         """
-        grp = self.h5[self.dataKey]
+        grp = self.h5[self.matrixKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = grp['indptr'][ind_n:ind_n + batch_size]
@@ -675,12 +692,10 @@ class H5adReader:
         """
         Returns a generator that yield chunks of data.
         """
-        if self.groupCodes[self.dataKey] == 1:
+        if self.groupCodes[self.matrixKey] == 1:
             return self.consume_dataset(batch_size)
-        elif self.groupCodes[self.dataKey] == 2:
+        elif self.groupCodes[self.matrixKey] == 2:
             return self.consume_group(batch_size)
-        else:
-            raise ValueError("ERROR: Datakey is neither Dataset or Group type. Will not consume data")
 
 
 class NaboH5Reader:
