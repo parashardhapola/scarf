@@ -106,17 +106,23 @@ class OSFdownloader:
 osfd = None
 
 
-def handle_download(url, out_fn):
+def handle_download(url: str, out_fn: str) -> None:
     """
-    Carry out the download of a specified dataset.
+    Carry out the download of a specified dataset. Invokes appropriate command for Linux and Windows OS
 
     Args:
-        out_fn: the file name (aka path) for the downloaded file(s)
+        url: URL of file to be downloaded
+        out_fn: Absolute path to the file where the downloaded data is to be saved
+
+    Returns: None
+
     """
+
     import sys
 
     if sys.platform == 'win32':
-        cmd = 'powershell -command "& { iwr %s -OutFile %s }"' % (url, out_fn)
+        cmd = 'powershell -command "(New-Object System.Net.WebClient).DownloadFile(%s, %s)"' % (
+            f"'{url}'", f"'{out_fn}'")
     elif sys.platform in ['posix', 'linux']:
         cmd = f"wget --no-verbose -O {out_fn} {url}"
     else:
@@ -128,7 +134,7 @@ def handle_download(url, out_fn):
     logger.info(f"Download finished! File saved here: {out_fn}")
 
 
-def show_available_datasets():
+def show_available_datasets() -> None:
     """
     List datasets offered through Scarf.
 
@@ -150,7 +156,7 @@ def fetch_dataset(dataset_name: str, save_path: str = '.', as_zarr: bool = False
     Args:
         dataset_name: Name of the dataset
         save_path: Save location without name of the file
-        as_zarr: If True, then a Zarr format file is downloaded instead
+        as_zarr: If True, then a Zarr format file, if available, is downloaded instead
 
     Returns:
         None
@@ -187,12 +193,15 @@ def fetch_dataset(dataset_name: str, save_path: str = '.', as_zarr: bool = False
 
     if as_zarr:
         sp, url = get_zarr_entry(files)
-        sp = os.path.join(save_dir, sp)
+        sp = os.path.abspath(os.path.join(save_dir, sp))
         handle_download(url, sp)
+        logger.info(f"Extracting Zarr file for {dataset_name}")
         tar = tarfile.open(sp, "r:gz")
         tar.extractall(save_dir)
         tar.close()
     else:
         for i in files:
-            sp = os.path.join(save_dir, i)
+            if i.endswith(zarr_ext):
+                continue
+            sp = os.path.abspath(os.path.join(save_dir, i))
             handle_download(files[i], sp)
