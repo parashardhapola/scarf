@@ -12,5 +12,18 @@ def pbmc_writer(pbmc_reader):
     shutil.rmtree(fn)
 
 
-def test_write_pbmc(pbmc_writer):
+def test_cr_to_zarr(pbmc_writer):
     pbmc_writer.dump()
+
+
+@pytest.fixture
+def h5ad_writer(h5ad_reader):
+    from ..writers import H5adToZarr
+
+    fn = os.path.join('scarf', 'tests', 'datasets', 'bastidas.zarr')
+    yield H5adToZarr(h5ad_reader, zarr_fn=fn)
+    shutil.rmtree(fn)
+
+
+def test_h5ad_to_zarr(h5ad_writer):
+    h5ad_writer.dump()
