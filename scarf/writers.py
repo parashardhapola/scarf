@@ -263,14 +263,13 @@ class H5adToZarr:
         z: The Zarr hierarchy (array or group).
     """
     def __init__(self, h5ad: H5adReader, zarr_fn: str, assay_name: str = None,
-                 chunk_size=(1000, 1000), dtype: str = 'uint32'):
+                 chunk_size=(1000, 1000)):
         """
         Args:
             h5ad: A H5adReader object, containing the Cellranger data.
             zarr_fn: The file name for the Zarr hierarchy.
             assay_name: the name of the assay (e. g. 'RNA')
             chunk_size: The requested size of chunks to load into memory and process.
-            dtype: the dtype of the data.
         """
         # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
         self.h5ad = h5ad
@@ -284,7 +283,7 @@ class H5adToZarr:
         self.z = zarr.open(self.fn, mode='w')
         self._ini_cell_data()
         create_zarr_count_assay(self.z, self.assayName, chunk_size, self.h5ad.nCells,
-                                self.h5ad.feat_ids(), self.h5ad.feat_names(), dtype)
+                                self.h5ad.feat_ids(), self.h5ad.feat_names(), self.h5ad.matrixDtype)
         for i, j in self.h5ad.get_feat_columns():
             if i not in self.z[self.assayName]['featureData']:
                 create_zarr_obj_array(self.z[self.assayName]['featureData'], i, j, j.dtype)
