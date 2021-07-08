@@ -755,6 +755,7 @@ class ZarrMerge:
         ret_val = []
         for assay, name in zip(self.assays, self.names):
             a = assay.cells.to_pandas_dataframe(assay.cells.columns)
+            a['ids'] = [f"{name}__{x}" for x in a['ids']]
             for i in a.columns:
                 if i not in ['ids', 'I', 'names'] and prepend_text is not None:
                     a[f"{prepend_text}_{i}"] = assay.cells.fetch_all(i)
