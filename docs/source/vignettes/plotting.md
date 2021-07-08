@@ -1,11 +1,12 @@
 ---
 jupyter:
   jupytext:
+    formats: ipynb,md
     text_representation:
       extension: .md
       format_name: markdown
       format_version: '1.3'
-      jupytext_version: 1.11.2
+      jupytext_version: 1.11.3
   kernelspec:
     display_name: Python 3
     language: python
@@ -37,36 +38,11 @@ This vignette will go through scarfs scatter plot functionality in more detail. 
 First we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance.
 
 ```python
-# Preprocess data 
-
-#scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets')
-#reader = scarf.CrH5Reader('D:/scarf_datasets/tenx_8K_pbmc_citeseq/data.h5', 'rna')
-#reader.rename_assays({'assay2': 'ADT'})
-#writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
-#                        chunk_size=(2000, 1000))
-#writer.dump(batch_size=1000)
-#ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
-#                     default_assay='RNA',
-#                     nthreads=4)
-#
-#ds.auto_filter_cells()
-#
-#ds.mark_hvgs(min_cells=20, top_n=500, min_mean=-3, max_mean=2, max_var=6)
-#ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
-#ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
-#ds.run_leiden_clustering(resolution=1)
-#
-#adt_names = ds.ADT.feats.to_pandas_dataframe(['names'])['names']
-#is_control = adt_names.str.contains('control').values
-#ds.ADT.feats.update_key(~is_control, 'I')
-#ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100)
-#
-#ds.run_umap(from_assay='ADT', fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
-#ds.run_leiden_clustering(from_assay='ADT', resolution=1)
+scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets', as_zarr=True)
 ```
 
 ```python
-ds = scarf.DataStore('D:/scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr')
+ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr')
 ```
 
 Minimum requirements to make a plot is to give the prefix for the cell metadata columns that contain the 2D coordinates. 
@@ -105,7 +81,8 @@ ds.plot_layout(layout_key="RNA_UMAP", color_by=["", "CD14", "CD4", "MS4A1", "CD7
 By default the padding between the plots will be automatically decided to avoid overlap. However, if you prefer to decide the padding yourself you can change it with `w_pad` and `h_pad`.
 
 ```python
-ds.plot_layout(layout_key="RNA_UMAP", color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"], w_pad=10, h_pad=10)
+ds.plot_layout(layout_key="RNA_UMAP",
+               color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"], w_pad=10, h_pad=10)
 ```
 
 ### Plot different layouts
@@ -125,7 +102,8 @@ Using the `legend_size` you can increase the size of the cluster legend and labe
 `marker_scale` will increase the colored legend markers. 
 
 ```python
-ds.plot_layout(layout_key=["RNA_UMAP", "ADT_UMAP"], color_by=["RNA_leiden_cluster", "CD14"], n_columns=2, width=10, height=10, legend_size=20, point_size=25, marker_scale=100)
+ds.plot_layout(layout_key=["RNA_UMAP", "ADT_UMAP"], color_by=["RNA_leiden_cluster", "CD14"],
+               n_columns=2, width=10, height=10, legend_size=20, point_size=25, marker_scale=100)
 ```
 
 ## Shaded scatter plots for larger datasets
@@ -161,4 +139,8 @@ fig = plt.figure(figsize=[14, 14], facecolor='white')
 fig.gca().axis('off')
 img = mpimg.imread('hca_783K_blood_rnaseq_shadedscatter.png')
 fig = plt.imshow(img)
+```
+
+```python
+
 ```

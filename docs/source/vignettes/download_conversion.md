@@ -6,7 +6,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.3'
-      jupytext_version: 1.11.2
+      jupytext_version: 1.11.3
   kernelspec:
     display_name: Python 3
     language: python
@@ -123,12 +123,6 @@ ds = scarf.DataStore('scarf_datasets/differentiating_pancreatic_cells.zarr')
 
 ```python
 scarf.writers.to_h5ad(ds.RNA, h5ad_filename='scarf_datasets/diff_pancreas.h5ad')
-```
-
-Finally, let's have a look at all the files that now exist in our previously empty scarf_datasets directory:
-
-```python
-ls -d scarf_datasets
 ```
 
 ---

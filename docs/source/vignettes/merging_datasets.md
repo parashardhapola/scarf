@@ -6,7 +6,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.3'
-      jupytext_version: 1.11.2
+      jupytext_version: 1.11.3
   kernelspec:
     display_name: Python 3
     language: python
@@ -142,6 +142,10 @@ Calculating UMAP embedding of cells:
 
 ```python
 ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
+```
+
+```python
+ds.cells.head()
 ```
 
 Visualization of cells from the two samples in the 2D UMAP space:
