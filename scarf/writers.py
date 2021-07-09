@@ -680,7 +680,7 @@ class SubsetZarr:
                                     self.iz[assay_name]['featureData']['ids'][:],
                                     self.iz[assay_name]['featureData']['names'][:], raw_data.dtype)
 
-    def write(self):
+    def dump(self):
         for assay_name in self.assays:
             raw_data = self._get_raw_data(assay_name)
             store = self.oz[f"{assay_name}/counts"]
@@ -724,7 +724,7 @@ class ZarrMerge:
             dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
                    assays have different dtypes then a float type is used.
             overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False).
-            prepend_text: This text is pre-appended to each column name.
+            prepend_text: This text is pre-appended to each column name (Default value: 'orig').
             reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
                                are set as True as in the 'I' column. To keep the filtering information set the value for
                                this parameter to False. (Default value: True)
@@ -752,6 +752,8 @@ class ZarrMerge:
     def _merge_cell_table(self, reset, prepend_text):
         if len(self.assays) != len(set(self.names)):
             raise ValueError("ERROR: A unique name should be provided for each of the assay")
+        if prepend_text == '':
+            prepend_text = None
         ret_val = []
         for assay, name in zip(self.assays, self.names):
             a = assay.cells.to_pandas_dataframe(assay.cells.columns)
@@ -824,7 +826,7 @@ class ZarrMerge:
         else:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
-    def write(self, nthreads=2):
+    def dump(self, nthreads=2):
         # TODO: add docstring
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):

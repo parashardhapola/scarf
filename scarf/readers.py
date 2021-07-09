@@ -835,15 +835,24 @@ class LoomReader:
         """
         return self.cell_names()
 
+    def _stream_attrs(self, key, ignore) -> Generator[Tuple[str, np.ndarray], None, None]:
+        if key in self.h5:
+            for i in tqdm(self.h5[key].keys(), desc=f"Reading {key} attributes"):
+                if i in [ignore]:
+                    continue
+                vals = self.h5[key][i][:]
+                if vals.dtype.names is None:
+                    yield i, vals
+                else:
+                    # Attribute is a structured array
+                    for j in vals.dtype.names:
+                        yield i + '_' + str(j), vals[j]
+
     def get_cell_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         """
         Returns a Generator that yields the cells' attributes.
         """
-        if self.cellAttrsKey in self.h5:
-            for i in tqdm(self.h5[self.cellAttrsKey].keys(), desc=f"Reading cell attributes"):
-                if i == self.cellNamesKey:
-                    continue
-                yield i, self.h5[self.cellAttrsKey][i][:]
+        return self._stream_attrs(self.cellAttrsKey, [self.cellNamesKey])
 
     def feature_names(self) -> List[str]:
         """
@@ -875,11 +884,8 @@ class LoomReader:
         """
         Returns a Generator that yields the features' attributes.
         """
-        if self.featureAttrsKey in self.h5:
-            for i in tqdm(self.h5[self.featureAttrsKey].keys(), desc=f"Reading feature attributes"):
-                if i in [self.featureIdsKey, self.featureNamesKey]:
-                    continue
-                yield i, self.h5[self.featureAttrsKey][i][:]
+        return self._stream_attrs(self.featureAttrsKey,
+                                  [self.featureIdsKey, self.featureNamesKey])
 
     def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
         """
