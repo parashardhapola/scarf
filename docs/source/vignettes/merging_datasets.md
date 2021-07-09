@@ -57,7 +57,7 @@ The merging step will make sure that the features are in the same order as in th
 scarf.ZarrMerge(zarr_path='scarf_datasets/kang_merged_pbmc_rnaseq.zarr',  # Path where merged Zarr files will be saved
                 assays=[ds_ctrl.RNA, ds_stim.RNA],                        # assays to be merged
                 names=['ctrl', 'stim'],                                   # these names will be preprended to the cell ids with '__' delimiter
-                merge_assay_name='RNA', overwrite=True).write()           # Name of the merged assay. `overwrite` will remove an existing Zarr file.
+                merge_assay_name='RNA', overwrite=True).dump()           # Name of the merged assay. `overwrite` will remove an existing Zarr file.
 ```
 
 Load the merged Zarr file as a DataStore:
