@@ -1,10 +1,11 @@
+from _pytest.fixtures import scopemismatch
 import pytest
 import os
 import shutil
 
 
-@pytest.fixture
-def pbmc_reader(scope="module"):
+@pytest.fixture(scope='session')
+def pbmc_reader():
     from ..readers import CrH5Reader
 
     fn = os.path.join('scarf', 'tests', 'datasets', '1K_pbmc_citeseq.h5')

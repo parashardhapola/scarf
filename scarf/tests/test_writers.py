@@ -3,7 +3,7 @@ import os
 import shutil
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def pbmc_writer(pbmc_reader):
     from ..writers import CrToZarr
 
