@@ -1,4 +1,4 @@
-|PyPI| |Docs| |Tests| |Gitter| |commits-latest| |pypi-downloads|
+|PyPI| |Docs| |Tests| |commits-latest| |pypi-downloads|
 
 |IMG1|
 
@@ -49,3 +49,7 @@ fixed in future updates.
 High memory consumption: If you are using a version of Scarf less than 0.7.0 and have dask version >2021.03.1
 then you might face high memory consumption issues. The solution is to install dask==2021.03.1. The
 latest version of Scarf automatically solves this issue.
+
+Scarf was recently renamed to `scarf` from `scarf-toolkit` on PyPi. So if you previously installed using
+`pip install scarf-toolkit` then you need to first uninstall using `pip uninstall scarf-toolkit`. Thereafter you can
+install the recent version of Scarf using `pip install -U scarf`
