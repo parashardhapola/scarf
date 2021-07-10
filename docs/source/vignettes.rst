@@ -22,7 +22,7 @@ Paste the following code on the top of the notebook before running any other cel
 ::
 
     !pip install ipython-autotime
-    !pip install scarf-toolkit
+    !pip install scarf
     !pip install -U numpy scipy
 
 Google Colab has older versions of Numpy and Scipy which are not compatible with Scarf.

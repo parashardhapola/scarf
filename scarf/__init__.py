@@ -29,7 +29,7 @@ Documentation: https://scarf.readthedocs.io/en/latest/index.html
 
 Pre-print: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
 
-PyPI: https://pypi.org/project/scarf-toolkit/
+PyPI: https://pypi.org/project/scarf/
 """
 
 import warnings
@@ -40,7 +40,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 try:
-    __version__ = version('scarf-toolkit')
+    __version__ = version('scarf')
 except ImportError:
     print("Scarf is not installed", flush=True)
 

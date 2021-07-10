@@ -42,7 +42,7 @@ RUN conda install -y -c conda-forge pandoc
 RUN pip install jupytext
 RUN jupyter lab build -y
 
-RUN pip install scarf-toolkit
+RUN pip install scarf
 
 # Building from Github repo
 #RUN mkdir -p /tmp/scarf

@@ -3,19 +3,17 @@
 |IMG1|
 
 
-.. |PyPI| image:: https://img.shields.io/pypi/v/scarf-toolkit.svg
-         :target: https://pypi.org/project/scarf-toolkit
+.. |PyPI| image:: https://img.shields.io/pypi/v/scarf.svg
+         :target: https://pypi.org/project/scarf
 .. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
          :target: https://scarf.readthedocs.io
 .. |Tests| image:: https://circleci.com/gh/parashardhapola/scarf/tree/master.svg?style=svg
           :target: https://circleci.com/gh/parashardhapola/scarf/tree/master
-.. |Gitter| image:: https://badges.gitter.im/scarf-toolkit/community.svg
-           :target: https://gitter.im/scarf-toolkit/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
 .. |commits-latest| image:: https://img.shields.io/github/last-commit/parashardhapola/scarf
                    :target: https://github.com/parashardhapola/scarf/commit/master
                    :alt: GitHub last commit
-.. |pypi-downloads| image:: https://img.shields.io/pypi/dm/scarf-toolkit
-                   :target: https://pypi.org/project/scarf-toolkit/
+.. |pypi-downloads| image:: https://img.shields.io/pypi/dm/scarf
+                   :target: https://pypi.org/project/scarf/
                    :alt: PyPI - Downloads
 
 .. |IMG1| image:: docs/source/_static/scarf_logo.svg
@@ -35,7 +33,7 @@ Preprint describing Scarf is out on `Biorxiv`_
 
 Install Scarf with::
 
-    pip install scarf-toolkit
+    pip install scarf
 
 Read the documentation here: `scarf.rtfd.io`_ or jump to a `basic workflow of Scarf`_
 

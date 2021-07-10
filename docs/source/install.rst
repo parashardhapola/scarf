@@ -5,12 +5,12 @@ Installation
 Requirements
 ------------
 
-Python version greater than 3.8.0
+Python version 3.8.0 or greater
 
 Short version
 -------------
 
-``pip install scarf-toolkit``
+``pip install scarf``
 
 Long version
 ------------
@@ -56,4 +56,4 @@ To activate the environment type ``conda activate myenv``. To deactivate it agai
 **Step 4:**
 
 Now, in your terminal, type this to install the latest version of Scarf:
-``pip install scarf-toolkit``
+``pip install scarf``

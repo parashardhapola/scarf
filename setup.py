@@ -42,7 +42,7 @@ if __name__ == "__main__":
                        ['dask[array]', 'dask[dataframe]']
     dependency_links = ['https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7']
     setup(
-        name='scarf-toolkit',
+        name='scarf',
         description='Scarf',
         long_description=read('README.rst'),
         author='Parashar Dhapola',
