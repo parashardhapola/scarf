@@ -16,7 +16,7 @@
                    :target: https://pypi.org/project/scarf/
                    :alt: PyPI - Downloads
 
-.. |IMG1| image:: docs/source/_static/scarf_logo.svg
+.. |IMG1| image:: docs/source/_static/scarf_logo.png
          :width: 75%
 
 
