@@ -1,6 +1,6 @@
 |PyPI| |Docs| |Tests|
 
-`Install`_ | `Documentation`_ | `Tutorials`_ | `Preprint`_
+`Installation`_ | `Documentation`_ | `Tutorials`_ | `Preprint`_
 
 |IMG1|
 
@@ -18,6 +18,6 @@
 Analyze large-scale (aka atlas-scale) single-cell genomics datasets with very low memory requirement.
 
 .. _Documentation: http://scarf.rtfd.io
-.. _Tutorials: https://scarf.readthedocs.io/en/latest/vignettes/basic_tutorial_scRNAseq.html
+.. _Tutorials: https://scarf.readthedocs.io/en/stable/vignettes/basic_tutorial_scRNAseq.html
 .. _Preprint: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
-.. _Install: https://scarf.readthedocs.io/en/stable/install.html
+.. _Installation: https://scarf.readthedocs.io/en/stable/install.html
