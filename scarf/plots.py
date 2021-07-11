@@ -1,7 +1,6 @@
 """
 Contains the code for plotting in Scarf.
 """
-from re import A
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
@@ -69,8 +68,8 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
         n_rows = n_plots
         n_cols = 1
     if fig_size is None:
-        fig_width = min(15, n_groups+(2*n_cols))
-        fig_height = 1+2.5*n_rows
+        fig_width = min(15, n_groups + (2 * n_cols))
+        fig_height = 1 + 2.5 * n_rows
         fig_size = (fig_width, fig_height)
     fig = plt.figure(figsize=fig_size)
     grouped = data.groupby('groups')
@@ -83,7 +82,7 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
             vals['g'].extend([j for _ in range(len(val))])
             vals['v'].extend(list(val))
         vals = pd.DataFrame(vals)
-        ax = fig.add_subplot(n_rows, n_cols, i+1)
+        ax = fig.add_subplot(n_rows, n_cols, i + 1)
         if n_groups == 1:
             sns.violinplot(y='v', x='g', data=vals, linewidth=1, orient='v', alpha=0.6,
                            inner=None, cut=0, color=color)
@@ -151,7 +150,7 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
     Shows a heatmap plot.
     """
     if figsize is None:
-        figsize = (cdf.shape[1]*fontsize*width_factor, fontsize*cdf.shape[0]*height_factor)
+        figsize = (cdf.shape[1] * fontsize * width_factor, fontsize * cdf.shape[0] * height_factor)
     cgx = sns.clustermap(cdf, yticklabels=cdf.index, xticklabels=cdf.columns, method='ward',
                          figsize=figsize, cmap=cmap, rasterized=True)
     cgx.ax_heatmap.set_yticklabels(cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize)
@@ -256,43 +255,42 @@ def _scatter_label_axis(df, ax, fs: float, fo: float):
 
 def _scatter_legends(df, ax, fig, cmap, ck, ondata: bool, onside: bool, fontsize: float,
                      n_per_col: int, scale: float, ls: float, cs: float) -> None:
-        from matplotlib.colors import Normalize
-        from matplotlib.colorbar import ColorbarBase
-        from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+    from matplotlib.colors import Normalize
+    from matplotlib.colorbar import ColorbarBase
+    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
-
-        x, y, vc = df.columns[:3]
-        v = df[vc]
-        if v.nunique() <= 1:
-            return None
-        if v.dtype.name == 'category':
-            ax.title.set_text(vc)
-            centers = df[[x, y, vc]].groupby(vc).median().T
-            for i in centers:
-                if ondata:
-                    ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize,
-                            ha='center', va='center')
-                if onside:
-                    ax.scatter([float(centers[i][x])], [float(centers[i][y])],
-                               c=ck[i], label=i, alpha=1, s=0.01)
-            if onside:
-                n_cols = v.nunique() // n_per_col
-                if v.nunique() % n_per_col > 0:
-                    n_cols += 1
-                ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
-                          markerscale=scale, labelspacing=ls, columnspacing=cs)
-        else:
-            if fig is not None:
-                ax_divider = make_axes_locatable(ax)
-                cax = ax_divider.append_axes("top", size="7%", pad="5%")
-                norm = Normalize(vmin=v.min(), vmax=v.max())
-                cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='horizontal')
-                cb.set_label(vc, fontsize=fontsize)
-                cb.ax.xaxis.set_label_position('top')
-                fig.set_constrained_layout_pads(wspace=0.1, hspace=0.05)
-            else:
-                logger.warning("Not plotting the colorbar because fig object was not passed")
+    x, y, vc = df.columns[:3]
+    v = df[vc]
+    if v.nunique() <= 1:
         return None
+    if v.dtype.name == 'category':
+        ax.title.set_text(vc)
+        centers = df[[x, y, vc]].groupby(vc).median().T
+        for i in centers:
+            if ondata:
+                ax.text(centers[i][x], centers[i][y], i, fontsize=fontsize,
+                        ha='center', va='center')
+            if onside:
+                ax.scatter([float(centers[i][x])], [float(centers[i][y])],
+                           c=ck[i], label=i, alpha=1, s=0.01)
+        if onside:
+            n_cols = v.nunique() // n_per_col
+            if v.nunique() % n_per_col > 0:
+                n_cols += 1
+            ax.legend(ncol=n_cols, loc=(1, 0), frameon=False, fontsize=fontsize,
+                      markerscale=scale, labelspacing=ls, columnspacing=cs)
+    else:
+        if fig is not None:
+            ax_divider = make_axes_locatable(ax)
+            cax = ax_divider.append_axes("top", size="7%", pad="5%")
+            norm = Normalize(vmin=v.min(), vmax=v.max())
+            cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='horizontal')
+            cb.set_label(vc, fontsize=fontsize)
+            cb.ax.xaxis.set_label_position('top')
+            fig.set_constrained_layout_pads(wspace=0.1, hspace=0.05)
+        else:
+            logger.warning("Not plotting the colorbar because fig object was not passed")
+    return None
 
 
 def _make_grid(width, height, w_pad, h_pad, n_panels, n_columns):
@@ -302,7 +300,8 @@ def _make_grid(width, height, w_pad, h_pad, n_panels, n_columns):
         constrained = True
     else:
         constrained = False
-    fig, axes = plt.subplots(n_rows, n_columns, figsize=(width * n_columns, height * n_rows), squeeze=False, constrained_layout=constrained)
+    fig, axes = plt.subplots(n_rows, n_columns, figsize=(width * n_columns, height * n_rows), squeeze=False,
+                             constrained_layout=constrained)
     diff = (n_rows * n_columns) - n_panels
     while diff > 0:
         fig.delaxes(axes[n_rows - 1, n_columns - diff])
@@ -315,15 +314,15 @@ def _make_grid(width, height, w_pad, h_pad, n_panels, n_columns):
 
 
 def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
-                      default_color: str = 'steelblue', color_map=None, color_key: dict = None,
-                      mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
-                      point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
-                      spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
-                      legend_ondata: bool = True, legend_onside: bool = True,
-                      legend_size: float = 12, legends_per_col: int = 20,
-                      marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
-                      savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True,
-                      n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
+                 default_color: str = 'steelblue', color_map=None, color_key: dict = None,
+                 mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k',
+                 point_size: float = 10, ax_label_size: float = 12, frame_offset: float = 0.05,
+                 spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
+                 legend_ondata: bool = True, legend_onside: bool = True,
+                 legend_size: float = 12, legends_per_col: int = 20,
+                 marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
+                 savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True,
+                 n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
     """
     Shows scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid. 
     """
@@ -350,12 +349,13 @@ def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
         fig, axs = plt.subplots(1, 1, figsize=(width, height), squeeze=False)
 
     for i, df in enumerate(dfs):
+        # noinspection DuplicatedCode
         dim1, dim2, vc = df.columns[:3]
         v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
         v = _scatter_fix_type(v, force_ints_as_cats)
         df[vc] = v
         col_map, col_key = _scatter_make_colors(v, color_map, color_key,
-                                                    mask_color, mask_name)
+                                                mask_color, mask_name)
         if v.dtype.name == 'category':
             df['c'] = [col_key[x] for x in v]
         else:
@@ -372,11 +372,11 @@ def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
         scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
         ax = axs[int(i / n_columns), i % n_columns]
         ax.scatter(df[dim1].values, df[dim2].values, c=df['c'].values, s=df['s'].values,
-                rasterized=True, **scatter_kwargs)
+                   rasterized=True, **scatter_kwargs)
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
         _scatter_legends(df, ax, fig, col_map, col_key, legend_ondata, legend_onside,
-                        legend_size, legends_per_col, marker_scale, lspacing, cspacing)
+                         legend_size, legends_per_col, marker_scale, lspacing, cspacing)
 
     if in_ax is None:
         if savename:
@@ -387,9 +387,9 @@ def plot_scatter(dfs, in_ax=None, fig=None, width: float = 6, height: float = 6,
 
 
 def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
-                  spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10, 
+                  spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10,
                   color_map=None, color_key: dict = None,
-                  mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k', 
+                  mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k',
                   ax_label_size: float = 12, frame_offset: float = 0.05,
                   spine_width: float = 0.5, spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                   legend_ondata: bool = True, legend_onside: bool = True,
@@ -405,7 +405,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
     from datashader.mpl_ext import dsshow
     import datashader.transfer_functions as tf
     from functools import partial
-    
+
     if len(dfs) > 1:
         fig, axs = _make_grid(figsize, figsize, w_pad, h_pad, len(dfs), n_columns)
     else:
@@ -417,7 +417,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
         v = _scatter_fix_type(v, force_ints_as_cats)
         df[vc] = v
         col_map, col_key = _scatter_make_colors(v, color_map, color_key,
-                                                    mask_color, mask_name)
+                                                mask_color, mask_name)
         if v.dtype.name == 'category':
             agg = dsh.count_cat(vc)
         else:
@@ -425,23 +425,24 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
                 agg = dsh.count(vc)
             else:
                 agg = dsh.mean(vc)
-    
+
         ax = axs[int(i / n_columns), i % n_columns]
-        artist = dsshow(df, dsh.Point(dim1, dim2), aggregator=agg, norm='eq_hist', 
+        artist = dsshow(df, dsh.Point(dim1, dim2), aggregator=agg, norm='eq_hist',
                         color_key=col_key, cmap=col_map, alpha_range=(min_alpha, 255),
-                        shade_hook=partial(tf.dynspread, threshold=spread_threshold, max_px=spread_px), 
+                        shade_hook=partial(tf.dynspread, threshold=spread_threshold, max_px=spread_px),
                         plot_height=pixels, plot_width=pixels, aspect='equal', width_scale=1, height_scale=1,
                         ax=ax)
 
-        _scatter_label_axis(df, ax, ax_label_size, frame_offset) 
+        _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
         _scatter_legends(df, ax, fig, col_map, col_key, legend_ondata, legend_onside,
-                        legend_size, legends_per_col, marker_scale, lspacing, cspacing)
-    
+                         legend_size, legends_per_col, marker_scale, lspacing, cspacing)
+
     if savename:
         plt.savefig(savename, dpi=dpi, bbox_inches='tight')
     if in_ax is not None:
         return axs
+
 
 def _draw_pie(ax, dist, colors, xpos, ypos, size):
     # https://stackoverflow.com/questions/56337732/how-to-plot-scatter-pie-chart-using-matplotlib
