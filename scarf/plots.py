@@ -395,7 +395,7 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
                  legend_size: float = 12, legends_per_col: int = 20, cbar_shrink: float = 0.6,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                  savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True,
-                 n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
+                 n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, scatter_kwargs: dict = None):
     """
     Shows scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid. 
     """

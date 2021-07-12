@@ -2131,8 +2131,8 @@ class MappingDatastore(GraphDataStore):
                             legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
                             legends_per_col: int = 20, cbar_shrink: float = 0.6, marker_scale: float = 70,
                             lspacing: float = 0.1, cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                            ax=None, force_ints_as_cats: bool = True, n_columns: int = 1, w_pad: float = None,
-                            h_pad: float = None, scatter_kwargs: dict = None, shuffle_zorder: bool = True):
+                            ax=None, force_ints_as_cats: bool = True, n_columns: int = 1, w_pad: float = 1,
+                            h_pad: float = 1, scatter_kwargs: dict = None, shuffle_zorder: bool = True):
         """
         Plots the reference and target cells in their unified space.
 
@@ -2860,7 +2860,7 @@ class DataStore(MappingDatastore):
                     legends_per_col: int = 20,  cbar_shrink: float = 0.6, marker_scale: float = 70,
                     lspacing: float = 0.1, cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
                     savename: str = None, save_dpi: int = 300, ax=None, force_ints_as_cats: bool = True,
-                    n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
+                    n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
         the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
