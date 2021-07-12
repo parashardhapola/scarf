@@ -1,3 +1,4 @@
+import sys
 import tarfile
 import pytest
 import os
@@ -74,7 +75,11 @@ def graph_weights(make_graph, datastore):
 
 @pytest.fixture(scope="module")
 def cell_attrs():
-    fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes.csv')
+    if sys.platform == 'win32':
+        # UMAP and Leiden are not reproducible cross platform. Most likely due to underlying C libraries
+        fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes_win32.csv')
+    else:
+        fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes.csv')
     return pd.read_csv(fn, index_col=0)
 
 
