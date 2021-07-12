@@ -1666,6 +1666,7 @@ class MappingDatastore(GraphDataStore):
         nthreads: Number of threads to use for this datastore instance.
         z: The Zarr file (directory) used for for this datastore instance.
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -2128,10 +2129,10 @@ class MappingDatastore(GraphDataStore):
                             frame_offset: float = 0.05, spine_width: float = 0.5, spine_color: str = 'k',
                             displayed_sides: tuple = ('bottom', 'left'),
                             legend_ondata: bool = False, legend_onside: bool = True, legend_size: float = 12,
-                            legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                            cspacing: float = 1, savename: str = None, save_dpi: int = 300,
-                            ax=None, fig=None, force_ints_as_cats: bool = True, n_columns: int = 1, scatter_kwargs: dict = None,
-                            shuffle_zorder: bool = True):
+                            legends_per_col: int = 20, cbar_shrink: float = 0.6, marker_scale: float = 70,
+                            lspacing: float = 0.1, cspacing: float = 1, savename: str = None, save_dpi: int = 300,
+                            ax=None, force_ints_as_cats: bool = True, n_columns: int = 1, w_pad: float = None,
+                            h_pad: float = None, scatter_kwargs: dict = None, shuffle_zorder: bool = True):
         """
         Plots the reference and target cells in their unified space.
 
@@ -2172,6 +2173,7 @@ class MappingDatastore(GraphDataStore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
             lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
@@ -2181,12 +2183,17 @@ class MappingDatastore(GraphDataStore):
             save_dpi: DPI when saving figure (Default value: 300)
             ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
                 created axes. (Default value: None)
-            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values.
-                 (Default value: None)
             force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
-                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                treated as continuous variables otherwise as categories. This effects how colormaps
                                 are chosen and how legends are rendered. Set this to False if you are large number of
                                 unique integer entries (Default: True)
+            n_columns: Number of columns in the grid
+            w_pad: When plotting in multiple plots in a grid this decides the width padding between the plots.
+                   If None is provided the padding will be automatically added to avoid overlap.
+                   Ignored if only plotting one scatterplot.
+            h_pad: When plotting in multiple plots in a grid this decides the height padding between the plots.
+                   If None is provided the padding will be automatically added to avoid overlap.
+                   Ignored if only plotting one scatterplot.
             scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
             shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
 
@@ -2252,11 +2259,12 @@ class MappingDatastore(GraphDataStore):
             df = df[ref_n_cells:]
         if shuffle_zorder:
             df = df.sample(frac=1)
-        return plot_scatter([df], ax, fig, width, height, mask_color, cmap, color_key,
+        return plot_scatter([df], ax, width, height, mask_color, cmap, color_key,
                             mask_values, mask_name, mask_color, point_size,
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-                            legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, scatter_kwargs)
+                            legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink, marker_scale,
+                            lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad,
+                            scatter_kwargs)
 
 
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
@@ -2849,10 +2857,9 @@ class DataStore(MappingDatastore):
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
-                    legends_per_col: int = 20, marker_scale: float = 70, lspacing: float = 0.1,
-                    cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
-                    savename: str = None, save_dpi: int = 300,
-                    ax=None, fig=None, force_ints_as_cats: bool = True,
+                    legends_per_col: int = 20,  cbar_shrink: float = 0.6, marker_scale: float = 70,
+                    lspacing: float = 0.1, cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
+                    savename: str = None, save_dpi: int = 300, ax=None, force_ints_as_cats: bool = True,
                     n_columns: int = 4, w_pad: float = None, h_pad: float = None, scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
@@ -2867,7 +2874,8 @@ class DataStore(MappingDatastore):
             cell_key: One of the columns from cell metadata table that indicates the cells to be used.
                       The values in the chosen column should be boolean (Default value: 'I')
             layout_key: A prefix to cell metadata columns that contains the coordinates for the 2D layout of the cells.
-                        For example, 'RNA_UMAP' or 'RNA_tSNE'. If a list of prefixes is provided a grid of plots will be made.
+                        For example, 'RNA_UMAP' or 'RNA_tSNE'. If a list of prefixes is provided a grid of plots will be
+                        made.
             color_by: One (or a list) of the columns of the metadata table or a feature name (for example gene, GATA2).
                       If a list of names is provided a grid of plots will be made.
                       (Default: None)
@@ -2923,6 +2931,7 @@ class DataStore(MappingDatastore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
             lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
@@ -2936,13 +2945,13 @@ class DataStore(MappingDatastore):
                          (Default value: False)
             ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
                 created axes. It is ignored if `do_shading` is set to True. (Default value: None)
-            fig: An instance of Matplotlib Figure. This is required to draw colorbar for continuous values. (Default value: None)
             force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
                                 treated as continuous variables otherwise as categories. This effects how colourmaps
                                 are chosen and how legends are rendered. Set this to False if you are large number of
                                 unique integer entries (Default: True)
-            n_columns: If plotting several plots in a grid this argument decides the layout by how many columns in the grid.
-                       Defaults to 4 but if the total amount of plots are less than 4 it will default to that number. 
+            n_columns: If plotting several plots in a grid this argument decides the layout by how many columns in the
+                       grid. Defaults to 4 but if the total amount of plots are less than 4 it will default to that
+                       number.
             w_pad: When plotting in multiple plots in a grid this decides the width padding between the plots. 
                    If None is provided the padding will be automatically added to avoid overlap.
                    Ignored if only plotting one scatterplot. 
@@ -2973,8 +2982,8 @@ class DataStore(MappingDatastore):
             raise ValueError("ERROR: clip_fraction cannot be larger than or equal to 0.5")
         if isinstance(layout_key, str):
             layout_key = [layout_key]
-        # If a list of layout keys and color_by (e.g. layout_key=['UMAP', 'tSNE'], color_by=['gene1', 'gene2'] the grid layout will be:
-        # plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2 
+        # If a list of layout keys and color_by (e.g. layout_key=['UMAP', 'tSNE'], color_by=['gene1', 'gene2'] the
+        # grid layout will be: plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2
         dfs = []
         for lk in layout_key:
             x = self.cells.fetch(f'{lk}1', cell_key)
@@ -2989,8 +2998,8 @@ class DataStore(MappingDatastore):
                     v = np.ones(len(x)).astype(int)
                 else:
                     v = self.get_cell_vals(from_assay=from_assay, cell_key=cell_key, k=c,
-                    clip_fraction=clip_fraction)
-                df = pd.DataFrame({f'{lk} 1': x, f'{lk} 2': y, c : v})
+                                           clip_fraction=clip_fraction)
+                df = pd.DataFrame({f'{lk} 1': x, f'{lk} 2': y, c: v})
                 if size_vals is not None:
                     if len(size_vals) != len(x):
                         raise ValueError("ERROR: `size_vals` is not of same size as layout_key")
@@ -3014,14 +3023,15 @@ class DataStore(MappingDatastore):
             return shade_scatter(dfs, ax, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-                                 legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
+                                 legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink, marker_scale,
                                  lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad)
         else:
-            return plot_scatter(dfs, ax, fig, width, height, default_color, cmap, color_key,
+            return plot_scatter(dfs, ax, width, height, default_color, cmap, color_key,
                                 mask_values, mask_name, mask_color, point_size,
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
-                                legend_ondata, legend_onside, legend_size, legends_per_col, marker_scale,
-                                lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad, scatter_kwargs)
+                                legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink,  marker_scale,
+                                lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad,
+                                scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                           cluster_key: str = None, fill_by_value: str = None, force_ints_as_cats: bool = True,
