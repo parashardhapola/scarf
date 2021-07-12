@@ -67,19 +67,32 @@ def graph_distances(make_graph, datastore):
 
 
 @pytest.fixture(scope="module")
+def graph_weights(make_graph, datastore):
+    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_weights.npy')
+    return np.load(fn)
+
+
+@pytest.fixture(scope="module")
 def cell_attrs():
     fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes.csv')
     return pd.read_csv(fn, index_col=0)
 
 
+GRAPH_LOC = 'RNA/normed__I__hvgs/reduction__pca__11__I/ann__l2__50__50__48__4466/knn__11'
+
+
 class TestDataStore:
     def test_graph_indices(self, graph_indices, datastore):
-        a = datastore.z.RNA.normed__I__hvgs.reduction__pca__11__I.ann__l2__50__50__48__4466.knn__11.indices[:]
+        a = datastore.z[GRAPH_LOC]['indices'][:]
         assert np.array_equal(a, graph_indices)
 
     def test_graph_distances(self, graph_distances, datastore):
-        a = datastore.z.RNA.normed__I__hvgs.reduction__pca__11__I.ann__l2__50__50__48__4466.knn__11.distances[:]
+        a = datastore.z[GRAPH_LOC]['distances'][:]
         assert np.alltrue((a - graph_distances) < 0.1)
+
+    def test_graph_weights(self, graph_weights, datastore):
+        a = datastore.z[GRAPH_LOC]['graph__1.0__1.5']['weights'][:]
+        assert np.alltrue((a - graph_weights) < 0.1)
 
     def test_leiden_values(self, leiden_clustering, cell_attrs):
         assert np.array_equal(leiden_clustering, cell_attrs['RNA_leiden_cluster'].values)
