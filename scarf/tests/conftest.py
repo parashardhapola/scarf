@@ -1,4 +1,3 @@
-from _pytest.fixtures import scopemismatch
 import pytest
 import os
 import shutil
@@ -12,8 +11,8 @@ def pbmc_reader():
     return CrH5Reader(fn, 'rna')
 
 
-@pytest.fixture
-def h5ad_reader(scope="module"):
+@pytest.fixture(scope='session')
+def h5ad_reader():
     from ..readers import H5adReader
     from ..downloader import fetch_dataset
 
