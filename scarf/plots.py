@@ -13,6 +13,52 @@ from .logging_utils import logger
 plt.rcParams['svg.fonttype'] = 'none'
 
 
+# These palettes were lifted from scanpy.plotting.palettes
+custom_palettes = {
+    10: [
+        '#1f77b4', '#ff7f0e', '#279e68', '#d62728', '#aa40fc',
+        '#8c564b', '#e377c2', '#7f7f7f', '#b5bd61', '#17becf'
+    ],
+    20: [
+        '#1f77b4', '#aec7e8', '#ff7f0e', '#ffbb78', '#2ca02c',
+        '#98df8a', '#d62728', '#ff9896', '#9467bd', '#c5b0d5',
+        '#8c564b', '#c49c94', '#e377c2', '#f7b6d2', '#7f7f7f',
+        '#c7c7c7', '#bcbd22', '#dbdb8d', '#17becf', '#9edae5'
+    ],
+    28: [
+        "#023fa5", "#7d87b9", "#bec1d4", "#d6bcc0", "#bb7784",
+        "#8e063b", "#4a6fe3", "#8595e1", "#b5bbe3", "#e6afb9",
+        "#e07b91", "#d33f6a", "#11c638", "#8dd593", "#c6dec7",
+        "#ead3c6", "#f0b98d", "#ef9708", "#0fcfc0", "#9cded6",
+        "#d5eae7", "#f3e1eb", "#f6c4e1", "#f79cd4", '#7f7f7f',
+        "#c7c7c7", "#1CE6FF", "#336600"
+    ],
+    102: [
+        "#FFFF00", "#1CE6FF", "#FF34FF", "#FF4A46", "#008941",
+        "#006FA6", "#A30059", "#FFDBE5", "#7A4900", "#0000A6",
+        "#63FFAC", "#B79762", "#004D43", "#8FB0FF", "#997D87",
+        "#5A0007", "#809693", "#6A3A4C", "#1B4400", "#4FC601",
+        "#3B5DFF", "#4A3B53", "#FF2F80", "#61615A", "#BA0900",
+        "#6B7900", "#00C2A0", "#FFAA92", "#FF90C9", "#B903AA",
+        "#D16100", "#DDEFFF", "#000035", "#7B4F4B", "#A1C299",
+        "#300018", "#0AA6D8", "#013349", "#00846F", "#372101",
+        "#FFB500", "#C2FFED", "#A079BF", "#CC0744", "#C0B9B2",
+        "#C2FF99", "#001E09", "#00489C", "#6F0062", "#0CBD66",
+        "#EEC3FF", "#456D75", "#B77B68", "#7A87A1", "#788D66",
+        "#885578", "#FAD09F", "#FF8A9A", "#D157A0", "#BEC459",
+        "#456648", "#0086ED", "#886F4C", "#34362D", "#B4A8BD",
+        "#00A6AA", "#452C2C", "#636375", "#A3C8C9", "#FF913F",
+        "#938A81", "#575329", "#00FECF", "#B05B6F", "#8CD0FF",
+        "#3B9700", "#04F757", "#C8A1A1", "#1E6E00", "#7900D7",
+        "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600",
+        "#D790FF", "#9B9700", "#549E79", "#FFF69F", "#201625",
+        "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329",
+        "#5B4534", "#FDE8DC", "#404E55", "#0089A3", "#CB7E98",
+        "#A4E804", "#324E72"
+    ]
+}
+
+
 def clean_axis(ax, ts=11, ga=0.4):
     """
     Cleans a given matplotlib axis.
@@ -198,6 +244,9 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Serie
 def _scatter_make_colors(v: pd.Series, cmap, color_key: Optional[dict], mask_color: str, mask_name: str):
     from matplotlib.cm import get_cmap
 
+    na_idx = v == mask_name
+    uv = v[~na_idx].unique()
+
     if v.dtype.name != 'category':
         if cmap is None:
             return cm.deep, None
@@ -205,9 +254,8 @@ def _scatter_make_colors(v: pd.Series, cmap, color_key: Optional[dict], mask_col
             return get_cmap(cmap), None
     else:
         if cmap is None:
-            cmap = 'tab20'
-    na_idx = v == mask_name
-    uv = v[~na_idx].unique()
+            cmap = 'custom'
+
     if color_key is not None:
         for i in uv:
             if i not in color_key:
@@ -217,7 +265,17 @@ def _scatter_make_colors(v: pd.Series, cmap, color_key: Optional[dict], mask_col
                 color_key[mask_name] = mpl.colors.to_hex(mask_color)
         return None, color_key
     else:
-        pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
+        if cmap == 'custom':
+            if len(uv) <= 10:
+                pal = custom_palettes[10]
+            elif len(uv) <= 20:
+                pal = custom_palettes[20]
+            elif len(uv) <= 30:
+                pal = custom_palettes[28]
+            else:
+                pal = custom_palettes[102]
+        else:
+            pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
         color_key = dict(zip(sorted(uv), pal))
         if na_idx.sum() > 0:
             color_key[mask_name] = mpl.colors.to_hex(mask_color)
