@@ -55,12 +55,32 @@ def umap(make_graph, datastore):
 
 
 @pytest.fixture(scope="module")
+def graph_indices(make_graph, datastore):
+    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_indices.npy')
+    return np.load(fn)
+
+
+@pytest.fixture(scope="module")
+def graph_distances(make_graph, datastore):
+    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_distances.npy')
+    return np.load(fn)
+
+
+@pytest.fixture(scope="module")
 def cell_attrs():
     fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes.csv')
     return pd.read_csv(fn, index_col=0)
 
 
 class TestDataStore:
+    def test_graph_indices(self, graph_indices, datastore):
+        a = datastore.z.RNA.normed__I__hvgs.reduction__pca__11__I.ann__l2__50__50__48__4466.knn__11.indices[:]
+        assert np.array_equal(a, graph_indices)
+
+    def test_graph_distances(self, graph_distances, datastore):
+        a = datastore.z.RNA.normed__I__hvgs.reduction__pca__11__I.ann__l2__50__50__48__4466.knn__11.distances[:]
+        assert np.alltrue((a - graph_distances) < 0.1)
+
     def test_leiden_values(self, leiden_clustering, cell_attrs):
         assert np.array_equal(leiden_clustering, cell_attrs['RNA_leiden_cluster'].values)
 
