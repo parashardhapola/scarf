@@ -12,7 +12,7 @@
 .. |Tests| image:: https://circleci.com/gh/parashardhapola/scarf/tree/master.svg?style=svg
           :target: https://circleci.com/gh/parashardhapola/scarf/tree/master
 
-.. |IMG1| image:: docs/source/_static/scarf_logo_for_readme.png
+.. |IMG1| image:: docs/source/logo_for_readme.png
          :width: 100%
 
 Analyze large-scale (aka atlas-scale) single-cell genomics datasets with very low memory requirement.
