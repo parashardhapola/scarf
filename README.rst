@@ -9,8 +9,8 @@
          :target: https://pypi.org/project/scarf
 .. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
          :target: https://scarf.readthedocs.io
-.. |Tests| image:: https://circleci.com/gh/parashardhapola/scarf/tree/master.svg?style=svg
-          :target: https://circleci.com/gh/parashardhapola/scarf/tree/master
+.. |Tests| image:: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml/badge.svg
+          :target: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
 
 .. |IMG1| image:: docs/source/logo_for_readme.png
          :width: 100%
