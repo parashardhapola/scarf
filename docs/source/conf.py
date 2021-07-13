@@ -36,8 +36,8 @@ pygments_style = 'sphinx'
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ['_static']
-html_favicon = '_static/scarf_icon.svg'
-html_logo = '_static/scarf_logo_inversed.svg'
+html_favicon = 'scarf_icon.svg'
+html_logo = 'scarf_logo_inversed.png'
 # html_title = project + ' version ' + release
 # html_sidebars = {}
 html_theme_options = {
