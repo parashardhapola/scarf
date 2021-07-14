@@ -1,24 +1,8 @@
 import sys
-import tarfile
 import pytest
 import os
-import shutil
 import pandas as pd
 import numpy as np
-
-
-@pytest.fixture(scope="module")
-def datastore():
-    from ..datastore import DataStore
-
-    fn = os.path.join('scarf', 'tests', 'datasets', '1K_pbmc_citeseq.zarr.tar.gz')
-    out_fn = fn.replace('.tar.gz', '')
-    if os.path.isdir(out_fn):
-        shutil.rmtree(out_fn)
-    tar = tarfile.open(fn, "r:gz")
-    tar.extractall(out_fn)
-    yield DataStore(out_fn, default_assay='RNA')
-    shutil.rmtree(out_fn)
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +58,17 @@ def graph_weights(make_graph, datastore):
 
 
 @pytest.fixture(scope="module")
+def marker_search(datastore):
+    datastore.run_marker_search(group_key='RNA_leiden_cluster')
+
+
+@pytest.fixture(scope="module")
+def run_mapping_no_coral(datastore):
+    datastore.run_mapping(target_assay=datastore.RNA, target_name='selfmap',
+                          target_feat_key='hvgs_self', save_k=3)
+
+
+@pytest.fixture(scope="module")
 def cell_attrs():
     if sys.platform == 'win32':
         # UMAP and Leiden are not reproducible cross platform. Most likely due to underlying C libraries
@@ -111,3 +106,16 @@ class TestDataStore:
         precalc_umap = cell_attrs[['RNA_UMAP1', 'RNA_UMAP2']].values
         # Disabled the following test because failing on CI
         # assert np.alltrue((umap - precalc_umap) < 0.1)
+
+    def test_get_markers(self, marker_search, datastore):
+        # TODO: Add assertion here to check if gene names make sense
+        datastore.get_markers(group_key='RNA_leiden_cluster', group_id='1')
+
+    def test_plot_layout(self, datastore):
+        datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster', show_fig=False)
+
+    def test_plot_cluster_tree(self, datastore):
+        datastore.plot_cluster_tree(cluster_key='RNA_cluster', show_fig=False)
+
+    def test_plot_marker_heatmap(self, marker_search, datastore):
+        datastore.plot_marker_heatmap(group_key='RNA_leiden_cluster', show_fig=False)

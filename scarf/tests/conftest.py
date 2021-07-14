@@ -1,6 +1,7 @@
 import pytest
 import os
 import shutil
+import tarfile
 
 
 @pytest.fixture(scope='session')
@@ -24,3 +25,17 @@ def h5ad_reader():
     yield reader
     reader.h5.close()
     shutil.rmtree(os.path.join(out_dir, sample))
+
+
+@pytest.fixture(scope="session")
+def datastore():
+    from ..datastore import DataStore
+
+    fn = os.path.join('scarf', 'tests', 'datasets', '1K_pbmc_citeseq.zarr.tar.gz')
+    out_fn = fn.replace('.tar.gz', '')
+    if os.path.isdir(out_fn):
+        shutil.rmtree(out_fn)
+    tar = tarfile.open(fn, "r:gz")
+    tar.extractall(out_fn)
+    yield DataStore(out_fn, default_assay='RNA')
+    shutil.rmtree(out_fn)
