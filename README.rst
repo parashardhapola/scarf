@@ -1,4 +1,4 @@
-|PyPI| |Docs| |Tests|
+|PyPI| |Docs| |Tests| |Coverage|
 
 `Installation`_ | `Documentation`_ | `Tutorials`_ | `Preprint`_
 
@@ -11,6 +11,8 @@
          :target: https://scarf.readthedocs.io
 .. |Tests| image:: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml/badge.svg
           :target: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
+.. |Coverage| image:: https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd
+             :target: https://codecov.io/gh/parashardhapola/scarf
 
 .. |IMG1| image:: docs/source/logo_for_readme.png
          :width: 100%
