@@ -30,4 +30,3 @@ importlib_metadata
 requests
 jinja2~=2.11
 kneed
-pytest
