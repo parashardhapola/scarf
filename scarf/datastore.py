@@ -2132,7 +2132,8 @@ class MappingDatastore(GraphDataStore):
                             legends_per_col: int = 20, cbar_shrink: float = 0.6, marker_scale: float = 70,
                             lspacing: float = 0.1, cspacing: float = 1, savename: str = None, save_dpi: int = 300,
                             ax=None, force_ints_as_cats: bool = True, n_columns: int = 1, w_pad: float = 1,
-                            h_pad: float = 1, scatter_kwargs: dict = None, shuffle_zorder: bool = True):
+                            h_pad: float = 1, scatter_kwargs: dict = None, shuffle_zorder: bool = True,
+                            show_fig: bool = True):
         """
         Plots the reference and target cells in their unified space.
 
@@ -2196,6 +2197,7 @@ class MappingDatastore(GraphDataStore):
                    Ignored if only plotting one scatterplot.
             scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
             shuffle_zorder: Whether to shuffle the plot order of data points in the figure. (Default value: True)
+            show_fig: Whether to render the figure and display it using plt.show() (Default value: True)
 
         Returns:
             None
@@ -2264,7 +2266,7 @@ class MappingDatastore(GraphDataStore):
                             ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                             legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink, marker_scale,
                             lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad,
-                            scatter_kwargs)
+                            show_fig, scatter_kwargs)
 
 
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
@@ -2860,7 +2862,8 @@ class DataStore(MappingDatastore):
                     legends_per_col: int = 20,  cbar_shrink: float = 0.6, marker_scale: float = 70,
                     lspacing: float = 0.1, cspacing: float = 1, shuffle_df: bool = False, sort_values: bool = False,
                     savename: str = None, save_dpi: int = 300, ax=None, force_ints_as_cats: bool = True,
-                    n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, scatter_kwargs: dict = None):
+                    n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, show_fig: bool = True,
+                    scatter_kwargs: dict = None):
         """
         Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
         the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
@@ -2957,7 +2960,8 @@ class DataStore(MappingDatastore):
                    Ignored if only plotting one scatterplot. 
             h_pad: When plotting in multiple plots in a grid this decides the height padding between the plots. 
                    If None is provided the padding will be automatically added to avoid overlap.
-                   Ignored if only plotting one scatterplot. 
+                   Ignored if only plotting one scatterplot.
+            show_fig: Whether to render the figure and display it using plt.show() (Default value: True)
             scatter_kwargs: Keyword argument to be passed to matplotlib's scatter command
 
         Returns:
@@ -3024,14 +3028,15 @@ class DataStore(MappingDatastore):
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                  legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink, marker_scale,
-                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad)
+                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad,
+                                 show_fig)
         else:
             return plot_scatter(dfs, ax, width, height, default_color, cmap, color_key,
                                 mask_values, mask_name, mask_color, point_size,
                                 ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                 legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink,  marker_scale,
                                 lspacing, cspacing, savename, save_dpi, force_ints_as_cats, n_columns, w_pad, h_pad,
-                                scatter_kwargs)
+                                show_fig, scatter_kwargs)
 
     def plot_cluster_tree(self, *, from_assay: str = None, cell_key: str = None, feat_key: str = None,
                           cluster_key: str = None, fill_by_value: str = None, force_ints_as_cats: bool = True,
@@ -3154,7 +3159,7 @@ class DataStore(MappingDatastore):
 
     def plot_marker_heatmap(self, *, from_assay: str = None, group_key: str = None, cell_key: str = None,
                             topn: int = 5, log_transform: bool = True, vmin: float = -1, vmax: float = 2,
-                            savename: str = None, save_dpi: int = 300, **heatmap_kwargs):
+                            savename: str = None, save_dpi: int = 300, show_fig: bool = True, **heatmap_kwargs):
         """
         Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
 
@@ -3177,6 +3182,7 @@ class DataStore(MappingDatastore):
             savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure. (Default value: 300)
+            show_fig: Whether to render the figure and display it using plt.show() (Default value: True)
             **heatmap_kwargs: Keyword arguments to be forwarded to seaborn.clustermap.
 
         Returns:
@@ -3219,4 +3225,4 @@ class DataStore(MappingDatastore):
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
         df[df > vmax] = vmax
-        plot_heatmap(df, savename=savename, save_dpi=save_dpi, **heatmap_kwargs)
+        plot_heatmap(df, savename=savename, save_dpi=save_dpi, show_fig=show_fig, **heatmap_kwargs)

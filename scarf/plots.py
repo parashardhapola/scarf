@@ -190,7 +190,7 @@ def plot_elbow(var_exp, figsize: Tuple[float, float] = (None, 2)):
 
 
 def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_factor: float = 0.02,
-                 cmap=cm.matter_r, savename: str = None, save_dpi: int = 300, figsize=None):
+                 cmap=cm.matter_r, savename: str = None, save_dpi: int = 300, figsize=None, show_fig: bool = True):
     """
     Shows a heatmap plot.
     """
@@ -204,8 +204,10 @@ def plot_heatmap(cdf, fontsize: float = 10, width_factor: float = 0.03, height_f
     cgx.ax_heatmap.patch.set_alpha(0)
     if savename:
         plt.savefig(savename, dpi=save_dpi)
-    plt.show()
-    return None
+    if show_fig:
+        plt.show()
+    else:
+        return cgx
 
 
 def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
@@ -395,7 +397,8 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
                  legend_size: float = 12, legends_per_col: int = 20, cbar_shrink: float = 0.6,
                  marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                  savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True,
-                 n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, scatter_kwargs: dict = None):
+                 n_columns: int = 4, w_pad: float = 1, h_pad: float = 1, show_fig: bool = True,
+                 scatter_kwargs: dict = None):
     """
     Shows scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid. 
     """
@@ -455,9 +458,9 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
         _scatter_legends(df, ax, col_map, col_key, legend_ondata, legend_onside,
                          legend_size, legends_per_col, marker_scale, lspacing, cspacing, cbar_shrink)
 
-    if in_ax is None:
-        if savename:
-            plt.savefig(savename, dpi=dpi, bbox_inches='tight')
+    if savename:
+        plt.savefig(savename, dpi=dpi, bbox_inches='tight')
+    if show_fig:
         plt.show()
     else:
         return axs
@@ -473,7 +476,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
                   legend_size: float = 12, legends_per_col: int = 20, cbar_shrink: float = 0.6,
                   marker_scale: float = 70, lspacing: float = 0.1, cspacing: float = 1,
                   savename: str = None, dpi: int = 300, force_ints_as_cats: bool = True,
-                  n_columns: int = 4, w_pad: float = None, h_pad: float = None):
+                  n_columns: int = 4, w_pad: float = None, h_pad: float = None, show_fig: bool = True):
     """
     Shows shaded scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid. 
     """
@@ -523,7 +526,9 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
 
     if savename:
         plt.savefig(savename, dpi=dpi, bbox_inches='tight')
-    if in_ax is not None:
+    if show_fig:
+        plt.show()
+    else:
         return axs
 
 
