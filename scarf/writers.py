@@ -30,7 +30,8 @@ from scipy.sparse import csr_matrix
 
 __all__ = ['create_zarr_dataset', 'create_zarr_obj_array', 'create_zarr_count_assay',
            'subset_assay_zarr', 'dask_to_zarr', 'ZarrMerge', 'SubsetZarr',
-           'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr']
+           'CrToZarr', 'H5adToZarr', 'MtxToZarr', 'NaboH5ToZarr', 'LoomToZarr', 'SparseToZarr',
+           'to_h5ad', 'to_mtx']
 
 
 def create_zarr_dataset(g: zarr.Group, name: str, chunks: tuple,
