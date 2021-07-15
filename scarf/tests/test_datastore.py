@@ -8,6 +8,7 @@ import numpy as np
 def full_path(fn):
     return os.path.join('scarf', 'tests', 'datasets', fn)
 
+
 @pytest.fixture(scope="module")
 def auto_filter_cells(datastore):
     datastore.auto_filter_cells(show_qc_plots=False)
@@ -33,6 +34,13 @@ def leiden_clustering(make_graph, datastore):
 def paris_clustering(make_graph, datastore):
     datastore.run_clustering(n_clusters=10)
     yield datastore.cells.fetch('RNA_cluster')
+
+
+@pytest.fixture(scope="module")
+def paris_clustering_balanced(make_graph, datastore):
+    datastore.run_clustering(balanced_cut=True, max_size=100, min_size=10,
+                             label='balanced_clusters')
+    yield datastore.cells.fetch('RNA_balanced_clusters')
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +78,12 @@ def run_mapping(datastore):
 
 
 @pytest.fixture(scope="module")
+def cell_cycle_scoring(datastore):
+    datastore.run_cell_cycle_scoring()
+    return datastore.cells.fetch('RNA_cell_cycle_phase')
+
+
+@pytest.fixture(scope="module")
 def cell_attrs():
     return pd.read_csv(full_path('cell_attributes.csv'), index_col=0)
 
@@ -97,6 +111,12 @@ class TestDataStore:
 
     def test_paris_values(self, paris_clustering, cell_attrs):
         assert np.array_equal(paris_clustering, cell_attrs['RNA_cluster'].values)
+
+    def test_paris_balanced_values(self, paris_clustering_balanced, cell_attrs):
+        assert np.array_equal(paris_clustering_balanced, cell_attrs['RNA_balanced_clusters'].values)
+
+    def test_run_cell_cycle_scoring(self, cell_cycle_scoring, cell_attrs):
+        assert np.array_equal(cell_cycle_scoring, cell_attrs['RNA_cell_cycle_phase'].values)
 
     def test_umap_values(self, umap, cell_attrs):
         precalc_umap = cell_attrs[['RNA_UMAP1', 'RNA_UMAP2']].values
@@ -143,3 +163,4 @@ class TestDataStore:
         scores = next(datastore.get_mapping_score(target_name='selfmap'))[1]
         diff = scores - cell_attrs['mapping_scores'].values
         assert np.all(diff < 1e-3)
+
