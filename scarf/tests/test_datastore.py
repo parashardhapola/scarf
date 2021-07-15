@@ -5,6 +5,9 @@ import pandas as pd
 import numpy as np
 
 
+def full_path(fn):
+    return os.path.join('scarf', 'tests', 'datasets', fn)
+
 @pytest.fixture(scope="module")
 def auto_filter_cells(datastore):
     datastore.auto_filter_cells(show_qc_plots=False)
@@ -41,41 +44,34 @@ def umap(make_graph, datastore):
 
 @pytest.fixture(scope="module")
 def graph_indices(make_graph, datastore):
-    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_indices.npy')
-    return np.load(fn)
+    return np.load(full_path('knn_indices.npy'))
 
 
 @pytest.fixture(scope="module")
 def graph_distances(make_graph, datastore):
-    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_distances.npy')
-    return np.load(fn)
+    return np.load(full_path('knn_distances.npy'))
 
 
 @pytest.fixture(scope="module")
 def graph_weights(make_graph, datastore):
-    fn = os.path.join('scarf', 'tests', 'datasets', 'knn_weights.npy')
-    return np.load(fn)
+    return np.load(full_path('knn_weights.npy'))
 
 
 @pytest.fixture(scope="module")
 def marker_search(datastore):
-    datastore.run_marker_search(group_key='RNA_leiden_cluster')
+    # Testing this with Paris clusters rather then Leiden clusters because of reproducibility.
+    datastore.run_marker_search(group_key='RNA_cluster')
 
 
 @pytest.fixture(scope="module")
-def run_mapping_no_coral(datastore):
+def run_mapping(datastore):
     datastore.run_mapping(target_assay=datastore.RNA, target_name='selfmap',
                           target_feat_key='hvgs_self', save_k=3)
 
 
 @pytest.fixture(scope="module")
 def cell_attrs():
-    if sys.platform == 'win32':
-        # UMAP and Leiden are not reproducible cross platform. Most likely due to underlying C libraries
-        fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes_win32.csv')
-    else:
-        fn = os.path.join('scarf', 'tests', 'datasets', 'cell_attributes.csv')
-    return pd.read_csv(fn, index_col=0)
+    return pd.read_csv(full_path('cell_attributes.csv'), index_col=0)
 
 
 GRAPH_LOC = 'RNA/normed__I__hvgs/reduction__pca__11__I/ann__l2__50__50__48__4466/knn__11'
@@ -104,18 +100,46 @@ class TestDataStore:
 
     def test_umap_values(self, umap, cell_attrs):
         precalc_umap = cell_attrs[['RNA_UMAP1', 'RNA_UMAP2']].values
+        assert umap.shape == precalc_umap.shape
         # Disabled the following test because failing on CI
         # assert np.alltrue((umap - precalc_umap) < 0.1)
 
-    def test_get_markers(self, marker_search, datastore):
-        # TODO: Add assertion here to check if gene names make sense
-        datastore.get_markers(group_key='RNA_leiden_cluster', group_id='1')
+    def test_get_markers(self, marker_search, paris_clustering, datastore):
+        precalc_markers = pd.read_csv(full_path('markers_cluster1.csv'), index_col=0)
+        markers = datastore.get_markers(group_key='RNA_cluster', group_id=1)
+        assert markers.names.equals(precalc_markers.names)
+        diff = (markers.score - precalc_markers.score).values
+        assert np.all(diff < 1e-3)
 
-    def test_plot_layout(self, datastore):
-        datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster', show_fig=False)
+    def test_export_markers_to_csv(self,  marker_search, paris_clustering, datastore):
+        precalc_markers = pd.read_csv(full_path('markers_all_clusters.csv'))
+        out_file = full_path('test_values_markers.csv')
+        datastore.export_markers_to_csv(group_key='RNA_cluster', csv_filename=out_file)
+        markers = pd.read_csv(out_file)
+        assert markers.equals(precalc_markers)
+        os.unlink(out_file)
+
+    def test_plot_layout(self, umap, paris_clustering, datastore):
+        datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', show_fig=False)
 
     def test_plot_cluster_tree(self, datastore):
         datastore.plot_cluster_tree(cluster_key='RNA_cluster', show_fig=False)
 
     def test_plot_marker_heatmap(self, marker_search, datastore):
-        datastore.plot_marker_heatmap(group_key='RNA_leiden_cluster', show_fig=False)
+        datastore.plot_marker_heatmap(group_key='RNA_cluster', show_fig=False)
+
+    def test_run_unified_umap(self, run_mapping, datastore):
+        datastore.run_unified_umap(target_names=['selfmap'])
+        coords = datastore.z['RNA'].projections['unified_UMAP'][:]
+        precalc_coords = np.load(full_path('unified_UMAP_coords.npy'))
+        assert coords.shape == precalc_coords.shape
+
+    def test_get_target_classes(self, run_mapping, paris_clustering, cell_attrs, datastore):
+        classes = datastore.get_target_classes(target_name='selfmap',
+                                               reference_class_group='RNA_cluster')
+        assert np.array_equal(classes.values, cell_attrs['target_classes'].values)
+
+    def test_get_mapping_score(self, run_mapping, cell_attrs, datastore):
+        scores = next(datastore.get_mapping_score(target_name='selfmap'))[1]
+        diff = scores - cell_attrs['mapping_scores'].values
+        assert np.all(diff < 1e-3)

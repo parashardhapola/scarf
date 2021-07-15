@@ -1,5 +1,8 @@
 [build.system]
-requires = ["setuptools", "wheel"]
+requires = [
+    "setuptools",
+    "wheel"
+]
 build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
@@ -7,4 +10,7 @@ minversion = "6.0"
 addopts = "-ra -q"
 testpaths = [
     "scarf/tests",
+]
+norecursedirs = [
+    "scarf/tests/*"
 ]
