@@ -78,6 +78,11 @@ def run_mapping(datastore):
 
 
 @pytest.fixture(scope="module")
+def run_unified_umap(run_mapping, datastore):
+    datastore.run_unified_umap(target_names=['selfmap'])
+
+
+@pytest.fixture(scope="module")
 def cell_cycle_scoring(datastore):
     datastore.run_cell_cycle_scoring()
     return datastore.cells.fetch('RNA_cell_cycle_phase')
@@ -139,17 +144,7 @@ class TestDataStore:
         assert markers.equals(precalc_markers)
         os.unlink(out_file)
 
-    def test_plot_layout(self, umap, paris_clustering, datastore):
-        datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', show_fig=False)
-
-    def test_plot_cluster_tree(self, datastore):
-        datastore.plot_cluster_tree(cluster_key='RNA_cluster', show_fig=False)
-
-    def test_plot_marker_heatmap(self, marker_search, datastore):
-        datastore.plot_marker_heatmap(group_key='RNA_cluster', show_fig=False)
-
-    def test_run_unified_umap(self, run_mapping, datastore):
-        datastore.run_unified_umap(target_names=['selfmap'])
+    def test_run_unified_umap(self, run_unified_umap, datastore):
         coords = datastore.z['RNA'].projections['unified_UMAP'][:]
         precalc_coords = np.load(full_path('unified_UMAP_coords.npy'))
         assert coords.shape == precalc_coords.shape
@@ -164,3 +159,22 @@ class TestDataStore:
         diff = scores - cell_attrs['mapping_scores'].values
         assert np.all(diff < 1e-3)
 
+    def test_repr(self, datastore):
+        # TODO: Test if the expected values are printed
+        print (datastore)
+
+    def test_make_bulk(self, paris_clustering, datastore):
+        df = datastore.make_bulk(group_key='RNA_cluster')
+        assert df.shape == (18850, 31)
+
+    def test_plot_layout(self, umap, paris_clustering, datastore):
+        datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', show_fig=False)
+
+    def test_plot_cluster_tree(self, datastore):
+        datastore.plot_cluster_tree(cluster_key='RNA_cluster', show_fig=False)
+
+    def test_plot_marker_heatmap(self, marker_search, datastore):
+        datastore.plot_marker_heatmap(group_key='RNA_cluster', show_fig=False)
+
+    def test_plot_unified_layout(self, run_unified_umap, datastore):
+        datastore.plot_unified_layout(layout_key='unified_UMAP', show_fig=False)
