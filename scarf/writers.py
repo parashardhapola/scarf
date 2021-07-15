@@ -673,10 +673,7 @@ class SubsetZarr:
     def _prep_counts(self):
         n_cells = len(self.cellIdx)
         for assay_name in self.assays:
-            print (assay_name)
             raw_data = self._get_raw_data(assay_name)
-            print (self.iz[assay_name]['featureData']['ids'][:])
-            print (self.iz[assay_name]['featureData']['names'][:])
             create_zarr_count_assay(self.oz, assay_name, raw_data.chunksize, n_cells,
                                     self.iz[assay_name]['featureData']['ids'][:],
                                     self.iz[assay_name]['featureData']['names'][:], raw_data.dtype)
