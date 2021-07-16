@@ -1,35 +1,31 @@
-import pytest
-import os
-import shutil
+from . import full_path, remove
 
 
-def full_path(fn):
-    return os.path.join('scarf', 'tests', 'datasets', fn)
-
-
-@pytest.fixture(scope='session')
-def pbmc_writer(pbmc_reader):
+def test_crtozarr(crh5_reader):
     from ..writers import CrToZarr
+
     fn = full_path('dummy_1K_pbmc_citeseq.zarr')
-    yield CrToZarr(pbmc_reader, zarr_fn=fn)
-    shutil.rmtree(fn)
+    writer = CrToZarr(crh5_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
 
 
-def test_cr_to_zarr(pbmc_writer):
-    pbmc_writer.dump()
+def test_crtozarr_fromdir(crdir_reader):
+    from ..writers import CrToZarr
+
+    fn = full_path('1K_pbmc_citeseq_dir.zarr')
+    writer = CrToZarr(crdir_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
 
 
-@pytest.fixture
-def h5ad_writer(h5ad_reader):
+def test_h5adtozarr(h5ad_reader):
     from ..writers import H5adToZarr
 
     fn = full_path('bastidas.zarr')
-    yield H5adToZarr(h5ad_reader, zarr_fn=fn)
-    shutil.rmtree(fn)
-
-
-def test_h5ad_to_zarr(h5ad_writer):
-    h5ad_writer.dump()
+    writer = H5adToZarr(h5ad_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
 
 
 def test_to_h5ad(datastore):
@@ -38,7 +34,7 @@ def test_to_h5ad(datastore):
 
     fn = full_path('test_1K_pbmc_citeseq.h5ad')
     to_h5ad(datastore.RNA, fn)
-    os.unlink(fn)
+    remove(fn)
 
 
 def test_to_mtx(datastore):
@@ -47,7 +43,7 @@ def test_to_mtx(datastore):
 
     fn = full_path('test_1K_pbmc_citeseq_dir')
     to_mtx(datastore.RNA, fn)
-    shutil.rmtree(fn)
+    remove(fn)
 
 
 def test_zarr_merge(datastore):
@@ -58,7 +54,7 @@ def test_zarr_merge(datastore):
     writer = ZarrMerge(zarr_path=fn, assays=[datastore.RNA, datastore.RNA],
                        names=['self1', 'self2'], merge_assay_name='RNA', prepend_text='')
     writer.dump()
-    shutil.rmtree(fn)
+    remove(fn)
 
 
 def test_zarr_subset(datastore):
@@ -71,4 +67,4 @@ def test_zarr_subset(datastore):
 
     writer = SubsetZarr(in_zarr=in_fn, out_zarr=out_fn, cell_idx=[1, 10, 100, 500])
     writer.dump()
-    shutil.rmtree(out_fn)
+    remove(out_fn)

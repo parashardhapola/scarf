@@ -1,8 +1,13 @@
-def test_read_pbmc(pbmc_reader):
-    assert pbmc_reader.nCells == 892
-    assert pbmc_reader.nFeatures == 36611
-    n_assay_feats = list(pbmc_reader.assayFeats.T.nFeatures.values)
+def test_crh5reader(crh5_reader):
+    assert crh5_reader.nCells == 892
+    assert crh5_reader.nFeatures == 36611
+    n_assay_feats = list(crh5_reader.assayFeats.T.nFeatures.values)
     assert n_assay_feats == [36601, 10]
+
+
+def test_crdir_reader(crdir_reader):
+    assert crdir_reader.nCells == 892
+    assert crdir_reader.nFeatures == 36601  # Does not contain 10 ADTs
 
 
 def test_h5ad_reader(h5ad_reader):

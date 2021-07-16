@@ -1,97 +1,6 @@
-import sys
-import pytest
-import os
 import pandas as pd
 import numpy as np
-
-
-def full_path(fn):
-    return os.path.join('scarf', 'tests', 'datasets', fn)
-
-
-@pytest.fixture(scope="module")
-def auto_filter_cells(datastore):
-    datastore.auto_filter_cells(show_qc_plots=False)
-
-
-@pytest.fixture(scope="module")
-def mark_hvgs(auto_filter_cells, datastore):
-    datastore.mark_hvgs(top_n=100, show_plot=False)
-
-
-@pytest.fixture(scope="module")
-def make_graph(mark_hvgs, datastore):
-    datastore.make_graph(feat_key='hvgs')
-
-
-@pytest.fixture(scope="module")
-def leiden_clustering(make_graph, datastore):
-    datastore.run_leiden_clustering()
-    yield datastore.cells.fetch('RNA_leiden_cluster')
-
-
-@pytest.fixture(scope="module")
-def paris_clustering(make_graph, datastore):
-    datastore.run_clustering(n_clusters=10)
-    yield datastore.cells.fetch('RNA_cluster')
-
-
-@pytest.fixture(scope="module")
-def paris_clustering_balanced(make_graph, datastore):
-    datastore.run_clustering(balanced_cut=True, max_size=100, min_size=10,
-                             label='balanced_clusters')
-    yield datastore.cells.fetch('RNA_balanced_clusters')
-
-
-@pytest.fixture(scope="module")
-def umap(make_graph, datastore):
-    datastore.run_umap(fit_n_epochs=50, tx_n_epochs=20)
-    yield np.array([datastore.cells.fetch('RNA_UMAP1'),
-                    datastore.cells.fetch('RNA_UMAP2')]).T
-
-
-@pytest.fixture(scope="module")
-def graph_indices(make_graph, datastore):
-    return np.load(full_path('knn_indices.npy'))
-
-
-@pytest.fixture(scope="module")
-def graph_distances(make_graph, datastore):
-    return np.load(full_path('knn_distances.npy'))
-
-
-@pytest.fixture(scope="module")
-def graph_weights(make_graph, datastore):
-    return np.load(full_path('knn_weights.npy'))
-
-
-@pytest.fixture(scope="module")
-def marker_search(datastore):
-    # Testing this with Paris clusters rather then Leiden clusters because of reproducibility.
-    datastore.run_marker_search(group_key='RNA_cluster')
-
-
-@pytest.fixture(scope="module")
-def run_mapping(datastore):
-    datastore.run_mapping(target_assay=datastore.RNA, target_name='selfmap',
-                          target_feat_key='hvgs_self', save_k=3)
-
-
-@pytest.fixture(scope="module")
-def run_unified_umap(run_mapping, datastore):
-    datastore.run_unified_umap(target_names=['selfmap'])
-
-
-@pytest.fixture(scope="module")
-def cell_cycle_scoring(datastore):
-    datastore.run_cell_cycle_scoring()
-    return datastore.cells.fetch('RNA_cell_cycle_phase')
-
-
-@pytest.fixture(scope="module")
-def cell_attrs():
-    return pd.read_csv(full_path('cell_attributes.csv'), index_col=0)
-
+from . import full_path, remove
 
 GRAPH_LOC = 'RNA/normed__I__hvgs/reduction__pca__11__I/ann__l2__50__50__48__4466/knn__11'
 
@@ -142,7 +51,7 @@ class TestDataStore:
         datastore.export_markers_to_csv(group_key='RNA_cluster', csv_filename=out_file)
         markers = pd.read_csv(out_file)
         assert markers.equals(precalc_markers)
-        os.unlink(out_file)
+        remove(out_file)
 
     def test_run_unified_umap(self, run_unified_umap, datastore):
         coords = datastore.z['RNA'].projections['unified_UMAP'][:]
@@ -161,7 +70,18 @@ class TestDataStore:
 
     def test_repr(self, datastore):
         # TODO: Test if the expected values are printed
-        print (datastore)
+        print(datastore)
+
+    def test_get_imputed(self, datastore):
+        # TODO: Test the output values
+        values = datastore.get_imputed(feature_name='CD4')
+        assert values.shape == datastore.cells.fetch('I').shape
+
+    def test_run_pseudotime_scoring(self, datastore):
+        # TODO: Test the output values
+        datastore.run_pseudotime_scoring()
+        values = datastore.cells.fetch('RNA_pseudotime')
+        assert values.shape == datastore.cells.fetch('I').shape
 
     def test_make_bulk(self, paris_clustering, datastore):
         df = datastore.make_bulk(group_key='RNA_cluster')
