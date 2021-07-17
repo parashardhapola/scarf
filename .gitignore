@@ -1,7 +1,6 @@
 .idea
 .vscode
 __pycache__
-data
 build
 dist
 scarf.egg-info
@@ -15,4 +14,4 @@ docs/source/vignettes/*.txt
 docs/source/vignettes/*.mtx
 .coverage
 .pytest_cache
-scarf/tests/datasets/dummy*
+interrogate_badge.svg
