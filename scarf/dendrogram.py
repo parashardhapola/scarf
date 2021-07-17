@@ -124,7 +124,7 @@ class BalancedCut:
                 q.extend(list(self.graph.successors(i)))
         return d[1:]
 
-    def _get_mean_dist(self, start_node: int) -> np.float:
+    def _get_mean_dist(self, start_node: int) -> float:
         """
         Get mean distances in downstream tree of a node
         """

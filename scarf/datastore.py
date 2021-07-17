@@ -427,7 +427,7 @@ class BaseDataStore:
                 targets = []
                 layouts = []
                 for j in self.z[i]['projections']:
-                    if 'indices' in self.z[i]['projections'][j]:
+                    if type(self.z[i]['projections'][j]) == zarr.Group:
                         targets.append(j)
                     else:
                         layouts.append(j)
