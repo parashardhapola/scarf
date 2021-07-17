@@ -98,5 +98,11 @@ def cell_cycle_scoring(datastore):
 
 
 @pytest.fixture(scope="class")
+def topacedo_sampler(paris_clustering, datastore):
+    datastore.run_topacedo_sampler(cluster_key='RNA_cluster')
+    return datastore.cells.fetch('RNA_sketched')
+
+
+@pytest.fixture(scope="class")
 def cell_attrs():
     return pd.read_csv(full_path('cell_attributes.csv'), index_col=0)
