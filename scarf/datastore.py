@@ -2773,7 +2773,7 @@ class DataStore(MappingDatastore):
                          group_key: str = None, color: str = 'steelblue', cmap: str = 'tab20',
                          fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10.0,
                          sup_title: str = None, sup_title_size: float = 12.0, scatter_size: float = 1.0,
-                         max_points: int = 10000, show_on_single_row: bool = True) -> None:
+                         max_points: int = 10000, show_on_single_row: bool = True, show_fig: bool = True) -> None:
         """
         Makes violin plots of the distribution of values present in cell metadata. This method is designed to
         distribution of nCounts, nFeatures, percentMito and percentRibo cell attrbutes.
@@ -2802,6 +2802,7 @@ class DataStore(MappingDatastore):
                         (Default value: 10000)
             show_on_single_row: Show all subplots in a single row. It might be useful to set this to False if you have
                                 too many groups within each subplot (Default value: True)
+            show_fig: Whether to render the figure and display it using plt.show() (Default value: True)
 
         Returns:
             None
@@ -2845,7 +2846,7 @@ class DataStore(MappingDatastore):
 
         plot_qc(df, color=color, cmap=cmap, fig_size=fig_size, label_size=label_size, title_size=title_size,
                 sup_title=sup_title, sup_title_size=sup_title_size, scatter_size=scatter_size,
-                max_points=max_points, show_on_single_row=show_on_single_row)
+                max_points=max_points, show_on_single_row=show_on_single_row, show_fig=show_fig)
         return None
 
     def plot_layout(self, *, from_assay: str = None, cell_key: str = None,

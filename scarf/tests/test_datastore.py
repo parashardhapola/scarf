@@ -94,6 +94,9 @@ class TestDataStore:
     def test_run_topacedo_sampler(self, cell_attrs, topacedo_sampler):
         assert np.all(topacedo_sampler == cell_attrs['RNA_sketched'])
 
+    def test_plot_cells_dists(self, datastore):
+        datastore.plot_cells_dists(show_fig=False)
+
     def test_plot_layout(self, umap, paris_clustering, datastore):
         datastore.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', show_fig=False)
 

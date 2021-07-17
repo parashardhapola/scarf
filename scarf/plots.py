@@ -99,7 +99,7 @@ def plot_graph_qc(g):
 def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
             fig_size: tuple = None, label_size: float = 10.0, title_size: float = 10,
             sup_title: str = None, sup_title_size: float = 12, scatter_size: float = 1.0,
-            max_points: int = 10000, show_on_single_row: bool = True):
+            max_points: int = 10000, show_on_single_row: bool = True, show_fig: bool = True):
     # TODO: add docstring description. Is this for qc of a plot, or for plotting a qc plot?
     n_plots = data.shape[1] - 1
     n_groups = data['groups'].nunique()
@@ -143,13 +143,19 @@ def plot_qc(data: pd.DataFrame, color: str = 'steelblue', cmap: str = 'tab20',
         ax.set_ylabel(data.columns[i], fontsize=label_size)
         ax.set_xlabel('')
         if n_groups == 1:
+            ax.set_xticks([])
             ax.set_xticklabels([])
         if data['groups'].nunique() == 1:
             ax.set_title('Median: %.1f' % (int(np.median(vals['v']))), fontsize=title_size)
-        clean_axis(ax)
+        # clean_axis(ax)
+        ax.figure.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
     fig.suptitle(sup_title, fontsize=sup_title_size)
     plt.tight_layout()
-    plt.show()
+    if show_fig:
+        plt.show()
+    else:
+        return fig
 
 
 def plot_mean_var(nzm: np.ndarray, fv: np.ndarray, n_cells: np.ndarray, hvg: np.ndarray,
@@ -481,7 +487,6 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
     Shows shaded scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid. 
     """
     import datashader as dsh
-    from IPython.display import display
     from datashader.mpl_ext import dsshow
     import datashader.transfer_functions as tf
     from functools import partial
