@@ -354,7 +354,7 @@ class MtxDirReader(CrReader):
         loc: Path for the directory containing the cellranger output.
         matFn: The file name for the matrix file.
     """
-    def __init__(self, loc, file_type: str = None):
+    def __init__(self, loc, file_type: str = None, mtx_separator: str = ' '):
         """
         Args:
             loc (str): Path for the directory containing the cellranger output.
@@ -362,6 +362,7 @@ class MtxDirReader(CrReader):
         """
         self.loc: str = loc.rstrip('/') + '/'
         self.matFn = None
+        self.sep = mtx_separator
         super().__init__(self._handle_version(), file_type)
 
     def _handle_version(self):
@@ -436,7 +437,7 @@ class MtxDirReader(CrReader):
     # noinspection DuplicatedCode
     def consume(self, batch_size: int, lines_in_mem: int = int(1e5)) -> \
             Generator[List[np.ndarray], None, None]:
-        stream = pd.read_csv(self.matFn, skiprows=3, sep='\t',
+        stream = pd.read_csv(self.matFn, skiprows=3, sep=self.sep,
                              header=None, chunksize=lines_in_mem)
         start = 1
         dfs = []

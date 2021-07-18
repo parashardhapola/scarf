@@ -19,6 +19,15 @@ def test_crtozarr_fromdir(crdir_reader):
     remove(fn)
 
 
+def test_mtxtozarr(mtx_reader):
+    from ..writers import MtxToZarr
+
+    fn = full_path('1K_pbmc_citeseq_dir_mtx.zarr')
+    writer = MtxToZarr(mtx_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
+
+
 def test_h5adtozarr(h5ad_reader):
     from ..writers import H5adToZarr
 
@@ -33,6 +42,25 @@ def test_loomtozarr(loom_reader):
 
     fn = full_path('sympathetic.zarr')
     writer = LoomToZarr(loom_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
+
+
+def test_sparsetozarr():
+    from ..writers import SparseToZarr
+    from scipy.sparse import csr_matrix
+
+    cols = [1, 3, 8, 2, 3, 1, 2, 8, 9]
+    rows = [0, 0, 0, 1, 1, 1, 2, 2, 2]
+    data = [1, 10, 15, 10, 20, 2, 3, 1, 5]
+    mat = (data, (cols, rows))
+    mat = csr_matrix(mat, shape=(10, 3))
+
+    fn = full_path('dummy_sparse.zarr')
+
+    writer = SparseToZarr(mat, zarr_fn=fn,
+                          cell_ids=[f"cell_{x}" for x in range(3)],
+                          feature_ids=[f"feat_{x}" for x in range(10)])
     writer.dump()
     remove(fn)
 
