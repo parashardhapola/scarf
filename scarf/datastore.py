@@ -2855,8 +2855,8 @@ class DataStore(MappingDatastore):
                     width: float = 6, height: float = 6, default_color: str = 'steelblue',
                     cmap=None, color_key: dict = None, mask_values: list = None,
                     mask_name: str = 'NA', mask_color: str = 'k', point_size: float = 10,
-                    do_shading: bool = False, shade_npixels: int = 1000, shade_sampling: float = 0.1,
-                    shade_min_alpha: int = 10, spread_pixels: int = 1, spread_threshold: float = 0.2,
+                    do_shading: bool = False, shade_npixels: int = 1000, shade_min_alpha: int = 10,
+                    spread_pixels: int = 1, spread_threshold: float = 0.2,
                     ax_label_size: float = 12, frame_offset: float = 0.05, spine_width: float = 0.5,
                     spine_color: str = 'k', displayed_sides: tuple = ('bottom', 'left'),
                     legend_ondata: bool = True, legend_onside: bool = True, legend_size: float = 12,
@@ -2913,8 +2913,6 @@ class DataStore(MappingDatastore):
             shade_npixels: Number of pixels to rasterize (for both height and width). This controls the resolution of
                            the figure. Adjust this according to the size of the image you want to generate.
                            (Default value: 1000)
-            shade_sampling: Specifies the smallest allowed sampling interval along the x and y axis. Larger values will
-                            lead loss of resolution (Default value: 0.1)
             shade_min_alpha: The minimum alpha value to use for non-empty pixels when doing colormapping, in [0, 255].
                              Use a higher value to avoid undersaturation, i.e. poorly visible low-value datapoints, at
                              the expense of the overall dynamic range. (Default value: 10)
@@ -3025,7 +3023,7 @@ class DataStore(MappingDatastore):
             n_columns = len(dfs)
 
         if do_shading:
-            return shade_scatter(dfs, ax, width, shade_npixels, shade_sampling, spread_pixels, spread_threshold,
+            return shade_scatter(dfs, ax, width, shade_npixels, spread_pixels, spread_threshold,
                                  shade_min_alpha, cmap, color_key, mask_values, mask_name, mask_color,
                                  ax_label_size, frame_offset, spine_width, spine_color, displayed_sides,
                                  legend_ondata, legend_onside, legend_size, legends_per_col, cbar_shrink, marker_scale,

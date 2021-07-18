@@ -394,6 +394,28 @@ def _make_grid(width, height, w_pad, h_pad, n_panels, n_columns):
     return fig, axes
 
 
+def _create_axes(dfs, in_ax, width, height, w_pad, h_pad, n_columns):
+    if len(dfs) > 1:
+        if in_ax is not None:
+            logger.warning(f"'in_ax' will not be used as multiple attributes will be plotted. Using internal grid"
+                           f"layout")
+        _, axs = _make_grid(width, height, w_pad, h_pad, len(dfs), n_columns)
+    else:
+        if in_ax is None:
+            _, axs = plt.subplots(1, 1, figsize=(width, height), squeeze=False)
+        else:
+            axs = in_ax
+    return axs
+
+
+def _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
+    for n, df in enumerate(dfs):
+        vc = df.columns[2]
+        v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
+        df[vc] = _scatter_fix_type(v, force_ints_as_cats)
+        yield n, df
+
+
 def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
                  default_color: str = 'steelblue', color_map=None, color_key: dict = None,
                  mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k',
@@ -425,23 +447,9 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
             sk['edgecolors'] = 'k'
         return sk
 
-    if len(dfs) > 1:
-        if in_ax is not None:
-            logger.warning(f"'in_ax' will not be used as multiple attributes will be plotted. Using internal grid"
-                           f"layout")
-        fig, axs = _make_grid(width, height, w_pad, h_pad, len(dfs), n_columns)
-    else:
-        if in_ax is None:
-            _, axs = plt.subplots(1, 1, figsize=(width, height), squeeze=False)
-        else:
-            axs = in_ax
-
-    for i, df in enumerate(dfs):
-        # noinspection DuplicatedCode
-        dim1, dim2, vc = df.columns[:3]
-        v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
-        v = _scatter_fix_type(v, force_ints_as_cats)
-        df[vc] = v
+    axs = _create_axes(dfs, in_ax, width, height, w_pad, h_pad, n_columns)
+    for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
+        v = df[df.columns[2]]
         col_map, col_key = _scatter_make_colors(v, color_map, color_key,
                                                 mask_color, mask_name)
         if v.dtype.name == 'category':
@@ -456,8 +464,8 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
         if 's' not in df:
             df['s'] = [point_size for _ in df.index]
         scatter_kwargs = _handle_scatter_kwargs(sk=scatter_kwargs)
-        ax = axs[int(i / n_columns), i % n_columns]
-        ax.scatter(df[dim1].values, df[dim2].values, c=df['c'].values, s=df['s'].values,
+        ax = axs[int(n / n_columns), n % n_columns]
+        ax.scatter(df.values[:, 0], df.values[:, 1], c=df['c'].values, s=df['s'].values,
                    rasterized=True, **scatter_kwargs)
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
@@ -472,7 +480,7 @@ def plot_scatter(dfs, in_ax=None, width: float = 6, height: float = 6,
         return axs
 
 
-def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampling: float = 0.1,
+def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000,
                   spread_px: int = 1, spread_threshold: float = 0.2, min_alpha: int = 10,
                   color_map=None, color_key: dict = None,
                   mask_values: list = None, mask_name: str = 'NA', mask_color: str = 'k',
@@ -491,22 +499,10 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
     import datashader.transfer_functions as tf
     from functools import partial
 
-    if len(dfs) > 1:
-        if in_ax is not None:
-            logger.warning(f"'in_ax' will not be used as multiple attributes will be plotted. Using internal grid"
-                           f"layout")
-        fig, axs = _make_grid(figsize, figsize, w_pad, h_pad, len(dfs), n_columns)
-    else:
-        if in_ax is None:
-            _, axs = plt.subplots(1, 1, figsize=(figsize, figsize), squeeze=False)
-        else:
-            axs = in_ax
-
-    for i, df in enumerate(dfs):
+    axs = _create_axes(dfs, in_ax, figsize, figsize, w_pad, h_pad, n_columns)
+    for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         dim1, dim2, vc = df.columns[:3]
-        v = _scatter_fix_mask(df[vc].copy(), mask_values, mask_name)
-        v = _scatter_fix_type(v, force_ints_as_cats)
-        df[vc] = v
+        v = df[vc]
         col_map, col_key = _scatter_make_colors(v, color_map, color_key,
                                                 mask_color, mask_name)
         if v.dtype.name == 'category':
@@ -517,7 +513,7 @@ def shade_scatter(dfs, in_ax=None, figsize: float = 6, pixels: int = 1000, sampl
             else:
                 agg = dsh.mean(vc)
 
-        ax = axs[int(i / n_columns), i % n_columns]
+        ax = axs[int(n / n_columns), n % n_columns]
         artist = dsshow(df, dsh.Point(dim1, dim2), aggregator=agg, norm='eq_hist',
                         color_key=col_key, cmap=col_map, alpha_range=(min_alpha, 255),
                         shade_hook=partial(tf.dynspread, threshold=spread_threshold, max_px=spread_px),
