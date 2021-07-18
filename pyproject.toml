@@ -12,7 +12,7 @@ testpaths = [
     "scarf/tests",
 ]
 norecursedirs = [
-    "scarf/tests/*"
+    "scarf/tests"
 ]
 
 [tool.interrogate]

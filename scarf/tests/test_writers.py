@@ -28,6 +28,15 @@ def test_h5adtozarr(h5ad_reader):
     remove(fn)
 
 
+def test_loomtozarr(loom_reader):
+    from ..writers import LoomToZarr
+
+    fn = full_path('sympathetic.zarr')
+    writer = LoomToZarr(loom_reader, zarr_fn=fn)
+    writer.dump()
+    remove(fn)
+
+
 def test_to_h5ad(datastore):
     # TODO: Evaluate the resulting H5ad file
     from ..writers import to_h5ad
