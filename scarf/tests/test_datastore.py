@@ -12,7 +12,7 @@ class TestDataStore:
     def test_graph_distances(self, make_graph, datastore):
         a = np.load(full_path('knn_distances.npy'))
         b = datastore.z[make_graph]['distances'][:]
-        assert np.alltrue((a - b) < 1e-5)
+        assert np.alltrue((a - b) < 1e-3)
 
     def test_graph_weights(self, make_graph, datastore):
         a = np.load(full_path('knn_weights.npy'))
