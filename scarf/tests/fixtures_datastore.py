@@ -31,6 +31,8 @@ def mark_hvgs(auto_filter_cells, datastore):
 @pytest.fixture(scope="class")
 def make_graph(mark_hvgs, datastore):
     datastore.make_graph(feat_key='hvgs')
+    graph_loc = datastore._get_latest_graph_loc(from_assay='RNA', cell_key='I', feat_key='hvgs')
+    yield graph_loc.rsplit('/', 1)[0]
 
 
 @pytest.fixture(scope="class")
@@ -57,21 +59,6 @@ def umap(make_graph, datastore):
     datastore.run_umap(fit_n_epochs=50, tx_n_epochs=20)
     yield np.array([datastore.cells.fetch('RNA_UMAP1'),
                     datastore.cells.fetch('RNA_UMAP2')]).T
-
-
-@pytest.fixture(scope="class")
-def graph_indices(make_graph, datastore):
-    return np.load(full_path('knn_indices.npy'))
-
-
-@pytest.fixture(scope="class")
-def graph_distances(make_graph, datastore):
-    return np.load(full_path('knn_distances.npy'))
-
-
-@pytest.fixture(scope="class")
-def graph_weights(make_graph, datastore):
-    return np.load(full_path('knn_weights.npy'))
 
 
 @pytest.fixture(scope="class")
@@ -106,3 +93,29 @@ def topacedo_sampler(paris_clustering, datastore):
 @pytest.fixture(scope="class")
 def cell_attrs():
     return pd.read_csv(full_path('cell_attributes.csv'), index_col=0)
+
+
+@pytest.fixture(scope="session")
+def atac_datastore():
+    from ..datastore import DataStore
+
+    fn = full_path('500_pbmc_atac.zarr.tar.gz')
+    out_fn = fn.replace('.tar.gz', '')
+    remove(out_fn)
+    tar = tarfile.open(fn, "r:gz")
+    tar.extractall(out_fn)
+    yield DataStore(out_fn)
+    remove(out_fn)
+
+
+@pytest.fixture(scope="class")
+def mark_prevalent_peaks(atac_datastore):
+    atac_datastore.mark_prevalent_peaks(top_n=5000)
+
+
+@pytest.fixture(scope="class")
+def make_atac_graph(mark_prevalent_peaks, atac_datastore):
+    atac_datastore.make_graph(feat_key='prevalent_peaks')
+    graph_loc = atac_datastore._get_latest_graph_loc(from_assay='ATAC', cell_key='I',
+                                                     feat_key='prevalent_peaks')
+    yield graph_loc.rsplit('/', 1)[0]

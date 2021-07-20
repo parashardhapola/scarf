@@ -2,21 +2,40 @@ import pandas as pd
 import numpy as np
 from . import full_path, remove
 
-GRAPH_LOC = 'RNA/normed__I__hvgs/reduction__pca__11__I/ann__l2__50__50__48__4466/knn__11'
-
 
 class TestDataStore:
-    def test_graph_indices(self, graph_indices, datastore):
-        a = datastore.z[GRAPH_LOC]['indices'][:]
-        assert np.array_equal(a, graph_indices)
+    def test_graph_indices(self, make_graph, datastore):
+        a = np.load(full_path('knn_indices.npy'))
+        b = datastore.z[make_graph]['indices'][:]
+        assert np.array_equal(a, b)
 
-    def test_graph_distances(self, graph_distances, datastore):
-        a = datastore.z[GRAPH_LOC]['distances'][:]
-        assert np.alltrue((a - graph_distances) < 0.1)
+    def test_graph_distances(self, make_graph, datastore):
+        a = np.load(full_path('knn_distances.npy'))
+        b = datastore.z[make_graph]['distances'][:]
+        assert np.alltrue((a - b) < 1e-5)
 
-    def test_graph_weights(self, graph_weights, datastore):
-        a = datastore.z[GRAPH_LOC]['graph__1.0__1.5']['weights'][:]
-        assert np.alltrue((a - graph_weights) < 0.1)
+    def test_graph_weights(self, make_graph, datastore):
+        a = np.load(full_path('knn_weights.npy'))
+        b = datastore.z[make_graph]['graph__1.0__1.5']['weights'][:]
+        assert np.alltrue((a - b) < 1e-5)
+
+    def test_atac_graph_indices(self, make_atac_graph, atac_datastore):
+        a = np.load(full_path('atac_knn_indices.npy'))
+        b = atac_datastore.z[make_atac_graph]['indices'][:]
+        assert a.shape == b.shape
+
+        # TODO: activate this when this PR is merged and released in gensim
+        # https://github.com/RaRe-Technologies/gensim/pull/3194
+        # assert np.array_equal(a, b)
+
+    def test_atac_graph_distances(self, make_atac_graph, atac_datastore):
+        a = np.load(full_path('atac_knn_distances.npy'))
+        b = atac_datastore.z[make_atac_graph]['distances'][:]
+        assert a.shape == b.shape
+
+        # TODO: activate this when this PR is merged and released in gensim
+        # https://github.com/RaRe-Technologies/gensim/pull/3194
+        # assert np.alltrue((a - b) < 1e-5)
 
     def test_leiden_values(self, leiden_clustering, cell_attrs):
         assert len(set(leiden_clustering)) == 10
