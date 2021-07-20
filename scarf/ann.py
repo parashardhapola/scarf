@@ -36,7 +36,7 @@ class AnnStream:
                  mu: np.ndarray, sigma: np.ndarray,
                  ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int,
                  nthreads: int, ann_parallel: bool, rand_state: int,
-                 do_kmeans_fit: bool, disable_scaling: bool, ann_idx):
+                 do_kmeans_fit: bool, disable_scaling: bool, ann_idx, lsi_params: dict):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -89,7 +89,7 @@ class AnnStream:
             elif self.method == 'lsi':
                 if self.loadings is None or len(self.loadings) == 0:
                     if disable_reduction is False:
-                        self._fit_lsi()
+                        self._fit_lsi(lsi_params)
                 else:
                     self.dims = self.loadings.shape[1]
                 if disable_reduction:
@@ -189,13 +189,17 @@ class AnnStream:
             logger.warning("{i.shape[0]} samples were not used in PCA fitting due to LinAlgError", flush=True)
         self.loadings = self._pca.components_[:-1, :].T
 
-    def _fit_lsi(self) -> None:
+    def _fit_lsi(self, lsi_params) -> None:
         from gensim.models import LsiModel
         from gensim.matutils import Dense2Corpus
 
-        self._lsiModel = LsiModel(Dense2Corpus(controlled_compute(self.data.blocks[0], self.nthreads).T),
+        for i in ['corpus', 'num_topics', 'id2word', 'chunksize', 'dtype']:
+            if i in lsi_params:
+                del lsi_params[i]
+                logger.warning(f"Provided parameter, {i}, for LSI model will not be used")
+        self._lsiModel = LsiModel(corpus=Dense2Corpus(controlled_compute(self.data.blocks[0], self.nthreads).T),
                                   num_topics=self.dims, chunksize=self.data.chunksize[0],
-                                  id2word={x: x for x in range(self.data.shape[1])}, extra_samples=0)
+                                  id2word={x: x for x in range(self.data.shape[1])}, **lsi_params)
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
             if n == 0:
                 continue

@@ -1033,12 +1033,13 @@ class GraphDataStore(BaseDataStore):
             fit_kmeans = False
             logger.info(f"using existing kmeans cluster centers")
         disable_scaling = True if feat_scaling is False else False
+        # TODO: expose LSImodel parameters
         ann_obj = AnnStream(data=data, k=k, n_cluster=n_centroids, reduction_method=reduction_method,
                             dims=dims, loadings=loadings, use_for_pca=use_for_pca,
                             mu=mu, sigma=sigma, ann_metric=ann_metric, ann_efc=ann_efc,
                             ann_ef=ann_ef, ann_m=ann_m, nthreads=self.nthreads, ann_parallel=ann_parallel,
                             rand_state=rand_state, do_kmeans_fit=fit_kmeans,
-                            disable_scaling=disable_scaling, ann_idx=ann_idx)
+                            disable_scaling=disable_scaling, ann_idx=ann_idx, lsi_params={})
 
         if reduction_loc not in self.z:
             logger.info(f"Saving loadings to {reduction_loc}")
