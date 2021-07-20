@@ -4,7 +4,6 @@
 
 |IMG1|
 
-
 .. |PyPI| image:: https://img.shields.io/pypi/v/scarf.svg
          :target: https://pypi.org/project/scarf
 .. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
@@ -13,10 +12,8 @@
           :target: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
 .. |Coverage| image:: https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd
              :target: https://codecov.io/gh/parashardhapola/scarf
-
 .. |IMG1| image:: https://github.com/parashardhapola/scarf/blob/master/docs/source/logo_for_readme.png
          :target: https://github.com/parashardhapola/scarf
-         :width: 100%
 
 Analyze large-scale (aka atlas-scale) single-cell genomics datasets with very low memory requirement.
 
