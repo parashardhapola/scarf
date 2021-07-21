@@ -10,6 +10,7 @@ dask-worker-space
 *.ipynb
 docs/source/vignettes/README.md
 docs/source/vignettes/scarf_datasets
+docs/source/vignettes/dev
 docs/source/vignettes/*.txt
 docs/source/vignettes/*.mtx
 .coverage

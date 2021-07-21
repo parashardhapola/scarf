@@ -11,16 +11,16 @@
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    id="svg4195"
    style="fill-rule:evenodd"
-   sodipodi:docname="scarf_logo.svg"
+   sodipodi:docname="logo_wide.svg"
    xml:space="preserve"
    version="1.1"
    inkscape:version="0.92.4 (5da689c313, 2019-01-14)"
    viewBox="0 0 810.00005 270.00004"
    width="238.125mm"
    height="79.375008mm"
-   inkscape:export-filename="C:\Users\parashar\Desktop\scarf\docs\source\_static\scarf_logo.png"
-   inkscape:export-xdpi="600"
-   inkscape:export-ydpi="600"><sodipodi:namedview
+   inkscape:export-filename="C:\Users\parashar\Desktop\scarf\docs\source\logo_wide.png"
+   inkscape:export-xdpi="199.99998"
+   inkscape:export-ydpi="199.99998"><sodipodi:namedview
    id="namedview607"
    bordercolor="#666666"
    inkscape:pageshadow="2"
@@ -28,18 +28,18 @@
    pagecolor="#ffffff"
    gridtolerance="10"
    inkscape:window-maximized="1"
-   inkscape:zoom="0.64000001"
+   inkscape:zoom="0.90509669"
    objecttolerance="10"
    borderopacity="1"
    inkscape:current-layer="g1142"
-   inkscape:cx="583.57606"
-   inkscape:cy="156.52252"
+   inkscape:cx="390.681"
+   inkscape:cy="134.89688"
    inkscape:window-y="-11"
-   inkscape:window-x="3009"
-   inkscape:window-width="1780"
+   inkscape:window-x="129"
+   inkscape:window-width="2741"
    showgrid="false"
    inkscape:pageopacity="0"
-   inkscape:window-height="1046"
+   inkscape:window-height="1766"
    units="mm"
    inkscape:lockguides="true"
    fit-margin-top="0"
@@ -108,6 +108,8 @@
 
 
 
+
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8443"><text
@@ -121,6 +123,8 @@
      x="2771.3943"
      y="16036.199"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1003.27246094px;line-height:3.25;font-family:'Century Schoolbook';-inkscape-font-specification:'Century Schoolbook';letter-spacing:0px;word-spacing:0.7524544px;stroke-width:0.7524544">c</tspan></text>
+
+
 
 
 
@@ -158,6 +162,8 @@
 
 
 
+
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8455"><text
@@ -183,6 +189,8 @@
 
 
 
+
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8461"><text
@@ -196,6 +204,8 @@
      x="2842.0269"
      id="tspan8463"
      sodipodi:role="line">f</tspan></text>
+
+
 
 
 
@@ -845,6 +855,8 @@
 
 
 
+
+
 </g><text
    id="text1132"
    y="-11472.553"
@@ -856,6 +868,8 @@
      x="118.55914"
      id="tspan1130"
      sodipodi:role="line">Single-cell atlases refreshed</tspan></text>
+
+
 
 <g
    transform="translate(-1395.1882,-28.423557)"
@@ -879,6 +893,8 @@
      x="1744.5792"
      y="-11674.393"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#ffffff;fill-opacity:1;stroke-width:75.34877014">carf</tspan></text>
+
+
 
 
 

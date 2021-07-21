@@ -1,5 +1,5 @@
-=======
-License
-=======
+# License
 
+:::{eval-rst}
 .. include:: ../../LICENSE
+:::
