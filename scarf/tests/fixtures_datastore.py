@@ -68,9 +68,15 @@ def marker_search(datastore):
 
 
 @pytest.fixture(scope="class")
-def run_mapping(datastore):
+def run_mapping(make_graph, datastore):
     datastore.run_mapping(target_assay=datastore.RNA, target_name='selfmap',
                           target_feat_key='hvgs_self', save_k=3)
+
+
+@pytest.fixture(scope="class")
+def run_mapping_coral(make_graph, datastore):
+    datastore.run_mapping(target_assay=datastore.RNA, target_name='selfmap_coral',
+                          target_feat_key='hvgs_self2', save_k=3, run_coral=True)
 
 
 @pytest.fixture(scope="class")

@@ -87,6 +87,10 @@ class TestDataStore:
         diff = scores - cell_attrs['mapping_scores'].values
         assert np.all(diff < 1e-3)
 
+    def test_coral_mapping_score(self, run_mapping_coral, cell_attrs, datastore):
+        # TODO: add test values for coral
+        assert 1 == 1
+
     def test_repr(self, datastore):
         # TODO: Test if the expected values are printed
         print(datastore)
