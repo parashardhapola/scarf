@@ -667,10 +667,10 @@ class GraphDataStore(BaseDataStore):
             msg = f"No value provided for parameter `{name}`. "
             if category == "default":
                 msg += f"Will use default value: {value}"
-                logger.info(msg)
+                logger.debug(msg)
             elif category == "cached":
                 msg += f"Will use previously used value: {value}"
-                logger.info(msg)
+                logger.debug(msg)
             else:
                 if custom_msg is None:
                     return False
