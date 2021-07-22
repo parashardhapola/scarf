@@ -5,7 +5,7 @@ from .utils import controlled_compute
 from numpy.linalg import LinAlgError
 from .logging_utils import logger
 
-__all__ = ['AnnStream']
+__all__ = ["AnnStream"]
 
 
 def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarray):
@@ -14,13 +14,15 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
     mis_idx = indices[:, 0].reshape(1, -1)[0] != ref_idx
     n_mis = mis_idx.sum()
     if n_mis > 0:
-        for n, i, j, k in zip(np.where(mis_idx)[0], ref_idx[mis_idx], indices[mis_idx], distances[mis_idx]):
+        for n, i, j, k in zip(
+            np.where(mis_idx)[0], ref_idx[mis_idx], indices[mis_idx], distances[mis_idx]
+        ):
             p = np.where(j == i)[0]
             if len(p) > 0:
                 # p is the position of self loop. We exclude this position
                 p = p[0]
-                j = np.array(list(j[:p]) + list(j[p + 1:]))
-                k = np.array(list(k[:p]) + list(k[p + 1:]))
+                j = np.array(list(j[:p]) + list(j[p + 1 :]))
+                k = np.array(list(k[:p]) + list(k[p + 1 :]))
             else:
                 # No self found at all. Poor recall? simply remove the last k neighbour
                 j = j[:-1]
@@ -31,12 +33,29 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
 
 
 class AnnStream:
-    def __init__(self, data, k: int, n_cluster: int, reduction_method: str,
-                 dims: int, loadings: np.ndarray, use_for_pca: np.ndarray,
-                 mu: np.ndarray, sigma: np.ndarray,
-                 ann_metric: str, ann_efc: int, ann_ef: int, ann_m: int,
-                 nthreads: int, ann_parallel: bool, rand_state: int,
-                 do_kmeans_fit: bool, disable_scaling: bool, ann_idx, lsi_params: dict):
+    def __init__(
+        self,
+        data,
+        k: int,
+        n_cluster: int,
+        reduction_method: str,
+        dims: int,
+        loadings: np.ndarray,
+        use_for_pca: np.ndarray,
+        mu: np.ndarray,
+        sigma: np.ndarray,
+        ann_metric: str,
+        ann_efc: int,
+        ann_ef: int,
+        ann_m: int,
+        nthreads: int,
+        ann_parallel: bool,
+        rand_state: int,
+        do_kmeans_fit: bool,
+        disable_scaling: bool,
+        ann_idx,
+        lsi_params: dict,
+    ):
         self.data = data
         self.k = k
         if self.k >= self.data.shape[0]:
@@ -45,7 +64,9 @@ class AnnStream:
         self.dims = dims
         self.loadings = loadings
         if self.dims is None and self.loadings is None:
-            raise ValueError("ERROR: Provide either value for atleast one: 'dims' or 'loadings'")
+            raise ValueError(
+                "ERROR: Provide either value for atleast one: 'dims' or 'loadings'"
+            )
         self.annMetric = ann_metric
         self.annEfc = ann_efc
         self.annEf = ann_ef
@@ -64,11 +85,13 @@ class AnnStream:
         if self.dims < 1:
             disable_reduction = True
         with threadpool_limits(limits=self.nthreads):
-            if self.method == 'pca':
+            if self.method == "pca":
                 self.mu, self.sigma = mu, sigma
                 if self.loadings is None or len(self.loadings) == 0:
                     if len(use_for_pca) != self.nCells:
-                        raise ValueError("ERROR: `use_for_pca` does not have sample length as nCells")
+                        raise ValueError(
+                            "ERROR: `use_for_pca` does not have sample length as nCells"
+                        )
                     if disable_reduction is False:
                         self._fit_pca(disable_scaling, use_for_pca)
                 else:
@@ -86,7 +109,7 @@ class AnnStream:
                         self.reducer = lambda x: self.transform_z(x)
                     else:
                         self.reducer = lambda x: self.transform_z(x).dot(self.loadings)
-            elif self.method == 'lsi':
+            elif self.method == "lsi":
                 if self.loadings is None or len(self.loadings) == 0:
                     if disable_reduction is False:
                         self._fit_lsi(lsi_params)
@@ -96,9 +119,11 @@ class AnnStream:
                     self.reducer = lambda x: x
                 else:
                     self.reducer = lambda x: x.dot(self.loadings)
-            elif self.method == 'custom':
+            elif self.method == "custom":
                 if self.loadings is None or len(self.loadings) == 0:
-                    logger.warning("No loadings provided for manual dimension reduction")
+                    logger.warning(
+                        "No loadings provided for manual dimension reduction"
+                    )
                 else:
                     self.dims = self.loadings.shape[1]
                 if disable_reduction:
@@ -121,20 +146,24 @@ class AnnStream:
         batch_size = self.data.chunksize[0]  # Assuming all chunks are same size
         if self.dims >= batch_size:
             self.dims = batch_size - 1  # -1 because we will do PCA +1
-            logger.info(f"Number of PCA/LSI components reduced to batch size of {batch_size}")
+            logger.info(
+                f"Number of PCA/LSI components reduced to batch size of {batch_size}"
+            )
         if self.nClusters > batch_size:
             self.nClusters = batch_size
             logger.info(f"Cluster number reduced to batch size of {batch_size}")
         return batch_size
 
-    def iter_blocks(self, msg: str = '') -> np.ndarray:
+    def iter_blocks(self, msg: str = "") -> np.ndarray:
         for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
             yield controlled_compute(i, self.nthreads)
 
     def transform_z(self, a: np.ndarray) -> np.ndarray:
         return (a - self.mu) / self.sigma
 
-    def transform_ann(self, a: np.ndarray, k: int = None, self_indices: np.ndarray = None) -> tuple:
+    def transform_ann(
+        self, a: np.ndarray, k: int = None, self_indices: np.ndarray = None
+    ) -> tuple:
         if k is None:
             k = self.k
         # Adding +1 to k because first neighbour will be the query itself
@@ -147,8 +176,11 @@ class AnnStream:
 
     def _fit_pca(self, disable_scaling, use_for_pca) -> None:
         from sklearn.decomposition import IncrementalPCA
+
         # We fit 1 extra PC dim than specified and then ignore the last PC.
-        self._pca = IncrementalPCA(n_components=self.dims + 1, batch_size=self.batchSize)
+        self._pca = IncrementalPCA(
+            n_components=self.dims + 1, batch_size=self.batchSize
+        )
         do_sample_subset = False if use_for_pca.sum() == self.nCells else True
         s, e = 0, 0
         # We store the first block of values here. if such a case arises that we are left with less dims+1 cells to fit
@@ -158,7 +190,7 @@ class AnnStream:
         end_reservoir = []
         # carry_over store cells that can yet not be added to end_reservoir ot be used for fitting pca directly.
         carry_over = []
-        for i in self.iter_blocks(msg='Fitting PCA'):
+        for i in self.iter_blocks(msg="Fitting PCA"):
             if do_sample_subset:
                 e = s + i.shape[0]
                 i = i[use_for_pca[s:e]]
@@ -186,20 +218,31 @@ class AnnStream:
         try:
             self._pca.partial_fit(i, check_input=False)
         except LinAlgError:
-            logger.warning("{i.shape[0]} samples were not used in PCA fitting due to LinAlgError", flush=True)
+            logger.warning(
+                "{i.shape[0]} samples were not used in PCA fitting due to LinAlgError",
+                flush=True,
+            )
         self.loadings = self._pca.components_[:-1, :].T
 
     def _fit_lsi(self, lsi_params) -> None:
         from gensim.models import LsiModel
         from gensim.matutils import Dense2Corpus
 
-        for i in ['corpus', 'num_topics', 'id2word', 'chunksize', 'dtype']:
+        for i in ["corpus", "num_topics", "id2word", "chunksize", "dtype"]:
             if i in lsi_params:
                 del lsi_params[i]
-                logger.warning(f"Provided parameter, {i}, for LSI model will not be used")
-        self._lsiModel = LsiModel(corpus=Dense2Corpus(controlled_compute(self.data.blocks[0], self.nthreads).T),
-                                  num_topics=self.dims, chunksize=self.data.chunksize[0],
-                                  id2word={x: x for x in range(self.data.shape[1])}, **lsi_params)
+                logger.warning(
+                    f"Provided parameter, {i}, for LSI model will not be used"
+                )
+        self._lsiModel = LsiModel(
+            corpus=Dense2Corpus(
+                controlled_compute(self.data.blocks[0], self.nthreads).T
+            ),
+            num_topics=self.dims,
+            chunksize=self.data.chunksize[0],
+            id2word={x: x for x in range(self.data.shape[1])},
+            **lsi_params,
+        )
         for n, i in enumerate(self.iter_blocks(msg="Fitting LSI model")):
             if n == 0:
                 continue
@@ -213,11 +256,15 @@ class AnnStream:
         if dims < 1:
             dims = self.data.shape[1]
         ann_idx = hnswlib.Index(space=self.annMetric, dim=dims)
-        ann_idx.init_index(max_elements=self.nCells, ef_construction=self.annEfc,
-                           M=self.annM, random_seed=self.randState)
+        ann_idx.init_index(
+            max_elements=self.nCells,
+            ef_construction=self.annEfc,
+            M=self.annM,
+            random_seed=self.randState,
+        )
         ann_idx.set_ef(self.annEf)
         ann_idx.set_num_threads(self.annThreads)
-        for i in self.iter_blocks(msg='Fitting ANN'):
+        for i in self.iter_blocks(msg="Fitting ANN"):
             ann_idx.add_items(self.reducer(i))
         return ann_idx
 
@@ -227,13 +274,15 @@ class AnnStream:
         if do_ann_fit is False:
             return None
         kmeans = MiniBatchKMeans(
-            n_clusters=self.nClusters, random_state=self.randState,
-            batch_size=self.batchSize)
+            n_clusters=self.nClusters,
+            random_state=self.randState,
+            batch_size=self.batchSize,
+        )
         with threadpool_limits(limits=self.nthreads):
-            for i in self.iter_blocks(msg='Fitting kmeans'):
+            for i in self.iter_blocks(msg="Fitting kmeans"):
                 kmeans.partial_fit(self.reducer(i))
         temp = []
-        for i in self.iter_blocks(msg='Estimating seed partitions'):
+        for i in self.iter_blocks(msg="Estimating seed partitions"):
             temp.extend(kmeans.predict(self.reducer(i)))
         self.clusterLabels = np.array(temp)
         return kmeans

@@ -6,14 +6,14 @@ from ..logging_utils import logger
 logger.remove()
 logger.add(sys.stderr, level="ERROR")
 
-__all__ = ['full_path', 'remove']
+__all__ = ["full_path", "remove"]
 
 
 def full_path(fn, *args):
-    if fn == '' or fn is None:
-        return os.path.join('scarf', 'tests', 'datasets')
+    if fn == "" or fn is None:
+        return os.path.join("scarf", "tests", "datasets")
     else:
-        return os.path.join('scarf', 'tests', 'datasets', fn, *args)
+        return os.path.join("scarf", "tests", "datasets", fn, *args)
 
 
 def remove(dir_path):

@@ -9,11 +9,17 @@ import pandas as pd
 from tqdm import tqdm
 
 
-__all__ = ['find_markers_by_rank']
+__all__ = ["find_markers_by_rank"]
 
 
-def find_markers_by_rank(assay: Assay, group_key: str, cell_key: str,
-                         nthreads: int, threshold: float = 0.25, gene_batch_size: int = 50) -> dict:
+def find_markers_by_rank(
+    assay: Assay,
+    group_key: str,
+    cell_key: str,
+    nthreads: int,
+    threshold: float = 0.25,
+    gene_batch_size: int = 50,
+) -> dict:
     """
 
     Args:
@@ -54,13 +60,20 @@ def find_markers_by_rank(assay: Assay, group_key: str, cell_key: str,
     int_indices = np.array([idx_map[x] for x in groups])
 
     data = assay.normed(cell_idx=assay.cells.active_index(cell_key))
-    gene_ids = assay.feats.fetch('ids')
-    chunks = np.array_split(np.arange(0, data.shape[1]), int(data.shape[1]/gene_batch_size))
+    gene_ids = assay.feats.fetch("ids")
+    chunks = np.array_split(
+        np.arange(0, data.shape[1]), int(data.shape[1] / gene_batch_size)
+    )
 
     results = {x: [] for x in group_set}
-    for chunk in tqdm(chunks, desc='Finding markers', total=len(chunks)):
-        val = pd.DataFrame(controlled_compute(data[:, chunk], nthreads),
-                           columns=gene_ids[chunk]).rank(method='dense').astype(int)
+    for chunk in tqdm(chunks, desc="Finding markers", total=len(chunks)):
+        val = (
+            pd.DataFrame(
+                controlled_compute(data[:, chunk], nthreads), columns=gene_ids[chunk]
+            )
+            .rank(method="dense")
+            .astype(int)
+        )
         res = val.apply(mean_rank_wrapper)
         # Removing genes that were below the threshold in all the groups
         res = res.T[(res < threshold).sum() != n_groups]

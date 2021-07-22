@@ -1,10 +1,11 @@
 from . import full_path, remove
 
+
 def test_downloader():
     from ..downloader import osfd, OSFdownloader
 
     if osfd is None:
-        osfd = OSFdownloader('zeupv')
+        osfd = OSFdownloader("zeupv")
     # Making sure that there are at least 15 datasets in the list
     assert len(osfd.datasets) > 15
 
@@ -25,6 +26,6 @@ def test_downloader_as_zarr():
 
     # TODO: check if only the zarr file was downloaded
 
-    sample = 'tenx_5K_pbmc_rnaseq'
+    sample = "tenx_5K_pbmc_rnaseq"
     fetch_dataset(sample, as_zarr=True, save_path=full_path(None))
     remove(full_path(sample))

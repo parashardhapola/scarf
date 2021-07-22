@@ -12,7 +12,13 @@ Utility methods.
 import numpy as np
 from .logging_utils import logger
 
-__all__ = ['system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
+__all__ = [
+    "system_call",
+    "rescale_array",
+    "clean_array",
+    "show_progress",
+    "controlled_compute",
+]
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
@@ -67,7 +73,7 @@ def controlled_compute(arr, nthreads):
     from multiprocessing.pool import ThreadPool
     import dask
 
-    with dask.config.set(schedular='threads', pool=ThreadPool(nthreads)):
+    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)):
         res = arr.compute()
     return res
 

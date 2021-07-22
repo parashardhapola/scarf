@@ -40,7 +40,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 try:
-    __version__ = version('scarf')
+    __version__ = version("scarf")
 except ImportError:
     print("Scarf is not installed", flush=True)
 
@@ -50,4 +50,3 @@ from .writers import *
 from .meld_assay import *
 from .utils import *
 from .downloader import *
-

@@ -4,7 +4,7 @@ from tqdm import tqdm
 import networkx as nx
 from .logging_utils import logger
 
-__all__ = ['BalancedCut', 'CoalesceTree', 'make_digraph']
+__all__ = ["BalancedCut", "CoalesceTree", "make_digraph"]
 
 
 def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
@@ -15,11 +15,13 @@ def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
     g = nx.DiGraph()
     n = d.shape[0] + 1  # Dendrogram contains one less sample
     if clust_info is not None:
-        if len(clust_info) != d.shape[0]+1:
-            raise ValueError("ERROR: cluster information doesn't match number of leaves in dendrogram")
+        if len(clust_info) != d.shape[0] + 1:
+            raise ValueError(
+                "ERROR: cluster information doesn't match number of leaves in dendrogram"
+            )
     else:
-        clust_info = np.ones(d.shape[0]+1)*-1
-    for i in tqdm(d, desc='Constructing graph from dendrogram'):
+        clust_info = np.ones(d.shape[0] + 1) * -1
+    for i in tqdm(d, desc="Constructing graph from dendrogram"):
         v = i[2]  # Distance between clusters
         i = i.astype(int)
         g.add_node(n, nleaves=i[3], dist=v)
@@ -31,14 +33,16 @@ def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
         g.add_edge(n, i[1])
         n += 1
     if g.number_of_edges() != d.shape[0] * 2:
-        logger.warning('Number of edges in directed graph not twice the dendrogram shape')
+        logger.warning(
+            "Number of edges in directed graph not twice the dendrogram shape"
+        )
     return g
 
 
 def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
-
     def calc_steps_to_top(g: nx.DiGraph, c: np.ndarray):
         import pandas as pd
+
         s = {}
         for i in range(len(c)):
             s[i] = 0
@@ -61,7 +65,7 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
         l = []
         while len(q) > 0:
             for i in g.successors(q.pop(0)):
-                if g.nodes[i]['nleaves'] == 0:
+                if g.nodes[i]["nleaves"] == 0:
                     l.append(i)
                 else:
                     q.append(i)
@@ -74,7 +78,7 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
             l = set(np.where(c == i)[0])
             nl = len(l)
             for j in iter_predecessors(g, s.reindex(l).idxmin()):
-                if g.nodes[j]['nleaves'] >= nl:
+                if g.nodes[j]["nleaves"] >= nl:
                     l2 = aggregate_leaves(g, j)
                     if len(l.intersection(l2)) == nl:
                         hn[j] = i
@@ -95,15 +99,20 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
         sn = list(set(sn))
         sg = nx.DiGraph(nx.subgraph(g, sn))
         for i in vs:
-            sg.nodes[i]['partition_id'] = vs[i]
+            sg.nodes[i]["partition_id"] = vs[i]
         return sg
 
     return make_subgraph(graph, get_holding_nodes(graph, clusters))
 
 
 class BalancedCut:
-    def __init__(self, dendrogram: np.ndarray, max_size: int, min_size: int,
-                 max_distance_fc: float):
+    def __init__(
+        self,
+        dendrogram: np.ndarray,
+        max_size: int,
+        min_size: int,
+        max_distance_fc: float,
+    ):
         self.nCells = dendrogram.shape[0] + 1
         self.graph = make_digraph(dendrogram)
         self.maxSize = max_size
@@ -119,7 +128,7 @@ class BalancedCut:
         d = []
         while len(q) > 0:
             i = q.pop(0)
-            if self.graph.nodes[i]['nleaves'] > min_leaves:
+            if self.graph.nodes[i]["nleaves"] > min_leaves:
                 d.append(i)
                 q.extend(list(self.graph.successors(i)))
         return d[1:]
@@ -129,31 +138,32 @@ class BalancedCut:
         Get mean distances in downstream tree of a node
         """
         s_nodes = self._successors(start_node, -1)
-        return np.array([self.graph.nodes[x]['dist'] for x in s_nodes]).mean()
+        return np.array([self.graph.nodes[x]["dist"] for x in s_nodes]).mean()
 
     def _are_subtrees_mergeable(self, s1: int, s2: int) -> bool:
-        n1, n2 = self.graph.nodes[s1]['nleaves'], self.graph.nodes[s2]['nleaves']
+        n1, n2 = self.graph.nodes[s1]["nleaves"], self.graph.nodes[s2]["nleaves"]
         if n1 > self.minSize and n2 > self.minSize:
-            d1, d2 = self.graph.nodes[s1]['dist'], self.graph.nodes[s2]['dist']
-            if d1/d2 > self.maxDistFc or d2/d1 > self.maxDistFc:
+            d1, d2 = self.graph.nodes[s1]["dist"], self.graph.nodes[s2]["dist"]
+            if d1 / d2 > self.maxDistFc or d2 / d1 > self.maxDistFc:
                 logger.debug(f"Will not merge {s1} and {s2} because of high distance")
                 return False
             else:
                 md1, md2 = self._get_mean_dist(s1), self._get_mean_dist(s2)
-                if md1/md2 > self.maxDistFc or md2/md1 > self.maxDistFc:
-                    logger.debug(f"Will not merge {s1} and {s2} because of high distance of successors")
+                if md1 / md2 > self.maxDistFc or md2 / md1 > self.maxDistFc:
+                    logger.debug(
+                        f"Will not merge {s1} and {s2} because of high distance of successors"
+                    )
                     return False
         return True
 
-    def _get_branchpoints(self) -> \
-            Dict[int, List[int]]:
+    def _get_branchpoints(self) -> Dict[int, List[int]]:
         """
         Aggregate leaves bottom up until target size is reached.
         """
         n_leaves = int((self.graph.number_of_nodes() + 1) / 2)
         leaves = {x: None for x in range(n_leaves)}
         bps = {}
-        pbar = tqdm(total=len(leaves), desc='Identifying nodes to split')
+        pbar = tqdm(total=len(leaves), desc="Identifying nodes to split")
         while len(leaves) > 0:
             leaf, _ = leaves.popitem()
             pbar.update(1)
@@ -164,8 +174,10 @@ class BalancedCut:
                 if temp in bps:
                     logger.debug(f"Will not climb to {temp} as already a branchpoint")
                     break
-                if self.graph.nodes[temp]['nleaves'] > self.maxSize:
-                    logger.debug(f"Will not climb to {temp} because too many leaves exist")
+                if self.graph.nodes[temp]["nleaves"] > self.maxSize:
+                    logger.debug(
+                        f"Will not climb to {temp} because too many leaves exist"
+                    )
                     break
                 s1, s2 = list(self.graph.successors(temp))
                 if self._are_subtrees_mergeable(s1, s2) is False:
@@ -183,7 +195,7 @@ class BalancedCut:
                     pbar.update(1)
                 elif i in bps and i != cur:
                     logger.debug(f"Skipping branch {i} because its already taken")
-                elif self.graph.nodes[i]['nleaves'] >= self.maxSize and i != cur:
+                elif self.graph.nodes[i]["nleaves"] >= self.maxSize and i != cur:
                     logger.debug(f"Skipping branch {i} to prevent greedy behaviour")
                 else:
                     s.extend(list(self.graph.successors(i)))
@@ -196,13 +208,17 @@ class BalancedCut:
             leaves.extend(self.branchpoints[i])
         n_leaves = len(leaves)
         if n_leaves != self.nCells:
-            raise ValueError("ERROR: Not all leaves present in branchpoints. This bug must be reported")
+            raise ValueError(
+                "ERROR: Not all leaves present in branchpoints. This bug must be reported"
+            )
         minl = min(leaves)
         if minl != 0:
             raise ValueError(f"ERROR: minimum leaf label is {minl} rather than 0")
         maxl = max(leaves)
-        if n_leaves != maxl+1:
-            raise ValueError(f"ERROR: maximum leaf label is {maxl} while total estimated leaves are {n_leaves}")
+        if n_leaves != maxl + 1:
+            raise ValueError(
+                f"ERROR: maximum leaf label is {maxl} while total estimated leaves are {n_leaves}"
+            )
         return None
 
     def get_clusters(self) -> np.ndarray:
@@ -254,15 +270,15 @@ class BalancedCut:
     #     return bps
 
     # def test(self):
-        # n = 30
-        # np.random.seed(154)
-        # randz = ward(gamma.rvs(0.3, size=n * 4).reshape((n, 4)))
-        #
-        # graph = z_to_g(randz)
-        # branchpoints = get_branchpoints(graph, max_leaf=10, min_leaves=2, fc=1.5)
-        # clusters = bps_to_clusts(branchpoints)
-        # dend = dendrogram(randz)
-        # clusters[dend['leaves']]
-        #
-        # res = [9, 5, 5, 1, 1, 1, 1, 7, 7, 7, 3, 3, 3, 3, 3, 4, 4, 4, 2, 2, 2, 8,
-        #        8, 8, 6, 6, 6, 6, 6, 6]
+    # n = 30
+    # np.random.seed(154)
+    # randz = ward(gamma.rvs(0.3, size=n * 4).reshape((n, 4)))
+    #
+    # graph = z_to_g(randz)
+    # branchpoints = get_branchpoints(graph, max_leaf=10, min_leaves=2, fc=1.5)
+    # clusters = bps_to_clusts(branchpoints)
+    # dend = dendrogram(randz)
+    # clusters[dend['leaves']]
+    #
+    # res = [9, 5, 5, 1, 1, 1, 1, 7, 7, 7, 3, 3, 3, 3, 3, 4, 4, 4, 2, 2, 2, 8,
+    #        8, 8, 6, 6, 6, 6, 6, 6]
