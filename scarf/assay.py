@@ -189,7 +189,7 @@ class Assay:
             return None
         total = show_dask_progress(
             self.rawData[:, feat_idx].sum(axis=1),
-            f"Computing percentage of {name}",
+            f"({self.name}) Computing {name}",
             self.nthreads,
         )
         if total.sum() == 0:
