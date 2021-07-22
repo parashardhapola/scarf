@@ -1,14 +1,12 @@
-[![PyPI][pypi]][pypiLink] [![Docs][docs]][docsLink]
-[![Tests][tests]][testsLink] [![Coverage][coverage]][coverageLink]
+[![PyPI][pypi]][pypiLink] [![Docs][docs]][docsLink] [![Github Stars][stars]][github]
 
 [pypi]: https://img.shields.io/pypi/v/scarf.svg
 [pypiLink]: https://pypi.org/project/scarf
 [docs]: https://readthedocs.org/projects/scarf/badge/?version=latest
 [docsLink]: https://scarf.readthedocs.io
-[tests]: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml/badge.svg
-[testsLink]: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
-[coverage]: https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd
-[coverageLink]: https://codecov.io/gh/parashardhapola/scarf
+[stars]: https://img.shields.io/github/stars/parashardhapola/scarf?style=social
+[github]: https://github.com/parashardhapola/scarf
+
 
 :::{important}
 Scarf's memory management fails with Dask version >2021.03.1.
