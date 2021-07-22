@@ -594,10 +594,10 @@ class GraphDataStore(BaseDataStore):
         if reduction_method == "auto":
             assay_type = str(assay.__class__).split(".")[-1][:-2]
             if assay_type == "ATACassay":
-                logger.info("Using LSI for dimension reduction")
+                logger.debug("Using LSI for dimension reduction")
                 reduction_method = "lsi"
             else:
-                logger.info("Using PCA for dimension reduction")
+                logger.debug("Using PCA for dimension reduction")
                 reduction_method = "pca"
         return reduction_method
 
@@ -1327,7 +1327,7 @@ class GraphDataStore(BaseDataStore):
         )
 
         if reduction_loc not in self.z:
-            logger.info(f"Saving loadings to {reduction_loc}")
+            logger.debug(f"Saving loadings to {reduction_loc}")
             self.z.create_group(reduction_loc, overwrite=True)
             if ann_obj.loadings is not None:
                 # can be None when no dimred is performed
@@ -1350,11 +1350,11 @@ class GraphDataStore(BaseDataStore):
                 )
                 g[:] = sigma
         if ann_loc not in self.z:
-            logger.info(f"Saving ANN index to {ann_loc}")
+            logger.debug(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
             ann_obj.annIdx.save_index(ann_idx_loc)
         if fit_kmeans:
-            logger.info(f"Saving kmeans clusters to {kmeans_loc}")
+            logger.debug(f"Saving kmeans clusters to {kmeans_loc}")
             self.z.create_group(kmeans_loc, overwrite=True)
             g = create_zarr_dataset(
                 self.z[kmeans_loc],
@@ -2012,21 +2012,21 @@ class GraphDataStore(BaseDataStore):
         a[nodes] = True
         key = self._col_renamer(from_assay, cell_key, save_sampling_key)
         self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
-        logger.info(f"Sketched cells saved under column '{key}'")
+        logger.debug(f"Sketched cells saved under column '{key}'")
 
         key = self._col_renamer(from_assay, cell_key, save_density_key)
         self.cells.insert(key, sampler.densities, key=cell_key, overwrite=True)
-        logger.info(f"Cell neighbourhood densities saved under column: '{key}'")
+        logger.debug(f"Cell neighbourhood densities saved under column: '{key}'")
 
         key = self._col_renamer(from_assay, cell_key, save_mean_snn_key)
         self.cells.insert(key, sampler.meanSnn, key=cell_key, overwrite=True)
-        logger.info(f"Mean SNN values saved under column: '{key}'")
+        logger.debug(f"Mean SNN values saved under column: '{key}'")
 
         a = np.zeros(self.cells.fetch_all(cell_key).sum()).astype(bool)
         a[sampler.seeds] = True
         key = self._col_renamer(from_assay, cell_key, save_seeds_key)
         self.cells.insert(key, a, fill_value=False, key=cell_key, overwrite=True)
-        logger.info(f"Seed cells saved under column: '{key}'")
+        logger.debug(f"Seed cells saved under column: '{key}'")
 
         if return_edges:
             return edges
@@ -2304,7 +2304,7 @@ class MappingDatastore(GraphDataStore):
             exclude_missing,
             self.nthreads,
         )
-        logger.info(f"{len(feat_idx)} features being used for mapping")
+        logger.debug(f"{len(feat_idx)} features being used for mapping")
         if np.all(
             source_assay.feats.active_index(cell_key + "__" + feat_key) == feat_idx
         ):
