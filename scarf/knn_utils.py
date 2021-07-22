@@ -4,8 +4,7 @@ Utility functions for running the KNN algorithm.
 import numpy as np
 from .writers import create_zarr_dataset
 from .ann import AnnStream
-from tqdm.auto import tqdm
-from .logging_utils import logger
+from .utils import logger, tqdm
 import pandas as pd
 
 __all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx"]

@@ -10,14 +10,19 @@ import numpy as np
 from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
 import zarr
-from tqdm.auto import tqdm
 import dask.array as daskarr
 from scipy.sparse import csr_matrix, coo_matrix
 from .writers import create_zarr_dataset, create_zarr_obj_array
 from .metadata import MetaData
 from .assay import Assay, RNAassay, ATACassay, ADTassay
-from .utils import show_progress, system_call, clean_array, controlled_compute
-from .logging_utils import logger
+from .utils import (
+    show_dask_progress,
+    system_call,
+    clean_array,
+    controlled_compute,
+    logger,
+    tqdm,
+)
 
 __all__ = ["DataStore"]
 
@@ -334,7 +339,7 @@ class BaseDataStore:
 
             var_name = from_assay + "_nCounts"
             if var_name not in self.cells.columns:
-                n_c = show_progress(
+                n_c = show_dask_progress(
                     assay.rawData.sum(axis=1),
                     f"({from_assay}) Computing nCounts",
                     self.nthreads,
@@ -349,7 +354,7 @@ class BaseDataStore:
                         )
             var_name = from_assay + "_nFeatures"
             if var_name not in self.cells.columns:
-                n_f = show_progress(
+                n_f = show_dask_progress(
                     (assay.rawData > 0).sum(axis=1),
                     f"({from_assay}) Computing nFeatures",
                     self.nthreads,
@@ -1251,14 +1256,14 @@ class GraphDataStore(BaseDataStore):
         else:
             if reduction_method in ["pca", "manual"]:
                 mu = clean_array(
-                    show_progress(
+                    show_dask_progress(
                         data.mean(axis=0),
                         "Calculating mean of norm. data",
                         self.nthreads,
                     )
                 )
                 sigma = clean_array(
-                    show_progress(
+                    show_dask_progress(
                         data.std(axis=0),
                         "Calculating std. dev. of norm. data",
                         self.nthreads,
@@ -2338,14 +2343,14 @@ class MappingDatastore(GraphDataStore):
             )
         if ann_obj.method == "pca" and run_coral is False:
             if ref_mu is False:
-                mu = show_progress(
+                mu = show_dask_progress(
                     target_data.mean(axis=0),
                     "Calculating mean of target norm. data",
                     self.nthreads,
                 )
                 ann_obj.mu = clean_array(mu)
             if ref_sigma is False:
-                sigma = show_progress(
+                sigma = show_dask_progress(
                     target_data.std(axis=0),
                     "Calculating std. dev. of target norm. data",
                     self.nthreads,

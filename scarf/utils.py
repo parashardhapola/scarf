@@ -9,16 +9,35 @@ Utility methods.
     - system_call: executes a command in the underlying operative system
 """
 
+from loguru import logger
+import sys
 import numpy as np
-from .logging_utils import logger
+from tqdm.dask import TqdmCallback
+from dask.array.core import Array
+from tqdm.auto import tqdm as std_tqdm
+from functools import partial
+
 
 __all__ = [
+    "logger",
     "system_call",
     "rescale_array",
     "clean_array",
-    "show_progress",
+    "show_dask_progress",
     "controlled_compute",
 ]
+
+logger.remove()
+logger.add(
+    sys.stdout, colorize=True, format="<level>{level}</level>: {message}", level="INFO"
+)
+
+tqdm_params = {
+    "bar_format": "{desc}: {percentage:3.0f}%| {bar} {n_fmt}/{total_fmt} [{elapsed}]",
+    "ncols": 500,
+    "colour": "#34abeb",
+}
+tqdm = partial(std_tqdm, **tqdm_params)
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
@@ -78,24 +97,21 @@ def controlled_compute(arr, nthreads):
     return res
 
 
-def show_progress(arr, msg: str = None, nthreads: int = 1):
+def show_dask_progress(arr: Array, msg: str = None, nthreads: int = 1):
     """
     Performs computation with Dask and shows progress bar.
 
     Args:
-        arr:
+        arr: A Dask array
         msg: message to log, default None
         nthreads: number of threads to use for computation, default 1
 
     Returns:
         Result of computation.
     """
-    from tqdm.dask import TqdmCallback
 
-    pbar = TqdmCallback(desc=msg)
-    pbar.register()
-    res = controlled_compute(arr, nthreads)
-    pbar.unregister()
+    with TqdmCallback(desc=msg, **tqdm_params):
+        res = controlled_compute(arr, nthreads)
     return res
 
 

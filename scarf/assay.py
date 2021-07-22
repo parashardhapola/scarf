@@ -11,9 +11,8 @@ import numpy as np
 import dask.array as daskarr
 import zarr
 from .metadata import MetaData
-from .utils import show_progress, controlled_compute
+from .utils import show_dask_progress, controlled_compute, logger
 from scipy.sparse import csr_matrix, vstack
-from .logging_utils import logger
 from typing import Tuple, List
 import pandas as pd
 
@@ -120,7 +119,7 @@ class Assay:
         Returns:
 
         """
-        from tqdm.auto import tqdm
+        from .utils import tqdm
 
         sm = None
         for i in tqdm(
@@ -147,7 +146,7 @@ class Assay:
         if "nCells" in self.feats.columns and "dropOuts" in self.feats.columns:
             pass
         else:
-            ncells = show_progress(
+            ncells = show_dask_progress(
                 (self.rawData > 0).sum(axis=0),
                 f"({self.name}) Computing nCells and dropOuts",
                 self.nthreads,
@@ -188,7 +187,7 @@ class Assay:
                 f" Will not add/update percentage feature"
             )
             return None
-        total = show_progress(
+        total = show_dask_progress(
             self.rawData[:, feat_idx].sum(axis=1),
             f"Computing percentage of {name}",
             self.nthreads,
@@ -439,7 +438,7 @@ class RNAassay(Assay):
         if log_transform:
             self.normMethod = norm_lib_size_log
         if renormalize_subset:
-            a = show_progress(
+            a = show_dask_progress(
                 counts.sum(axis=1), "Normalizing with feature subset", self.nthreads
             )
             a[a == 0] = 1
@@ -466,17 +465,17 @@ class RNAassay(Assay):
         if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is True:
             logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
-        n_cells = show_progress(
+        n_cells = show_dask_progress(
             (self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
             f"({self.name}) Computing nCells",
             self.nthreads,
         )
-        tot = show_progress(
+        tot = show_dask_progress(
             self.normed(cell_idx, feat_idx).sum(axis=0),
             f"({self.name}) Computing normed_tot",
             self.nthreads,
         )
-        sigmas = show_progress(
+        sigmas = show_dask_progress(
             self.normed(cell_idx, feat_idx).var(axis=0),
             f"({self.name}) Computing sigmas",
             self.nthreads,
@@ -696,7 +695,7 @@ class ATACassay(Assay):
         if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is True:
             logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
-        prevalence = show_progress(
+        prevalence = show_dask_progress(
             self.normed(cell_idx, feat_idx).sum(axis=0),
             f"({self.name}) Calculating peak prevalence across cells",
             self.nthreads,

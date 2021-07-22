@@ -20,12 +20,10 @@ Methods and classes for writing data to disk.
 import zarr
 from typing import Any, Tuple, List, Union
 import numpy as np
-from tqdm.auto import tqdm
 from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
 import os
 import pandas as pd
-from .utils import controlled_compute
-from .logging_utils import logger
+from .utils import controlled_compute, logger, tqdm
 from scipy.sparse import csr_matrix
 
 __all__ = [

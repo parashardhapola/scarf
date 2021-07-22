@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from typing import Tuple, Optional
 from cmocean import cm
-from .logging_utils import logger
+from .utils import logger
 
 plt.rcParams["svg.fonttype"] = "none"
 

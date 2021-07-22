@@ -2,11 +2,10 @@
 Module to find biomarkers.
 """
 from .assay import Assay
-from .utils import controlled_compute
+from .utils import controlled_compute, tqdm
 from numba import jit
 import numpy as np
 import pandas as pd
-from tqdm.auto import tqdm
 
 
 __all__ = ["find_markers_by_rank"]

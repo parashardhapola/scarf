@@ -20,8 +20,7 @@ import os
 import sparse
 from typing import IO
 import h5py
-from tqdm.auto import tqdm
-from .logging_utils import logger
+from .utils import logger, tqdm
 
 __all__ = [
     "CrH5Reader",

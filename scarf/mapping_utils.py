@@ -5,8 +5,7 @@ import dask.array as daskarr
 import numpy as np
 from typing import Tuple
 from .assay import Assay
-from .utils import controlled_compute, show_progress
-from .logging_utils import logger
+from .utils import controlled_compute, show_dask_progress, logger, tqdm
 import pandas as pd
 
 __all__ = ["align_features", "coral"]
@@ -23,10 +22,10 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
     from scipy.linalg import fractional_matrix_power as fmp
     from threadpoolctl import threadpool_limits
 
-    s_cov = show_progress(
+    s_cov = show_dask_progress(
         _cov_diaged(s), f"CORAL: Computing source covariance", nthreads
     )
-    t_cov = show_progress(
+    t_cov = show_dask_progress(
         _cov_diaged(t), f"CORAL: Computing target covariance", nthreads
     )
     logger.info(
@@ -53,14 +52,14 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     from .utils import clean_array
 
     sm = clean_array(
-        show_progress(
+        show_dask_progress(
             source_data.mean(axis=0),
             "INFO: (CORAL) Calculating source feature means",
             nthreads,
         )
     )
     sd = clean_array(
-        show_progress(
+        show_dask_progress(
             source_data.std(axis=0),
             "INFO: (CORAL) Calculating source feature stdev",
             nthreads,
@@ -68,14 +67,14 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
         1,
     )
     tm = clean_array(
-        show_progress(
+        show_dask_progress(
             target_data.mean(axis=0),
             "INFO: (CORAL) Calculating target feature means",
             nthreads,
         )
     )
     td = clean_array(
-        show_progress(
+        show_dask_progress(
             target_data.std(axis=0),
             "INFO: (CORAL) Calculating target feature stdev",
             nthreads,
@@ -171,7 +170,6 @@ def align_features(
 
     """
     from .writers import create_zarr_dataset
-    from tqdm.auto import tqdm
 
     source_feat_ids = source_assay.feats.fetch(
         "ids", key=source_cell_key + "__" + source_feat_key

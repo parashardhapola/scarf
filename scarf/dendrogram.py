@@ -1,8 +1,7 @@
 import numpy as np
 from typing import List, Dict
-from tqdm.auto import tqdm
 import networkx as nx
-from .logging_utils import logger
+from .utils import logger, tqdm
 
 __all__ = ["BalancedCut", "CoalesceTree", "make_digraph"]
 

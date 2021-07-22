@@ -9,7 +9,7 @@ import pandas as pd
 from typing import List, Iterable, Any, Dict, Tuple
 from .feat_utils import fit_lowess
 from .writers import create_zarr_obj_array
-from .logging_utils import logger
+from .utils import logger
 
 __all__ = ["MetaData"]
 

@@ -1,9 +1,7 @@
-from tqdm.auto import tqdm
 import numpy as np
 from threadpoolctl import threadpool_limits
-from .utils import controlled_compute
+from .utils import controlled_compute, logger, tqdm
 from numpy.linalg import LinAlgError
-from .logging_utils import logger
 
 __all__ = ["AnnStream"]
 

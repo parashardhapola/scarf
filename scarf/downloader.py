@@ -13,8 +13,7 @@ Classes:
 import requests
 import os
 import tarfile
-from .logging_utils import logger
-from .utils import system_call
+from .utils import system_call, logger
 import pandas as pd
 import io
 

@@ -1,7 +1,7 @@
 import os
 import shutil
 import sys
-from ..logging_utils import logger
+from ..utils import logger
 
 logger.remove()
 logger.add(sys.stderr, level="ERROR")

@@ -5,13 +5,12 @@
 """
 # TODO: add description in docstring
 
-from tqdm.auto import tqdm
 from typing import List, Dict
 import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
-from .utils import controlled_compute
-from .logging_utils import logger
+from .utils import controlled_compute, logger, tqdm
+
 
 __all__ = ["meld_assay", "make_bed_from_gff"]
 
