@@ -6,7 +6,7 @@ from .utils import controlled_compute
 from numba import jit
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 __all__ = ["find_markers_by_rank"]

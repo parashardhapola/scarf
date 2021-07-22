@@ -10,7 +10,7 @@ import numpy as np
 from typing import List, Iterable, Tuple, Generator, Union
 import pandas as pd
 import zarr
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import dask.array as daskarr
 from scipy.sparse import csr_matrix, coo_matrix
 from .writers import create_zarr_dataset, create_zarr_obj_array

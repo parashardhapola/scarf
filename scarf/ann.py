@@ -1,4 +1,4 @@
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import numpy as np
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute

@@ -5,7 +5,7 @@
 """
 # TODO: add description in docstring
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from typing import List, Dict
 import pandas as pd
 import numpy as np

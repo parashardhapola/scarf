@@ -90,11 +90,9 @@ def show_progress(arr, msg: str = None, nthreads: int = 1):
     Returns:
         Result of computation.
     """
-    from dask.diagnostics import ProgressBar
+    from tqdm.dask import TqdmCallback
 
-    if msg is not None:
-        logger.info(msg)
-    pbar = ProgressBar()
+    pbar = TqdmCallback(desc=msg)
     pbar.register()
     res = controlled_compute(arr, nthreads)
     pbar.unregister()

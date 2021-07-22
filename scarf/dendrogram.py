@@ -1,6 +1,6 @@
 import numpy as np
 from typing import List, Dict
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import networkx as nx
 from .logging_utils import logger
 

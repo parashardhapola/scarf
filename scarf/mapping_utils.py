@@ -171,7 +171,7 @@ def align_features(
 
     """
     from .writers import create_zarr_dataset
-    from tqdm import tqdm
+    from tqdm.auto import tqdm
 
     source_feat_ids = source_assay.feats.fetch(
         "ids", key=source_cell_key + "__" + source_feat_key

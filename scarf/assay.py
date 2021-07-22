@@ -120,7 +120,7 @@ class Assay:
         Returns:
 
         """
-        from tqdm import tqdm
+        from tqdm.auto import tqdm
 
         sm = None
         for i in tqdm(

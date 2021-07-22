@@ -20,7 +20,7 @@ import os
 import sparse
 from typing import IO
 import h5py
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from .logging_utils import logger
 
 __all__ = [
