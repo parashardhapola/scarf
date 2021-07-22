@@ -47,6 +47,21 @@ visualize them together using `plot_cluster_tree` like this::
 This will allow you test the robustness of clusters and visualize the relationship between
 Leiden clusters as well.
 
+## How do I create a count matrix for my single-cell data?
+Generating count matrices is the primary step of single-cell data analysis. For scRNA-Seq one can
+tools like [STARsolo], [alevin-fry] or [kallisto|bustools]. If your data was generated using
+10x's commercial solution then you can use [Cell Ranger]. In the case of single-cell ATAC-Seq data,
+there you may try following protocol from [Yan et al] or [Cusanovich et al]. [Cell Ranger ATAC] can
+be used if your data was generated using 10x's kit.
+
+[STARsolo]: https://github.com/alexdobin/STAR/blob/master/docs/STARsolo.md
+[alevin-fry]: https://alevin-fry.readthedocs.io/en/stable/
+[kallisto|bustools]: https://www.kallistobus.tools/
+[Cell Ranger]: https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/what-is-cell-ranger
+[Yan et al]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-020-1929-3
+[Cusanovich et al]: https://www.cell.com/cell/fulltext/S0092-8674(18)30855-9
+[Cell Ranger ATAC]: https://support.10xgenomics.com/single-cell-atac/software/pipelines/latest/what-is-cell-ranger-atac
+
 ## Can I use Scarf from R?
 Unfortunately, not yet! Please let the developers know if you would like to create an R API for Scarf.
 

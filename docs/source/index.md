@@ -27,10 +27,10 @@ The issue is being [tracked here]
 
 Scarf is a Python package that performs memory-efficient analysis of **single-cell genomics data**.
 Using an efficient data chunking process (using [Zarr] and [Dask]) Scarf manages to perform the core
-steps of single-cell genomics data analysis with very low memory consumption. The core principle
-in Scarf is to generate a neighbourhood graph (KNN graph) of cells. This graph forms the
-basis for downstream steps of the analysis thus maximizing concordance between those steps. Read below
-to see what cool new features Scarf has on offer.
+steps of single-cell genomics data analysis with very low memory consumption. Scarf's core step
+is to efficiently generate a neighbourhood graph (KNN graph) of cells. This graph forms the basis for
+downstream steps of the analysis thus maximizing concordance between those steps. Read below to see what
+cool new features Scarf has on offer.
 
 
 [Zarr]: http://zarr.readthedocs.io
@@ -56,18 +56,23 @@ The manuscript describing Scarf is under peer-review. Preprint is available
 - Perform projections of cells from one dataset onto another or integrate multiple datasets
 
 ## Why use Scarf
-The following flowchart shows a usage case of different tools depending on the size of the data
-and the methodology. This flowchart assumes that you do not have access or simply do not want
-to use a system with large RAM capacity.
+The following flowchart can help one decide which tool to choose with respect to the size of the data.
+This flowchart assumes that you do not have access or simply do not want to use a system with large RAM
+capacity. Only a few popular tools have been mentioned here, this is not an exhaustive list. 
+
+:::{margin} **Useful references**
+[Chen et. al.] benchmarked many scATAC-Seq tools for their scalability
+
+[Luecken et. al.] benchmarked scalability of various data integration tools
+
+[Chen et. al.]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1854-5
+[Luecken et. al.]: https://www.biorxiv.org/content/10.1101/2020.05.22.111161v2.full
+:::
 
 :::{image} _static/mermaid_why_scarf.svg
 :width: 75%
 :align: center
 :::
-
-For reference, [This paper] benchmarked a lot of scATAC-Seq tools for their scalability
-
-[This paper]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1854-5
 
 ### Example usage scenarios
 - You have generated a knockdown model of some stem cells and want to see which lineages are
@@ -100,15 +105,14 @@ those methods.
 ## Acknowledgements
 
 ### Contributors
-No open-source project can survive without contributions from core team and the community.
+No open-source project can survive without contributions from the core team and the community.
 Hope this list grows bigger. Thank you everyone!
 
 :::{eval-rst}
 .. include:: contributors.rst
 :::
-
 ### Scarf open-source stack
-Diverse number of open-source packages in Python scientific stack are being used to build Scarf.
+A diverse number of open-source packages in Python scientific stack are being used to build Scarf.
 Here we acknowledge some of them (atleast those with pretty logos..)
 
 :::{eval-rst}

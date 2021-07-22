@@ -3,8 +3,6 @@ subtrees:
   - entries:
       - file: install
       - file: faq
-  - caption: Vignettes/Tutorials
-    entries:
       - file: colab
   - caption: Basic pipelines
     entries:
@@ -16,13 +14,13 @@ subtrees:
         title: Working with multiple modalities
       - file: vignettes/cell_subsampling_tutorial
         title: Automated cell downsampling
-  - caption: Data integration
+  - caption: Data integration Tutorials
     entries:
       - file: vignettes/data_projection
         title: Integration through projection
       - file: vignettes/merging_datasets
         title: Merging samples and datasets
-  - caption: Utilties /  Explanation
+  - caption: Vignettes
     entries:
       - file: vignettes/zarr_explanation
         title: Data organization in Scarf

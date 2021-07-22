@@ -44,7 +44,10 @@ myst_enable_extensions = [
   "colon_fence",
 ]
 
-html_css_files = ["custom.css"]
+html_css_files = [
+    "custom.css",
+    "styles.css"
+]
 html_theme = "sphinx_book_theme"
 html_static_path = ['_static']
 html_favicon = "favicon.ico"
