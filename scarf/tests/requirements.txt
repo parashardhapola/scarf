@@ -1,0 +1,7 @@
+pytest
+pytest-cov
+topacedo
+anndata
+git+git://github.com/fraenkel-lab/pcst_fast@deb3236cc26ee9fee77d5af40fac3f12bb753850
+black
+scalene
