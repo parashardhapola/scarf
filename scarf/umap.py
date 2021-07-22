@@ -30,6 +30,7 @@ def simplicial_set_embedding(
     from umap.layouts import optimize_layout_euclidean
     from sklearn.utils import check_random_state
     import numpy as np
+    import warnings
 
     g.data[g.data < (g.data.max() / float(n_epochs))] = 0.0
     g.eliminate_zeros()
@@ -45,23 +46,25 @@ def simplicial_set_embedding(
     if numba.config.NUMBA_NUM_THREADS > nthreads:
         numba.set_num_threads(nthreads)
     with threadpool_limits(limits=nthreads):
-        embedding = optimize_layout_euclidean(
-            embedding,
-            embedding,
-            head,
-            tail,
-            n_epochs,
-            g.shape[1],
-            epochs_per_sample,
-            a,
-            b,
-            rng_state,
-            gamma,
-            initial_alpha,
-            negative_sample_rate,
-            parallel=parallel,
-            verbose=True,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            embedding = optimize_layout_euclidean(
+                embedding,
+                embedding,
+                head,
+                tail,
+                n_epochs,
+                g.shape[1],
+                epochs_per_sample,
+                a,
+                b,
+                rng_state,
+                gamma,
+                initial_alpha,
+                negative_sample_rate,
+                parallel=parallel,
+                verbose=True,
+            )
     return embedding
 
 
