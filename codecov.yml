@@ -10,7 +10,7 @@ coverage:
     project: off
       default:
         target: auto
-        threshold: 20%
+        threshold: 90%
         branches:
           - master
           - development
@@ -19,7 +19,7 @@ coverage:
     patch: off
       default:
         target: auto
-        threshold: 0%
+        threshold: 90%
         base: auto
         branches:
           - master
