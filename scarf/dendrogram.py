@@ -144,12 +144,12 @@ class BalancedCut:
         if n1 > self.minSize and n2 > self.minSize:
             d1, d2 = self.graph.nodes[s1]["dist"], self.graph.nodes[s2]["dist"]
             if d1 / d2 > self.maxDistFc or d2 / d1 > self.maxDistFc:
-                logger.debug(f"Will not merge {s1} and {s2} because of high distance")
+                logger.trace(f"Will not merge {s1} and {s2} because of high distance")
                 return False
             else:
                 md1, md2 = self._get_mean_dist(s1), self._get_mean_dist(s2)
                 if md1 / md2 > self.maxDistFc or md2 / md1 > self.maxDistFc:
-                    logger.debug(
+                    logger.trace(
                         f"Will not merge {s1} and {s2} because of high distance of successors"
                     )
                     return False
@@ -166,15 +166,15 @@ class BalancedCut:
         while len(leaves) > 0:
             leaf, _ = leaves.popitem()
             pbar.update(1)
-            logger.debug(f"FRESH STEP: Leaf {leaf} plucked as base leaf")
+            logger.trace(f"FRESH STEP: Leaf {leaf} plucked as base leaf")
             cur = leaf
             while True:
                 temp = next(self.graph.predecessors(cur))
                 if temp in bps:
-                    logger.debug(f"Will not climb to {temp} as already a branchpoint")
+                    logger.trace(f"Will not climb to {temp} as already a branchpoint")
                     break
                 if self.graph.nodes[temp]["nleaves"] > self.maxSize:
-                    logger.debug(
+                    logger.trace(
                         f"Will not climb to {temp} because too many leaves exist"
                     )
                     break
@@ -182,7 +182,7 @@ class BalancedCut:
                 if self._are_subtrees_mergeable(s1, s2) is False:
                     break
                 cur = temp
-            logger.debug(f"Aggregating from branch {cur} for leaf {leaf}")
+            logger.trace(f"Aggregating from branch {cur} for leaf {leaf}")
             bps[cur] = [leaf]
             s = [cur]
             while len(s) > 0:
@@ -190,12 +190,12 @@ class BalancedCut:
                 if i in leaves:
                     bps[cur].append(i)
                     leaves.pop(i)
-                    logger.debug(f"Leaf {i} plucked in aggregation step")
+                    logger.trace(f"Leaf {i} plucked in aggregation step")
                     pbar.update(1)
                 elif i in bps and i != cur:
-                    logger.debug(f"Skipping branch {i} because its already taken")
+                    logger.trace(f"Skipping branch {i} because its already taken")
                 elif self.graph.nodes[i]["nleaves"] >= self.maxSize and i != cur:
-                    logger.debug(f"Skipping branch {i} to prevent greedy behaviour")
+                    logger.trace(f"Skipping branch {i} to prevent greedy behaviour")
                 else:
                     s.extend(list(self.graph.successors(i)))
         pbar.close()
@@ -232,41 +232,6 @@ class BalancedCut:
             logger.warning(f"{(c == 0).sum()} samples were not assigned a cluster")
             c[c == 0] = -1
         return c
-
-    # def get_sibling(g, node):
-    #     sibs = g.successors(next(g.predecessors(node)))
-    #     return [x for x in sibs if x != node][0]
-
-    # def top_rsquared(d, cutoff):
-    #     df = pd.DataFrame([list(range(len(d))), d.values], index=['pos', 'val']).T
-    #     f ='pos~val'
-    #     f ='val~pos'
-    #     rs = []
-    #     for i in range(1, len(d)-2):
-    #         rs.append(ols(formula=f, data=df[:-i]).fit().rsquared)
-    #     rs = np.array(rs)
-    #     pos = np.where((rs > cutoff) == True)[0][0]
-    #     return 1+pos
-
-    # def merge_branches(g, bps, nodes):
-    #     bps = dict(bps)
-    #     for i in nodes:
-    #         if i not in bps:
-    #             logger.debug(f"Ignoring {i} because not a branchpoint anymore")
-    #         sib = get_sibling(g, i)
-    #         if sib in bps:
-    #             if sib in nodes:
-    #                 logger.debug(f"Merging two sibling candidates {i} and {sib}")
-    #                 bps[next(g.predecessors(i))] = bps[i] + bps[sib]
-    #                 del bps[i]
-    #                 del bps[sib]
-    #             else:
-    #                 logger.debug(f"Branchpoint {sib} updated with values from {i}")
-    #                 bps[sib] = bps[i] + bps[sib]
-    #                 del bps[i]
-    #         else:
-    #             logger.debug(f"Not merging {i} because sibling not a branchpoint")
-    #     return bps
 
     # def test(self):
     # n = 30
