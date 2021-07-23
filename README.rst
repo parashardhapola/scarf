@@ -14,7 +14,7 @@
              :target: https://codecov.io/gh/parashardhapola/scarf
 .. |Black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
               :target: https://github.com/psf/black
-.. |IMG1| image:: https://github.com/parashardhapola/scarf/blob/master/docs/source/logo_wide.png
+.. |IMG1| image:: https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png
          :target: https://github.com/parashardhapola/scarf
 
 Analyze large-scale (aka atlas-scale) single-cell genomics datasets with very low memory requirement.
