@@ -54,14 +54,14 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     sm = clean_array(
         show_dask_progress(
             source_data.mean(axis=0),
-            "INFO: (CORAL) Calculating source feature means",
+            "CORAL: Computing source feature means",
             nthreads,
         )
     )
     sd = clean_array(
         show_dask_progress(
             source_data.std(axis=0),
-            "INFO: (CORAL) Calculating source feature stdev",
+            "CORAL: Computing source feature stdev",
             nthreads,
         ),
         1,
@@ -69,14 +69,14 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     tm = clean_array(
         show_dask_progress(
             target_data.mean(axis=0),
-            "INFO: (CORAL) Calculating target feature means",
+            "CORAL: Computing target feature means",
             nthreads,
         )
     )
     td = clean_array(
         show_dask_progress(
             target_data.std(axis=0),
-            "INFO: (CORAL) Calculating target feature stdev",
+            "CORAL: Computing target feature stdev",
             nthreads,
         ),
         1,
@@ -201,7 +201,7 @@ def align_features(
     for i in tqdm(
         normed_data.blocks,
         total=normed_data.numblocks[0],
-        desc=f"Writing aligned normed target data to {loc}",
+        desc=f"({target_assay.name}) Writing aligned data to {loc.split('/')[1]}",
     ):
         pos_end += i.shape[0]
         a = np.ones((i.shape[0], len(t_idx)))

@@ -2363,7 +2363,11 @@ class MappingDatastore(GraphDataStore):
         zi = create_zarr_dataset(store, "indices", (batch_size,), "u8", (nc, nk))
         zd = create_zarr_dataset(store, "distances", (batch_size,), "f8", (nc, nk))
         entry_start = 0
-        for i in tqdm(target_data.blocks, desc="Mapping"):
+        for i in tqdm(
+            target_data.blocks,
+            desc=f"Mapping cells from {target_name}",
+            total=target_data.numblocks[0],
+        ):
             a: np.ndarray = controlled_compute(i, self.nthreads)
             ki, kd = ann_obj.transform_ann(ann_obj.reducer(a), k=save_k)
             entry_end = entry_start + len(ki)
