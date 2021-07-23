@@ -20,6 +20,7 @@ from tqdm.auto import tqdm as std_tqdm
 __all__ = [
     "logger",
     "tqdmbar",
+    "set_verbosity",
     "system_call",
     "rescale_array",
     "clean_array",
@@ -39,8 +40,53 @@ tqdm_params = {
 }
 
 
+def get_log_level():
+    # noinspection PyUnresolvedReferences
+    return logger._core.min_level
+
+
 def tqdmbar(*args, **kwargs):
-    return std_tqdm(*args, **kwargs, **tqdm_params)
+    params = dict(tqdm_params)
+    for i in kwargs:
+        if i in params:
+            del params[i]
+    if "disable" not in kwargs and "disable" not in params:
+        if get_log_level() <= 20:
+            params["disable"] = False
+        else:
+            params["disable"] = True
+    return std_tqdm(*args, **kwargs, **params)
+
+
+def set_verbosity(level: str = None, filepath: str = None):
+    """
+    Set verbosity level of Scarf's output. Setting value of level='CRITICAL' should silence all
+    logs. Progress bars are automatically disabled for levels above 'INFO'.
+
+    Args:
+        level: A valid level name. Run without any parameter to see available options
+        filepath: The output file path. All logs will be saved to this file. If no file path is
+                  is provided then all the logs are printed on standard output.
+
+    Returns:
+
+    """
+    # noinspection PyUnresolvedReferences
+    available_levels = logger._core.levels.keys()
+
+    if level is None or level not in available_levels:
+        raise ValueError(
+            f"Please provide a value for level: {', '.join(available_levels)}"
+        )
+    logger.remove()
+    if filepath is None:
+        filepath = sys.stdout
+    logger.add(
+        filepath,
+        colorize=True,
+        format="<level>{level}</level>: {message}",
+        level=level,
+    )
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
@@ -113,7 +159,13 @@ def show_dask_progress(arr: Array, msg: str = None, nthreads: int = 1):
         Result of computation.
     """
 
-    with TqdmCallback(desc=msg, **tqdm_params):
+    params = dict(tqdm_params)
+    if "disable" not in params:
+        if get_log_level() <= 20:
+            params["disable"] = False
+        else:
+            params["disable"] = True
+    with TqdmCallback(desc=msg, **params):
         res = controlled_compute(arr, nthreads)
     return res
 
