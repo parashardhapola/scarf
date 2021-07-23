@@ -1,3 +1,28 @@
 ignore:
   - "scarf/tests/*"
   - "setup.py"
+
+coverage:
+  precision: 2
+  round: up
+  range: "75...100"
+  status:
+    project: off
+      default:
+        target: auto
+        threshold: 20%
+        branches:
+          - master
+          - development
+        if_ci_failed: error
+        only_pulls: false
+    patch: off
+      default:
+        target: auto
+        threshold: 0%
+        base: auto
+        branches:
+          - master
+          - development
+        if_ci_failed: error
+        only_pulls: false
