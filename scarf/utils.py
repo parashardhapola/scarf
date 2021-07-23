@@ -21,6 +21,7 @@ __all__ = [
     "logger",
     "tqdmbar",
     "set_verbosity",
+    "get_log_level",
     "system_call",
     "rescale_array",
     "clean_array",

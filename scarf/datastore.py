@@ -1672,6 +1672,7 @@ class GraphDataStore(BaseDataStore):
 
         """
         from .umap import fit_transform
+        from .utils import get_log_level
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
@@ -1689,6 +1690,9 @@ class GraphDataStore(BaseDataStore):
             ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, umap_dims)
         if nthreads is None:
             nthreads = self.nthreads
+        verbose = False
+        if get_log_level() <= 20:
+            verbose = True
         t = fit_transform(
             graph=graph.tocoo(),
             ini_embed=ini_embed,
@@ -1703,6 +1707,7 @@ class GraphDataStore(BaseDataStore):
             negative_sample_rate=negative_sample_rate,
             parallel=parallel,
             nthreads=nthreads,
+            verbose=verbose,
         )
         for i in range(umap_dims):
             self.cells.insert(

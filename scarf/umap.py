@@ -23,6 +23,7 @@ def simplicial_set_embedding(
     negative_sample_rate,
     parallel,
     nthreads,
+    verbose,
 ):
     import numba
     from threadpoolctl import threadpool_limits
@@ -63,7 +64,7 @@ def simplicial_set_embedding(
                 initial_alpha,
                 negative_sample_rate,
                 parallel=parallel,
-                verbose=True,
+                verbose=verbose,
             )
     return embedding
 
@@ -89,6 +90,7 @@ def fit(
     negative_sample_rate,
     parallel,
     nthreads,
+    verbose,
 ):
     from umap.umap_ import find_ab_params
 
@@ -106,6 +108,7 @@ def fit(
         negative_sample_rate,
         parallel,
         nthreads,
+        verbose,
     )
     return embedding, a, b
 
@@ -122,6 +125,7 @@ def transform(
     negative_sample_rate,
     parallel,
     nthreads,
+    verbose,
 ):
     return simplicial_set_embedding(
         graph,
@@ -135,6 +139,7 @@ def transform(
         negative_sample_rate,
         parallel,
         nthreads,
+        verbose,
     )
 
 
@@ -152,6 +157,7 @@ def fit_transform(
     negative_sample_rate: float = 5,
     parallel: bool = False,
     nthreads: int = 1,
+    verbose: bool = True,
 ):
     e, a, b = fit(
         graph,
@@ -166,6 +172,7 @@ def fit_transform(
         negative_sample_rate=negative_sample_rate,
         parallel=parallel,
         nthreads=nthreads,
+        verbose=verbose,
     )
     t = transform(
         graph,
@@ -179,5 +186,6 @@ def fit_transform(
         negative_sample_rate=negative_sample_rate,
         parallel=parallel,
         nthreads=nthreads,
+        verbose=verbose,
     )
     return t
