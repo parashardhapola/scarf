@@ -13,7 +13,7 @@ Classes:
 import requests
 import os
 import tarfile
-from .utils import system_call, logger
+from .utils import logger, tqdmbar
 import pandas as pd
 import io
 
@@ -114,35 +114,35 @@ class OSFdownloader:
 osfd = None
 
 
-def handle_download(url: str, out_fn: str) -> None:
+def handle_download(url: str, out_fn: str, seq_counter: str = "") -> None:
     """
-    Carry out the download of a specified dataset. Invokes appropriate command for Linux and Windows OS
+    Carry out the download of a specified dataset.
 
     Args:
         url: URL of file to be downloaded
         out_fn: Absolute path to the file where the downloaded data is to be saved
+        seq_counter: show the sequence number of the download
 
     Returns: None
 
     """
 
-    import sys
+    import requests
 
-    if sys.platform == "win32":
-        cmd = (
-            'powershell -command "(New-Object System.Net.WebClient).DownloadFile(%s, %s)"'
-            % (f"'{url}'", f"'{out_fn}'")
-        )
-    elif sys.platform in ["posix", "linux"]:
-        cmd = f"wget --no-verbose -O {out_fn} {url}"
-    else:
-        raise ValueError(
-            f"This operating system is not supported in this function. "
-            f"Please download the file manually from this URL:\n {url}\n "
-            f"Please save as: {out_fn}"
-        )
-    logger.info("Download started...")
-    system_call(cmd)
+    chunk_size = int(1e7)
+    r = requests.head(url, allow_redirects=True)
+    size = int(r.headers.get("content-length", -1))
+    size = size // chunk_size + 1
+
+    r = requests.get(url, stream=True)
+    with open(out_fn, "wb") as handle:
+        for chunk in tqdmbar(
+            r.iter_content(chunk_size=chunk_size),
+            total=size,
+            desc=f"Downloading {seq_counter}",
+        ):
+            if chunk:
+                handle.write(chunk)
     logger.info(f"Download finished! File saved here: {out_fn}")
 
 
@@ -216,8 +216,8 @@ def fetch_dataset(
         tar.extractall(save_dir)
         tar.close()
     else:
-        for i in files:
+        for n, i in enumerate(files, start=1):
             if i.endswith(zarr_ext):
                 continue
             sp = os.path.abspath(os.path.join(save_dir, i))
-            handle_download(files[i], sp)
+            handle_download(files[i], sp, f"{n}/{len(files)}")
