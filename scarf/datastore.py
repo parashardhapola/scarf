@@ -244,7 +244,7 @@ class BaseDataStore:
                     pass
                 else:
                     z_attrs[i] = assay_name
-                    logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                    logger.debug(f"Setting assay {i} to assay type: {assay.__name__}")
             elif i in z_attrs:
                 assay = preset_assay_types[z_attrs[i]]
             else:
@@ -259,7 +259,7 @@ class BaseDataStore:
                     pass
                 else:
                     z_attrs[i] = assay_name
-                    logger.info(f"Setting assay {i} to assay type: {assay.__name__}")
+                    logger.debug(f"Setting assay {i} to assay type: {assay.__name__}")
             setattr(
                 self,
                 i,
