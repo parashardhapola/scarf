@@ -20,7 +20,7 @@ import os
 import sparse
 from typing import IO
 import h5py
-from .utils import logger, tqdm
+from .utils import logger, tqdmbar
 
 __all__ = [
     "CrH5Reader",
@@ -731,7 +731,7 @@ class H5adReader:
         self, group: str, ignore_keys: List[str]
     ) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.groupCodes[group] == 1:
-            for i in tqdm(
+            for i in tqdmbar(
                 self.h5[group].dtype.names,
                 desc=f"Reading attributes from group {group}",
             ):
@@ -739,7 +739,7 @@ class H5adReader:
                     continue
                 yield i, self._replace_category_values(self.h5[group][i][:], i, group)
         if self.groupCodes[group] == 2:
-            for i in tqdm(
+            for i in tqdmbar(
                 self.h5[group].keys(), desc=f"Reading attributes from group {group}"
             ):
                 if i in ignore_keys:
@@ -969,7 +969,7 @@ class LoomReader:
         self, key, ignore
     ) -> Generator[Tuple[str, np.ndarray], None, None]:
         if key in self.h5:
-            for i in tqdm(self.h5[key].keys(), desc=f"Reading {key} attributes"):
+            for i in tqdmbar(self.h5[key].keys(), desc=f"Reading {key} attributes"):
                 if i in [ignore]:
                     continue
                 vals = self.h5[key][i][:]

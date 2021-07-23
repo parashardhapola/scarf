@@ -2,7 +2,7 @@
 Module to find biomarkers.
 """
 from .assay import Assay
-from .utils import controlled_compute, tqdm
+from .utils import controlled_compute, tqdmbar
 from numba import jit
 import numpy as np
 import pandas as pd
@@ -65,7 +65,7 @@ def find_markers_by_rank(
     )
 
     results = {x: [] for x in group_set}
-    for chunk in tqdm(chunks, desc="Finding markers", total=len(chunks)):
+    for chunk in tqdmbar(chunks, desc="Finding markers", total=len(chunks)):
         val = (
             pd.DataFrame(
                 controlled_compute(data[:, chunk], nthreads), columns=gene_ids[chunk]

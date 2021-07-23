@@ -1,6 +1,6 @@
 import numpy as np
 from threadpoolctl import threadpool_limits
-from .utils import controlled_compute, logger, tqdm
+from .utils import controlled_compute, logger, tqdmbar
 from numpy.linalg import LinAlgError
 
 __all__ = ["AnnStream"]
@@ -153,7 +153,7 @@ class AnnStream:
         return batch_size
 
     def iter_blocks(self, msg: str = "") -> np.ndarray:
-        for i in tqdm(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
+        for i in tqdmbar(self.data.blocks, desc=msg, total=self.data.numblocks[0]):
             yield controlled_compute(i, self.nthreads)
 
     def transform_z(self, a: np.ndarray) -> np.ndarray:

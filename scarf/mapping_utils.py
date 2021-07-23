@@ -5,7 +5,7 @@ import dask.array as daskarr
 import numpy as np
 from typing import Tuple
 from .assay import Assay
-from .utils import controlled_compute, show_dask_progress, logger, tqdm
+from .utils import controlled_compute, show_dask_progress, logger, tqdmbar
 import pandas as pd
 
 __all__ = ["align_features", "coral"]
@@ -198,7 +198,7 @@ def align_features(
     )
     pos_start, pos_end = 0, 0
     unsorter_idx = np.argsort(np.argsort(t_idx[t_idx != -1]))
-    for i in tqdm(
+    for i in tqdmbar(
         normed_data.blocks,
         total=normed_data.numblocks[0],
         desc=f"({target_assay.name}) Writing aligned data to {loc.split('/')[1]}",

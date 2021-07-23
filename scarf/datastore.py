@@ -21,7 +21,7 @@ from .utils import (
     clean_array,
     controlled_compute,
     logger,
-    tqdm,
+    tqdmbar,
 )
 
 __all__ = ["DataStore"]
@@ -2363,7 +2363,7 @@ class MappingDatastore(GraphDataStore):
         zi = create_zarr_dataset(store, "indices", (batch_size,), "u8", (nc, nk))
         zd = create_zarr_dataset(store, "distances", (batch_size,), "f8", (nc, nk))
         entry_start = 0
-        for i in tqdm(
+        for i in tqdmbar(
             target_data.blocks,
             desc=f"Mapping cells from {target_name}",
             total=target_data.numblocks[0],
@@ -3617,7 +3617,7 @@ class DataStore(MappingDatastore):
         groups = self.cells.fetch_all(group_key)
 
         vals = {}
-        for g in tqdm(sorted(set(groups))):
+        for g in tqdmbar(sorted(set(groups))):
             if g in null_vals:
                 continue
             rep_indices = make_reps(np.where(groups == g)[0], pseudo_reps, random_seed)

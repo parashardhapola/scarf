@@ -15,11 +15,11 @@ import numpy as np
 from tqdm.dask import TqdmCallback
 from dask.array.core import Array
 from tqdm.auto import tqdm as std_tqdm
-from functools import partial
 
 
 __all__ = [
     "logger",
+    "tqdmbar",
     "system_call",
     "rescale_array",
     "clean_array",
@@ -37,7 +37,10 @@ tqdm_params = {
     "ncols": 500,
     "colour": "#34abeb",
 }
-tqdm = partial(std_tqdm, **tqdm_params)
+
+
+def tqdmbar(*args, **kwargs):
+    return std_tqdm(*args, **kwargs, **tqdm_params)
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:

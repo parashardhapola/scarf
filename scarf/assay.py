@@ -119,10 +119,10 @@ class Assay:
         Returns:
 
         """
-        from .utils import tqdm
+        from .utils import tqdmbar
 
         sm = None
-        for i in tqdm(
+        for i in tqdmbar(
             self.rawData[self.cells.active_index(cell_key), :].blocks,
             total=self.rawData.numblocks[0],
             desc=f"INFO: Converting raw data from {self.name} assay into CSR format",

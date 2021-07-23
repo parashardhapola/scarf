@@ -9,7 +9,7 @@ from typing import List, Dict
 import pandas as pd
 import numpy as np
 from .writers import create_zarr_count_assay
-from .utils import controlled_compute, logger, tqdm
+from .utils import controlled_compute, logger, tqdmbar
 
 
 __all__ = ["meld_assay", "make_bed_from_gff"]
@@ -37,7 +37,7 @@ def make_bed_from_gff(
             l = next(h)
             if l[0] != "#":
                 logger.warning(f"line num {i} is not comment line", flush=True)
-        for l in tqdm(h):
+        for l in tqdmbar(h):
             c = l.split("\t")
             if c[2] != "gene":
                 continue
@@ -140,7 +140,7 @@ def _create_counts_mat(
     assay, out_store, feat_order: list, cross_idx_map: dict, nthreads: int
 ) -> None:
     c_pos_start = 0
-    for a in tqdm(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
+    for a in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
         a = controlled_compute(a, nthreads)
         b = np.zeros((a.shape[0], len(feat_order)))
         c_pos_end = c_pos_start + a.shape[0]

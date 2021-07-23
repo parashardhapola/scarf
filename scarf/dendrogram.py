@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Dict
 import networkx as nx
-from .utils import logger, tqdm
+from .utils import logger, tqdmbar
 
 __all__ = ["BalancedCut", "CoalesceTree", "make_digraph"]
 
@@ -20,7 +20,7 @@ def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
             )
     else:
         clust_info = np.ones(d.shape[0] + 1) * -1
-    for i in tqdm(d, desc="Constructing graph from dendrogram"):
+    for i in tqdmbar(d, desc="Constructing graph from dendrogram"):
         v = i[2]  # Distance between clusters
         i = i.astype(int)
         g.add_node(n, nleaves=i[3], dist=v)
@@ -73,7 +73,7 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
     def get_holding_nodes(g: nx.DiGraph, c):
         hn = {}
         s = calc_steps_to_top(g, c)
-        for i in tqdm(set(c), desc="Identifying the top node for cluster"):
+        for i in tqdmbar(set(c), desc="Identifying the top node for cluster"):
             l = set(np.where(c == i)[0])
             nl = len(l)
             for j in iter_predecessors(g, s.reindex(l).idxmin()):
@@ -162,7 +162,7 @@ class BalancedCut:
         n_leaves = int((self.graph.number_of_nodes() + 1) / 2)
         leaves = {x: None for x in range(n_leaves)}
         bps = {}
-        pbar = tqdm(total=len(leaves), desc="Identifying nodes to split")
+        pbar = tqdmbar(total=len(leaves), desc="Identifying nodes to split")
         while len(leaves) > 0:
             leaf, _ = leaves.popitem()
             pbar.update(1)
