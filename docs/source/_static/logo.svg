@@ -19,8 +19,8 @@
    width="103.85829mm"
    height="74.979942mm"
    inkscape:export-filename="C:\Users\parashar\Desktop\scarf\docs\source\logo.png"
-   inkscape:export-xdpi="199.86678"
-   inkscape:export-ydpi="199.86678"><sodipodi:namedview
+   inkscape:export-xdpi="99.959557"
+   inkscape:export-ydpi="99.959557"><sodipodi:namedview
    id="namedview607"
    bordercolor="#666666"
    inkscape:pageshadow="2"
@@ -28,14 +28,14 @@
    pagecolor="#ffffff"
    gridtolerance="10"
    inkscape:window-maximized="1"
-   inkscape:zoom="1.28"
+   inkscape:zoom="1.8101934"
    objecttolerance="10"
    borderopacity="1"
    inkscape:current-layer="g1547"
-   inkscape:cx="106.01609"
-   inkscape:cy="134.85203"
+   inkscape:cx="235.88261"
+   inkscape:cy="112.35701"
    inkscape:window-y="-11"
-   inkscape:window-x="3009"
+   inkscape:window-x="129"
    inkscape:window-width="1780"
    showgrid="false"
    inkscape:pageopacity="0"
@@ -110,6 +110,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8443"><text
@@ -123,6 +124,7 @@
      x="2771.3943"
      y="16036.199"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1003.27246094px;line-height:3.25;font-family:'Century Schoolbook';-inkscape-font-specification:'Century Schoolbook';letter-spacing:0px;word-spacing:0.7524544px;stroke-width:0.7524544">c</tspan></text>
+
 
 
 
@@ -164,6 +166,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8455"><text
@@ -191,6 +194,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8461"><text
@@ -204,6 +208,7 @@
      x="2842.0269"
      id="tspan8463"
      sodipodi:role="line">f</tspan></text>
+
 
 
 
@@ -852,6 +857,7 @@
      id="tspan5283"
      sodipodi:role="line">s</tspan></text>
 
+
 <text
    xml:space="preserve"
    style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:189.63331604px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:10.15892887;"
@@ -864,6 +870,7 @@
      y="-7401.5811"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:10.15892887;">Single-cell atlases refreshed</tspan></text>
 
+
 <text
    xml:space="preserve"
    style="font-style:normal;font-weight:normal;font-size:1406.51049805px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:75.34877014;"
@@ -875,6 +882,7 @@
      x="504.84583"
      y="-7631.8442"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:75.34877014;">carf</tspan></text>
+
 
 </g></g></g>
 

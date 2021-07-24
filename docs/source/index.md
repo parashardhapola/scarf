@@ -1,25 +1,13 @@
 [![PyPI][pypi]][pypiLink] [![Docs][docs]][docsLink] [![Github Stars][stars]][github]
 
-[pypi]: https://img.shields.io/pypi/v/scarf.svg
-[pypiLink]: https://pypi.org/project/scarf
-[docs]: https://readthedocs.org/projects/scarf/badge/?version=latest
-[docsLink]: https://scarf.readthedocs.io
-[stars]: https://img.shields.io/github/stars/parashardhapola/scarf?style=social
-[github]: https://github.com/parashardhapola/scarf
-
-
 :::{important}
 Scarf's memory management fails with Dask version >2021.03.1.
-The issue is being [tracked here]
+The issue is being [tracked here](https://github.com/parashardhapola/scarf/issues/49)
 :::
-
-[tracked here]: https://github.com/parashardhapola/scarf/issues/49
 
 # Welcome to Scarf's documentation
 
 {ref}`Jump to installation <installation>` | {ref}`Try live code <colab>` | [Source code on Github]
-
-[Source code on Github]: https://github.com/parashardhapola/scarf
 
 ## What is Scarf
 
@@ -29,10 +17,6 @@ steps of single-cell genomics data analysis with very low memory consumption. Sc
 is to efficiently generate a neighbourhood graph (KNN graph) of cells. This graph forms the basis for
 downstream steps of the analysis thus maximizing concordance between those steps. Read below to see what
 cool new features Scarf has on offer.
-
-
-[Zarr]: http://zarr.readthedocs.io
-[Dask]: http://dask.org
 
 :::{image} _static/overview.png
 :width: 75%
@@ -62,12 +46,9 @@ capacity. Only a few popular tools have been mentioned here, this is not an exha
 [Chen et. al.] benchmarked many scATAC-Seq tools for their scalability
 
 [Luecken et. al.] benchmarked scalability of various data integration tools
-
-[Chen et. al.]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1854-5
-[Luecken et. al.]: https://www.biorxiv.org/content/10.1101/2020.05.22.111161v2.full
 :::
 
-:::{image} _static/mermaid_why_scarf.svg
+:::{image} _static/mermaid_why_scarf.png
 :width: 75%
 :align: center
 :::
@@ -88,7 +69,6 @@ capacity. Only a few popular tools have been mentioned here, this is not an exha
   select the most representative cells from the clusters of your interest. You can then use this
   downsampled data and run the trajectory analysis on it.
 
-
 ## When not to use Scarf
 There is no reason to not use Scarf, generally. But Scarf currently lacks a lots of
 functionality that is available elsewhere. The primary reason for this is that we want to guarantee
@@ -100,15 +80,37 @@ make the code more robust (aka testing). We aim to extend the Scarf to more sing
 methodologies by including normalization and dimension reduction strategies best suited to
 those methods.
 
+## How to contribute
+
+### Contributions through pull requests:
+If you would like to add a new feature, fix a bug or make some improvements please
+follow this [guideline]. Usually when planning to add a new feature it is a good
+idea to introduce the proposed feature and discuss it. This can be done on the [discussion
+page]. The code is written using [black] style. Please make sure you blacken any edited files. 
+
+### Testing locally
+You can run the tests locally on your branch by running [pytest]. The configurations
+for pytest are already set in `pyproject.toml`. The extra requirements for running the
+tests can be installed from the `requirements.txt` file that is under the 'tests' folder.
+
+### Contributions to the documentation
+You may contribute to the documentation by either adding new sections or modifying existing
+sections. All the required packages for building the locally documentation can be installed
+from another `requirements.txt` file that is under 'docs' directory. The documentation is built
+using [Sphinx]. The markdown files are parsed using [MyST] parser. If you want to add a notebook
+to  the documentation then please convert your `ipynb` files to `markdown` format using [Jupytext].
+The markdown files are saved with extension `mdnb` so that they can be recognized by [nbshpinx]
+extension. 
+
 ## Acknowledgements
 
 ### Contributors
-No open-source project can survive without contributions from the core team and the community.
-Hope this list grows bigger. Thank you everyone!
+Contributors to the Scarf repository. Thank you everyone!
 
 :::{eval-rst}
 .. include:: contributors.rst
 :::
+
 ### Scarf open-source stack
 A diverse number of open-source packages in Python scientific stack are being used to build Scarf.
 Here we acknowledge some of them (atleast those with pretty logos..)
@@ -116,3 +118,22 @@ Here we acknowledge some of them (atleast those with pretty logos..)
 :::{eval-rst}
 .. include:: logos.rst
 :::
+
+[pypi]: https://img.shields.io/pypi/v/scarf.svg
+[pypiLink]: https://pypi.org/project/scarf
+[docs]: https://readthedocs.org/projects/scarf/badge/?version=latest
+[docsLink]: https://scarf.readthedocs.io
+[stars]: https://img.shields.io/github/stars/parashardhapola/scarf?style=social
+[github]: https://github.com/parashardhapola/scarf
+[Source code on Github]: https://github.com/parashardhapola/scarf
+[Zarr]: http://zarr.readthedocs.io
+[Dask]: http://dask.org
+[Chen et. al.]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1854-5
+[Luecken et. al.]: https://www.biorxiv.org/content/10.1101/2020.05.22.111161v2.full
+[guideline]: https://www.dataschool.io/how-to-contribute-on-github
+[discussion page]: https://www.dataschool.io/how-to-contribute-on-github
+[black]: https://black.readthedocs.io/en/stable
+[Sphinx]: https://www.sphinx-doc.org
+[Jupytext]: https://jupytext.readthedocs.io/en/latest/index.html
+[MyST]: https://myst-parser.readthedocs.io/en/latest/index.html
+[nbsphinx]: https://nbsphinx.readthedocs.io
