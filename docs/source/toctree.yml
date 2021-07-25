@@ -2,13 +2,13 @@ root: index
 subtrees:
   - entries:
       - file: install
-      - title: Installation
+        title: Installation
       - file: contributions
-      - title: For developers
+        title: For developers
       - file: faq
-      - title: Frequently asked questions
+        title: Frequently asked questions
       - file: colab
-      - title: Interactive tutorials on Colab
+        title: Interactive tutorials on Colab
   - caption: Basic pipelines
     entries:
       - file: vignettes/basic_tutorial_scRNAseq

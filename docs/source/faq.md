@@ -65,6 +65,10 @@ be used if your data was generated using 10x's kit.
 ## Can I use Scarf from R?
 Unfortunately, not yet! Please let the developers know if you would like to create an R API for Scarf.
 
+## Can I try Scarf without installing anything on my computer?
+Yes, you may try Scarf on Google Colab, an online notebook environment that allows running any
+Python code. {ref}`Check this out <colab>` for more details.
+
 ## What does Scarf's logo signify?
 Scarf's logo is highly inspired by the Human Cell Atlas's logo.
 Scarf's logo is composed of three circular fields, each composed of Voronoi cells representing
