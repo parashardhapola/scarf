@@ -28,14 +28,14 @@
    pagecolor="#ffffff"
    gridtolerance="10"
    inkscape:window-maximized="1"
-   inkscape:zoom="1.8101934"
+   inkscape:zoom="0.9050967"
    objecttolerance="10"
    borderopacity="1"
    inkscape:current-layer="g1547"
-   inkscape:cx="235.88261"
-   inkscape:cy="112.35701"
+   inkscape:cx="157.74397"
+   inkscape:cy="215.16811"
    inkscape:window-y="-11"
-   inkscape:window-x="129"
+   inkscape:window-x="3009"
    inkscape:window-width="1780"
    showgrid="false"
    inkscape:pageopacity="0"
@@ -111,6 +111,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8443"><text
@@ -124,6 +125,7 @@
      x="2771.3943"
      y="16036.199"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1003.27246094px;line-height:3.25;font-family:'Century Schoolbook';-inkscape-font-specification:'Century Schoolbook';letter-spacing:0px;word-spacing:0.7524544px;stroke-width:0.7524544">c</tspan></text>
+
 
 
 
@@ -167,6 +169,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8455"><text
@@ -195,6 +198,7 @@
 
 
 
+
 </clipPath><clipPath
    clipPathUnits="userSpaceOnUse"
    id="clipPath8461"><text
@@ -208,6 +212,7 @@
      x="2842.0269"
      id="tspan8463"
      sodipodi:role="line">f</tspan></text>
+
 
 
 
@@ -342,7 +347,7 @@
      inkscape:export-ydpi="200"><g
        id="g1547"><g
    id="g12367"
-   transform="matrix(1.1923549,0.18707611,-0.18707611,1.1923549,-12692.912,3560.7847)"><g
+   transform="matrix(1.0666646,0.16735576,-0.16735576,1.0666646,-11152.812,2186.8684)"><g
      id="g4865"><g
        style="fill-rule:evenodd"
        transform="translate(712.81446,236.24421)"
@@ -847,41 +852,44 @@
          id="path12363"
          inkscape:connector-curvature="0" /></g></g></g><text
    id="text5285"
-   y="-7637.272"
+   y="-7742.7993"
    x="-183.12852"
-   style="font-style:normal;font-weight:normal;font-size:1455.14001465px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:77.95392609;"
+   style="font-style:normal;font-weight:normal;font-size:1455.14001465px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:77.95392609"
    xml:space="preserve"><tspan
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:77.95392609;"
-     y="-7637.272"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:77.95392609"
+     y="-7742.7993"
      x="-183.12852"
      id="tspan5283"
      sodipodi:role="line">s</tspan></text>
 
 
+
 <text
    xml:space="preserve"
-   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:189.63331604px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:10.15892887;"
-   x="274.01398"
-   y="-7401.5811"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:243.1096344px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:13.02373123"
+   x="-93.44043"
+   y="-7448.2012"
    id="text1132"><tspan
      sodipodi:role="line"
      id="tspan1130"
-     x="274.01398"
-     y="-7401.5811"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:10.15892887;">Single-cell atlases refreshed</tspan></text>
+     x="-93.44043"
+     y="-7448.2012"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:13.02373123">Single-cell atlases refreshed</tspan></text>
+
 
 
 <text
    xml:space="preserve"
-   style="font-style:normal;font-weight:normal;font-size:1406.51049805px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:75.34877014;"
+   style="font-style:normal;font-weight:normal;font-size:1406.51049805px;line-height:1.25;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:75.34877014"
    x="504.84583"
-   y="-7631.8442"
+   y="-7737.3716"
    id="text1137"><tspan
      sodipodi:role="line"
      id="tspan1135"
      x="504.84583"
-     y="-7631.8442"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:75.34877014;">carf</tspan></text>
+     y="-7737.3716"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Bookman Old Style';-inkscape-font-specification:'Bookman Old Style';fill:#000000;fill-opacity:1;stroke-width:75.34877014">carf</tspan></text>
+
 
 
 </g></g></g>

@@ -80,45 +80,6 @@ make the code more robust (aka testing). We aim to extend the Scarf to more sing
 methodologies by including normalization and dimension reduction strategies best suited to
 those methods.
 
-## How to contribute
-
-### Contributions through pull requests:
-If you would like to add a new feature, fix a bug or make some improvements please
-follow this [guideline]. Usually when planning to add a new feature it is a good
-idea to introduce the proposed feature and discuss it. This can be done on the [discussion
-page]. The code is written using [black] style. Please make sure you blacken any edited files. 
-
-### Testing locally
-You can run the tests locally on your branch by running [pytest]. The configurations
-for pytest are already set in `pyproject.toml`. The extra requirements for running the
-tests can be installed from the `requirements.txt` file that is under the 'tests' folder.
-
-### Contributions to the documentation
-You may contribute to the documentation by either adding new sections or modifying existing
-sections. All the required packages for building the locally documentation can be installed
-from another `requirements.txt` file that is under 'docs' directory. The documentation is built
-using [Sphinx]. The markdown files are parsed using [MyST] parser. If you want to add a notebook
-to  the documentation then please convert your `ipynb` files to `markdown` format using [Jupytext].
-The markdown files are saved with extension `mdnb` so that they can be recognized by [nbshpinx]
-extension. 
-
-## Acknowledgements
-
-### Contributors
-Contributors to the Scarf repository. Thank you everyone!
-
-:::{eval-rst}
-.. include:: contributors.rst
-:::
-
-### Scarf open-source stack
-A diverse number of open-source packages in Python scientific stack are being used to build Scarf.
-Here we acknowledge some of them (atleast those with pretty logos..)
-
-:::{eval-rst}
-.. include:: logos.rst
-:::
-
 [pypi]: https://img.shields.io/pypi/v/scarf.svg
 [pypiLink]: https://pypi.org/project/scarf
 [docs]: https://readthedocs.org/projects/scarf/badge/?version=latest
@@ -130,10 +91,3 @@ Here we acknowledge some of them (atleast those with pretty logos..)
 [Dask]: http://dask.org
 [Chen et. al.]: https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1854-5
 [Luecken et. al.]: https://www.biorxiv.org/content/10.1101/2020.05.22.111161v2.full
-[guideline]: https://www.dataschool.io/how-to-contribute-on-github
-[discussion page]: https://www.dataschool.io/how-to-contribute-on-github
-[black]: https://black.readthedocs.io/en/stable
-[Sphinx]: https://www.sphinx-doc.org
-[Jupytext]: https://jupytext.readthedocs.io/en/latest/index.html
-[MyST]: https://myst-parser.readthedocs.io/en/latest/index.html
-[nbsphinx]: https://nbsphinx.readthedocs.io
