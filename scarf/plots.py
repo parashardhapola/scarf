@@ -898,6 +898,159 @@ def _draw_pie(ax, dist, colors, xpos, ypos, size):
         ax.scatter([xpos], [ypos], marker=xy, s=size, c=c)
 
 
+def hierarchy_pos(
+    g, root=None, width=1.0, vert_gap=0.2, vert_loc=0, leaf_vs_root_factor=0.5
+):
+    """
+    This function was lifted from here:
+    https://github.com/springer-math/Mathematics-of-Epidemics-on-Networks/blob/80c8accbe0c6b7710c0a189df17529696ac31bf9/EoN/auxiliary.py
+
+    If the graph is a tree this will return the positions to plot this in a
+    hierarchical layout.
+
+    Based on Joel's answer at https://stackoverflow.com/a/29597209/2966723,
+    but with some modifications.
+    We include this because it may be useful for plotting transmission trees,
+    and there is currently no networkx equivalent (though it may be coming soon).
+
+    There are two basic approaches we think of to allocate the horizontal
+    location of a node.
+
+    - Top down: we allocate horizontal space to a node.  Then its ``k``
+      descendants split up that horizontal space equally.  This tends to result
+      in overlapping nodes when some have many descendants.
+    - Bottom up: we allocate horizontal space to each leaf node.  A node at a
+      higher level gets the entire space allocated to its descendant leaves.
+      Based on this, leaf nodes at higher levels get the same space as leaf
+      nodes very deep in the tree.
+
+    We use use both of these approaches simultaneously with ``leaf_vs_root_factor``
+    determining how much of the horizontal space is based on the bottom up
+    or top down approaches.  ``0`` gives pure bottom up, while 1 gives pure top
+    down.
+
+    Args:
+        g: the graph (must be a tree)
+        root: the root node of the tree
+              - if the tree is directed and this is not given, the root will be found and used
+              - if the tree is directed and this is given, then the positions will be just for the descendants of
+               this node.
+              - if the tree is undirected and not given, then a random choice will be used.
+        width: horizontal space allocated for this branch - avoids overlap with other branches
+        vert_gap: gap between levels of hierarchy
+        vert_loc: vertical location of root
+        leaf_vs_root_factor: leaf_vs_root_factor
+        xcenter: horizontal location of root
+    """
+
+    import networkx as nx
+
+    if not nx.is_tree(g):
+        raise TypeError("cannot use hierarchy_pos on a graph that is not a tree")
+
+    if root is None:
+        if isinstance(g, nx.DiGraph):
+            root = next(
+                iter(nx.topological_sort(g))
+            )  # allows back compatibility with nx version 1.11
+        else:
+            root = np.random.choice(list(g.nodes))
+
+    def _hierarchy_pos(
+        g,
+        root,
+        leftmost,
+        width,
+        leafdx=0.2,
+        vert_gap=0.2,
+        vert_loc=0,
+        xcenter=0.5,
+        rootpos=None,
+        leafpos=None,
+        parent=None,
+    ):
+        """
+        see hierarchy_pos docstring for most arguments
+        pos: a dict saying where all nodes go if they have been assigned
+        parent: parent of this branch. - only affects it if non-directed
+        """
+
+        if rootpos is None:
+            rootpos = {root: (xcenter, vert_loc)}
+        else:
+            rootpos[root] = (xcenter, vert_loc)
+        if leafpos is None:
+            leafpos = {}
+        children = list(g.neighbors(root))
+        leaf_count = 0
+        if not isinstance(g, nx.DiGraph) and parent is not None:
+            children.remove(parent)
+        if len(children) != 0:
+            rootdx = width / len(children)
+            nextx = xcenter - width / 2 - rootdx / 2
+            for child in children:
+                nextx += rootdx
+                rootpos, leafpos, newleaves = _hierarchy_pos(
+                    g,
+                    child,
+                    leftmost + leaf_count * leafdx,
+                    width=rootdx,
+                    leafdx=leafdx,
+                    vert_gap=vert_gap,
+                    vert_loc=vert_loc - vert_gap,
+                    xcenter=nextx,
+                    rootpos=rootpos,
+                    leafpos=leafpos,
+                    parent=root,
+                )
+                leaf_count += newleaves
+
+            leftmostchild = min((x for x, y in [leafpos[child] for child in children]))
+            rightmostchild = max((x for x, y in [leafpos[child] for child in children]))
+            leafpos[root] = ((leftmostchild + rightmostchild) / 2, vert_loc)
+        else:
+            leaf_count = 1
+            leafpos[root] = (leftmost, vert_loc)
+        #        pos[root] = (leftmost + (leaf_count-1)*dx/2., vert_loc)
+        #        print(leaf_count)
+        return rootpos, leafpos, leaf_count
+
+    xcenter = width / 2.0
+    if isinstance(g, nx.DiGraph):
+        leafcount = len(
+            [node for node in nx.descendants(g, root) if g.out_degree(node) == 0]
+        )
+    elif isinstance(g, nx.Graph):
+        leafcount = len(
+            [
+                node
+                for node in nx.node_connected_component(g, root)
+                if g.degree(node) == 1 and node != root
+            ]
+        )
+    rootpos, leafpos, leaf_count = _hierarchy_pos(
+        g,
+        root,
+        0,
+        width,
+        leafdx=width * 1.0 / leafcount,
+        vert_gap=vert_gap,
+        vert_loc=vert_loc,
+        xcenter=xcenter,
+    )
+    pos = {}
+    for node in rootpos:
+        pos[node] = (
+            leaf_vs_root_factor * leafpos[node][0]
+            + (1 - leaf_vs_root_factor) * rootpos[node][0],
+            leafpos[node][1],
+        )
+    xmax = max(x for x, y in pos.values())
+    for node in pos:
+        pos[node] = (pos[node][0] * width / xmax, pos[node][1])
+    return pos
+
+
 def plot_cluster_hierarchy(
     sg,
     clusts,
@@ -934,7 +1087,6 @@ def plot_cluster_hierarchy(
         (which is the modified `ax` parameter if given).
     """
     import networkx as nx
-    import EoN
     import math
     from matplotlib.colors import to_hex
 
@@ -948,7 +1100,7 @@ def plot_cluster_hierarchy(
     cmap, color_key = _scatter_make_colors(
         color_values, cmap, color_key, "k", "longdummyvaluesofh3489hfpiqehdcbla"
     )
-    pos = EoN.hierarchy_pos(
+    pos = hierarchy_pos(
         sg, width=width * math.pi, leaf_vs_root_factor=lvr_factor, vert_gap=vert_gap
     )
     new_pos = {
