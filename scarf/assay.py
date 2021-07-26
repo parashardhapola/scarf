@@ -2,10 +2,13 @@
 - Classes:
     - Assay: A generic Assay class that contains methods to calculate feature level statistics.
     - RNAassay: This assay is designed for feature selection and normalization of scRNA-Seq data.
-    - ATACassay:
-    - ADTassay:
+    - ATACassay: This assay is designed for ATAC-Seq data. It uses TF-IDF normalization and
+                 performs feature selection by marking most prevalent peaks.
+    - ADTassay: This assay is designed for ADT data (surface antibodies) obtained from CITE-Seq
+                experiments. It performs CLR normalization of the data but does not have any
+                method for feature selection.
 """
-# TODO: add description to docstring
+
 
 import numpy as np
 import dask.array as daskarr
@@ -20,23 +23,78 @@ __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
 
 
 def norm_dummy(_, counts: daskarr) -> daskarr:
+    """
+    A dummy normalizer. Doesn't perform any normalization.
+    This is useful when the 'raw data' is already normalized
+
+    Args:
+        _:
+        counts: A dask array with 'raw' counts data
+
+    Returns: Dask array
+
+    """
     return counts
 
 
 def norm_lib_size(assay, counts: daskarr) -> daskarr:
+    """
+    Performs library size normalization on the data.
+    This is the default method for RNA assays
+
+    Args:
+        assay: An instance of the assay object
+        counts: A dask array with raw counts data
+
+    Returns:  A dask array (delayed matrix) containing normalized data.
+
+    """
     return assay.sf * counts / assay.scalar.reshape(-1, 1)
 
 
 def norm_lib_size_log(assay, counts: daskarr) -> daskarr:
+    """
+    Performs library size normalization and then transforms the
+    values into log scale.
+
+    Args:
+        assay: An instance of the assay object
+        counts: A dask array with raw counts data
+
+    Returns: A dask array (delayed matrix) containing normalized data.
+
+    """
     return np.log1p(assay.sf * counts / assay.scalar.reshape(-1, 1))
 
 
 def norm_clr(_, counts: daskarr) -> daskarr:
+    """
+    Performs centered log-ratio normalization (ADT).
+    This is the default method for ADT assays
+
+    Args:
+        _:
+        counts: A dask array with raw counts data
+
+    Returns: A dask array (delayed matrix) containing normalized data.
+
+    """
     f = np.exp(np.log1p(counts).sum(axis=0) / len(counts))
     return np.log1p(counts / f)
 
 
 def norm_tf_idf(assay, counts: daskarr) -> daskarr:
+    """
+    Performs TF-IDF normalization
+    This is the default method for ATAC assays
+
+    Args:
+        assay: An instance of the assay object
+        counts: A dask array with raw counts data
+
+    Returns: A dask array (delayed matrix) containing normalized data.
+
+    """
     tf = counts / assay.n_term_per_doc.reshape(-1, 1)
     # TODO: Split TF and IDF functionality to make it similar to norml_lib and zscaling
     idf = np.log2(1 + (assay.n_docs / (assay.n_docs_per_term + 1)))
@@ -46,18 +104,17 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 class Assay:
     """
     A generic Assay class that contains methods to calculate feature level statistics.
-
     It also provides a method for saving normalized subset of data for later KNN graph construction.
 
     Attributes:
-        name:
-        z:
-        cells:
-        nthreads:
-        rawData:
-        feats: a MetaData object with info about each feature in the dataset
-        attrs:
-        normMethod: Which normalization method to use.
+        name: A label for the assay instance
+        z: Zarr group that contains the assay
+        cells: A Metadata class object for cell attributes
+        nthreads: number of threads to use for computations
+        rawData: dask array containing the raw data
+        feats: a MetaData class object for feature attributes
+        attrs: Zarr attributes for the zarr group of the assay
+        normMethod: normalization method to use.
         sf: scaling factor for doing library-size normalization
     """
 
@@ -92,15 +149,19 @@ class Assay:
 
     def normed(
         self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs
-    ):
+    ) -> daskarr:
         """
 
         Args:
-            cell_idx:
-            feat_idx:
+            cell_idx: Indices of cells to be included in the normalized matrix
+                      (Default value: All those marked True in 'I' column of cell
+                      attribute table)
+            feat_idx: Indices of features to be included in the normalized matrix
+                      (Default value: All those marked True in 'I' column of
+                      feature attribute table)
             **kwargs:
 
-        Returns:
+        Returns: A dask array (delayed matrix) containing normalized data.
 
         """
         if cell_idx is None:
@@ -110,13 +171,15 @@ class Assay:
         counts = self.rawData[:, feat_idx][cell_idx, :]
         return self.normMethod(self, counts)
 
-    def to_raw_sparse(self, cell_key):
+    def to_raw_sparse(self, cell_key) -> csr_matrix:
         """
 
         Args:
-            cell_key:
+            cell_key: A column from cell attribute table. This column must be a boolean
+                      type. The data will be exported for only those that have a True value
+                      in this column.
 
-        Returns:
+        Returns: A sparse matrix containing raw data.
 
         """
         from .utils import tqdmbar
@@ -138,7 +201,8 @@ class Assay:
         """
 
         Args:
-            min_cells:
+            min_cells: Minimum number of cells per feature. Features below this
+                       number are marked invalid.
 
         Returns:
 
