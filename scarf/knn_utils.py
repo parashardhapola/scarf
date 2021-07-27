@@ -10,7 +10,7 @@ import pandas as pd
 __all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx"]
 
 
-def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> None:
+def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
     """
     Constructs KNN graph.
 
@@ -48,9 +48,7 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) ->
             tnm += nm
     recall = ann_obj.data.shape[0] - tnm
     recall = 100 * recall / ann_obj.data.shape[0]
-    recall = "%.2f" % recall
-    logger.info(f"ANN recall: {recall}%")
-    return None
+    return recall
 
 
 def _is_umap_version_new():
@@ -63,9 +61,7 @@ def _is_umap_version_new():
         return False
 
 
-def smoothen_dists(
-    store, z_idx, z_dist, lc: float, bw: float, chunk_size: int = 100000
-):
+def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
     """
     Smoothens KNN distances.
 
@@ -94,12 +90,13 @@ def smoothen_dists(
     )
     last_row = 0
     val_counts = 0
-    step = int(chunk_size / n_neighbors)
-    for i in tqdmbar(range(0, n_cells, step), desc="Smoothening KNN distances"):
-        if i + step > n_cells:
+    null_idx = []
+    global_min = 1
+    for i in tqdmbar(range(0, n_cells, chunk_size), desc="Smoothening KNN distances"):
+        if i + chunk_size > n_cells:
             ki, kv = z_idx[i:n_cells, :], z_dist[i:n_cells, :]
         else:
-            ki, kv = z_idx[i : i + step, :], z_dist[i : i + step, :]
+            ki, kv = z_idx[i : i + chunk_size, :], z_dist[i : i + chunk_size, :]
         kv = kv.astype(np.float32, order="C")
         sigmas, rhos = smooth_knn_dist(
             kv, k=n_neighbors, local_connectivity=lc, bandwidth=bw
@@ -116,11 +113,21 @@ def smoothen_dists(
         zge[start:end, 0] = rows
         zge[start:end, 1] = cols
         zgw[start:end] = vals
-    # Fixing edges with 0 weights
+
+        # Fixing edges with 0 weights
+        # We are doing these steps here to have minimum operations outside
+        # the scope of a progress bar
+        nidx = vals == 0
+        if nidx.sum() > 0:
+            min_val = vals[~nidx].min()
+            if min_val < global_min:
+                global_min = min_val
+        null_idx.extend(nidx)
+
+    # The whole zarr array needs to copied, modified and written back.
+    # Or is this assumption wrong?
     w = zgw[:]
-    idx = w == 0
-    minv = w[~idx].min()
-    w[idx] = minv
+    w[null_idx] = global_min
     zgw[:] = w
     return None
 

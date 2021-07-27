@@ -1377,20 +1377,26 @@ class GraphDataStore(BaseDataStore):
         else:
             from .knn_utils import self_query_knn, smoothen_dists
 
+            recall = None
             if knn_loc not in self.z:
-                self_query_knn(
+                recall = self_query_knn(
                     ann_obj,
                     self.z.create_group(knn_loc, overwrite=True),
                     batch_size,
                     self.nthreads,
                 )
+                recall = "%.2f" % recall
+
             smoothen_dists(
                 self.z.create_group(graph_loc, overwrite=True),
                 self.z[knn_loc]["indices"],
                 self.z[knn_loc]["distances"],
                 local_connectivity,
                 bandwidth,
+                batch_size,
             )
+            if recall is not None:
+                logger.info(f"ANN recall: {recall}%")
 
         self.z[normed_loc].attrs["latest_reduction"] = reduction_loc
         self.z[reduction_loc].attrs["latest_ann"] = ann_loc
