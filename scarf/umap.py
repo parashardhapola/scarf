@@ -32,6 +32,7 @@ def simplicial_set_embedding(
     from sklearn.utils import check_random_state
     import numpy as np
     import warnings
+    from .utils import tqdm_params
 
     g.data[g.data < (g.data.max() / float(n_epochs))] = 0.0
     g.eliminate_zeros()
@@ -46,6 +47,12 @@ def simplicial_set_embedding(
     # Since threadpool_limits doesnt work well with numba. We will use numba's set_num_threads to limit threads
     if numba.config.NUMBA_NUM_THREADS > nthreads:
         numba.set_num_threads(nthreads)
+
+    # tqdm will be activated if https://github.com/lmcinnes/umap/pull/739
+    # is merged and when it is released
+    tqdm_params = dict(tqdm_params)
+    tqdm_params["desc"] = "Training UMAP"
+
     with threadpool_limits(limits=nthreads):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -65,6 +72,7 @@ def simplicial_set_embedding(
                 negative_sample_rate,
                 parallel=parallel,
                 verbose=verbose,
+                # tqdm_kwds=tqdm_params,
             )
     return embedding
 
