@@ -216,8 +216,7 @@ def fetch_dataset(
         tar.extractall(save_dir)
         tar.close()
     else:
-        for n, i in enumerate(files, start=1):
-            if i.endswith(zarr_ext):
-                continue
+        valid_files = [x for x in files if not x.endswith(zarr_ext)]
+        for n, i in enumerate(valid_files, start=1):
             sp = os.path.abspath(os.path.join(save_dir, i))
-            handle_download(files[i], sp, f"{n}/{len(files)}")
+            handle_download(files[i], sp, f"{n}/{len(valid_files)}")
