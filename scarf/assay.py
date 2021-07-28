@@ -131,7 +131,7 @@ class Assay:
             z (zarr.hierarchy): Zarr hierarchy to use.
             name (str): Name for assay.
             cell_data: Metadata for the cells.
-            nthreads:
+            nthreads: number for threads to use for dask parallel computations
             min_cells_per_feature:
         """
         self.name = name
@@ -151,6 +151,8 @@ class Assay:
         self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs
     ) -> daskarr:
         """
+        This function normalizes the raw and returns a delayed dask array of the normalized
+        data.
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -227,8 +229,9 @@ class Assay:
         """
 
         Args:
-            feat_pattern:
-            name:
+            feat_pattern: A regular expression pattern to identify the features of interest
+            name: This will be used as the name of column under which the percentages will
+                  be saved
 
         Returns:
 
@@ -268,6 +271,17 @@ class Assay:
         )
 
     def _verify_keys(self, cell_key: str, feat_key: str) -> None:
+        """
+        Checks if provided key names are present in cells and feature attribute tables
+        and that they are of boolean types.
+
+        Args:
+            cell_key: Name of the key (column) from cell attribute table
+            feat_key: Name of the key (column) from feature attribute table
+
+        Returns: None
+
+        """
         if cell_key not in self.cells.columns or self.cells.get_dtype(cell_key) != bool:
             raise ValueError(
                 f"ERROR: Either {cell_key} does not exist or is not bool type"
@@ -280,6 +294,19 @@ class Assay:
     def _get_cell_feat_idx(
         self, cell_key: str, feat_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Verifies the provided key by calling _verify_keys and fetches the indices of
+        rows that have True value in respective column.
+
+        Args:
+            cell_key: Name of the key (column) from cell attribute table
+            feat_key: Name of the key (column) from feature attribute table
+
+        Returns: A tuple of two numpy arrays corresponding to cell and feature indices
+                 respectively.
+
+        """
+
         self._verify_keys(cell_key, feat_key)
         cell_idx = self.cells.active_index(cell_key)
         feat_idx = self.feats.active_index(feat_key)
@@ -287,10 +314,36 @@ class Assay:
 
     @staticmethod
     def _create_subset_hash(cell_idx: np.ndarray, feat_idx: np.ndarray) -> int:
+        """
+        Takes two index list and hashes them individually and then computes hash of
+        the resulting tuple of two hashes.
+        The objective of this function is to generate a unique state identifier for
+        the cell and feature indices.
+
+        Args:
+            cell_idx: Cell row indices
+            feat_idx: Feature row indices
+
+        Returns: Returns the final hash
+
+        """
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
     @staticmethod
     def _get_summary_stats_loc(cell_key: str) -> Tuple[str, str]:
+        """
+        A convenience method that returns the location of feature-wise summary statistics
+        Currently summaries are stored under pattern: summary_stats_{cell_key}
+
+        Args:
+            cell_key: Name of the key (column) from cell attribute table
+
+        Returns: A tuple of two strings. First is the text that will be prepended to column
+                 names when summary statistics are loaded onto the feature metadata table. The
+                 second is the location of the summary statistics group in the zarr hierarchy of
+                 the assay.
+
+        """
         return f"stats_{cell_key}", f"summary_stats_{cell_key}"
 
     def _validate_stats_loc(
@@ -300,6 +353,20 @@ class Assay:
         feat_idx: np.ndarray,
         delete_on_fail: bool = True,
     ) -> bool:
+        """
+        Check whether the feature-wise summary statistics was previously calculated on the same
+        set of features and cells as preset in the cell_idx and feat_idx parameters.
+
+        Args:
+            stats_loc: Location where the feature summary statistics are saved
+            cell_idx: The indices of the cell attribute table
+            feat_idx: The indices of the feature attribute table
+            delete_on_fail: Whether to delete the summary statistics group if the validity check
+                            fails (Default: True).
+
+        Returns: True is the validity test passes otherwise False
+
+        """
         subset_hash = self._create_subset_hash(cell_idx, feat_idx)
         if stats_loc in self.z:
             attrs = self.z[stats_loc].attrs
@@ -314,6 +381,16 @@ class Assay:
             return False
 
     def _load_stats_loc(self, cell_key: str) -> str:
+        """
+        Loads the feature-wise summary statistics calculated on the cells that are True in the
+        'cell_key' column.
+
+        Args:
+            cell_key: Name of the key (column) from cell attribute table
+
+        Returns: Location of the group group that contains feature-wise summary statistics
+
+        """
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, "I")
         identifier, stats_loc = self._get_summary_stats_loc(cell_key)
         if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is False:
@@ -337,17 +414,29 @@ class Assay:
         update_keys: bool,
     ) -> daskarr:
         """
+        Create a new zarr group and saves the normalized data in the group for the selected features
+        only.
 
         Args:
-            cell_key:
-            feat_key:
-            batch_size:
-            location:
-            log_transform:
-            renormalize_subset:
-            update_keys:
+            cell_key: Name of the key (column) from cell attribute table. The data will be saved
+                      for only those cells that have a True value in this column.
+            feat_key: Name of the key (column) from feature attribute table. The data will be saved
+                      for only those features that have a True value in this column
+            batch_size: Number of cells to store in a single chunk. Higher values lead to larger
+                        memory consumption
+            location: Zarr group wherein to save the normalized values
+            log_transform: Whether to log transform the values. Is only used if the 'normed' method
+                           takes this parameter, ex. RNAassay
+            renormalize_subset: Only used if the 'normed' method takes this parameter. Please refer
+                                to the documentation of the 'normed' method of the RNAassay for
+                                further description of this parameter.
+            update_keys: Whether to update the keys. If True then the 'latest_feat_key' and
+                         'latest_feat_key' attributes of the assay will be updated. It can be useful
+                         to set False in case where you only need to save the normalized data but
+                         don't intend to use it directly. For example, when mapping onto a different
+                         dataset and aligning features to that dataset.
 
-        Returns:
+        Returns: Dask array containing the normalized data
 
         """
 
@@ -405,15 +494,18 @@ class Assay:
         rand_seed: int,
     ) -> np.ndarray:
         """
+        Calculates the scores (mean values) of selection of features over a randomly sampled
+        selected feature set in given cells (as marked by cell_key)
 
         Args:
-            feature_names:
-            cell_key:
-            ctrl_size:
-            n_bins:
-            rand_seed:
+            feature_names: Names (as in 'names' column of the feature attribute table) of features to
+                           be used for scoring
+            cell_key: Name of the key (column) from cell attribute table.
+            ctrl_size: Number of reference features to be sampled from each bin.
+            n_bins: Number of bins for sampling.
+            rand_seed: The seed to use for the random number generation.
 
-        Returns:
+        Returns: Numpy array of the calculated scores
 
         """
 
