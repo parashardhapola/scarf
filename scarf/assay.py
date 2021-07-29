@@ -120,7 +120,7 @@ class Assay:
 
     def __init__(
         self,
-        z: zarr.hierarchy,
+        z: zarr.group,
         name: str,
         cell_data: MetaData,
         nthreads: int,
@@ -128,8 +128,8 @@ class Assay:
     ):
         """
         Args:
-            z (zarr.hierarchy): Zarr hierarchy to use.
-            name (str): Name for assay.
+            z (zarr.Group): Zarr hierarchy where raw data is located
+            name (str): A label/name for assay.
             cell_data: Metadata for the cells.
             nthreads: number for threads to use for dask parallel computations
             min_cells_per_feature:
@@ -552,9 +552,9 @@ class RNAassay(Assay):
         """
 
         Args:
-            z:
-            name:
-            cell_data:
+            z (zarr.Group): Zarr hierarchy where raw data is located
+            name (str): A label/name for assay.
+            cell_data: Metadata for the cells.
             **kwargs:
         """
         super().__init__(z, name, cell_data, **kwargs)
@@ -573,16 +573,27 @@ class RNAassay(Assay):
         renormalize_subset: bool = False,
         log_transform: bool = False,
         **kwargs,
-    ):
+    ) -> daskarr:
         """
+        This function normalizes the raw and returns a delayed dask array of the normalized
+        data. Unlike the `normed` method in the generic Assay class this method is optimized for RNA-Seq data and
+        takes additional parameters that will be used by `norm_lib_size` (default normalization
+        method for this class).
+
         Args:
-            cell_idx:
-            feat_idx:
-            renormalize_subset:
-            log_transform:
+            cell_idx: Indices of cells to be included in the normalized matrix
+                      (Default value: All those marked True in 'I' column of cell
+                      attribute table)
+            feat_idx: Indices of features to be included in the normalized matrix
+                      (Default value: All those marked True in 'I' column of
+                      feature attribute table)
+            renormalize_subset: If True, then the data is normalized using only those features that are True in
+                                `feat_key` column rather using total expression of all features in a cell
+                                 (Default value: False)
+            log_transform: If True, then the normalized data is log-transformed (Default value: False).
             **kwargs:
 
-        Returns:
+        Returns: A dask array (delayed matrix) containing normalized data.
 
         """
         if cell_idx is None:
@@ -607,12 +618,17 @@ class RNAassay(Assay):
 
     def set_feature_stats(self, cell_key: str, min_cells: int) -> None:
         """
+        Calculates summary statistics for the features of the assay using only cells that are marked True by the
+        'cell_key' parameter.
 
         Args:
-            cell_key:
-            min_cells:
+            cell_key: Name of the key (column) from cell attribute table.
+            min_cells: Minimum number of cells across which a given feature should be present. If a feature is present
+                       (has non zero un-normalized value) in fewer cells that it is ignored and summary statistics
+                       are not calculated for that feature. Also, such features will be disabled and `I` value of these
+                       features in the feature attribute table will be set to False
 
-        Returns:
+        Returns: None
 
         """
         feat_key = "I"  # Here we choose to calculate stats for all the features
@@ -693,14 +709,7 @@ class RNAassay(Assay):
         variable. The variance is corrected by first dividing genes into bins based on their mean expression values.
         Genes with minimum variance is selected from each bin and a Lowess curve is fitted to
         the mean-variance trend of these genes. mark_hvgs will by default run on the default assay.
-
-        A plot is produced, that for each gene shows the corrected variance on the y-axis and the non-zero mean
-        (means from cells where the gene had a non-zero value) on the x-axis. The genes are colored in two gradients
-        which indicate the number of cells where the gene was expressed. The colors are yellow to dark red for HVGs,
-        and blue to green for non-HVGs.
-
-        The mark_hvgs function has a parameter cell_key that dictates which cells to use to identify the HVGs.
-        The default value of this parameter is I, which means it will use all the cells that were not filtered out.
+        See `utils.fit_lowess` for further details.
 
         *Modifies the feats table*: adds a column named `<cell_key>__hvgs` to the feature table,
         which contains a True value for genes marked HVGs. The prefix comes from the `cell_key` parameter,
@@ -708,20 +717,32 @@ class RNAassay(Assay):
         (with a double underscore delimiter).
 
         Args:
-            cell_key: Specify which cells to use to identify the HVGs. Default value `I` (use all non-filtered out cells).
-            min_cells:
-            top_n:
-            min_var:
-            max_var:
-            min_mean:
-            max_mean:
-            n_bins: Number of bins
-            lowess_frac:
-            blacklist:
-            hvg_key_name:
-            show_plot:
-            **plot_kwargs:
+            cell_key: Specify which cells to use to identify the HVGs. (Default value 'I' use all non-filtered out
+                      cells).
+            min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. Large values for this parameter might make it difficult
+                       to identify rare populations of cells. Very small values might lead to higher signal to noise
+                       ratio in the selected features.
+            top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
+                   for `min_var` parameter.
+            min_var: Minimum variance threshold for HVG selection.
+            max_var: Maximum variance threshold for HVG selection.
+            min_mean: Minimum mean value of expression threshold for HVG selection.
+            max_mean: Maximum mean value of expression threshold for HVG selection.
+            n_bins: Number of bins into which the mean expression is binned.
+            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
+                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
+            blacklist: A regular expression string pattern. Gene names matching to this pattern will be excluded from
+                       the final highly variable genes list
+            hvg_key_name: The label for highly variable genes. This label will be used to mark the HVGs in the
+                          feature attribute table. The value for 'cell_key' parameter is prepended to this value.
+            show_plot: If True, a plot is produced, that for each gene shows the corrected variance on the y-axis and
+                       the non-zero mean (means from cells where the gene had a non-zero value) on the x-axis. The
+                       genes are colored in two gradients which indicate the number of cells where the gene was
+                       expressed. The colors are yellow to dark red for HVGs, and blue to green for non-HVGs.
+            **plot_kwargs: Keyword arguments for matplotlib.pyplot.scatter function
         """
+
         self.set_feature_stats(cell_key, min_cells)
         identifier = self._load_stats_loc(cell_key)
         col_renamer = lambda x: f"{identifier}_{x}"
