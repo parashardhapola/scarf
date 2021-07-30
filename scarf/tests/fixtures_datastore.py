@@ -59,7 +59,7 @@ def paris_clustering_balanced(make_graph, datastore):
 
 @pytest.fixture(scope="class")
 def umap(make_graph, datastore):
-    datastore.run_umap(fit_n_epochs=50, tx_n_epochs=20)
+    datastore.run_umap(n_epochs=50)
     yield np.array(
         [datastore.cells.fetch("RNA_UMAP1"), datastore.cells.fetch("RNA_UMAP2")]
     ).T
