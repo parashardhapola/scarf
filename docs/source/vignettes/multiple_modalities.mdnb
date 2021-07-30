@@ -98,7 +98,7 @@ Now we process the RNA assay to perform feature selection, create KNN graph, run
 ```python
 ds.mark_hvgs(min_cells=20, top_n=500, min_mean=-3, max_mean=2, max_var=6)
 ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
-ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
 ds.run_leiden_clustering(resolution=1)
 ```
 
@@ -153,7 +153,7 @@ ds.make_graph(from_assay='ADT', feat_key='I', k=11, dims=11, n_centroids=100)
 UMAP and clustering can be run on ADT assay by simply setting `from_assay` parameter value to 'ADT':
 
 ```python
-ds.run_umap(from_assay='ADT', fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.run_umap(from_assay='ADT', n_epochs=250, spread=5, min_dist=1, parallel=True)
 ds.run_leiden_clustering(from_assay='ADT', resolution=1)
 ```
 

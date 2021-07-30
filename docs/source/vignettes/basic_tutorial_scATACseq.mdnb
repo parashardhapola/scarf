@@ -75,7 +75,7 @@ Non-linear dimension reduction using UMAP and tSNE are performed in the same way
 <!-- #endregion -->
 
 ```python
-ds.run_umap(fit_n_epochs=250, min_dist=0.5, parallel=True)
+ds.run_umap(n_epochs=250, min_dist=0.5, parallel=True)
 ```
 
 ```python

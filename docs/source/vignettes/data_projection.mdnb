@@ -135,7 +135,7 @@ Scarf introduces Unified UMAPs, a strategy to embed target cells onto the refere
 
 ```python
 ds_ctrl.run_unified_umap(target_names=['stim'], ini_embed_with='RNA_UMAP', target_weight=1,
-                         use_k=5, fit_n_epochs=100, tx_n_epochs=10)
+                         use_k=5, n_epochs=100)
 ```
 
 Since the results of unified embedding contain 'foreign' cells, `plot_layout` function cannot be used to visualize all the cells. A specialized method, `plot_unified_layout` takes care of this issue. The following example shows co-embedded control (reference) and stimulated  (target) PBMCs.

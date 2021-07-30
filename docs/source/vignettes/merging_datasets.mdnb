@@ -141,7 +141,7 @@ ds.make_graph(feat_key='hvgs', k=21, dims=25, n_centroids=100)
 Calculating UMAP embedding of cells:
 
 ```python
-ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
 ```
 
 ```python
@@ -185,7 +185,7 @@ ds.make_graph(feat_key='hvgs', k=21, dims=25, n_centroids=100, pca_cell_key='is_
 We run UMAP as usual, but the UMAP embeddings are saved in a new cell attribute column so as to not overwrite the previous UMAP values. The new column will be called `RNA_pUMAP`; 'RNA' is automatically prepend because the assay name is `RNA`
 
 ```python
-ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True, label='pUMAP')
+ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True, label='pUMAP')
 ```
 
 Visualize the new UMAP

@@ -159,7 +159,7 @@ ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
 Next we run UMAP on the graph calculated above. Here we will not provide which cell key or feature key to be used, because we want the UMAP to run on all the cells that were not filtered out and with the feature key used to calculate the latest graph. We can provide the parameter values for the UMAP algorithm here.
 
 ```python
-ds.run_umap(fit_n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
 ```
 
 The UMAP results are saved in the cell metadata table as seen below in columns: **RNA_UMAP1** and **RNA_UMAP2**
