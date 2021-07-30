@@ -1617,9 +1617,7 @@ class GraphDataStore(BaseDataStore):
         umap_dims: int = 2,
         spread: float = 2.0,
         min_dist: float = 1,
-        fit_n_epochs: int = 200,
-        tx_n_epochs: int = 100,
-        set_op_mix_ratio: float = 1.0,
+        n_epochs: int = 300,
         repulsion_strength: float = 1.0,
         initial_alpha: float = 1.0,
         negative_sample_rate: float = 5,
@@ -1649,15 +1647,9 @@ class GraphDataStore(BaseDataStore):
                       manifold are drawn closer together, while larger values will result on a more even dispersal of
                       points. The value should be set relative to the ``spread`` value, which determines the scale at
                       which embedded points will be spread out. (Default value: 1)
-            fit_n_epochs: Same as n_epochs in UMAP package. The number of training epochs to be used in optimizing the
-                          low dimensional embedding. Larger values result in more accurate embeddings.
-                          (Default value: 200)
-            tx_n_epochs: NUmber of epochs during transform (Default value: 100)
-            set_op_mix_ratio: Same as set_op_mix_ratio in UMAP package. Interpolate between (fuzzy) union and
-                              intersection as the set operation used to combine local fuzzy simplicial sets to obtain
-                              a global fuzzy simplicial sets. Both fuzzy set operations use the product t-norm.
-                              The value of this parameter should be between 0.0 and 1.0; a value of 1.0 will use a
-                              pure fuzzy union, while 0.0 will use a pure fuzzy intersection.
+            n_epochs: Same as n_epochs in UMAP package. The number of epochs to be used in optimizing the
+                      low dimensional embedding. Larger values may result in more accurate embeddings.
+                      (Default value: 300)
             repulsion_strength: Same as repulsion_strength in UMAP package. Weighting applied to negative samples in
                                 low dimensional embedding optimization. Values higher than one will result in greater
                                 weight being given to negative samples. (Default value: 1.0)
@@ -1699,15 +1691,13 @@ class GraphDataStore(BaseDataStore):
         verbose = False
         if get_log_level() <= 20:
             verbose = True
-        t = fit_transform(
+        t, a, b = fit_transform(
             graph=graph.tocoo(),
             ini_embed=ini_embed,
             spread=spread,
             min_dist=min_dist,
-            tx_n_epochs=tx_n_epochs,
-            fit_n_epochs=fit_n_epochs,
+            n_epochs=n_epochs,
             random_seed=random_seed,
-            set_op_mix_ratio=set_op_mix_ratio,
             repulsion_strength=repulsion_strength,
             initial_alpha=initial_alpha,
             negative_sample_rate=negative_sample_rate,
@@ -2657,15 +2647,15 @@ class MappingDatastore(GraphDataStore):
         target_weight: float = 0.1,
         spread: float = 2.0,
         min_dist: float = 1,
-        fit_n_epochs: int = 200,
-        tx_n_epochs: int = 100,
-        set_op_mix_ratio: float = 1.0,
+        n_epochs: int = 200,
         repulsion_strength: float = 1.0,
         initial_alpha: float = 1.0,
         negative_sample_rate: float = 5,
         random_seed: int = 4444,
         ini_embed_with: str = "kmeans",
         label: str = "unified_UMAP",
+        parallel: bool = False,
+        nthreads: int = None,
     ) -> None:
         """
         Calculates the UMAP embedding for graph obtained using ``load_unified_graph``.
@@ -2689,15 +2679,9 @@ class MappingDatastore(GraphDataStore):
                       manifold are drawn closer together, while larger values will result on a more even dispersal of
                       points. The value should be set relative to the ``spread`` value, which determines the scale at
                       which embedded points will be spread out. (Default value: 1)
-            fit_n_epochs: Same as n_epochs in UMAP package. The number of training epochs to be used in optimizing the
-                          low dimensional embedding. Larger values result in more accurate embeddings.
-                          (Default value: 200)
-            tx_n_epochs: NUmber of epochs during transform (Default value: 100)
-            set_op_mix_ratio: Same as set_op_mix_ratio in UMAP package. Interpolate between (fuzzy) union and
-                              intersection as the set operation used to combine local fuzzy simplicial sets to obtain
-                              a global fuzzy simplicial sets. Both fuzzy set operations use the product t-norm.
-                              The value of this parameter should be between 0.0 and 1.0; a value of 1.0 will use a
-                              pure fuzzy union, while 0.0 will use a pure fuzzy intersection.
+            n_epochs: Same as n_epochs in UMAP package. The number of training epochs to be used in optimizing the
+                      low dimensional embedding. Larger values result in more accurate embeddings.
+                      (Default value: 200)
             repulsion_strength: Same as repulsion_strength in UMAP package. Weighting applied to negative samples in
                                 low dimensional embedding optimization. Values higher than one will result in greater
                                 weight being given to negative samples. (Default value: 1.0)
@@ -2710,11 +2694,16 @@ class MappingDatastore(GraphDataStore):
             random_seed: (Default value: 4444)
             ini_embed_with: either 'kmeans' or a column from cell metadata to be used as initial embedding coordinates
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
+            parallel: Whether to run UMAP in parallel mode. Setting value to True will use `nthreads` threads.
+                      The results are not reproducible in parallel mode. (Default value: False)
+            nthreads: If parallel=True then this number of threads will be used to run UMAP. By default the `nthreads`
+                      attribute of the class is used. (Default value: None)
 
         Returns:
             None
         """
         from .umap import fit_transform
+        from .utils import get_log_level
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2731,18 +2720,24 @@ class MappingDatastore(GraphDataStore):
         ini_embed = self._get_uni_ini_embed(
             from_assay, cell_key, feat_key, graph, ini_embed_with, n_cells[0]
         )
-        t = fit_transform(
+        if nthreads is None:
+            nthreads = self.nthreads
+        verbose = False
+        if get_log_level() <= 20:
+            verbose = True
+        t, a, b = fit_transform(
             graph=graph.tocoo(),
             ini_embed=ini_embed,
             spread=spread,
             min_dist=min_dist,
-            tx_n_epochs=tx_n_epochs,
-            fit_n_epochs=fit_n_epochs,
+            n_epochs=n_epochs,
             random_seed=random_seed,
-            set_op_mix_ratio=set_op_mix_ratio,
             repulsion_strength=repulsion_strength,
             initial_alpha=initial_alpha,
             negative_sample_rate=negative_sample_rate,
+            parallel=parallel,
+            nthreads=nthreads,
+            verbose=verbose,
         )
         self._save_embedding(from_assay, cell_key, label, t, n_cells, target_names)
         return None
