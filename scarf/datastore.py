@@ -1425,6 +1425,7 @@ class GraphDataStore(BaseDataStore):
         symmetric: bool,
         upper_only: bool,
         use_k: int = None,
+        graph_loc: str = None,
     ) -> csr_matrix:
         """
         Load the cell neighbourhood as a scipy sparse matrix
@@ -1438,6 +1439,8 @@ class GraphDataStore(BaseDataStore):
                        used when symmetric is True.
             use_k: Number of top k-nearest neighbours to keep in the graph. This value must be greater than 0 and less
                    the parameter k used. By default all neighbours are used. (Default value: None)
+            graph_loc: Zarr hierarchy where the graph is stored. If no value is provided then graph location is
+                       obtained from `_get_latest_graph_loc` method.
 
         Returns:
             A scipy sparse matrix representing cell neighbourhood graph.
@@ -1451,7 +1454,8 @@ class GraphDataStore(BaseDataStore):
 
         from scipy.sparse import triu
 
-        graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        if graph_loc is None:
+            graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc not in self.z:
             raise ValueError(
                 f"{graph_loc} not found in zarr location {self._fn}. "
@@ -1621,6 +1625,10 @@ class GraphDataStore(BaseDataStore):
         repulsion_strength: float = 1.0,
         initial_alpha: float = 1.0,
         negative_sample_rate: float = 5,
+        use_density_map: bool = False,
+        dens_lambda: float = 2.0,
+        dens_frac: float = 0.3,
+        dens_var_shift: float = 0.1,
         random_seed: int = 4444,
         label="UMAP",
         parallel: bool = False,
@@ -1659,6 +1667,10 @@ class GraphDataStore(BaseDataStore):
                                   select per positive sample in the optimization process. Increasing this value will
                                   result in greater repulsive force being applied, greater optimization cost, but
                                   slightly more accuracy. (Default value: 5)
+            use_density_map:
+            dens_lambda:
+            dens_frac:
+            dens_var_shift:
             random_seed: (Default value: 4444)
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
             parallel: Whether to run UMAP in parallel mode. Setting value to True will use `nthreads` threads.
@@ -1691,6 +1703,35 @@ class GraphDataStore(BaseDataStore):
         verbose = False
         if get_log_level() <= 20:
             verbose = True
+
+        if use_density_map:
+            graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+            knn_loc = graph_loc.rsplit("/", 1)[0]
+            logger.trace(f"Loading KNN dists and indices from {knn_loc}")
+            dists = self.z[knn_loc].distances[:]
+            indices = self.z[knn_loc].indices[:]
+            dmat = csr_matrix(
+                (
+                    dists.flatten(),
+                    (
+                        np.repeat(range(indices.shape[0]), indices.shape[1]),
+                        indices.flatten(),
+                    ),
+                ),
+                shape=(indices.shape[0], indices.shape[0]),
+            )
+            # dmat = dmat.maximum(dmat.transpose()).todok()
+            logger.trace(f"Created sparse KNN dists and indices")
+            densmap_kwds = {
+                "lambda": dens_lambda,
+                "frac": dens_frac,
+                "var_shift": dens_var_shift,
+                "n_neighbors": dists.shape[1],
+                "knn_dists": dmat,
+            }
+        else:
+            densmap_kwds = {}
+
         t, a, b = fit_transform(
             graph=graph.tocoo(),
             ini_embed=ini_embed,
@@ -1701,6 +1742,7 @@ class GraphDataStore(BaseDataStore):
             repulsion_strength=repulsion_strength,
             initial_alpha=initial_alpha,
             negative_sample_rate=negative_sample_rate,
+            densmap_kwds=densmap_kwds,
             parallel=parallel,
             nthreads=nthreads,
             verbose=verbose,
@@ -2735,6 +2777,7 @@ class MappingDatastore(GraphDataStore):
             repulsion_strength=repulsion_strength,
             initial_alpha=initial_alpha,
             negative_sample_rate=negative_sample_rate,
+            densmap_kwds={},
             parallel=parallel,
             nthreads=nthreads,
             verbose=verbose,

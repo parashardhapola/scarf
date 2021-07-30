@@ -11,6 +11,32 @@ locale.setlocale(locale.LC_NUMERIC, "C")
 __all__ = ["fit_transform"]
 
 
+def calc_dens_map_params(graph, dists):
+    import numpy as np
+
+    n_vertices = graph.shape[0]
+    mu_sum = np.zeros(n_vertices, dtype=np.float32)
+    ro = np.zeros(n_vertices, dtype=np.float32)
+    head = graph.row
+    tail = graph.col
+    for i in range(len(head)):
+        j = head[i]
+        k = tail[i]
+
+        D = dists[j, k] * dists[j, k]  # match sq-Euclidean used for embedding
+        mu = graph.data[i]
+
+        ro[j] += mu * D
+        ro[k] += mu * D
+        mu_sum[j] += mu
+        mu_sum[k] += mu
+
+    epsilon = 1e-8
+    ro = np.log(epsilon + (ro / mu_sum))
+    R = (ro - np.mean(ro)) / np.std(ro)
+    return mu_sum, R
+
+
 def simplicial_set_embedding(
     g,
     embedding,
@@ -21,6 +47,7 @@ def simplicial_set_embedding(
     gamma,
     initial_alpha,
     negative_sample_rate,
+    densmap_kwds,
     parallel,
     nthreads,
     verbose,
@@ -47,6 +74,17 @@ def simplicial_set_embedding(
     if numba.config.NUMBA_NUM_THREADS > nthreads:
         numba.set_num_threads(nthreads)
 
+    if densmap_kwds != {}:
+        with threadpool_limits(limits=nthreads):
+            mu_sum, R = calc_dens_map_params(g, densmap_kwds["knn_dists"])
+        densmap_kwds["mu_sum"] = mu_sum
+        densmap_kwds["R"] = R
+        densmap_kwds["mu"] = g.data
+        densmap = True
+        logger.trace("calculated densmap params")
+    else:
+        densmap = False
+
     # tqdm will be activated if https://github.com/lmcinnes/umap/pull/739
     # is merged and when it is released
     tqdm_params = dict(tqdm_params)
@@ -71,6 +109,8 @@ def simplicial_set_embedding(
                 negative_sample_rate,
                 parallel=parallel,
                 verbose=verbose,
+                densmap=densmap,
+                densmap_kwds=densmap_kwds,
                 # tqdm_kwds=tqdm_params,
             )
     return embedding
@@ -95,6 +135,7 @@ def fit_transform(
     repulsion_strength,
     initial_alpha,
     negative_sample_rate,
+    densmap_kwds,
     parallel,
     nthreads,
     verbose,
@@ -104,6 +145,7 @@ def fit_transform(
     a, b = find_ab_params(spread, min_dist)
     logger.trace("Found ab params")
     # sym_graph = fuzzy_simplicial_set(graph, set_op_mix_ratio)
+
     embedding = simplicial_set_embedding(
         graph,
         ini_embed,
@@ -114,6 +156,7 @@ def fit_transform(
         repulsion_strength,
         initial_alpha,
         negative_sample_rate,
+        densmap_kwds,
         parallel,
         nthreads,
         verbose,
