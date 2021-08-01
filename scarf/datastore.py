@@ -1700,7 +1700,6 @@ class GraphDataStore(BaseDataStore):
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
         )
-        # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
         graph_loc = None
         if integrated_graph is not None:
             graph_loc = f"{self._integratedGraphsLoc}/{integrated_graph}"
@@ -1772,9 +1771,9 @@ class GraphDataStore(BaseDataStore):
             nthreads=nthreads,
             verbose=verbose,
         )
+
         if integrated_graph is not None:
             from_assay = integrated_graph
-
         for i in range(umap_dims):
             self.cells.insert(
                 self._col_renamer(from_assay, cell_key, f"{label}{i + 1}"),
@@ -1791,6 +1790,7 @@ class GraphDataStore(BaseDataStore):
         cell_key: str = None,
         feat_key: str = None,
         resolution: int = 1,
+        integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
         graph_upper_only: bool = False,
         label: str = "leiden_cluster",
@@ -1806,6 +1806,7 @@ class GraphDataStore(BaseDataStore):
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             resolution: Resolution parameter for `RBConfigurationVertexPartition` configuration
+            integrated_graph:
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             label: base label for cluster identity in the cell metadata column (Default value: 'leiden_cluster')
@@ -1829,24 +1830,35 @@ class GraphDataStore(BaseDataStore):
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
         )
-        adj = self.load_graph(
+        graph_loc = None
+        if integrated_graph is not None:
+            graph_loc = f"{self._integratedGraphsLoc}/{integrated_graph}"
+            if graph_loc not in self.z:
+                raise KeyError(
+                    f"ERROR: An integrated graph with label: {integrated_graph} does not exist"
+                )
+        graph = self.load_graph(
             from_assay=from_assay,
             cell_key=cell_key,
             feat_key=feat_key,
             symmetric=symmetric_graph,
             upper_only=graph_upper_only,
+            graph_loc=graph_loc,
         )
-        sources, targets = adj.nonzero()
+        sources, targets = graph.nonzero()
         g = igraph.Graph()
-        g.add_vertices(adj.shape[0])
+        g.add_vertices(graph.shape[0])
         g.add_edges(list(zip(sources, targets)))
-        g.es["weight"] = adj[sources, targets].A1
+        g.es["weight"] = graph[sources, targets].A1
         part = leidenalg.find_partition(
             g,
             leidenalg.RBConfigurationVertexPartition,
             resolution_parameter=resolution,
             seed=random_seed,
         )
+
+        if integrated_graph is not None:
+            from_assay = integrated_graph
         self.cells.insert(
             self._col_renamer(from_assay, cell_key, label),
             np.array(part.membership) + 1,
@@ -1863,6 +1875,7 @@ class GraphDataStore(BaseDataStore):
         cell_key: str = None,
         feat_key: str = None,
         n_clusters: int = None,
+        integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
         graph_upper_only: bool = False,
         balanced_cut: bool = False,
@@ -1885,6 +1898,7 @@ class GraphDataStore(BaseDataStore):
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
                        used feature for the given assay will be used.
             n_clusters: Number of desired clusters (required if balanced_cut is False)
+            integrated_graph:
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: True)
             balanced_cut: If True, then uses the balanced cut algorithm as implemented in ``BalancedCut`` to obtain
@@ -1903,9 +1917,6 @@ class GraphDataStore(BaseDataStore):
         """
         import sknetwork as skn
 
-        from_assay, cell_key, feat_key = self._get_latest_keys(
-            from_assay, cell_key, feat_key
-        )
         if balanced_cut is False:
             if n_clusters is None:
                 raise ValueError(
@@ -1921,7 +1932,19 @@ class GraphDataStore(BaseDataStore):
                 raise ValueError(
                     "ERROR: Please provide value for max_size and min_size"
                 )
+
+        from_assay, cell_key, feat_key = self._get_latest_keys(
+            from_assay, cell_key, feat_key
+        )
+
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
+        if integrated_graph is not None:
+            graph_loc = f"{self._integratedGraphsLoc}/{integrated_graph}"
+            if graph_loc not in self.z:
+                raise KeyError(
+                    f"ERROR: An integrated graph with label: {integrated_graph} does not exist"
+                )
+
         dendrogram_loc = f"{graph_loc}/dendrogram"
         # tuple are changed to list when saved as zarr attrs
         if dendrogram_loc in self.z and force_recalc is False:
@@ -1935,6 +1958,7 @@ class GraphDataStore(BaseDataStore):
                 feat_key=feat_key,
                 symmetric=symmetric_graph,
                 upper_only=graph_upper_only,
+                graph_loc=graph_loc,
             )
             dendrogram = paris.fit_transform(graph)
             dendrogram[dendrogram == np.Inf] = 0
@@ -1947,6 +1971,7 @@ class GraphDataStore(BaseDataStore):
             )
             g[:] = dendrogram
         self.z[graph_loc].attrs["latest_dendrogram"] = dendrogram_loc
+
         if balanced_cut:
             from .dendrogram import BalancedCut
 
@@ -1956,6 +1981,9 @@ class GraphDataStore(BaseDataStore):
             logger.info(f"{len(set(labels))} clusters found")
         else:
             labels = skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusters) + 1
+
+        if integrated_graph is not None:
+            from_assay = integrated_graph
         self.cells.insert(
             self._col_renamer(from_assay, cell_key, label),
             labels,
