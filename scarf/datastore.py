@@ -7,7 +7,7 @@ Contains the primary interface to interact with data (i. e. DataStore) and its s
 
 import os
 import numpy as np
-from typing import List, Iterable, Tuple, Generator, Union
+from typing import List, Iterable, Tuple, Generator, Union, Optional
 import pandas as pd
 import zarr
 import dask.array as daskarr
@@ -111,6 +111,7 @@ class BaseDataStore:
         self._ini_cell_props(min_features_per_cell, mito_pattern, ribo_pattern)
         self._cachedMagicOperator = None
         self._cachedMagicOperatorLoc = None
+        self._integratedGraphsLoc = "integratedGraphs"
         # TODO: Implement _caches to hold are cached data
         # TODO: Implement _defaults to hold default parameters for methods
 
@@ -968,6 +969,9 @@ class GraphDataStore(BaseDataStore):
         Returns:
 
         """
+        if graph_loc.startswith(self._integratedGraphsLoc):
+            attrs = self.z[graph_loc].attrs
+            return attrs["n_cells"], attrs["n_neighbors"]
         knn_loc = self.z[graph_loc.rsplit("/", 1)[0]]
         return knn_loc["indices"].shape
 
@@ -984,6 +988,7 @@ class GraphDataStore(BaseDataStore):
         Returns:
 
         """
+        logger.debug(f"Loading graph from location: {graph_loc}")
         store = self.z[graph_loc]
         n_cells, k = self._get_graph_ncells_k(graph_loc)
         # TODO: can we have a progress bar for graph loading. Append to coo matrix?
@@ -1419,21 +1424,23 @@ class GraphDataStore(BaseDataStore):
     def load_graph(
         self,
         *,
-        from_assay: str,
-        cell_key: str,
-        feat_key: str,
-        symmetric: bool,
-        upper_only: bool,
-        use_k: int = None,
-        graph_loc: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        symmetric: Optional[bool] = None,
+        upper_only: Optional[bool] = None,
+        use_k: Optional[int] = None,
+        graph_loc: Optional[str] = None,
     ) -> csr_matrix:
         """
         Load the cell neighbourhood as a scipy sparse matrix
 
         Args:
-            from_assay: Name of the assay.
-            cell_key: Cell key used to create the graph.
-            feat_key: Feature key used to create the graph.
+            from_assay: Name of the assay. If None then the default assay is used.
+            cell_key: Cell key used to create the graph. If None then the latest feature key used for creating a
+                      KNN graph is used.
+            feat_key: Feature key used to create the graph. If None then the latest feature key used for creating a
+                      KNN graph is used.
             symmetric: If True, makes the graph symmetric by adding it to its transpose.
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
                        used when symmetric is True.
@@ -1454,6 +1461,10 @@ class GraphDataStore(BaseDataStore):
 
         from scipy.sparse import triu
 
+        from_assay, cell_key, feat_key = self._get_latest_keys(
+            from_assay, cell_key, feat_key
+        )
+
         if graph_loc is None:
             graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
         if graph_loc not in self.z:
@@ -1462,9 +1473,9 @@ class GraphDataStore(BaseDataStore):
                 f"Run `make_graph` for assay {from_assay}"
             )
         n_cells, graph = self._store_to_sparse(graph_loc, "csr", use_k)
-        if symmetric:
+        if symmetric is True:
             graph = symmetrize(graph)
-            if upper_only:
+            if upper_only is True:
                 graph = triu(graph)
         return graph
         # idx = None
@@ -1612,11 +1623,11 @@ class GraphDataStore(BaseDataStore):
     def run_umap(
         self,
         *,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        symmetric_graph: bool = False,
-        graph_upper_only: bool = False,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        symmetric_graph: Optional[bool] = False,
+        graph_upper_only: Optional[bool] = False,
         ini_embed: np.ndarray = None,
         umap_dims: int = 2,
         spread: float = 2.0,
@@ -1630,9 +1641,10 @@ class GraphDataStore(BaseDataStore):
         dens_frac: float = 0.3,
         dens_var_shift: float = 0.1,
         random_seed: int = 4444,
-        label="UMAP",
+        label: str = "UMAP",
+        integrated_graph: Optional[str] = None,
         parallel: bool = False,
-        nthreads: int = None,
+        nthreads: Optional[int] = None,
     ) -> None:
         """
         Runs UMAP algorithm using the precomputed cell-neighbourhood graph. The calculated UMAP coordinates are saved
@@ -1673,6 +1685,7 @@ class GraphDataStore(BaseDataStore):
             dens_var_shift:
             random_seed: (Default value: 4444)
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
+            integrated_graph:
             parallel: Whether to run UMAP in parallel mode. Setting value to True will use `nthreads` threads.
                       The results are not reproducible in parallel mode. (Default value: False)
             nthreads: If parallel=True then this number of threads will be used to run UMAP. By default the `nthreads`
@@ -1688,12 +1701,20 @@ class GraphDataStore(BaseDataStore):
             from_assay, cell_key, feat_key
         )
         # Loading graph and converting to coo because simplicial_set_embedding expects a coo matrix and
+        graph_loc = None
+        if integrated_graph is not None:
+            graph_loc = f"{self._integratedGraphsLoc}/{integrated_graph}"
+            if graph_loc not in self.z:
+                raise KeyError(
+                    f"ERROR: An integrated graph with label: {integrated_graph} does not exist"
+                )
         graph = self.load_graph(
             from_assay=from_assay,
             cell_key=cell_key,
             feat_key=feat_key,
             symmetric=symmetric_graph,
             upper_only=graph_upper_only,
+            graph_loc=graph_loc,
         )
 
         if ini_embed is None:
@@ -1705,6 +1726,10 @@ class GraphDataStore(BaseDataStore):
             verbose = True
 
         if use_density_map:
+            if integrated_graph is not None:
+                logger.warning(
+                    "DensMap is not available for integrated graphs. Will run without UMAP without DensMap"
+                )
             graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
             knn_loc = graph_loc.rsplit("/", 1)[0]
             logger.trace(f"Loading KNN dists and indices from {knn_loc}")
@@ -1747,6 +1772,9 @@ class GraphDataStore(BaseDataStore):
             nthreads=nthreads,
             verbose=verbose,
         )
+        if integrated_graph is not None:
+            from_assay = integrated_graph
+
         for i in range(umap_dims):
             self.cells.insert(
                 self._col_renamer(from_assay, cell_key, f"{label}{i + 1}"),
@@ -2233,6 +2261,64 @@ class GraphDataStore(BaseDataStore):
             overwrite=True,
         )
         return None
+
+    def integrate_assays(
+        self,
+        assays: List[str],
+        label: str,
+        chunk_size: int = 10000,
+    ) -> None:
+        """
+        Merges KNN graphs of two or more assays from within the same DataStore.
+        The input KNN graphs should have been constructed on the same set of cells and
+        should each have been constructed with equal number of neighbours (parameter: k)
+        The merged KNN graph has the same size and shape as the input graphs.
+
+        Args:
+            assays: Name of the input assays. The latest constructed graph from each assay is used.
+
+        Returns: None
+
+        """
+        from .knn_utils import merge_graphs
+
+        merged_graph = []
+        for assay in assays:
+            if assay not in self.assayNames:
+                raise ValueError(f"ERROR: Assay {assay} was not found.")
+            merged_graph.append(
+                self.load_graph(
+                    from_assay=assay,
+                    cell_key=None,
+                    feat_key=None,
+                    symmetric=False,
+                    upper_only=False,
+                ).tocsr()
+            )
+        merged_graph = merge_graphs(merged_graph)
+
+        n_cells = merged_graph.shape[0]
+        n_neighbors = int(merged_graph.size / n_cells)
+
+        ig_loc = self._integratedGraphsLoc
+        if ig_loc not in self.z:
+            self.z.create_group(ig_loc)
+        if label in self.z[ig_loc]:
+            del self.z[f"{ig_loc}/{label}"]
+        store = self.z.create_group(f"{ig_loc}/{label}")
+        store.attrs["n_cells"] = n_cells
+        store.attrs["n_neighbors"] = n_neighbors
+
+        zge = create_zarr_dataset(
+            store, f"edges", (chunk_size,), ("u8", "u8"), (n_cells * n_neighbors, 2)
+        )
+        zgw = create_zarr_dataset(
+            store, f"weights", (chunk_size,), "f8", (n_cells * n_neighbors)
+        )
+
+        zge[:, 0] = merged_graph.row
+        zge[:, 1] = merged_graph.col
+        zgw[:] = merged_graph.data
 
 
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.

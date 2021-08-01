@@ -4,10 +4,13 @@ Utility functions for running the KNN algorithm.
 import numpy as np
 from .writers import create_zarr_dataset
 from .ann import AnnStream
-from .utils import logger, tqdmbar
+from .utils import tqdmbar
 import pandas as pd
+from scipy.sparse import csr_matrix, coo_matrix
+from typing import List
 
-__all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx"]
+
+__all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx", "merge_graphs"]
 
 
 def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
@@ -165,3 +168,84 @@ def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
                 "ERROR: Internal loop count error in export_knn_to_mtx. Please report this bug"
             )
     return None
+
+
+def calc_snn(g: csr_matrix) -> np.ndarray:
+    """
+    Calculates shared nearest neighbour between each node and its neighbour.
+
+    Args:
+        g: A KNN graph in CSR matrix form
+
+    Returns: A numpy matrix of shape (n_cells, n neighbours)
+
+    """
+    ncells, nk = g.shape[0], g[0].indices.shape[0]
+    snn = []
+    indices = [set(g[x].indices) for x in range(g.shape[0])]
+    for i in range(g.shape[0]):
+        snn.extend([len(indices[i].intersection(indices[x])) for x in indices[i]])
+    snn = np.array(snn) / (nk - 1)
+    return np.array(snn).reshape(ncells, nk)
+
+
+def weight_sort_indices(
+    i: np.ndarray, w: np.ndarray, wn: np.ndarray, n: int
+) -> (np.ndarray, np.ndarray):
+    """
+    Sort the array i and w based on values of wn. Only keep the top n values.
+
+    Args:
+        i: A 1D array of indices
+        w: A 1D array of weights
+        wn: A 1D array of weights. These weights are used for sorting
+        n: Number of neighbours to retain.
+
+    Returns: A tuple of two 1D arrays representing sorted and filtered
+             indices and their corresponding weights
+
+    """
+
+    idx = np.argsort(wn)[::-1]
+    i = i[idx]
+    w = w[idx]
+    # Removing duplicate neighbours
+    _, idx = np.unique(i, return_index=True)
+    idx = sorted(idx)
+    return i[idx][:n], w[idx][:n]
+
+
+def merge_graphs(csr_mats: List[csr_matrix]) -> coo_matrix:
+    """
+    Merge multiple graphs of same size and shape such that the merged graph have the same size and shape.
+    Edge values are sorted based on their weight and the shared neighbours.
+
+    Args:
+        csr_mats: A list of two or more CSR matrices representing the graphs to be merged.
+
+    Returns: A merged graph in CSR matrix form.
+             The merged graph has same number of edges as each graph
+
+    """
+    try:
+        assert len(set([x.shape for x in csr_mats])) == 1
+    except AssertionError:
+        raise ValueError("ERROR: All graphs do not have the same shape.")
+    try:
+        assert len(set([x.size for x in csr_mats])) == 1
+    except AssertionError:
+        raise ValueError("ERROR: All graphs do not have the same number of edges")
+
+    nk = csr_mats[0][0].indices.shape[0]
+    snns = [calc_snn(mat) for mat in tqdmbar(csr_mats)]
+    row, data = [], []
+    for i in tqdmbar(range(csr_mats[0].shape[0])):
+        mi = np.hstack([mat[i].indices for mat in csr_mats])
+        mwn = np.hstack([mat[i].data + snns[n][i] for n, mat in enumerate(csr_mats)])
+        mw = np.hstack([mat[i].data for mat in csr_mats])
+        mi, mw = weight_sort_indices(mi, mw, mwn, nk)
+        row.extend(mi)
+        data.extend(mw)
+    s = csr_mats[0].shape
+    col = np.repeat(range(s[0]), nk)
+    return coo_matrix((data, (row, col)), shape=s)
