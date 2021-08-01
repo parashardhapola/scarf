@@ -390,15 +390,24 @@ class MtxDirReader(CrReader):
         matFn: The file name for the matrix file.
     """
 
-    def __init__(self, loc, file_type: str = None, mtx_separator: str = " "):
+    def __init__(
+        self,
+        loc,
+        file_type: str = None,
+        mtx_separator: str = " ",
+        index_offset: int = -1,
+    ):
         """
         Args:
             loc (str): Path for the directory containing the cellranger output.
             file_type (str): Type of sequencing data ('rna' | 'atac')
+            mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
+            index_offset (int): This value is added to each feature index (Default value: -1)
         """
         self.loc: str = loc.rstrip("/") + "/"
         self.matFn = None
         self.sep = mtx_separator
+        self.indexOffset = index_offset
         super().__init__(self._handle_version(), file_type)
 
     def _handle_version(self):
@@ -466,7 +475,7 @@ class MtxDirReader(CrReader):
         """
         idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
         return sparse.COO(
-            [(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] - 1).astype(int)],
+            [(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] + self.indexOffset).astype(int)],
             a[:, 2],
             shape=(len(idx) + 1, self.nFeatures),
         )
