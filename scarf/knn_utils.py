@@ -8,6 +8,7 @@ from .utils import tqdmbar
 import pandas as pd
 from scipy.sparse import csr_matrix, coo_matrix
 from typing import List
+from numba import jit
 
 
 __all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx", "merge_graphs"]
@@ -170,23 +171,24 @@ def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
     return None
 
 
-def calc_snn(g: csr_matrix) -> np.ndarray:
+@jit(nopython=True)
+def calc_snn(indices: np.ndarray) -> np.ndarray:
     """
     Calculates shared nearest neighbour between each node and its neighbour.
 
     Args:
-        g: A KNN graph in CSR matrix form
+        indices: KNN graph indices
 
     Returns: A numpy matrix of shape (n_cells, n neighbours)
 
     """
-    ncells, nk = g.shape[0], g[0].indices.shape[0]
-    snn = []
-    indices = [set(g[x].indices) for x in range(g.shape[0])]
-    for i in range(g.shape[0]):
-        snn.extend([len(indices[i].intersection(indices[x])) for x in indices[i]])
-    snn = np.array(snn) / (nk - 1)
-    return np.array(snn).reshape(ncells, nk)
+    ncells, nk = indices.shape
+    snn = np.zeros((ncells, nk))
+    for i in range(ncells):
+        for j in range(nk):
+            k = indices[i][j]
+            snn[i][j] = len(set(indices[i]).intersection(set(indices[k])))
+    return snn / (nk - 1)
 
 
 def weight_sort_indices(
@@ -237,9 +239,13 @@ def merge_graphs(csr_mats: List[csr_matrix]) -> coo_matrix:
         raise ValueError("ERROR: All graphs do not have the same number of edges")
 
     nk = csr_mats[0][0].indices.shape[0]
-    snns = [calc_snn(mat) for mat in tqdmbar(csr_mats)]
+    snns = []
+    for mat in tqdmbar(csr_mats, desc="Identifying SNNs in graphs"):
+        snns.append(
+            calc_snn(mat.indices.reshape((mat.shape[0], mat[0].indices.shape[0])))
+        )
     row, data = [], []
-    for i in tqdmbar(range(csr_mats[0].shape[0])):
+    for i in tqdmbar(range(csr_mats[0].shape[0]), desc="Merging graph edges"):
         mi = np.hstack([mat[i].indices for mat in csr_mats])
         mwn = np.hstack([mat[i].data + snns[n][i] for n, mat in enumerate(csr_mats)])
         mw = np.hstack([mat[i].data for mat in csr_mats])
