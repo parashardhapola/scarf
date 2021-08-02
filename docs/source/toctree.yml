@@ -31,6 +31,8 @@ subtrees:
         title: Data organization in Scarf
       - file: vignettes/download_conversion
         title: Data import and export
+      - file: vignettes/mnist
+        title: Exploring MNIST dataset
   - caption: Useful links
     entries:
         - url: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
