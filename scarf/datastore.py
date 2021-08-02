@@ -3854,6 +3854,55 @@ class DataStore(MappingDatastore):
         else:
             print(self.z[start].tree(expand=True, level=depth))
 
+    def smart_label(
+        self,
+        to_relabel: str,
+        base_label: str,
+        cell_key: str = "I",
+        new_col_name: Optional[str] = None,
+    ) -> Union[None, List[str]]:
+        """
+        A convenience function to relabel the values in a cell attribure column (A) based on the values
+        in another cell attribute column (B). For each unique value in A, the most frequently occuring
+        value in B is found. If two or more values in A have maximum overlap with the same value in B, then
+        they all get the same label as B along with different suffixes like, 'a', 'b', etc. The suffixes are
+        ordered based on where the largest fraction of the B label lies. If one label from A takes up multiple
+        labels from B then all the labels from B are included and they are separated by hyphens.
+
+        Args:
+            to_relabel: Cell attributes column to relabel
+            base_label: Cell attributes column to relabel
+            cell_key: Cell key fetching column values
+            new_col_name: Name of new column where relabeled values will be saved. If None then values
+                          are returned and not saved in cell attributes table
+
+        Returns: None or a list of relabelled values
+
+        """
+        df = pd.crosstab(
+            self.cells.fetch(base_label, key=cell_key),
+            self.cells.fetch(to_relabel, key=cell_key),
+        )
+        normed_frac = df.divide(df.sum(axis=1), axis="index")
+        idxmax = df.idxmax()
+        missing_vals = list(set(df.index).difference(idxmax.unique()))
+        new_names = {}
+        for i in sorted(idxmax.unique()):
+            j = normed_frac[idxmax[idxmax == i].index].iloc[i]
+            j = j.sort_values(ascending=False).index
+            for n, k in enumerate(j, start=1):
+                a = chr(ord("@") + n)
+                new_names[k] = f"{i}{a.lower()}"
+        miss_idxmax = df.iloc[missing_vals].idxmax(axis=1).to_dict()
+        for k, v in miss_idxmax.items():
+            new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
+
+        ret_val = [new_names[x] for x in self.cells.fetch(to_relabel, key=cell_key)]
+        if new_col_name is None:
+            return ret_val
+        else:
+            self.cells.insert(new_col_name, ret_val, overwrite=True)
+
     def plot_cells_dists(
         self,
         from_assay: str = None,
