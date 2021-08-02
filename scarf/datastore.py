@@ -4411,10 +4411,14 @@ class DataStore(MappingDatastore):
         if coalesced_loc in self.z:
             subgraph = DiGraph()
             subgraph.add_edges_from(self.z[coalesced_loc + "/edgelist"][:])
-            for i in self.z[coalesced_loc + "/nodelist"][:]:
-                subgraph.nodes[i[0]]["nleaves"] = i[1]
-                if i[2] != -1:
-                    subgraph.nodes[i[0]]["partition_id"] = i[2]
+            for i, j in zip(
+                self.z[coalesced_loc + "/nodelist"][:],
+                self.z[coalesced_loc + "/partition_id"][:],
+            ):
+                node = int(i[0])
+                subgraph.nodes[node]["nleaves"] = int(i[1])
+                if j != "-1":
+                    subgraph.nodes[node]["partition_id"] = j
         else:
             subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
             edge_list = to_pandas_edgelist(subgraph).values
@@ -4423,15 +4427,32 @@ class DataStore(MappingDatastore):
             )
             store[:] = edge_list
             node_list = []
+            partition_id_list = []
             for i in subgraph.nodes():
                 d = subgraph.nodes[i]
                 p = d["partition_id"] if "partition_id" in d else -1
-                node_list.append((i, d["nleaves"], p))
+                node_list.append((i, d["nleaves"]))
+                partition_id_list.append(p)
+
             node_list = np.array(node_list)
             store = create_zarr_dataset(
-                self.z, coalesced_loc + "/nodelist", (100000,), "i8", node_list.shape
+                self.z,
+                coalesced_loc + "/nodelist",
+                (100000,),
+                node_list.dtype,
+                node_list.shape,
             )
             store[:] = node_list
+
+            store = create_zarr_dataset(
+                self.z,
+                coalesced_loc + "/partition_id",
+                (100000,),
+                str,
+                (len(partition_id_list),),
+            )
+            store[:] = partition_id_list
+
         if fill_by_value is not None:
             color_values = self.get_cell_vals(
                 from_assay=from_assay, cell_key=cell_key, k=fill_by_value
