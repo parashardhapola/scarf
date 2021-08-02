@@ -4432,7 +4432,7 @@ class DataStore(MappingDatastore):
                 d = subgraph.nodes[i]
                 p = d["partition_id"] if "partition_id" in d else -1
                 node_list.append((i, d["nleaves"]))
-                partition_id_list.append(p)
+                partition_id_list.append(str(p))
 
             node_list = np.array(node_list)
             store = create_zarr_dataset(
