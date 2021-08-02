@@ -58,7 +58,6 @@ def simplicial_set_embedding(
     from umap.layouts import optimize_layout_euclidean
     from sklearn.utils import check_random_state
     import numpy as np
-    import warnings
     from .utils import tqdm_params
 
     # g.data[g.data < (g.data.max() / float(n_epochs))] = 0.0
@@ -91,28 +90,26 @@ def simplicial_set_embedding(
     tqdm_params["desc"] = "Training UMAP"
 
     with threadpool_limits(limits=nthreads):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            embedding = optimize_layout_euclidean(
-                embedding,
-                embedding,
-                g.row,
-                g.col,
-                n_epochs,
-                g.shape[1],
-                epochs_per_sample,
-                a,
-                b,
-                rng_state,
-                gamma,
-                initial_alpha,
-                negative_sample_rate,
-                parallel=parallel,
-                verbose=verbose,
-                densmap=densmap,
-                densmap_kwds=densmap_kwds,
-                # tqdm_kwds=tqdm_params,
-            )
+        embedding = optimize_layout_euclidean(
+            embedding,
+            embedding,
+            g.row,
+            g.col,
+            n_epochs,
+            g.shape[1],
+            epochs_per_sample,
+            a,
+            b,
+            rng_state,
+            gamma,
+            initial_alpha,
+            negative_sample_rate,
+            parallel=parallel,
+            verbose=verbose,
+            densmap=densmap,
+            densmap_kwds=densmap_kwds,
+            # tqdm_kwds=tqdm_params,
+        )
     return embedding
 
 
@@ -129,7 +126,6 @@ def fit_transform(
     ini_embed,
     spread,
     min_dist,
-    # set_op_mix_ratio,
     n_epochs,
     random_seed,
     repulsion_strength,
@@ -141,10 +137,12 @@ def fit_transform(
     verbose,
 ):
     from umap.umap_ import find_ab_params
+    import warnings
 
-    a, b = find_ab_params(spread, min_dist)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        a, b = find_ab_params(spread, min_dist)
     logger.trace("Found ab params")
-    # sym_graph = fuzzy_simplicial_set(graph, set_op_mix_ratio)
 
     embedding = simplicial_set_embedding(
         graph,
