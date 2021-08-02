@@ -16,7 +16,7 @@ subtrees:
       - file: vignettes/basic_tutorial_scATACseq
         title: Workflow for scATAC-Seq data
       - file: vignettes/multiple_modalities
-        title: Working with multiple modalities
+        title: Multi-omics/Multimodal analysis
       - file: vignettes/cell_subsampling_tutorial
         title: Automated cell downsampling
   - caption: Data integration Tutorials
