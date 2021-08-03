@@ -1,7 +1,6 @@
 .idea
 .vscode
 __pycache__
-data
 build
 dist
 scarf.egg-info
@@ -11,5 +10,9 @@ dask-worker-space
 *.ipynb
 docs/source/vignettes/README.md
 docs/source/vignettes/scarf_datasets
+docs/source/vignettes/dev
 docs/source/vignettes/*.txt
 docs/source/vignettes/*.mtx
+.coverage
+.pytest_cache
+interrogate_badge.svg

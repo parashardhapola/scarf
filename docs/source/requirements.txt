@@ -8,3 +8,9 @@ jupytext
 ipykernel
 ipython-autotime
 topacedo
+sphinx-book-theme
+jinja2~=2.11
+myst_parser
+sphinx_external_toc
+sphinx-copybutton
+sphinx-tabs

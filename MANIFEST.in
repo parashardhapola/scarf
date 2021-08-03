@@ -1,0 +1,16 @@
+recursive-exclude * __pycache__
+recursive-exclude * *.pyc
+recursive-exclude * *.pyo
+exclude .gitignore
+exclude .gitattribute
+exclude .readthedocs.yml
+exclude Dockerfile
+exclude push_pypi.sh
+prune scarf_toolkit.egg-info
+prune docs
+prune scarf/tests
+prune .circleci
+prune .github
+include requirements.txt
+include VERSION
+graft bin

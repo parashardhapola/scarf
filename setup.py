@@ -26,7 +26,7 @@ class PostInstallCommand(install):
                 os.remove(target)
             with open(source, 'rb') as src, open(target, 'wb') as dst:
                 dst.write(src.read())
-            os.chmod(target, 0o555)
+            os.chmod(target, 0o655)
 
 
 if __name__ == "__main__":
@@ -34,9 +34,7 @@ if __name__ == "__main__":
         "Development Status :: 4 - Beta",
         "License :: OSI Approved :: BSD License",
         "Natural Language :: English",
-        'Operating System :: POSIX :: Linux',
         "Programming Language :: Python :: 3",
-        'Programming Language :: Python :: 3.7',
     ]
     keywords = ['store']
     version = open('VERSION').readline().rstrip('\n')
@@ -44,7 +42,7 @@ if __name__ == "__main__":
                        ['dask[array]', 'dask[dataframe]']
     dependency_links = ['https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7']
     setup(
-        name='scarf-toolkit',
+        name='scarf',
         description='Scarf',
         long_description=read('README.rst'),
         author='Parashar Dhapola',
@@ -56,7 +54,7 @@ if __name__ == "__main__":
         install_requires=install_requires,
         dependency_links=dependency_links,
         version=version,
-        packages=find_packages(exclude=['data']),
+        packages=find_packages(),
         include_package_data=False,
         cmdclass={'install': PostInstallCommand}
     )

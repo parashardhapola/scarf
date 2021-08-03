@@ -1,0 +1,10 @@
+ignore:
+  - "scarf/tests/*"
+  - "setup.py"
+
+github_checks: false
+
+coverage:
+  precision: 2
+  round: up
+  range: "75...100"

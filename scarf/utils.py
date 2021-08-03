@@ -9,10 +9,85 @@ Utility methods.
     - system_call: executes a command in the underlying operative system
 """
 
+from loguru import logger
+import sys
 import numpy as np
-from .logging_utils import logger
+from tqdm.dask import TqdmCallback
+from dask.array.core import Array
+from tqdm.auto import tqdm as std_tqdm
 
-__all__ = ['system_call', 'rescale_array', 'clean_array', 'show_progress', 'controlled_compute']
+
+__all__ = [
+    "logger",
+    "tqdmbar",
+    "set_verbosity",
+    "get_log_level",
+    "system_call",
+    "rescale_array",
+    "clean_array",
+    "show_dask_progress",
+    "controlled_compute",
+]
+
+logger.remove()
+logger.add(
+    sys.stdout, colorize=True, format="<level>{level}</level>: {message}", level="INFO"
+)
+
+tqdm_params = {
+    "bar_format": "{desc}: {percentage:3.0f}%| {bar} {n_fmt}/{total_fmt} [{elapsed}]",
+    "ncols": 500,
+    "colour": "#34abeb",
+}
+
+
+def get_log_level():
+    # noinspection PyUnresolvedReferences
+    return logger._core.min_level
+
+
+def tqdmbar(*args, **kwargs):
+    params = dict(tqdm_params)
+    for i in kwargs:
+        if i in params:
+            del params[i]
+    if "disable" not in kwargs and "disable" not in params:
+        if get_log_level() <= 20:
+            params["disable"] = False
+        else:
+            params["disable"] = True
+    return std_tqdm(*args, **kwargs, **params)
+
+
+def set_verbosity(level: str = None, filepath: str = None):
+    """
+    Set verbosity level of Scarf's output. Setting value of level='CRITICAL' should silence all
+    logs. Progress bars are automatically disabled for levels above 'INFO'.
+
+    Args:
+        level: A valid level name. Run without any parameter to see available options
+        filepath: The output file path. All logs will be saved to this file. If no file path is
+                  is provided then all the logs are printed on standard output.
+
+    Returns:
+
+    """
+    # noinspection PyUnresolvedReferences
+    available_levels = logger._core.levels.keys()
+
+    if level is None or level not in available_levels:
+        raise ValueError(
+            f"Please provide a value for level: {', '.join(available_levels)}"
+        )
+    logger.remove()
+    if filepath is None:
+        filepath = sys.stdout
+    logger.add(
+        filepath,
+        colorize=True,
+        format="<level>{level}</level>: {message}",
+        level=level,
+    )
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
@@ -67,31 +142,32 @@ def controlled_compute(arr, nthreads):
     from multiprocessing.pool import ThreadPool
     import dask
 
-    with dask.config.set(schedular='threads', pool=ThreadPool(nthreads)):
+    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)):
         res = arr.compute()
     return res
 
 
-def show_progress(arr, msg: str = None, nthreads: int = 1):
+def show_dask_progress(arr: Array, msg: str = None, nthreads: int = 1):
     """
     Performs computation with Dask and shows progress bar.
 
     Args:
-        arr:
+        arr: A Dask array
         msg: message to log, default None
         nthreads: number of threads to use for computation, default 1
 
     Returns:
         Result of computation.
     """
-    from dask.diagnostics import ProgressBar
 
-    if msg is not None:
-        logger.info(msg)
-    pbar = ProgressBar()
-    pbar.register()
-    res = controlled_compute(arr, nthreads)
-    pbar.unregister()
+    params = dict(tqdm_params)
+    if "disable" not in params:
+        if get_log_level() <= 20:
+            params["disable"] = False
+        else:
+            params["disable"] = True
+    with TqdmCallback(desc=msg, **params):
+        res = controlled_compute(arr, nthreads)
     return res
 
 

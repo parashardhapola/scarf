@@ -1,0 +1,48 @@
+root: index
+subtrees:
+  - entries:
+      - file: install
+        title: Installation
+      - file: contributions
+        title: For developers
+      - file: faq
+        title: Frequently asked questions
+      - file: colab
+        title: Interactive tutorials on Colab
+  - caption: Basic pipelines
+    entries:
+      - file: vignettes/basic_tutorial_scRNAseq
+        title: Workflow for scRNA-Seq data
+      - file: vignettes/basic_tutorial_scATACseq
+        title: Workflow for scATAC-Seq data
+      - file: vignettes/multiple_modalities
+        title: Multi-omics/Multimodal analysis
+      - file: vignettes/cell_subsampling_tutorial
+        title: Automated cell downsampling
+  - caption: Data integration Tutorials
+    entries:
+      - file: vignettes/data_projection
+        title: Integration through projection
+      - file: vignettes/merging_datasets
+        title: Merging samples and datasets
+  - caption: Vignettes
+    entries:
+      - file: vignettes/zarr_explanation
+        title: Data organization in Scarf
+      - file: vignettes/download_conversion
+        title: Data import and export
+      - file: vignettes/mnist
+        title: Exploring MNIST dataset
+  - caption: Useful links
+    entries:
+        - url: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
+          title: Read Scarf's preprint
+        - url: https://github.com/parashardhapola/scarf/discussions
+          title: Discussion page
+        - url: https://github.com/parashardhapola/scarf/issues
+          title: Report bug
+  - caption: Reference manual
+    entries:
+      - file: api
+      - file: license
+      - file: genindex
