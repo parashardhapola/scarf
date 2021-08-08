@@ -23,3 +23,15 @@ h6 {
 p {
     font-size: 1em
 }
+@media (min-width: 768px)
+div.navbar-brand-box a.navbar-brand img {
+    max-height: 100vh !important;
+}
+div.navbar-brand-box a.navbar-brand img {
+    display: block;
+    height: auto;
+    width: auto;
+    max-height: 100vh !important;
+    max-width: 100%;
+    margin: 0 auto;
+}
