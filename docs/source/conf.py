@@ -8,48 +8,49 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../..'))
 
-project = 'Scarf'
-copyright = '2021, Parashar Dhapola, Göran Karlsson'
-author = ''
+sys.path.insert(0, os.path.abspath("../.."))
+
+project = "Scarf"
+copyright = "2021, Parashar Dhapola, Göran Karlsson"
+author = ""
 
 extensions = [
-    'nbsphinx',
-    'IPython.sphinxext.ipython_console_highlighting',
-    'sphinx.ext.autodoc',
-    'sphinx.ext.napoleon',
-    'sphinx_autodoc_typehints',
-    'sphinx.ext.coverage',
-    'sphinx.ext.mathjax',
-    'myst_parser',
-    'sphinx_external_toc',
-    'sphinx_copybutton',
-    'sphinx_tabs.tabs',
+    "nbsphinx",
+    "IPython.sphinxext.ipython_console_highlighting",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx_autodoc_typehints",
+    "sphinx.ext.coverage",
+    "sphinx.ext.mathjax",
+    "myst_parser",
+    "sphinx_external_toc",
+    "sphinx_copybutton",
+    "sphinx_tabs.tabs",
 ]
 
-templates_path = ['_templates']
-source_suffix = ['.rst']
-master_doc = 'index'
+templates_path = ["_templates"]
+source_suffix = [".rst"]
+master_doc = "index"
 exclude_patterns = [
-    '_build', 'Thumbs.db', '.DS_Store',
-    '**.ipynb_checkpoints', 'vignettes/dev'
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "**.ipynb_checkpoints",
+    "vignettes/dev",
 ]
-pygments_style = 'sphinx'
-language = 'en'
+pygments_style = "sphinx"
+language = "en"
 
 external_toc_path = "toctree.yml"
 external_toc_exclude_missing = False
 myst_enable_extensions = [
-  "colon_fence",
+    "colon_fence",
 ]
 
-html_css_files = [
-    "custom.css",
-    "styles.css"
-]
+html_css_files = ["styles.css"]
 html_theme = "sphinx_book_theme"
-html_static_path = ['_static']
+html_static_path = ["_static"]
 html_favicon = "favicon.ico"
 html_logo = "logo.png"
 html_title = "Scarf documentation"
@@ -72,35 +73,38 @@ html_theme_options = {
     "extra_navbar": "",
     "logo_only": True,
     "show_navbar_depth": 2,
-    "toc_title": "Sections"
+    "toc_title": "Sections",
 }
 # html_sidebars = {
 #      "**": ["sbt-sidebar-nav.html", "sbt-sidebar-footer.html"]
 # }
 
-htmlhelp_basename = 'ScarfDoc'
+htmlhelp_basename = "ScarfDoc"
 
 latex_elements = {}
 latex_documents = [
-    (master_doc, 'Scarf.tex', 'Scarf Documentation',
-     'Parashar Dhapola', 'manual'),
+    (master_doc, "Scarf.tex", "Scarf Documentation", "Parashar Dhapola", "manual"),
 ]
-man_pages = [
-    (master_doc, 'scarf', 'Scarf Documentation',
-     [author], 1)
-]
+man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
 texinfo_documents = [
-    (master_doc, 'Scarf', 'Scarf documentation',
-     author, 'Scarf', 'One line description of project.',
-     'Miscellaneous'),
+    (
+        master_doc,
+        "Scarf",
+        "Scarf documentation",
+        author,
+        "Scarf",
+        "One line description of project.",
+        "Miscellaneous",
+    ),
 ]
 
 nbsphinx_custom_formats = {
-    '.mdnb': ['jupytext.reads', {'fmt': 'md'}],
+    ".mdnb": ["jupytext.reads", {"fmt": "md"}],
 }
-nbsphinx_execute = 'auto'
-nbsphinx_kernel_name = 'python'
+nbsphinx_execute = "auto"
+nbsphinx_kernel_name = "python"
 nbsphinx_allow_errors = True
 
 import matplotlib
-matplotlib.use('agg')
+
+matplotlib.use("agg")
