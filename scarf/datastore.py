@@ -3888,12 +3888,12 @@ class DataStore(MappingDatastore):
         missing_vals = list(set(df.index).difference(idxmax.unique()))
         new_names = {}
         for i in sorted(idxmax.unique()):
-            j = normed_frac[idxmax[idxmax == i].index].iloc[i]
+            j = normed_frac[idxmax[idxmax == i].index].loc[i]
             j = j.sort_values(ascending=False).index
             for n, k in enumerate(j, start=1):
                 a = chr(ord("@") + n)
                 new_names[k] = f"{i}{a.lower()}"
-        miss_idxmax = df.iloc[missing_vals].idxmax(axis=1).to_dict()
+        miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
         for k, v in miss_idxmax.items():
             new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
 
