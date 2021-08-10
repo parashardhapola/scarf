@@ -2226,8 +2226,7 @@ class GraphDataStore(BaseDataStore):
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
-        k_singular: int = 20,
-        r_vec: np.ndarray = None,
+        k_singular: int = 30,
         label: str = "pseudotime",
     ) -> None:
         """
@@ -2244,7 +2243,6 @@ class GraphDataStore(BaseDataStore):
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                         used feature for the given assay will be used.
             k_singular: Number of smallest singular values to save.
-            r_vec: Same as parameter R in the above said reference.
             label:
 
         Returns:
@@ -2264,9 +2262,22 @@ class GraphDataStore(BaseDataStore):
             identity = csr_matrix((np.ones(n), (range(n), range(n))), shape=[n, n])
             return identity - graph.dot(inv_deg)
 
-        def pseudo_inverse(lap):
-            u, s, vt = svds(lap, k=k_singular, which="SM")
-            return vt.T @ np.diag(np.linalg.pinv([s]).reshape(1, -1)[0]) @ u.T
+        def pseudo_inverse(lap, k, nk):
+            v0 = np.random.rand(lap.shape[0])
+            u, s, vt = svds(lap, k=k, which="SM", v0=v0)
+            # Because the order of singular values is not guaranteed
+            idx = np.argsort(s)
+            # Extracting the second smallest values
+            s = s[idx][1:nk].T
+            s = 1 / s
+            u = u[:, idx][:, 1:nk]
+            vt = vt[idx, :][1:nk, :].T
+            # Computing matmul in an iterative way to save memory
+            n = u.shape[0]
+            ilap = np.zeros(n)
+            for i in range(n):
+                ilap[i] = ((vt * u[i, :] * s).sum())
+            return ilap
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
@@ -2278,13 +2289,14 @@ class GraphDataStore(BaseDataStore):
             symmetric=True,
             upper_only=False,
         )
-        inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
-        if r_vec is None:
-            r_vec = np.ones(inv_lap.shape[0])
-        v = np.dot(inv_lap, r_vec)
+        ptime = pseudo_inverse(laplacian(graph, inverse_degree(graph)), k_singular, 2)
+        ptime = ptime - ptime.min()
+        ptime = ptime / ptime.max()
+        ptime = 1 - ptime
+
         self.cells.insert(
             self._col_renamer(from_assay, cell_key, label),
-            v,
+            ptime,
             key=cell_key,
             overwrite=True,
         )
