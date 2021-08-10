@@ -1,35 +1,32 @@
 ---
-jupyter:
-  jupytext:
-    cell_metadata_filter: -all
-    formats: ipynb,md
-    text_representation:
-      extension: .md
-      format_name: markdown
-      format_version: '1.3'
-      jupytext_version: 1.11.3
-  kernelspec:
-    display_name: Python 3
-    language: python
-    name: python3
+jupytext:
+  cell_metadata_filter: -all
+  formats: ipynb,md:myst
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.11.1
+kernelspec:
+  display_name: Python 3 (ipykernel)
+  language: python
+  name: python3
 ---
 
 ## Scarf's basic workflow for scRNA-Seq
 
 This workflow is meant to familiarize users with the Scarf API and how data is internally handled in Scarf. Please checkout the quick start guide if you are interested in the minimal steps required to run the analysis.
 
-```python
+```{code-cell} ipython3
 %load_ext autotime
-%config InlineBackend.figure_format = 'retina'
 
 import scarf
 scarf.__version__
 ```
 
-
 Download the count matrix from 10x's website using the `fetch_dataset` function. This is a convenience function that stores URLs of datasets that can be downloaded. The `save_path` parameter allows the data to be saved to a location of choice.
 
-```python
+```{code-cell} ipython3
 scarf.fetch_dataset('tenx_5K_pbmc_rnaseq', save_path='scarf_datasets')
 ```
 
@@ -38,23 +35,25 @@ scarf.fetch_dataset('tenx_5K_pbmc_rnaseq', save_path='scarf_datasets')
 
 The first step of the analysis workflow is to convert the file into the Zarr format that is supported by Scarf. We read in the data using `CrH5Reader` (stands for cellranger H5 reader). The reader object allows quick investigation of the file before the format is converted.
 
-```python
+```{code-cell} ipython3
 reader = scarf.CrH5Reader('scarf_datasets/tenx_5K_pbmc_rnaseq/data.h5', 'rna')
 ```
 
 We can quickly check the number of cells and features (genes as well as ADT features in this case) present in the file.
 
-```python
+```{code-cell} ipython3
 reader.nCells, reader.nFeatures
 ```
+
 Next we convert the data to the Zarr format that will later on be used by Scarf. For this we use Scarf's `CrToZarr` class. This class will first quickly ascertain the type of data to be written and then create a Zarr format file for the data to be written into. `CrToZarr` takes two mandatory arguments. The first is the cellranger reader, and the other is the name of the output file.
 
++++
 
 <div class="alert alert-block alert-info">
 NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HDF5, Zarr hierarchy is organized as a directory structure.
 </div>
 
-```python
+```{code-cell} ipython3
 writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
                         chunk_size=(2000, 1000))
 writer.dump(batch_size=1000)
@@ -62,7 +61,7 @@ writer.dump(batch_size=1000)
 
 The next step is to create a Scarf `DataStore` object. This object will be the primary way to interact with the data and all its constituent assays. When a Zarr file is loaded, Scarf checks if some per-cell statistics have been calculated. If not, then **nFeatures** (number of features per cell) and **nCounts** (total sum of feature counts per cell) are calculated. Scarf will also attempt to calculate the percent of mitochondrial and ribosomal content per cell. When we create a DataStore instance, we can decide to filter out low abundance genes with parameter `min_features_per_cell`. For example the value of 10 for `min_features_per_cell` below means that those genes that are present in less than 10 cells will be filtered out.
 
-```python
+```{code-cell} ipython3
 ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
                      nthreads=4, min_features_per_cell=10)
 ```
@@ -72,14 +71,13 @@ ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
 
 We can visualize the per-cell statistics in [violin plots](https://datavizcatalogue.com/methods/violin_plot.html) before we start filtering cells out.
 
-```python
+```{code-cell} ipython3
 ds.plot_cells_dists()
 ```
 
-
 We can filter cells based on these cell attributes by providing upper and lower threshold values.
 
-```python
+```{code-cell} ipython3
 ds.filter_cells(attrs=['RNA_nCounts', 'RNA_nFeatures', 'RNA_percentMito'],
                 highs=[15000, 4000, 15],
                 lows=[1000, 500, 0])
@@ -89,33 +87,34 @@ Now we visualize the attributes again after filtering the values.
 
 *Note: the 'I' value given as the `cell_key` attribute signifies the column of the table that is set to `False` for cells that were filtered out or `True` for cells that are kept.*
 
-
-```python
+```{code-cell} ipython3
 ds.plot_cells_dists(cell_key='I', color='coral')
 ```
 
-
 The data stored under the 'cellData' level can easily be accessed using the `cells` attribute of the `DataStore` object.
 
-```python
+```{code-cell} ipython3
 ds.cells.head()
 ```
+
 <div class="alert alert-block alert-info">
 NOTE: We strongly discourage directly adding or removing the data from this table as Scarf will not be able to synchronize the changes to the disk. Instead use the methods of the <code>cells</code> attribute. Please refer to the <code>insert</code>, <code>fetch</code>, <code>fetch_all</code>, <code>drop</code> and <code>update_key</code> methods.
 </div>
 
++++
 
 ---
 ### 3) Feature selection
 
 Similar to the cell table, Scarf also saves the feature level data that can be accessed as below:
 
-```python
+```{code-cell} ipython3
 ds.RNA.feats.head()
 ```
+
 The feature selection step is performed on the normalized data. The default normalization method for `RNAassay`-type data is library-size normalization, wherein the count values are divided by the sum of total values for a cell. These values are then multiplied by a scalar factor. The default value of this scalar factor is 1000. However, if the total counts in a cell are less than this value, then on multiplication with this scalar factor the values will be 'scaled up' (which is not a desired behaviour). In the filtering step above, we set the `low` threshold for `RNA_nCounts` at 1000, and hence it is safe to use 1000 as a scalar factor. The scalar factor can be set by modifying the `sf` attribute of the assay. Let's print the default value of `sf`
 
-```python
+```{code-cell} ipython3
 ds.RNA.sf
 ```
 
@@ -127,15 +126,16 @@ A plot is produced, that for each gene shows the corrected variance on the y-axi
 
 The `mark_hvgs` function has a parameter `cell_key` that dictates which cells to use to identify the HVGs. The default value of this parameter is `I`, which means it will use all the cells that were not filtered out.
 
-```python
+```{code-cell} ipython3
 ds.mark_hvgs(min_cells=20, top_n=500, min_mean=-3, max_mean=2, max_var=6)
 ```
 
 As a result of running `mark_hvgs`, the feature table now has an extra column **I\_\_hvgs** which contains a `True` value for genes marked HVGs. The naming rule in Scarf dictates that cells used to identify HVGs are prepended to the column name (with a double underscore delimiter). Since we did not provide any `cell_key` parameter the default value was used, i.e. the filtered cells. This resulted in **I** becoming the prefix.
 
-```python
+```{code-cell} ipython3
 ds.RNA.feats.head()
 ```
+
 ### 4) Graph creation
 
 Creating a neighbourhood graph of cells is the most critical step in any Scarf workflow. This step internally involves multiple substeps: 
@@ -149,7 +149,7 @@ Creating a neighbourhood graph of cells is the most critical step in any Scarf w
 
 The `make_graph` method is responsible for graph construction. Its method takes a mandatory parameter: `feat_key`. This should be a column in the feature metadata table that indicates which genes to use to create the graph. Since we have already identified the `hvgs` in the step above, we use those genes. Note that we do not need to write *I\_\_hvgs* but just *hvgs* as the value of the parameter. We also supply values for two very important parameters here: `k` (number of nearest neighbours to be queried for each cell) and `dims` (number of PCA dimensions to use for graph construction). `n_centroids` parameter controls number of clusters to create for the data using the Kmeans algorithm. We perform a more accurate clustering of data in the later steps.
 
-```python
+```{code-cell} ipython3
 ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
 ```
 
@@ -158,32 +158,31 @@ ds.make_graph(feat_key='hvgs', k=11, dims=15, n_centroids=100)
 
 Next we run UMAP on the graph calculated above. Here we will not provide which cell key or feature key to be used, because we want the UMAP to run on all the cells that were not filtered out and with the feature key used to calculate the latest graph. We can provide the parameter values for the UMAP algorithm here.
 
-```python
+```{code-cell} ipython3
 ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
 ```
 
 The UMAP results are saved in the cell metadata table as seen below in columns: **RNA_UMAP1** and **RNA_UMAP2**
 
-```python
+```{code-cell} ipython3
 ds.cells.head()
 ```
+
 `plot_layout` is a versatile method to create a [scatter plot](https://datavizcatalogue.com/methods/scatterplot.html) using Scarf. Here we can plot the UMAP coordinates of all the non-filtered out cells.
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP')
 ```
 
-
 `plot_layout` can be used to easily visualize data from any column of the cell metadata table. Next, we visualize the number of genes expressed in each cell.
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', cmap='coolwarm')
 ```
 
-
 There has been a lot of discussion over the choice of non-linear dimensionality reduction for single-cell data. tSNE was initially considered an excellent solution, but has gradually lost out to UMAP because the magnitude of relations between the clusters cannot easily be discerned in a tSNE plot. Scarf contains an implementation of tSNE that runs directly on the graph structure of cells. So, essentially the same data that was used to create the UMAP and clustering is used.
 
-```python
+```{code-cell} ipython3
 ds.run_tsne(alpha=10, box_h=1, early_iter=250, max_iter=500, parallel=True)
 ```
 
@@ -191,7 +190,7 @@ ds.run_tsne(alpha=10, box_h=1, early_iter=250, max_iter=500, parallel=True)
 NOTE: The tSNE implementation is currently not supported on Windows.
 </div>
 
-```python
+```{code-cell} ipython3
 # Here we run plot_layout under exception catching because if you are not on Linux then the `run_tnse` would have failed.
 try:
     ds.plot_layout(layout_key='RNA_tSNE')
@@ -202,6 +201,7 @@ except KeyError:
 ---
 ### 6) Cell clustering
 
++++
 
 Identifying clusters of cells is one of the central tenets of single cell approaches. Scarf includes two graph clustering methods and any (or even both) can be used on the dataset. The methods start with the same graph as the UMAP algorithm above to minimize the disparity between the UMAP and clustering results. The two clustering methods are:
 
@@ -210,50 +210,51 @@ Identifying clusters of cells is one of the central tenets of single cell approa
 
 Paris is the default algorithm in Scarf due to its ability to highlight cluster relationships. [Paris](https://github.com/tbonald/paris) is a hierarchical graph clustering algorithm that is based on node pair sampling. Paris creates a dendrogram of cells which can then be cut to obtain desired number of clusters. The advantage of using Paris, especially in the larger datasets, is that once the dendrogram has been created one can change the desired number of clusters with minimal computation overhead.
 
-```python
+```{code-cell} ipython3
 # We start with Leiden clustering
 ds.run_leiden_clustering(resolution=0.5)
 ```
 
 We can visualize the results using the `plot_layout` method again. Here we plot both UMAP and colour cells based on their cluster identity, as obtained using Leiden clustering.
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_leiden_cluster')
 ```
 
 The results of the clustering algorithm are saved in the cell metadata table. In this case, they have been saved under the column name **RNA_leiden_cluster**.
 
-```python
+```{code-cell} ipython3
 ds.cells.head()
 ```
 
 We can export the Leiden cluster information into a pandas dataframe. Setting `key` to `I` makes sure that we do not include the data for cells that were filtered out.
 
-```python
+```{code-cell} ipython3
 leiden_clusters = ds.cells.to_pandas_dataframe(['RNA_leiden_cluster'], key='I')
 leiden_clusters.head()
 ```
 
 Now we run Paris clustering algorithm using `run_clustering` method. Paris clustering requires only one parameter: `n_clusters`, which determines the number of clusters to create. Here we set the number of clusters same as that were obtained using Leiden clustering.leiden_clusters.nunique()
 
-```python
+```{code-cell} ipython3
 ds.run_clustering(n_clusters=leiden_clusters.nunique()[0])
 ```
 
 Visualizing Paris clusters
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
 ```
 
 Discerning similarity between clusters can be difficult from visual inspection alone, especially for tSNE plots. `plot_cluster_tree` function plots the relationship between clusters as a binary tree. This tree is simply a condensation of the dendrogram obtained using Paris clustering.
 
-```python
+```{code-cell} ipython3
 ds.plot_cluster_tree(cluster_key='RNA_cluster', width=1)
 ```
 
 The tree is free form (i.e the position of clusters doesn't convey any meaning) but allows inspection of cluster similarity based on branching pattern. The sizes of clusters indicate the number of cells present in each cluster. The tree starts from the root node (black dot with no incoming edges). 
 
++++
 
 ---
 ### 7) Marker gene identification
@@ -267,29 +268,27 @@ Now we can identify the genes that are differentially expressed between the clus
 
 This method does not perform any statistical test of significance and uses 'specificity score' as a measure of importance of each gene for a cluster.
 
-```python
+```{code-cell} ipython3
 ds.run_marker_search(group_key='RNA_cluster', threshold=0.25)
 ```
 
 Using the `plot_marker_heatmap` method, we can also plot a heatmap with the top marker genes from each cluster. The method will calculate the mean expression value for each gene from each cluster.
 
-
-```python
+```{code-cell} ipython3
 ds.plot_marker_heatmap(group_key='RNA_cluster', topn=5, figsize=(5, 9))
 ```
 
 The markers list for specific clusters can be obtained like this:
 
-```python
+```{code-cell} ipython3
 ds.get_markers(group_key='RNA_cluster', group_id='1')
 ```
 
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells at least this way.
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')
 ```
-
 
 ---
 That is all for this vignette.

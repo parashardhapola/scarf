@@ -13,6 +13,7 @@ docs/source/vignettes/scarf_datasets
 docs/source/vignettes/dev
 docs/source/vignettes/*.txt
 docs/source/vignettes/*.mtx
+docs/jupyter_execute
 .coverage
 .pytest_cache
 interrogate_badge.svg

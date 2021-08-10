@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-#
-# Configuration file for the Sphinx documentation builder.
-#
-# This file does only contain a selection of the most common options. For a
-# full list see the documentation:
-# http://www.sphinx-doc.org/en/master/config
-
 import os
 import sys
 
@@ -16,17 +8,16 @@ copyright = "2021, Parashar Dhapola, Göran Karlsson"
 author = ""
 
 extensions = [
-    "nbsphinx",
     "IPython.sphinxext.ipython_console_highlighting",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx_autodoc_typehints",
     "sphinx.ext.coverage",
     "sphinx.ext.mathjax",
-    "myst_parser",
     "sphinx_external_toc",
     "sphinx_copybutton",
     "sphinx_tabs.tabs",
+    "myst_nb",
 ]
 
 templates_path = ["_templates"]
@@ -54,12 +45,6 @@ html_static_path = ["_static"]
 html_favicon = "favicon.ico"
 html_logo = "logo.png"
 html_title = "Scarf documentation"
-
-# This was for the rtd theme. Disabled for book style
-# html_theme_options = {
-#     'style_nav_header_background': 'black',
-# }
-
 html_theme_options = {
     "repository_url": "https://github.com/parashardhapola/scarf",
     "use_repository_button": True,
@@ -75,35 +60,13 @@ html_theme_options = {
     "show_navbar_depth": 2,
     "toc_title": "Sections",
 }
-# html_sidebars = {
-#      "**": ["sbt-sidebar-nav.html", "sbt-sidebar-footer.html"]
-# }
 
 htmlhelp_basename = "ScarfDoc"
-
-latex_elements = {}
-latex_documents = [
-    (master_doc, "Scarf.tex", "Scarf Documentation", "Parashar Dhapola", "manual"),
-]
 man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
-texinfo_documents = [
-    (
-        master_doc,
-        "Scarf",
-        "Scarf documentation",
-        author,
-        "Scarf",
-        "One line description of project.",
-        "Miscellaneous",
-    ),
-]
 
-nbsphinx_custom_formats = {
-    ".mdnb": ["jupytext.reads", {"fmt": "md"}],
-}
-nbsphinx_execute = "auto"
-nbsphinx_kernel_name = "python"
-nbsphinx_allow_errors = True
+execution_allow_errors = True
+jupyter_execute_notebooks = "auto"
+execution_timeout = 5000
 
 import matplotlib
 
