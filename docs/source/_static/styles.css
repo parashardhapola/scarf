@@ -25,14 +25,17 @@ p {
 }
 @media (min-width: 768px) {
 	div.navbar-brand-box a.navbar-brand img {
-		max-height: 100vh !important
+		max-height: 25vh !important;
 	}
 }
 div.navbar-brand-box a.navbar-brand img {
     display: block;
     height: auto;
     width: auto;
-    max-height: 100vh !important;
+    max-height: 30vh !important;
     max-width: 100%;
     margin: 0 auto;
+}
+.navbar-brand-box {
+    padding-top: unset !important;
 }
