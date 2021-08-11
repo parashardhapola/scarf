@@ -2227,6 +2227,7 @@ class GraphDataStore(BaseDataStore):
         cell_key: str = None,
         feat_key: str = None,
         k_singular: int = 30,
+        random_seed: int = 4444,
         label: str = "pseudotime",
     ) -> None:
         """
@@ -2241,7 +2242,8 @@ class GraphDataStore(BaseDataStore):
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                         used feature for the given assay will be used.
             k_singular: Number of smallest singular values to save.
-            label:
+            random_seed: random seed for svds
+            label: label: Base label for pseudotime in the cell metadata column (Default value: 'pseudotime')
 
         Returns:
 
@@ -2260,8 +2262,9 @@ class GraphDataStore(BaseDataStore):
             identity = csr_matrix((np.ones(n), (range(n), range(n))), shape=[n, n])
             return identity - graph.dot(inv_deg)
 
-        def pseudo_inverse(lap, k, nk):
-            v0 = np.random.rand(lap.shape[0])
+        def pseudo_inverse(lap, k, nk, random_seed):
+            random_state = np.random.RandomState(random_seed)
+            v0 = random_state.rand(lap.shape[0])
             u, s, vt = svds(lap, k=k, which="SM", v0=v0)
             # Because the order of singular values is not guaranteed
             idx = np.argsort(s)
@@ -2287,7 +2290,9 @@ class GraphDataStore(BaseDataStore):
             symmetric=True,
             upper_only=False,
         )
-        ptime = pseudo_inverse(laplacian(graph, inverse_degree(graph)), k_singular, 2)
+        ptime = pseudo_inverse(
+            laplacian(graph, inverse_degree(graph)), k_singular, 2, random_seed
+        )
         ptime = ptime - ptime.min()
         ptime = ptime / ptime.max()
         ptime = 1 - ptime
@@ -2314,6 +2319,8 @@ class GraphDataStore(BaseDataStore):
 
         Args:
             assays: Name of the input assays. The latest constructed graph from each assay is used.
+            label: label: Label for integrated graph
+            chunk_size: number of cells to be loaded at a time while reading and writing the graph
 
         Returns: None
 
