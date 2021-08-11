@@ -2233,9 +2233,7 @@ class GraphDataStore(BaseDataStore):
         Calculate differentiation potential of cells. This function is a reimplementation of population balance
         analysis (PBA) approach published in Weinreb et al. 2017, PNAS. This function computes the random walk
         normalized Laplacian matrix of the reference graph, L_rw = I-A/D and then calculates a Moore-Penrose
-        pseudoinverse of L_rw. The method takes an optional but recommended parameter 'r' which represents the
-        relative rates of proliferation and loss in different gene expression states (R). If not provided then a vector
-        with ones is used. The differentiation potential is the dot product of inverse L_rw and R
+        pseudoinverse of L_rw.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2276,7 +2274,7 @@ class GraphDataStore(BaseDataStore):
             n = u.shape[0]
             ilap = np.zeros(n)
             for i in range(n):
-                ilap[i] = ((vt * u[i, :] * s).sum())
+                ilap[i] = (vt * u[i, :] * s).sum()
             return ilap
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
@@ -3564,6 +3562,47 @@ class DataStore(MappingDatastore):
                 )
                 g_s[:] = vals.values
         return None
+
+    def run_pseudotime_marker_search(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        pseudotime_key: str = None,
+        gene_batch_size: int = 50,
+    ) -> None:
+        """
+        Identify genes that a correlated with a given pseudotime ordering of cells.
+        The results are saved in feature attribute tables. For example, the r value can be found under,
+        'I__RNA_pseudotime__r' and the corresponding p values can be found under 'I__RNA_pseudotime__p'
+        The values are saved with patten {cell_key}__{regressor_key}__r/p
+
+        Args:
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table. (Default value: 'I')
+            pseudotime_key: Required parameter. This has to be a column name from cell metadata table. This column
+                            contains values for pseudotime ordering of the cells.
+            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
+
+        Returns: None
+
+        """
+
+        from .markers import find_markers_by_regression
+
+        if pseudotime_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `pseudotime_key`. This should be the name of a column from "
+                "cell metadata object where pseudotime values are stored. If you ran `run_pseudotime_scoring` then "
+                "the values are stored under `RNA_pseudotime` by default."
+            )
+        if cell_key is None:
+            cell_key = "I"
+        assay = self._get_assay(from_assay)
+        find_markers_by_regression(
+            assay, cell_key, pseudotime_key, self.nthreads, gene_batch_size
+        )
 
     def get_markers(
         self,

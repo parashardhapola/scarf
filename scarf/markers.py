@@ -6,9 +6,10 @@ from .utils import controlled_compute, tqdmbar
 from numba import jit
 import numpy as np
 import pandas as pd
+from scipy.stats import linregress
 
 
-__all__ = ["find_markers_by_rank"]
+__all__ = ["find_markers_by_rank", "find_markers_by_regression"]
 
 
 def find_markers_by_rank(
@@ -81,3 +82,36 @@ def find_markers_by_rank(
     for i in results:
         results[i] = pd.concat(results[i]).sort_values(ascending=False)
     return results
+
+
+def find_markers_by_regression(
+    assay: Assay,
+    cell_key: str,
+    regressor_key: str,
+    nthreads: int,
+    gene_batch_size: int = 50,
+) -> None:
+
+    data = assay.normed(cell_idx=assay.cells.active_index(cell_key))
+    gene_ids = assay.feats.fetch("ids")
+    chunks = np.array_split(
+        np.arange(0, data.shape[1]), int(data.shape[1] / gene_batch_size)
+    )
+    regressor = assay.cells.fetch(regressor_key, key=cell_key)
+
+    res = {}
+    for chunk in tqdmbar(chunks, desc="Finding markers", total=len(chunks)):
+        df = pd.DataFrame(
+            controlled_compute(data[:, chunk], nthreads), columns=gene_ids[chunk]
+        )
+        for i in df:
+            v = df[i].values
+            if (v > 0).sum() > 20:
+                lin_obj = linregress(regressor, v)
+                res[i] = (lin_obj.rvalue, lin_obj.pvalue)
+            else:
+                res[i] = (0, 1)
+    res = pd.DataFrame(res, index=["r_value", "p_value"]).T
+    assay.feats.insert(f"{cell_key}__{regressor_key}__r", res["r_value"])
+    assay.feats.insert(f"{cell_key}__{regressor_key}__p", res["p_value"])
+    return None
