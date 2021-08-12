@@ -31,6 +31,8 @@ subtrees:
         title: Data organization in Scarf
       - file: vignettes/download_conversion
         title: Data import and export
+      - file: vignettes/cell_cycle
+        title: Estimate cell-cycle phases
       - file: vignettes/mnist
         title: Exploring MNIST dataset
   - caption: Useful links
