@@ -2226,7 +2226,12 @@ class GraphDataStore(BaseDataStore):
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
-        k_singular: int = 30,
+        n_singular_vals: int = 30,
+        source_sink_key: str = None,
+        sources: List = None,
+        sinks: List = None,
+        ss_vec: np.ndarray = None,
+        min_max_norm_ptime: bool = True,
         random_seed: int = 4444,
         label: str = "pseudotime",
     ) -> None:
@@ -2241,8 +2246,19 @@ class GraphDataStore(BaseDataStore):
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                         used feature for the given assay will be used.
-            k_singular: Number of smallest singular values to save.
-            random_seed: random seed for svds
+            n_singular_vals: Number of smallest singular values to save.
+            source_sink_key: Name of a column from cell attributes table that shall be used for fetching source and
+                             sink groups. Usually this will a column containing cell cluster/group identities.
+            sources: A list of group/clusters ids from `source_sink_key` column to be treated as sources. Sources are
+                     usually progenitor/precursor or other actively dividing cell states.
+            sinks: A list of group/clusters ids from `source_sink_key` column to be treated as sinks. Sinks are usually
+                   more differentiated (or terminally differentiated) cell states.
+            ss_vec: A vector that contains source sink values for each cell. If not provided then, this vector is
+                    internally computed using the `sources` and `sinks` parameter. This vector should add up to 0 and
+                    should have negative values for source cells and positive values for sink cells.
+            min_max_norm_ptime: Whether to perform min-max normalization on the final pseudotime values so that values
+                                are in 0 to 1 range. (Default: True)
+            random_seed: A random seed for svds (Defaul: 4444)
             label: label: Base label for pseudotime in the cell metadata column (Default value: 'pseudotime')
 
         Returns:
@@ -2260,24 +2276,38 @@ class GraphDataStore(BaseDataStore):
         def laplacian(g, inv_deg):
             n = g.shape[0]
             identity = csr_matrix((np.ones(n), (range(n), range(n))), shape=[n, n])
-            return identity - graph.dot(inv_deg)
+            return identity - g.dot(inv_deg)
 
-        def pseudo_inverse(lap, k, nk, random_seed):
+        def make_source_sink_vector(clusts, source, sink):
+            ss = list(source) + list(sink)
+
+            r = np.zeros(clusts.shape[0])
+            r[clusts.isin(sink)] = 1
+            r[clusts.isin(source)] = -1
+
+            n = clusts.isin(ss).sum()
+            v = (0 - r.sum()) / (r.shape[0] - n)
+            r[~clusts.isin(ss)] = v
+            return r
+
+        def pseudo_inverse(lap, k, random_seed, r):
             random_state = np.random.RandomState(random_seed)
             v0 = random_state.rand(lap.shape[0])
+            # TODO: add thread management here
             u, s, vt = svds(lap, k=k, which="SM", v0=v0)
             # Because the order of singular values is not guaranteed
             idx = np.argsort(s)
             # Extracting the second smallest values
-            s = s[idx][1:nk].T
+            s = s[idx][1:].T
             s = 1 / s
-            u = u[:, idx][:, 1:nk]
-            vt = vt[idx, :][1:nk, :].T
+            u = u[:, idx][:, 1:]
+            vt = vt[idx, :][1:, :].T
             # Computing matmul in an iterative way to save memory
             n = u.shape[0]
+            # TODO: Use numba for this part
             ilap = np.zeros(n)
-            for i in range(n):
-                ilap[i] = (vt * u[i, :] * s).sum()
+            for i in tqdmbar(range(n), desc="Calculating pseudotime"):
+                ilap[i] = (vt * u[i, :] * s * r).sum()
             return ilap
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
@@ -2290,12 +2320,66 @@ class GraphDataStore(BaseDataStore):
             symmetric=True,
             upper_only=False,
         )
+
+        if source_sink_key is None:
+            if sources is not None or sinks is not None:
+                logger.warning(
+                    "Provide `sources` and `sinks` will not be used because `source_sink_key` has not been "
+                    "provided"
+                )
+        if ss_vec is None:
+            if source_sink_key is None:
+                logger.warning(
+                    "No source/sink info or custom source sink vector provided. The results might not be "
+                    "reflect true pseudotime."
+                )
+                ss_vec = np.ones(graph.shape[0])
+            else:
+                clusts = pd.Series(self.cells.fetch(source_sink_key))
+                if sources is None:
+                    sources = []
+                else:
+                    if isinstance(sources, list) is False:
+                        raise ValueError(
+                            "ERROR: Parameter `sources` should be of 'list' type"
+                        )
+                if sinks is None:
+                    sinks = []
+                else:
+                    if isinstance(sinks, list) is False:
+                        raise ValueError(
+                            "ERROR: Parameter `sinks` should be of 'list' type"
+                        )
+                ss_vec = make_source_sink_vector(clusts, sources, sinks)
+        else:
+            if source_sink_key is not None:
+                logger.warning(
+                    "Sources/sinks from `source_sink_key` will not be because custom vector `ss_vec` is "
+                    "provided"
+                )
+            ss_vec = np.array(ss_vec)
+            if ss_vec.shape[0] != graph.shape[0]:
+                raise ValueError(
+                    f"ERROR: Size mismatch between `ss_vec` ({ss_vec.shape[0]}) and "
+                    f"graph ({graph.shape[0]:})"
+                )
+            if ss_vec.sum() > 1e-10:
+                raise ValueError(
+                    f"ERROR: The sum of all the values in `ss_vec` should be zero. Here we test if the sum is less"
+                    f" 1e-10"
+                )
+
+        ss_vec = ss_vec.reshape(-1, 1)
+
         ptime = pseudo_inverse(
-            laplacian(graph, inverse_degree(graph)), k_singular, 2, random_seed
+            laplacian(graph, inverse_degree(graph)),
+            n_singular_vals,
+            random_seed,
+            ss_vec,
         )
-        ptime = ptime - ptime.min()
-        ptime = ptime / ptime.max()
-        ptime = 1 - ptime
+        if min_max_norm_ptime:
+            ptime = ptime - ptime.min()
+            ptime = ptime / ptime.max()
 
         self.cells.insert(
             self._col_renamer(from_assay, cell_key, label),
