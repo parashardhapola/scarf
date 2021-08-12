@@ -2294,6 +2294,9 @@ class GraphDataStore(BaseDataStore):
             random_state = np.random.RandomState(random_seed)
             v0 = random_state.rand(lap.shape[0])
             # TODO: add thread management here
+            logger.info(
+                "Calculating SVD of graph laplacian. This might take a while...",
+            )
             u, s, vt = svds(lap, k=k, which="SM", v0=v0)
             # Because the order of singular values is not guaranteed
             idx = np.argsort(s)
@@ -3660,6 +3663,7 @@ class DataStore(MappingDatastore):
         from_assay: str = None,
         cell_key: str = None,
         pseudotime_key: str = None,
+        min_cells: int = 10,
         gene_batch_size: int = 50,
     ) -> None:
         """
@@ -3674,7 +3678,10 @@ class DataStore(MappingDatastore):
                         the cell metadata table. (Default value: 'I')
             pseudotime_key: Required parameter. This has to be a column name from cell metadata table. This column
                             contains values for pseudotime ordering of the cells.
-            gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
+            min_cells: Minimum number of cells where a gene should have non-zero value to be considered for test.
+                       (Default: 10)
+            gene_batch_size: Number of genes to be loaded in memory at a time. (Default value: 50).
+
 
         Returns: None
 
@@ -3691,8 +3698,20 @@ class DataStore(MappingDatastore):
         if cell_key is None:
             cell_key = "I"
         assay = self._get_assay(from_assay)
-        find_markers_by_regression(
-            assay, cell_key, pseudotime_key, self.nthreads, gene_batch_size
+        ptime = assay.cells.fetch(pseudotime_key, key=cell_key)
+        markers = find_markers_by_regression(
+            assay,
+            cell_key,
+            ptime,
+            self.nthreads,
+            min_cells,
+            gene_batch_size,
+        )
+        assay.feats.insert(
+            f"{cell_key}__{pseudotime_key}__r", markers["r_value"], overwrite=True
+        )
+        assay.feats.insert(
+            f"{cell_key}__{pseudotime_key}__p", markers["p_value"], overwrite=True
         )
 
     def get_markers(
