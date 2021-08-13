@@ -23,6 +23,9 @@ h6 {
 p {
     font-size: 1em
 }
+.dataframe {
+    font-size: 0.8em !important;
+}
 @media (min-width: 768px) {
 	div.navbar-brand-box a.navbar-brand img {
 		max-height: 25vh !important;
