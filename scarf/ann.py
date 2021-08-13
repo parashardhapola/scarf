@@ -3,7 +3,24 @@ from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
 from numpy.linalg import LinAlgError
 
-__all__ = ["AnnStream"]
+__all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
+
+
+def instantiate_knn_index(
+    space, dim, max_elements, ef_construction, M, random_seed, ef, num_threads
+):
+    import hnswlib
+
+    ann_idx = hnswlib.Index(space=space, dim=dim)
+    ann_idx.init_index(
+        max_elements=max_elements,
+        ef_construction=ef_construction,
+        M=M,
+        random_seed=random_seed,
+    )
+    ann_idx.set_ef(ef)
+    ann_idx.set_num_threads(num_threads)
+    return ann_idx
 
 
 def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarray):
@@ -248,20 +265,20 @@ class AnnStream:
         self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
-        import hnswlib
-
         dims = self.dims
         if dims < 1:
             dims = self.data.shape[1]
-        ann_idx = hnswlib.Index(space=self.annMetric, dim=dims)
-        ann_idx.init_index(
-            max_elements=self.nCells,
-            ef_construction=self.annEfc,
-            M=self.annM,
-            random_seed=self.randState,
+
+        ann_idx = instantiate_knn_index(
+            self.annMetric,
+            dims,
+            self.nCells,
+            self.annEfc,
+            self.annM,
+            self.randState,
+            self.annEf,
+            self.annThreads,
         )
-        ann_idx.set_ef(self.annEf)
-        ann_idx.set_num_threads(self.annThreads)
         for i in self.iter_blocks(msg="Fitting ANN"):
             ann_idx.add_items(self.reducer(i))
         return ann_idx
