@@ -216,8 +216,9 @@ class CrToZarr:
         for a in tqdmbar(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
             for j in range(len(stores)):
                 idx = (a.coords[1] >= assay_idx[j][0]) & (a.coords[1] < assay_idx[j][1])
+                feats_coords = a.coords[1][idx] - assay_idx[j][0]
                 stores[j].set_coordinate_selection(
-                    (s + a.coords[0][idx], a.coords[1][idx]), a.data[idx]
+                    (s + a.coords[0][idx], feats_coords), a.data[idx]
                 )
             s += a.shape[0]
         if s != self.cr.nCells:
