@@ -209,20 +209,18 @@ class CrToZarr:
             None
         """
         stores = [self.z["%s/counts" % x] for x in self.cr.assayFeats.columns]
-        spidx = [0] + list(self.cr.assayFeats.T.nFeatures.cumsum().values)
-        spidx = [(spidx[x - 1], spidx[x]) for x in range(1, len(spidx))]
-        s, e, = (
-            0,
-            0,
-        )
+        assay_idx = [0] + list(self.cr.assayFeats.T.nFeatures.cumsum().values)
+        assay_idx = [(assay_idx[x - 1], assay_idx[x]) for x in range(1, len(assay_idx))]
+        s = 0
         n_chunks = self.cr.nCells // batch_size + 1
         for a in tqdmbar(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
-            e += a.shape[0]
-            a = a.todense()
             for j in range(len(stores)):
-                stores[j][s:e] = a[:, spidx[j][0] : spidx[j][1]]
-            s = e
-        if e != self.cr.nCells:
+                idx = (a.coords[1] >= assay_idx[j][0]) & (a.coords[1] < assay_idx[j][1])
+                stores[j].set_coordinate_selection(
+                    (s + a.coords[0][idx], a.coords[1][idx]), a.data[idx]
+                )
+            s += a.shape[0]
+        if s != self.cr.nCells:
             raise AssertionError(
                 "ERROR: This is a bug in CrToZarr. All cells might not have been successfully "
                 "written into the zarr file. Please report this issue"
