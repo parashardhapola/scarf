@@ -16,7 +16,7 @@ import zarr
 from .metadata import MetaData
 from .utils import show_dask_progress, controlled_compute, logger
 from scipy.sparse import csr_matrix, vstack
-from typing import Tuple, List
+from typing import Tuple, List, Generator
 import pandas as pd
 
 __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
@@ -484,6 +484,144 @@ class Assay:
             )
             self.attrs["latest_cell_key"] = cell_key
         return daskarr.from_zarr(self.z[location + "/data"], inline_array=True)
+
+    def iter_normed_feature_wise(
+        self,
+        cell_key: str,
+        feat_key: str,
+        batch_size: int,
+        msg: str,
+        **norm_params,
+    ) -> Generator[pd.DataFrame, None, None]:
+        """
+
+        Args:
+            cell_key:
+            feat_key:
+            batch_size:
+            msg:
+
+        Returns:
+
+        """
+        from .utils import tqdmbar
+
+        data = self.normed(
+            cell_idx=self.cells.active_index(cell_key),
+            feat_key=self.feats.active_index(feat_key),
+            **norm_params,
+        )
+        chunks = np.array_split(
+            np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
+        )
+        indices = self.feats.active_index(key=feat_key)
+        for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
+            yield pd.DataFrame(
+                controlled_compute(data[:, chunk], self.nthreads),
+                columns=indices[chunk],
+            )
+
+    def save_aggregated_ordering(
+        self,
+        cell_key: str,
+        feat_key: str,
+        ordering_key: str,
+        min_exp: float = 10,
+        window_size: int = 200,
+        chunk_size: int = 50,
+        smoothen: bool = True,
+        z_scale: bool = True,
+        batch_size: int = 100,
+        **norm_params,
+    ):
+        """
+
+        Args:
+            cell_key:
+            feat_key:
+            ordering_key:
+            min_exp:
+            window_size:
+            chunk_size:
+            smoothen:
+            z_scale:
+            batch_size:
+            **norm_params:
+
+        Returns:
+
+        """
+
+        from .utils import rolling_window
+        from .writers import create_zarr_dataset
+
+        cell_ordering = self.cells.fetch(ordering_key, key=cell_key)
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
+        hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
+        params = {
+            "min_exp": min_exp,
+            "window_size": window_size,
+            "chunk_size": chunk_size,
+            "smoothen": smoothen,
+            "z_scale": z_scale,
+            "norm_params": norm_params,
+        }
+        location = f"aggregated_{cell_key}_{feat_key}_{ordering_key}"
+        if (
+            location in self.z
+            and hashes == self.z[location].attrs["hashes"]
+            and params == self.z[location].attrs["params"]
+        ):
+            logger.info(f"Using existing aggregated data from {location}")
+        else:
+            if location in self.z:
+                del self.z[location]
+
+            # The actual size might be smaller due to dynamic filtering of features
+            g = create_zarr_dataset(
+                self.z,
+                location + "/data",
+                (batch_size,),
+                "float64",
+                (feat_idx.shape[0], chunk_size),
+            )
+            ordering_idx = np.argsort(cell_ordering)
+            valid_feat_idx = []
+            s = 0
+            for df in self.iter_normed_feature_wise(
+                cell_key,
+                feat_key,
+                batch_size,
+                "Binning over cell-ordering",
+                **norm_params,
+            ):
+                valid_features = df.columns[df.sum() > min_exp]
+                df = df[valid_features]
+                if smoothen:
+                    df = rolling_window(df.reindex(ordering_idx).values, window_size)
+                if z_scale:
+                    df = (df - df.mean(axis=0)) / df.std(axis=0)
+                df = np.array(
+                    [x.mean(axis=0) for x in np.array_split(df, chunk_size)]
+                ).T
+                valid_feat_idx.extend(list(valid_features))
+                g[s : s + df.shape[0]] = df
+                s += df.shape[0]
+
+            g = create_zarr_dataset(
+                self.z,
+                location + "/feature_indices",
+                (len(valid_feat_idx),),
+                "uint64",
+                (len(valid_feat_idx),),
+            )
+            g[:] = np.array(valid_feat_idx).astype(int)
+            self.z[location].attrs["hashes"] = hashes
+            self.z[location].attrs["params"] = params
+
+        ret_val1 = daskarr.from_zarr(self.z[location + "/data"], inline_array=True)
+        ret_val2 = self.z[location + "/feature_indices"][:]
+        return ret_val1[: ret_val2.shape[0]], ret_val2
 
     def score_features(
         self,
