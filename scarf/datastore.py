@@ -1956,7 +1956,7 @@ class GraphDataStore(BaseDataStore):
             dendrogram = self.z[dendrogram_loc][:]
             logger.info("Using existing dendrogram")
         else:
-            paris = skn.hierarchy.Paris()
+            paris = skn.hierarchy.Paris(reorder=False)
             graph = self.load_graph(
                 from_assay=from_assay,
                 cell_key=cell_key,
