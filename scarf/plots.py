@@ -1188,62 +1188,38 @@ def plot_cluster_hierarchy(
         return ax
 
 
-def plot_pseudotime_heatmap(
-    df,
-    feature_clusters: np.ndarray,
-    pseudotime: np.ndarray,
-    show_genes: list = None,
-    feat_labels: list = None,
+def plot_annotated_heatmap(
+    df: np.array,
+    xbar_values: np.ndarray,
+    ybar_values: np.ndarray,
+    display_row_labels: list = None,
+    row_labels: list = None,
     width: int = 5,
     height: int = 10,
     vmin: float = -2.0,
     vmax: float = 2.0,
     heatmap_cmap: str = None,
-    pseudotime_cmap: str = None,
-    clusterbar_cmap: str = None,
+    xbar_cmap: str = None,
+    ybar_cmap: str = None,
     tick_fontsize: int = 10,
     axis_fontsize: int = 12,
-    gene_label_fontsize: int = 12,
+    row_label_fontsize: int = 12,
     savename: str = None,
     save_dpi: int = 300,
     show_fig: bool = True,
 ):
-    """
 
-    Args:
-        df:
-        feature_clusters:
-        pseudotime:
-        show_genes:
-        feat_labels:
-        width:
-        height:
-        vmin:
-        vmax:
-        heatmap_cmap:
-        pseudotime_cmap:
-        clusterbar_cmap:
-        tick_fontsize:
-        axis_fontsize:
-        gene_label_fontsize:
-        savename:
-        save_dpi:
-        show_fig:
-
-    Returns:
-
-    """
     import matplotlib.gridspec as gridspec
     import matplotlib.ticker as mticker
 
-    if show_genes is None:
-        show_genes = []
-    if feat_labels is None:
-        feat_labels = df.index
+    if display_row_labels is None:
+        display_row_labels = []
+    if row_labels is None:
+        row_labels = list(map(str, range(df.shape[0])))
     else:
-        if len(feat_labels) != df.shape[0]:
+        if len(row_labels) != df.shape[0]:
             raise ValueError(
-                "ERROR: Number of provided feature labels and size of the dataframe does not match"
+                "ERROR: Number of provided feature labels and size of the data array does not match"
             )
 
     whr = height / width
@@ -1267,28 +1243,25 @@ def plot_pseudotime_heatmap(
         cmap=heatmap_cmap,
     )
 
-    if len(show_genes) > 0:
-        feat_labels = {x.lower(): n for n, x in enumerate(feat_labels)}
-        show_genes = [x for x in show_genes if x.lower() in feat_labels]
-        heatmap_ax.set_yticks([feat_labels[x.lower()] for x in show_genes])
-        heatmap_ax.set_yticklabels(show_genes, fontsize=gene_label_fontsize)
+    if len(display_row_labels) > 0:
+        row_labels = {x.lower(): n for n, x in enumerate(row_labels)}
+        display_row_labels = [x for x in display_row_labels if x.lower() in row_labels]
+        heatmap_ax.set_yticks([row_labels[x.lower()] for x in display_row_labels])
+        heatmap_ax.set_yticklabels(display_row_labels, fontsize=row_label_fontsize)
 
     heatmap_ax.set_title(f"{df.shape[0]} features", fontsize=axis_fontsize)
     ticks_loc = cbar_ax.get_yticks().tolist()
     cbar_ax.yaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
     cbar_ax.set_yticklabels([x for x in ticks_loc], fontsize=tick_fontsize)
 
-    feature_clusters = feature_clusters[df.index]
-    if clusterbar_cmap is None:
-        clusterbar_cmap = "tab20"
-    clustbar_ax.imshow(
-        feature_clusters.reshape(-1, 1), aspect="auto", cmap=clusterbar_cmap
-    )
+    if ybar_cmap is None:
+        ybar_cmap = "tab20"
+    clustbar_ax.imshow(ybar_values.reshape(-1, 1), aspect="auto", cmap=ybar_cmap)
     clustbar_ax.set_xticks([])
     clustbar_ax.set_yticks([])
 
-    for i in set(feature_clusters):
-        y = np.where(feature_clusters == i)[0].mean()
+    for i in set(ybar_values):
+        y = np.where(ybar_values == i)[0].mean()
         clustbar_ax.text(
             0,
             y,
@@ -1298,10 +1271,10 @@ def plot_pseudotime_heatmap(
             va="center",
         )
 
-    binned_ptime = [x.mean() for x in np.array_split(sorted(pseudotime), df.shape[1])]
-    if pseudotime_cmap is None:
-        pseudotime_cmap = cm.deep
-    ptime_ax.imshow([binned_ptime], aspect="auto", cmap=pseudotime_cmap)
+    binned_ptime = [x.mean() for x in np.array_split(sorted(xbar_values), df.shape[1])]
+    if xbar_cmap is None:
+        xbar_cmap = cm.deep
+    ptime_ax.imshow([binned_ptime], aspect="auto", cmap=xbar_cmap)
     ptime_ax.set_xticks([])
     ptime_ax.set_yticks([])
     ptime_ax.set_xlabel("------ Pseudotime----->", fontsize=axis_fontsize)
