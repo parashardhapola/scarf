@@ -362,15 +362,21 @@ class BaseDataStore:
                 self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
-                if mito_pattern is None:
-                    mito_pattern = "MT-|mt"
-                var_name = from_assay + "_percentMito"
-                assay.add_percent_feature(mito_pattern, var_name)
+                if mito_pattern == "":
+                    pass
+                else:
+                    if mito_pattern is None:
+                        mito_pattern = "MT-|mt"
+                    var_name = from_assay + "_percentMito"
+                    assay.add_percent_feature(mito_pattern, var_name)
 
-                if ribo_pattern is None:
-                    ribo_pattern = "RPS|RPL|MRPS|MRPL"
-                var_name = from_assay + "_percentRibo"
-                assay.add_percent_feature(ribo_pattern, var_name)
+                if ribo_pattern == "":
+                    pass
+                else:
+                    if ribo_pattern is None:
+                        ribo_pattern = "RPS|RPL|MRPS|MRPL"
+                    var_name = from_assay + "_percentRibo"
+                    assay.add_percent_feature(ribo_pattern, var_name)
 
             if from_assay == self._defaultAssay:
                 v = self.cells.fetch(from_assay + "_nFeatures")
@@ -3994,23 +4000,25 @@ class DataStore(MappingDatastore):
         self,
         *,
         from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
         group_key: str = None,
         assay_label: str = None,
         exclude_values: list = None,
-    ):
+    ) -> None:
         """
+        Add a new assay to the DataStore by grouping together multiple features and taking their means.
+        This method requires that the features are already assigned a group/cluster identity. The new assay will have
+        all the cells but only features that marked by 'feat_key' and contain a group identity not present in
+        `exclude_values`.
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            group_key:
-            assay_label:
-            exclude_values:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            group_key: This is mandatory parameter. Name of the column in feature metadata table to be used for
+                       grouping features.
+            assay_label: This is mandatory parameter. A name for the new assay.
+            exclude_values: These groups/clusters will ignored and not added to new assay. By default it is set to [-1],
+                            this means that all the features that have the group identity of -1 are not used.
 
-        Returns:
+        Returns: None
 
         """
 
@@ -4018,11 +4026,16 @@ class DataStore(MappingDatastore):
 
         if assay_label is None:
             raise ValueError(
-                "ERROR: Please provide a value for assay_label. "
+                "ERROR: Please provide a value for `assay_label`. "
                 "It will be used to create a new assay"
             )
+        if group_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `group_key`. "
+                "This should be name of the column in the feature attribute table that contains the group/cluster "
+                "identity of each feature."
+            )
 
-        from_assay, cell_key, _ = self._get_latest_keys(from_assay, cell_key, feat_key)
         assay = self._get_assay(from_assay)
         groups = assay.feats.fetch_all(group_key)
         if exclude_values is None:
@@ -4040,11 +4053,11 @@ class DataStore(MappingDatastore):
             dtype="float",
         )
 
+        cell_idx = np.array(list(range(assay.cells.N)))
         for n, i in tqdmbar(
             enumerate(group_set), desc="Writing to Zarr", total=len(group_set)
         ):
             feat_idx = np.where(groups == i)[0]
-            cell_idx = assay.cells.active_index(cell_key)
             temp = np.zeros(assay.cells.N)
             temp[cell_idx] = (
                 assay.normed(cell_idx=cell_idx, feat_idx=feat_idx)
@@ -4053,7 +4066,8 @@ class DataStore(MappingDatastore):
             )
             g[:, n] = temp
 
-        self._load_assays(min_cells=-1)
+        self._load_assays(min_cells=0, custom_assay_types={assay_label: "Assay"})
+        self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
 
     def make_bulk(
         self,
@@ -4919,6 +4933,34 @@ class DataStore(MappingDatastore):
         save_dpi: int = 300,
         show_fig: bool = True,
     ) -> None:
+        """
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
+                      The values in the chosen column should be boolean (Default value: 'I')
+            feat_key:
+            feature_cluster_key:
+            pseudotime_key:
+            show_features:
+            width:
+            height:
+            vmin:
+            vmax:
+            heatmap_cmap:
+            pseudotime_cmap:
+            clusterbar_cmap:
+            tick_fontsize:
+            axis_fontsize:
+            feature_label_fontsize:
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
+            show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
+
+        Returns:
+
+        """
 
         from .plots import plot_annotated_heatmap
 
