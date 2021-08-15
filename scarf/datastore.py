@@ -56,7 +56,6 @@ class BaseDataStore:
 
     Attributes:
         cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
-        assay_names: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: Number of threads to use for this datastore instance.
         z: The Zarr file (directory) used for for this datastore instance.
     """
@@ -1568,7 +1567,7 @@ class GraphDataStore(BaseDataStore):
             symmetric=symmetric_graph,
             upper_only=graph_upper_only,
         )
-        export_knn_to_mtx(knn_mtx_fn, graph)
+        export_knn_to_mtx(str(knn_mtx_fn), graph)
 
         ini_emb_fn = Path(temp_file_loc, f"{uid}.txt").resolve()
         with open(ini_emb_fn, "w") as h:
@@ -2290,8 +2289,9 @@ class GraphDataStore(BaseDataStore):
             r[~clusts.isin(ss)] = v
             return r
 
-        def pseudo_inverse(lap, k, random_seed, r):
-            random_state = np.random.RandomState(random_seed)
+        def pseudo_inverse(lap, k, rseed, r):
+            random_state = np.random.RandomState(rseed)
+            # noinspection PyArgumentList
             v0 = random_state.rand(lap.shape[0])
             # TODO: add thread management here
             logger.info(
@@ -2381,6 +2381,7 @@ class GraphDataStore(BaseDataStore):
             ss_vec,
         )
         if min_max_norm_ptime:
+            # noinspection PyArgumentList
             ptime = ptime - ptime.min()
             ptime = ptime / ptime.max()
 
@@ -3079,7 +3080,7 @@ class MappingDatastore(GraphDataStore):
             h.write("\n".join(map(str, ini_embed.flatten())))
         del ini_embed
         knn_mtx_fn = Path(temp_file_loc, f"{uid}.mtx").resolve()
-        export_knn_to_mtx(knn_mtx_fn, graph)
+        export_knn_to_mtx(str(knn_mtx_fn), graph)
         out_fn = Path(temp_file_loc, f"{uid}_output.txt").resolve()
         cmd = (
             f"sgtsne -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}"
@@ -3606,6 +3607,7 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         threshold: float = 0.25,
         gene_batch_size: int = 50,
+        **norm_params,
     ) -> None:
         """
         Identifies group specific features for a given assay.
@@ -3639,7 +3641,12 @@ class DataStore(MappingDatastore):
             cell_key = "I"
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(
-            assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size
+            assay,
+            group_key,
+            cell_key,
+            threshold,
+            gene_batch_size,
+            **norm_params,
         )
         z = self.z[assay.name]
         slot_name = f"{cell_key}__{group_key}"
@@ -3665,6 +3672,7 @@ class DataStore(MappingDatastore):
         pseudotime_key: str = None,
         min_cells: int = 10,
         gene_batch_size: int = 50,
+        **norm_params,
     ) -> None:
         """
         Identify genes that a correlated with a given pseudotime ordering of cells.
@@ -3700,12 +3708,7 @@ class DataStore(MappingDatastore):
         assay = self._get_assay(from_assay)
         ptime = assay.cells.fetch(pseudotime_key, key=cell_key)
         markers = find_markers_by_regression(
-            assay,
-            cell_key,
-            ptime,
-            self.nthreads,
-            min_cells,
-            gene_batch_size,
+            assay, cell_key, ptime, min_cells, gene_batch_size, **norm_params
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__r", markers["r_value"], overwrite=True
