@@ -3657,7 +3657,9 @@ class DataStore(MappingDatastore):
             g = group.create_group(i)
             vals = markers[i]
             if len(vals) != 0:
-                create_zarr_obj_array(g, "names", np.array(list(vals.index)))
+                create_zarr_obj_array(
+                    g, "names", np.array(list(vals.index)), dtype="uint64"
+                )
                 g_s = create_zarr_dataset(
                     g, "scores", (10000,), float, vals.values.shape
                 )
@@ -4858,17 +4860,15 @@ class DataStore(MappingDatastore):
                 f"{cell_key} as `cell_key`"
             )
         g = self.z[assay.name]["markers"][slot_name]
-        goi = []
+        feat_idx = []
         for i in g.keys():
             if "names" in g[i]:
-                goi.extend(g[i]["names"][:][:topn])
-        goi = np.array(sorted(set(goi)))
+                feat_idx.extend(g[i]["names"][:][:topn])
+        feat_idx = np.array(sorted(set(feat_idx)))
         cell_idx = np.array(assay.cells.active_index(cell_key))
-        feat_idx = np.array(assay.feats.get_index_by(goi, "ids"))
-        feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(
             cell_idx=cell_idx,
-            feat_idx=feat_idx[feat_argsort],
+            feat_idx=feat_idx,
             log_transform=log_transform,
         )
         nc = normed_data.chunks[0]
@@ -4879,14 +4879,8 @@ class DataStore(MappingDatastore):
         ).to_dask_dataframe()
         df = controlled_compute(normed_data.groupby(groups).mean(), 4)
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
-        df.columns = goi[feat_argsort]
+        df.columns = assay.feats.fetch_all("names")[feat_idx]
         df = df.T
-        df.index = (
-            assay.feats.to_pandas_dataframe(["ids", "names"])
-            .set_index("ids")
-            .reindex(df.index)["names"]
-            .values
-        )
         # noinspection PyTypeChecker
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
