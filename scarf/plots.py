@@ -1186,3 +1186,118 @@ def plot_cluster_hierarchy(
         plt.show()
     else:
         return ax
+
+
+def plot_pseudotime_heatmap(
+    df,
+    feature_clusters: np.ndarray,
+    pseudotime: np.ndarray,
+    show_genes: list = None,
+    feat_labels: list = None,
+    width: int = 5,
+    height: int = 10,
+    vmin: float = -2.0,
+    vmax: float = 2.0,
+    heatmap_cmap: str = None,
+    pseudotime_cmap: str = None,
+    clusterbar_cmap: str = None,
+    tick_fontsize: int = 10,
+    axis_fontsize: int = 12,
+    gene_label_fontsize: int = 12,
+):
+    """
+
+    Args:
+        df:
+        feature_clusters:
+        pseudotime:
+        show_genes:
+        feat_labels:
+        width:
+        height:
+        vmin:
+        vmax:
+        heatmap_cmap:
+        pseudotime_cmap:
+        clusterbar_cmap:
+        tick_fontsize:
+        axis_fontsize:
+        gene_label_fontsize:
+
+    Returns:
+
+    """
+    import matplotlib.gridspec as gridspec
+    import matplotlib.ticker as mticker
+
+    if show_genes is None:
+        show_genes = []
+    if feat_labels is None:
+        feat_labels = df.index
+    else:
+        if len(feat_labels) != df.shape[0]:
+            raise ValueError(
+                "ERROR: Number of provided feature labels and size of the dataframe does not match"
+            )
+
+    whr = height / width
+    fig = plt.figure(constrained_layout=False, figsize=(width, height))
+    gs = fig.add_gridspec(nrows=int(20 * whr), ncols=20, wspace=0, hspace=0)
+    heatmap_ax = fig.add_subplot(gs[:-2, 1:16])
+    clustbar_ax = fig.add_subplot(gs[:-2, 17:18])
+    cbar_ax = fig.add_subplot(gs[round(7 * whr) : round(12 * whr), -1:])
+    ptime_ax = fig.add_subplot(gs[-1:, 1:16])
+
+    if heatmap_cmap is None:
+        heatmap_cmap = "coolwarm"
+    sns.heatmap(
+        df,
+        ax=heatmap_ax,
+        cbar_ax=cbar_ax,
+        xticklabels=[],
+        yticklabels=[],
+        vmin=vmin,
+        vmax=vmax,
+        cmap=heatmap_cmap,
+    )
+
+    if len(show_genes) > 0:
+        feat_labels = {x.lower(): n for n, x in enumerate(feat_labels)}
+        show_genes = [x for x in show_genes if x.lower() in feat_labels]
+        heatmap_ax.set_yticks([feat_labels[x.lower()] for x in show_genes])
+        heatmap_ax.set_yticklabels(show_genes, fontsize=gene_label_fontsize)
+
+    heatmap_ax.set_title(f"{df.shape[0]} features", fontsize=axis_fontsize)
+    ticks_loc = cbar_ax.get_yticks().tolist()
+    cbar_ax.yaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+    cbar_ax.set_yticklabels([x for x in ticks_loc], fontsize=tick_fontsize)
+
+    feature_clusters = feature_clusters[df.index]
+    if clusterbar_cmap is None:
+        clusterbar_cmap = "tab20"
+    clustbar_ax.imshow(
+        feature_clusters.reshape(-1, 1), aspect="auto", cmap=clusterbar_cmap
+    )
+    clustbar_ax.set_xticks([])
+    clustbar_ax.set_yticks([])
+
+    for i in set(feature_clusters):
+        y = np.where(feature_clusters == i)[0].mean()
+        clustbar_ax.text(
+            0,
+            y,
+            i,
+            fontsize=axis_fontsize,
+            ha="center",
+            va="center",
+        )
+
+    binned_ptime = [x.mean() for x in np.array_split(sorted(pseudotime), df.shape[1])]
+    if pseudotime_cmap is None:
+        pseudotime_cmap = cm.deep
+    ptime_ax.imshow([binned_ptime], aspect="auto", cmap=pseudotime_cmap)
+    ptime_ax.set_xticks([])
+    ptime_ax.set_yticks([])
+    ptime_ax.set_xlabel("------ Pseudotime----->", fontsize=axis_fontsize)
+
+    plt.show()
