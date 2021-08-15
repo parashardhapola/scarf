@@ -1204,6 +1204,9 @@ def plot_pseudotime_heatmap(
     tick_fontsize: int = 10,
     axis_fontsize: int = 12,
     gene_label_fontsize: int = 12,
+    savename: str = None,
+    save_dpi: int = 300,
+    show_fig: bool = True,
 ):
     """
 
@@ -1223,6 +1226,9 @@ def plot_pseudotime_heatmap(
         tick_fontsize:
         axis_fontsize:
         gene_label_fontsize:
+        savename:
+        save_dpi:
+        show_fig:
 
     Returns:
 
@@ -1299,5 +1305,7 @@ def plot_pseudotime_heatmap(
     ptime_ax.set_xticks([])
     ptime_ax.set_yticks([])
     ptime_ax.set_xlabel("------ Pseudotime----->", fontsize=axis_fontsize)
-
-    plt.show()
+    if savename is not None:
+        plt.savefig(savename, dpi=save_dpi)
+    if show_fig:
+        plt.show()
