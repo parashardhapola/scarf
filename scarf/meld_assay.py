@@ -146,6 +146,7 @@ def _create_counts_mat(
         c_pos_end = c_pos_start + a.shape[0]
         for n, i in enumerate(feat_order):
             if i in cross_idx_map and len(cross_idx_map[i]) > 0:
+                # TODO: check if cross_idx_map[i] should be sorted and then fed into a's index
                 b[:, n] = a[:, cross_idx_map[i]].sum(axis=1)
         out_store[c_pos_start:c_pos_end, :] = b
         c_pos_start = c_pos_end
