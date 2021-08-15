@@ -56,7 +56,7 @@ class BaseDataStore:
 
     Attributes:
         cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
-        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
+        assay_names: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: Number of threads to use for this datastore instance.
         z: The Zarr file (directory) used for for this datastore instance.
     """
@@ -104,7 +104,6 @@ class BaseDataStore:
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()
-        self.assayNames = self._get_assay_names()
         self._defaultAssay = self._load_default_assay(default_assay)
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
@@ -127,7 +126,8 @@ class BaseDataStore:
             raise KeyError("ERROR: cellData not found in zarr file")
         return MetaData(self.z["cellData"])
 
-    def _get_assay_names(self) -> List[str]:
+    @property
+    def assay_names(self) -> List[str]:
         """
         Load all assay names present in the Zarr file. Zarr writers create an 'is_assay' attribute in the assay level
         and this function looks for presence of those attributes to load assay names.
@@ -159,17 +159,17 @@ class BaseDataStore:
             if "defaultAssay" in self.z.attrs:
                 assay_name = self.z.attrs["defaultAssay"]
             else:
-                if len(self.assayNames) == 1:
-                    assay_name = self.assayNames[0]
+                if len(self.assay_names) == 1:
+                    assay_name = self.assay_names[0]
                     self.z.attrs["defaultAssay"] = assay_name
                 else:
                     raise ValueError(
                         "ERROR: You have more than one assay data. "
-                        f"Choose one from: {' '.join(self.assayNames)}\n using 'default_assay' parameter. "
+                        f"Choose one from: {' '.join(self.assay_names)}\n using 'default_assay' parameter. "
                         "Please note that names are case-sensitive."
                     )
         else:
-            if assay_name in self.assayNames:
+            if assay_name in self.assay_names:
                 if "defaultAssay" in self.z.attrs:
                     if assay_name != self.z.attrs["defaultAssay"]:
                         logger.info(
@@ -179,7 +179,7 @@ class BaseDataStore:
             else:
                 raise ValueError(
                     f"ERROR: The provided default assay name: {assay_name} was not found. "
-                    f"Please Choose one from: {' '.join(self.assayNames)}\n"
+                    f"Please Choose one from: {' '.join(self.assay_names)}\n"
                     "Please note that the names are case-sensitive."
                 )
         return assay_name
@@ -227,7 +227,7 @@ class BaseDataStore:
         z_attrs = dict(self.z.attrs["assayTypes"])
         if custom_assay_types is None:
             custom_assay_types = {}
-        for i in self.assayNames:
+        for i in self.assay_names:
             if i in custom_assay_types:
                 if custom_assay_types[i] in preset_assay_types:
                     assay = preset_assay_types[custom_assay_types[i]]
@@ -335,7 +335,7 @@ class BaseDataStore:
         Returns:
 
         """
-        for from_assay in self.assayNames:
+        for from_assay in self.assay_names:
             assay = self._get_assay(from_assay)
 
             var_name = from_assay + "_nCounts"
@@ -423,7 +423,7 @@ class BaseDataStore:
             ValueError: if `assay_name` is not found in attribute `assayNames`
 
         """
-        if assay_name in self.assayNames:
+        if assay_name in self.assay_names:
             self._defaultAssay = assay_name
             self.z.attrs["defaultAssay"] = assay_name
         else:
@@ -480,7 +480,7 @@ class BaseDataStore:
     def __repr__(self):
         res = (
             f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with"
-            f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
+            f" {len(self.assay_names)} assays: {' '.join(self.assay_names)}"
         )
         htabs = " " * 3
         stabs = htabs * 2
@@ -497,7 +497,7 @@ class BaseDataStore:
             )
         )
         res = res.rstrip("\n\t")[:-2]
-        for i in self.assayNames:
+        for i in self.assay_names:
             assay = self._get_assay(i)
             res += (
                 f"\n{htabs}{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) "
@@ -2416,7 +2416,7 @@ class GraphDataStore(BaseDataStore):
 
         merged_graph = []
         for assay in assays:
-            if assay not in self.assayNames:
+            if assay not in self.assay_names:
                 raise ValueError(f"ERROR: Assay {assay} was not found.")
             merged_graph.append(
                 self.load_graph(
@@ -3714,6 +3714,87 @@ class DataStore(MappingDatastore):
             f"{cell_key}__{pseudotime_key}__p", markers["p_value"], overwrite=True
         )
 
+    def run_pseudotime_aggregation(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        feat_key: str = None,
+        pseudotime_key: str = None,
+        cluster_label: str = None,
+        min_exp: float = 10,
+        window_size: int = 200,
+        chunk_size: int = 50,
+        smoothen: bool = True,
+        z_scale: bool = True,
+        k: int = 11,
+        n_clusters: int = 10,
+        batch_size: int = 100,
+        ann_params: dict = None,
+    ):
+        """
+
+        Args:
+            from_assay:
+            cell_key:
+            feat_key:
+            pseudotime_key:
+            cluster_label:
+            min_exp:
+            window_size:
+            chunk_size:
+            smoothen:
+            z_scale:
+            k:
+            n_clusters:
+            batch_size:
+            ann_params:
+
+        Returns:
+
+        """
+        from .markers import knn_clustering
+
+        from_assay, cell_key, _ = self._get_latest_keys(from_assay, cell_key, feat_key)
+        if feat_key is None:
+            feat_key = "I"
+        assay = self._get_assay(from_assay)
+
+        if pseudotime_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `pseudotime_key` parameter. This is the column in "
+                "the cell attribute table that contains the pseudotime values."
+            )
+        if cluster_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for cluster_label. "
+                "It will be used to create new column in feature attribute table. The module identity "
+                "of each feature will be saved under this column name. If this column already exists "
+                "then it will be overwritten."
+            )
+
+        df, feat_ids = assay.save_aggregated_ordering(
+            cell_key=cell_key,
+            feat_key=feat_key,
+            ordering_key=pseudotime_key,
+            min_exp=min_exp,
+            window_size=window_size,
+            chunk_size=chunk_size,
+            smoothen=smoothen,
+            z_scale=z_scale,
+            batch_size=batch_size,
+        )
+        df = pd.DataFrame(df.compute(), index=feat_ids)
+
+        df, clusts = knn_clustering(
+            df=df, k=k, n_clusts=n_clusters, ann_params=ann_params
+        )
+        clusts_full_array = np.ones(assay.feats.N) * -1
+        clusts_full_array[df.index] = clusts
+        assay.feats.insert(cluster_label, clusts_full_array.astype(int), overwrite=True)
+
+        return df
+
     def get_markers(
         self,
         *,
@@ -3900,6 +3981,71 @@ class DataStore(MappingDatastore):
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
+
+    def add_grouped_assay(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        feat_key: str = None,
+        group_key: str = None,
+        assay_label: str = None,
+        exclude_values: list = None,
+    ):
+        """
+
+        Args:
+            from_assay:
+            cell_key:
+            feat_key:
+            group_key:
+            assay_label:
+            exclude_values:
+
+        Returns:
+
+        """
+
+        from .writers import create_zarr_count_assay
+
+        if assay_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for assay_label. "
+                "It will be used to create a new assay"
+            )
+
+        from_assay, cell_key, _ = self._get_latest_keys(from_assay, cell_key, feat_key)
+        assay = self._get_assay(from_assay)
+        groups = assay.feats.fetch_all(group_key)
+        if exclude_values is None:
+            exclude_values = [-1]
+        group_set = sorted(set(groups).difference(exclude_values))
+
+        module_ids = [f"group_{x}" for x in group_set]
+        g = create_zarr_count_assay(
+            z=assay.z["/"],
+            assay_name=assay_label,
+            chunk_size=assay.rawData.chunksize,
+            n_cells=assay.cells.N,
+            feat_ids=module_ids,
+            feat_names=module_ids,
+            dtype="float",
+        )
+
+        for n, i in tqdmbar(
+            enumerate(group_set), desc="Writing to Zarr", total=len(group_set)
+        ):
+            feat_idx = np.where(groups == i)[0]
+            cell_idx = assay.cells.active_index(cell_key)
+            temp = np.zeros(assay.cells.N)
+            temp[cell_idx] = (
+                assay.normed(cell_idx=cell_idx, feat_idx=feat_idx)
+                .mean(axis=1)
+                .compute()
+            )
+            g[:, n] = temp
+
+        self._load_assays(min_cells=-1)
 
     def make_bulk(
         self,
