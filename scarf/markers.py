@@ -123,46 +123,72 @@ def find_markers_by_regression(
     return res
 
 
-def knn_clustering(df, k, n_clusts, ann_params=None):
+def knn_clustering(
+    d_array, n_neighbours: int, n_clusters: int, n_threads: int, ann_params: dict = None
+) -> np.ndarray:
     """
 
     Args:
-        df:
-        k:
-        n_clusts:
+        d_array:
+        n_neighbours:
+        n_clusters:
+        n_threads:
         ann_params:
 
     Returns:
 
     """
 
-    from scarf.ann import instantiate_knn_index
+    from .ann import instantiate_knn_index, fix_knn_query
+    from .utils import controlled_compute, tqdmbar, show_dask_progress
+    from scipy.sparse import csr_matrix
 
-    def make_knn_mat():
+    def make_knn_mat(data, k, t):
         """
+
+        Args:
+            data:
+            k:
+            t:
 
         Returns:
 
         """
-        from scarf.ann import fix_knn_query
-        from scipy.sparse import csr_matrix
 
-        ann_idx.add_items(df)
-        inds, d = ann_idx.knn_query(df, k=k + 1)
-        inds, _, _ = fix_knn_query(inds, d, np.array(range(df.shape[0])))
+        for i in tqdmbar(data.blocks, desc="Fitting KNNs", total=data.numblocks[0]):
+            i = controlled_compute(i, t)
+            ann_idx.add_items(i)
+        s, e = 0, 0
+        indices = []
+        for i in tqdmbar(
+            data.blocks, desc="Identifying feature KNNs", total=data.numblocks[0]
+        ):
+            e += i.shape[0]
+            i = controlled_compute(i, t)
+            inds, d = ann_idx.knn_query(i, k=k + 1)
+            inds, _, _ = fix_knn_query(inds, d, np.arange(s, e))
+            indices.append(inds)
+            s = e
+        indices = np.vstack(indices)
+        assert indices.shape[0] == data.shape[0]
+
         return csr_matrix(
             (
-                np.ones(inds.shape[0] * inds.shape[1]),
-                (np.repeat(range(inds.shape[0]), inds.shape[1]), inds.flatten()),
+                np.ones(indices.shape[0] * indices.shape[1]),
+                (
+                    np.repeat(range(indices.shape[0]), indices.shape[1]),
+                    indices.flatten(),
+                ),
             ),
-            shape=(inds.shape[0], inds.shape[0]),
+            shape=(indices.shape[0], indices.shape[0]),
         )
 
-    def make_clusters(mat):
+    def make_clusters(mat, nc):
         """
 
         Args:
             mat:
+            nc:
 
         Returns:
 
@@ -170,45 +196,46 @@ def knn_clustering(df, k, n_clusts, ann_params=None):
         import sknetwork as skn
 
         paris = skn.hierarchy.Paris(reorder=False)
+        logger.info("Performing clustering, this might take a while...")
         dendrogram = paris.fit_transform(mat)
-        return skn.hierarchy.cut_straight(dendrogram, n_clusters=n_clusts)
+        return skn.hierarchy.cut_straight(dendrogram, n_clusters=nc)
 
-    def fix_cluster_order(clusters):
+    def fix_cluster_order(data, clusters, t):
         """
 
         Args:
+            data:
             clusters:
+            t:
 
         Returns:
 
         """
-        cmm = (
-            pd.DataFrame([df.idxmax(axis=1).values, clusters])
-            .T.groupby(1)
-            .median()[0]
-            .sort_values()
-        )
-        updated_ids = (
+
+        idxmax = show_dask_progress(data.argmax(axis=1), "Sorting clusters", t)
+        cmm = pd.DataFrame([idxmax, clusters]).T.groupby(1).median()[0].sort_values()
+        return (
             pd.Series(clusters)
             .replace(dict(zip(cmm.index, range(1, 1 + len(cmm)))))
             .values
         )
-        idx = np.argsort(updated_ids)
-        return df.iloc[idx], updated_ids[idx]
 
     default_ann_params = {
         "space": "l2",
-        "dim": df.shape[1],
-        "max_elements": df.shape[0],
+        "dim": d_array.shape[1],
+        "max_elements": d_array.shape[0],
         "ef_construction": 80,
         "M": 50,
         "random_seed": 444,
         "ef": 80,
-        "num_threads": 2,
+        "num_threads": 1,
     }
     if ann_params is None:
         ann_params = {}
     default_ann_params.update(ann_params)
     ann_idx = instantiate_knn_index(**default_ann_params)
-    logger.info("Performing clustering, this might take a while...")
-    return fix_cluster_order(make_clusters(make_knn_mat()))
+    return fix_cluster_order(
+        d_array,
+        make_clusters(make_knn_mat(d_array, n_neighbours, n_threads), n_clusters),
+        n_threads,
+    )
