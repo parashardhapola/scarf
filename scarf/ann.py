@@ -152,7 +152,7 @@ class AnnStream:
             else:
                 self.annIdx = ann_idx
                 self.annIdx.set_ef(self.annEf)
-                self.annIdx.set_num_threads(1)
+                self.annIdx.set_num_threads(self.annThreads)
             self.kmeans = self._fit_kmeans(do_kmeans_fit)
 
     def _handle_batch_size(self):
