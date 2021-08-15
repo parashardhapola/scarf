@@ -2,7 +2,7 @@
 Module to find biomarkers.
 """
 from .assay import Assay
-from .utils import controlled_compute, tqdmbar
+from .utils import logger
 from numba import jit
 import numpy as np
 import pandas as pd
@@ -12,38 +12,17 @@ from scipy.stats import linregress
 __all__ = [
     "find_markers_by_rank",
     "find_markers_by_regression",
-    "aggregate_over_cell_ordering",
     "knn_clustering",
 ]
-
-
-def iter_data_feature_wise(
-    assay, cell_key, feat_key, feature_ids, batch_size, nthreads, msg
-):
-    data = assay.normed(
-        cell_idx=assay.cells.active_index(cell_key),
-        feat_key=assay.feats.active_index(feat_key),
-    )
-    chunks = np.array_split(
-        np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
-    )
-    if len(feature_ids) != data.shape[1]:
-        raise ValueError(
-            "ERROR: The number of provided feature ids is not same as the requested normed data"
-        )
-    for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
-        yield pd.DataFrame(
-            controlled_compute(data[:, chunk], nthreads), columns=feature_ids[chunk]
-        )
 
 
 def find_markers_by_rank(
     assay: Assay,
     group_key: str,
     cell_key: str,
-    nthreads: int,
     threshold: float = 0.25,
     batch_size: int = 50,
+    **norm_params,
 ) -> dict:
     """
 
@@ -51,7 +30,6 @@ def find_markers_by_rank(
         assay:
         group_key:
         cell_key:
-        nthreads:
         threshold:
         batch_size:
 
@@ -85,9 +63,14 @@ def find_markers_by_rank(
     int_indices = np.array([idx_map[x] for x in groups])
     feature_ids = assay.feats.fetch("ids", key="I")
     results = {x: [] for x in group_set}
-    for val in iter_data_feature_wise(
-        assay, cell_key, "I", feature_ids, batch_size, nthreads, "Finding markers"
+    for val in assay.iter_normed_feature_wise(
+        cell_key,
+        "I",
+        batch_size,
+        "Finding markers",
+        **norm_params,
     ):
+        val.index = feature_ids
         res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
         # Removing genes that were below the threshold in all the groups
         res = res.T[(res < threshold).sum() != n_groups]
@@ -102,9 +85,9 @@ def find_markers_by_regression(
     assay: Assay,
     cell_key: str,
     regressor: np.ndarray,
-    nthreads: int,
     min_cells: int,
     batch_size: int = 50,
+    **norm_params,
 ) -> pd.DataFrame:
     """
 
@@ -112,7 +95,6 @@ def find_markers_by_regression(
         assay:
         cell_key:
         regressor:
-        nthreads:
         min_cells:
         batch_size:
 
@@ -122,15 +104,14 @@ def find_markers_by_regression(
 
     feature_ids = assay.feats.fetch("ids")
     res = {}
-    for df in iter_data_feature_wise(
-        assay,
+    for df in assay.iter_normed_feature_wise(
         cell_key,
         "I",
-        feature_ids,
         batch_size,
-        nthreads,
         "Finding correlated features",
+        **norm_params,
     ):
+        df.index = feature_ids
         for i in df:
             v = df[i].values
             if (v > 0).sum() > min_cells:
@@ -140,87 +121,6 @@ def find_markers_by_regression(
                 res[i] = (0, 1)
     res = pd.DataFrame(res, index=["r_value", "p_value"]).T
     return res
-
-
-@jit(nopython=True)
-def rolling_window(a, w):
-    n, m = a.shape
-    b = np.zeros(shape=(n, m))
-    for i in range(n):
-        if i < w:
-            x = i
-            y = w - i
-        elif (n - i) < w:
-            x = w - (n - i)
-            y = n - i
-        else:
-            x = w // 2
-            y = w // 2
-        x = i - x
-        y = i + y
-        for j in range(m):
-            b[i, j] = a[x:y, j].mean()
-    return b
-
-
-def aggregate_over_cell_ordering(
-    assay,
-    cell_key: str,
-    feat_key: str,
-    cell_ordering: np.ndarray,
-    feature_ids: np.ndarray,
-    min_exp: float = 10,
-    window_size: int = 200,
-    chunk_size: int = 50,
-    smoothen: bool = True,
-    z_scale: bool = True,
-    nthreads: int = 2,
-    batch_size: int = 100,
-):
-    """
-
-    Args:
-        assay:
-        cell_key:
-        feat_key:
-        cell_ordering:
-        feature_ids:
-        min_exp:
-        window_size:
-        chunk_size:
-        smoothen:
-        z_scale:
-        nthreads:
-        batch_size:
-
-    Returns:
-
-    """
-
-    agg = []
-    if cell_ordering.shape[0] != assay.cells.fetch(cell_key).sum():
-        raise ValueError(
-            "ERROR: The number of cells in `cell_ordering` not same as valid cells in `cell_key`"
-        )
-    idx = np.argsort(cell_ordering)
-    for df in iter_data_feature_wise(
-        assay,
-        cell_key,
-        feat_key,
-        feature_ids,
-        batch_size,
-        nthreads,
-        "Smoothening features",
-    ):
-        valid_genes = df.columns[df.sum() > min_exp]
-        df = df[valid_genes]
-        if smoothen:
-            df = rolling_window(df.reindex(idx).values, window_size)
-        if z_scale:
-            df = (df - df.mean(axis=0)) / df.std(axis=0)
-        df = np.array([x.mean(axis=0) for x in np.array_split(df, chunk_size)])
-        agg.append(pd.DataFrame(df, columns=valid_genes).T)
-    return pd.concat(agg)
 
 
 def knn_clustering(df, k, n_clusts, ann_params=None):
@@ -310,4 +210,5 @@ def knn_clustering(df, k, n_clusts, ann_params=None):
         ann_params = {}
     default_ann_params.update(ann_params)
     ann_idx = instantiate_knn_index(**default_ann_params)
+    logger.info("Performing clustering, this might take a while...")
     return fix_cluster_order(make_clusters(make_knn_mat()))
