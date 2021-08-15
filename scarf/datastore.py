@@ -3698,7 +3698,6 @@ class DataStore(MappingDatastore):
                        (Default: 10)
             gene_batch_size: Number of genes to be loaded in memory at a time. (Default value: 50).
 
-
         Returns: None
 
         """
@@ -3746,26 +3745,41 @@ class DataStore(MappingDatastore):
         n_clusters: int = 10,
         batch_size: int = 100,
         ann_params: dict = None,
-    ):
+    ) -> None:
         """
+        This method performs clustering of features based on pseudotime ordered cells. The values from the pseudotime
+        ordered cells are smoothened, scaled and binned. The resulting binned matrix is used to perform a KNN-Paris
+        clustering of the features. This function can be used an alternative to `run_marker_search` and
+        `run_pseudotime_marker_search`
 
         Args:
-            from_assay:
-            cell_key:
-            feat_key:
-            pseudotime_key:
-            cluster_label:
-            min_exp:
-            window_size:
-            chunk_size:
-            smoothen:
-            z_scale:
-            n_neighbours:
-            n_clusters:
-            batch_size:
-            ann_params:
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                      the cell metadata table. (Default value: The cell key that was used to generate the latest graph)
+            feat_key: To use only a subset of features, provide the name of a boolean column in the feature
+                      metadata/attribute table. Default value: The cell key that was used to generate the latest graph)
+            pseudotime_key: Required parameter. This has to be a column name from cell attribute table. This
+                            column contains values for pseudotime ordering of the cells.
+            cluster_label: Required parameter. Name of the column under which the feature cluster identity will be
+                           saved in the feature attribute table.
+            min_exp: Features with cumulative normalized expression than this value are dropped and hence not assigned
+                     a cluster identity (Default value: 10)
+            window_size: The window for calculating rolling mean of feature values along pseudotime ordering. Larger
+                         values will slow down processing but produce more smoothened. The choice of value here depends
+                         on the number of cells in the analysis. Larger value will be useful to produce smooth profiles
+                         when number of cells are large. (Default value: 200)
+            chunk_size: Number of bins of cells to be create. Larger values will increase memory consumption but will
+                        provide improved resolution (Default value: 50)
+            smoothen: Whether to perform the rolling window averaging (Default value: True)
+            z_scale: Whether to perform standard scaling of each feature. Turning this off maynot be a good choice.
+                     (Default value: True)
+            n_neighbours: Number of neighbours to save in the KNN graph of features(Default value: 11)
+            n_clusters: Number of feauture clusters to create. (Default value: 10)
+            batch_size: Number of features to load at a time when processing the data. Larger values will increase
+                        memory consumption (Default value: 100)
+            ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
 
-        Returns:
+        Returns: None
 
         """
         from .markers import knn_clustering
@@ -3827,7 +3841,7 @@ class DataStore(MappingDatastore):
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table.
             group_key: Required parameter. This has to be a column name from cell metadata table.
                        Usually this would be a column denoting cell clusters. Please use the same value as used
@@ -3929,7 +3943,7 @@ class DataStore(MappingDatastore):
         s_score_label: str = "S_score",
         g2m_score_label: str = "G2M_score",
         phase_label: str = "cell_cycle_phase",
-    ):
+    ) -> None:
         """
         Computes S and G2M phase scores by taking into account the average expression of S and G2M phase genes
         respectively. Following steps are taken for each phase:
@@ -3960,7 +3974,7 @@ class DataStore(MappingDatastore):
             phase_label: A base label for saving the inferred cell cycle phase into a cell metadata column
                            (Default value: 'cell_cycle_phase')
 
-        Returns:
+        Returns: None
 
         """
         if from_assay is None:
@@ -4934,31 +4948,48 @@ class DataStore(MappingDatastore):
         show_fig: bool = True,
     ) -> None:
         """
+        Plot heatmap for the matrix calculated by running `run_pseudotime_aggregation`. The heatmap shows the cell bins
+        ordered as per pseudotime values and features ordered by clusters. The clusters themselves are ordered in a
+        fashion such that features that have mean maximum expression in early pseudotime appear first and the feature
+        cluster that has mean maxima in the later pseudotime appears last.
+
+        CAUTION: This make take a long time to render and consume large amount of memory if your data has too many
+                 features or you created many bins across cell ordering.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: One of the columns from cell metadata table that indicates the cells to be used.
-                      The values in the chosen column should be boolean (Default value: 'I')
-            feat_key:
-            feature_cluster_key:
-            pseudotime_key:
-            show_features:
-            width:
-            height:
-            vmin:
-            vmax:
-            heatmap_cmap:
-            pseudotime_cmap:
-            clusterbar_cmap:
-            tick_fontsize:
-            axis_fontsize:
-            feature_label_fontsize:
+            cell_key: Required paramter. One of the columns from cell attribute table that indicates the cells to be
+                      used. The values in the chosen column should be boolean. This value should be same as used for
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+            feat_key: Required parameter. One of the columns from feature attribute table that indicates the cells to be
+                      used. The values in the chosen column should be boolean. This value should be same as used for
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+            feature_cluster_key: Required parameter. The name of column from feature attribute table that contains
+                                 information about feature clusters.
+            pseudotime_key: Required parameter. The name of the column from cell attribute table that contains the
+                            pseudotime values. This should be same as the one used from the relevent run of
+                            `run_pseudotime_aggregation`.
+            show_features: A list of feature names to be highlighted/labelled on the heatmap.
+            width: Width of the heatmap (Default value: 5)
+            height: Height of the heatmap (Default value: 10)
+            vmin: The minimum value to be displayed on the heatmap. The values lower than this will ceiled to this
+                  value. (Default value: -2.0)
+            vmax: The maximum value to be displayed on the heatmap. The values higher than this will floored to this
+                  value. (Default value: 2.0)
+            heatmap_cmap: Colormap for the heatmap (Default value: coolwarm)
+            pseudotime_cmap: Colormap for the pseudotime bar. It should be some kind of continuous colormap.
+                             (Default value: cmocean.deep)
+            clusterbar_cmap: Colormap for the cluster bar showing the span of each feature cluster.
+                             (Default value: tab20)
+            tick_fontsize: Fontsize for cbar ticks (Default value: 10)
+            axis_fontsize: Font size for labels along each axis(Default value: 12)
+            feature_label_fontsize: Fontsize for feature labels on the heatmap (Default value: 12)
             savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
             show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
 
-        Returns:
+        Returns: None
 
         """
 
