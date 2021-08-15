@@ -61,7 +61,7 @@ def find_markers_by_rank(
     idx_map = dict(zip(group_set, range(n_groups)))
     rev_idx_map = {v: k for k, v in idx_map.items()}
     int_indices = np.array([idx_map[x] for x in groups])
-    feature_ids = assay.feats.fetch("ids", key="I")
+    feature_ids = assay.feats.fetch_all("ids")
     results = {x: [] for x in group_set}
     for val in assay.iter_normed_feature_wise(
         cell_key,
@@ -70,7 +70,7 @@ def find_markers_by_rank(
         "Finding markers",
         **norm_params,
     ):
-        val.index = feature_ids
+        val.index = feature_ids[val.index]
         res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
         # Removing genes that were below the threshold in all the groups
         res = res.T[(res < threshold).sum() != n_groups]
@@ -102,7 +102,7 @@ def find_markers_by_regression(
 
     """
 
-    feature_ids = assay.feats.fetch("ids")
+    feature_ids = assay.feats.fetch_all("ids")
     res = {}
     for df in assay.iter_normed_feature_wise(
         cell_key,
@@ -111,7 +111,7 @@ def find_markers_by_regression(
         "Finding correlated features",
         **norm_params,
     ):
-        df.index = feature_ids
+        df.index = feature_ids[df.index]
         for i in df:
             v = df[i].values
             if (v > 0).sum() > min_cells:

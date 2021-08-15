@@ -3657,7 +3657,7 @@ class DataStore(MappingDatastore):
             g = group.create_group(i)
             vals = markers[i]
             if len(vals) != 0:
-                create_zarr_obj_array(g, "names", list(vals.index))
+                create_zarr_obj_array(g, "names", np.array(list(vals.index)))
                 g_s = create_zarr_dataset(
                     g, "scores", (10000,), float, vals.values.shape
                 )
@@ -3711,10 +3711,14 @@ class DataStore(MappingDatastore):
             assay, cell_key, ptime, min_cells, gene_batch_size, **norm_params
         )
         assay.feats.insert(
-            f"{cell_key}__{pseudotime_key}__r", markers["r_value"], overwrite=True
+            f"{cell_key}__{pseudotime_key}__r",
+            markers["r_value"].values,
+            overwrite=True,
         )
         assay.feats.insert(
-            f"{cell_key}__{pseudotime_key}__p", markers["p_value"], overwrite=True
+            f"{cell_key}__{pseudotime_key}__p",
+            markers["p_value"].values,
+            overwrite=True,
         )
 
     def run_pseudotime_aggregation(
@@ -3848,11 +3852,8 @@ class DataStore(MappingDatastore):
         df = pd.DataFrame(
             [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
         ).T.set_index("ids")
-        id_idx = assay.feats.get_index_by(df.index, "ids")
-        if len(id_idx) != df.shape[0]:
-            logger.warning("Internal error in fetching names of the features IDs")
-            return df
-        df["names"] = assay.feats.fetch_all("names")[id_idx]
+        df.index = list(map(int, df.index))
+        df["names"] = assay.feats.fetch_all("names")[df.index]
         return df
 
     def export_markers_to_csv(
