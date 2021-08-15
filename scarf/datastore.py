@@ -3736,7 +3736,7 @@ class DataStore(MappingDatastore):
         chunk_size: int = 50,
         smoothen: bool = True,
         z_scale: bool = True,
-        k: int = 11,
+        n_neighbours: int = 11,
         n_clusters: int = 10,
         batch_size: int = 100,
         ann_params: dict = None,
@@ -3754,7 +3754,7 @@ class DataStore(MappingDatastore):
             chunk_size:
             smoothen:
             z_scale:
-            k:
+            n_neighbours:
             n_clusters:
             batch_size:
             ann_params:
@@ -3793,16 +3793,18 @@ class DataStore(MappingDatastore):
             z_scale=z_scale,
             batch_size=batch_size,
         )
-        df = pd.DataFrame(df.compute(), index=feat_ids)
 
-        df, clusts = knn_clustering(
-            df=df, k=k, n_clusts=n_clusters, ann_params=ann_params
+        clusts = knn_clustering(
+            d_array=df,
+            n_neighbours=n_neighbours,
+            n_clusters=n_clusters,
+            n_threads=self.nthreads,
+            ann_params=ann_params,
         )
-        clusts_full_array = np.ones(assay.feats.N) * -1
-        clusts_full_array[df.index] = clusts
-        assay.feats.insert(cluster_label, clusts_full_array.astype(int), overwrite=True)
-
-        return df
+        temp = np.ones(assay.feats.N) * -1
+        temp[feat_ids] = clusts
+        assay.feats.insert(cluster_label, temp.astype(int), overwrite=True)
+        return None
 
     def get_markers(
         self,
@@ -4873,6 +4875,7 @@ class DataStore(MappingDatastore):
         )
         nc = normed_data.chunks[0]
         # FIXME: avoid conversion to dask dataframe here
+        # Unfortunately doing this dask array in a loop is 10x slower
         normed_data = normed_data.to_dask_dataframe()
         groups = daskarr.from_array(
             assay.cells.fetch(group_key, cell_key), chunks=nc
@@ -4891,4 +4894,91 @@ class DataStore(MappingDatastore):
             save_dpi=save_dpi,
             show_fig=show_fig,
             **heatmap_kwargs,
+        )
+
+    def plot_pseudotime_heatmap(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        feat_key: str = None,
+        feature_cluster_key: str = None,
+        pseudotime_key: str = None,
+        show_features: list = None,
+        width: int = 5,
+        height: int = 10,
+        vmin: float = -2.0,
+        vmax: float = 2.0,
+        heatmap_cmap: str = None,
+        pseudotime_cmap: str = None,
+        clusterbar_cmap: str = None,
+        tick_fontsize: int = 10,
+        axis_fontsize: int = 12,
+        feature_label_fontsize: int = 12,
+        savename: str = None,
+        save_dpi: int = 300,
+        show_fig: bool = True,
+    ) -> None:
+
+        from .plots import plot_annotated_heatmap
+
+        assay = self._get_assay(from_assay)
+        for i in [cell_key, feat_key, feature_cluster_key, feature_cluster_key]:
+            if i is None:
+                var_name = list(dict(i=i).keys())[0]  # Trick to get variables own name
+                raise ValueError(
+                    f"ERROR: Please provide a value for parameter `{var_name}`"
+                )
+
+        cell_ordering = assay.cells.fetch(pseudotime_key, key=cell_key)
+        # noinspection PyProtectedMember
+        cell_idx, feat_idx = assay._get_cell_feat_idx(cell_key, feat_key)
+        hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
+        location = f"aggregated_{cell_key}_{feat_key}_{pseudotime_key}"
+        if location not in assay.z:
+            raise KeyError(
+                f"ERROR: Could not find aggregated feature values at location '{location}' "
+                f"Please make sure that you have run `run_pseudotime_aggregation` with the same values for "
+                f"parameters: `cell_key`, `feat_key` and `pseudotime_key`"
+            )
+        else:
+            if hashes != assay.z[location].attrs["hashes"]:
+                raise ValueError(
+                    f"ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
+                    f"`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
+                )
+
+        da = daskarr.from_zarr(assay.z[location + "/data"], inline_array=True)
+        feature_indices = assay.z[location + "/feature_indices"][:]
+        da = da[: feature_indices.shape[0]]
+
+        feature_clusters = assay.feats.fetch_all(feature_cluster_key)[feature_indices]
+        feature_labels = assay.feats.fetch_all("names")[feature_indices]
+
+        idx = np.argsort(feature_clusters)
+        feature_clusters = feature_clusters[idx]
+        feature_labels = feature_labels[idx]
+        da = da.compute()[idx]
+
+        ordering = assay.cells.fetch(pseudotime_key, key=cell_key)
+
+        plot_annotated_heatmap(
+            df=da,
+            xbar_values=ordering,
+            ybar_values=feature_clusters,
+            display_row_labels=show_features,
+            row_labels=feature_labels,
+            width=width,
+            height=height,
+            vmin=vmin,
+            vmax=vmax,
+            heatmap_cmap=heatmap_cmap,
+            xbar_cmap=pseudotime_cmap,
+            ybar_cmap=clusterbar_cmap,
+            tick_fontsize=tick_fontsize,
+            axis_fontsize=axis_fontsize,
+            row_label_fontsize=feature_label_fontsize,
+            savename=savename,
+            save_dpi=save_dpi,
+            show_fig=show_fig,
         )
