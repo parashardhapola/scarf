@@ -3878,9 +3878,11 @@ class DataStore(MappingDatastore):
         ).T.set_index("ids")
         try:
             df.index = list(map(int, df.index))
+            idx = df.index
         except ValueError:
-            pass
-        df["names"] = assay.feats.fetch_all("names")[df.index]
+            # Backward compatibility when we using 'ids' as indices
+            idx = assay.feats.get_index_by(df.index, "ids")
+        df["names"] = assay.feats.fetch_all("names")[idx]
         return df
 
     def export_markers_to_csv(
