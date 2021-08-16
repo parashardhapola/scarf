@@ -112,8 +112,17 @@ class TestDataStore:
         assert np.all(diff < 1e-3)
 
     def test_run_pseudotime_marker_search(self, pseudotime_markers):
-        precalc_markers = pd.read_csv(full_path("pseudotime_markers_r_values.csv"))
-        assert precalc_markers.equals(pseudotime_markers)
+        precalc_markers = pd.read_csv(
+            full_path("pseudotime_markers_r_values.csv"), index_col=0
+        )
+        assert np.alltrue(precalc_markers.index == pseudotime_markers.index)
+        assert np.alltrue(
+            precalc_markers.names.values == pseudotime_markers.names.values
+        )
+        assert np.allclose(
+            precalc_markers.I__RNA_pseudotime__r.values,
+            pseudotime_markers.I__RNA_pseudotime__r.values,
+        )
 
     def test_run_pseudotime_aggregation(self, pseudotime_aggregation, datastore):
         precalc_values = np.load(full_path("aggregated_feat_idx.npy"))
@@ -178,5 +187,5 @@ class TestDataStore:
             feature_cluster_key="pseudotime_clusters",
             pseudotime_key="RNA_pseudotime",
             show_features=["Wsb1", "Rest"],
-            how_fig=False,
+            show_fig=False,
         )
