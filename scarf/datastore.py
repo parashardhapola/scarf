@@ -3876,7 +3876,10 @@ class DataStore(MappingDatastore):
         df = pd.DataFrame(
             [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
         ).T.set_index("ids")
-        df.index = list(map(int, df.index))
+        try:
+            df.index = list(map(int, df.index))
+        except ValueError:
+            pass
         df["names"] = assay.feats.fetch_all("names")[df.index]
         return df
 
