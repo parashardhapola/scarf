@@ -25,6 +25,10 @@ subtrees:
         title: Integration through projection
       - file: vignettes/merging_datasets
         title: Merging samples and datasets
+  - caption: Trajectory analysis
+    entries:
+      - file: vignettes/pseudotime_dynamics.md
+        title: Pseudotime dynamics
   - caption: Vignettes
     entries:
       - file: vignettes/zarr_explanation
