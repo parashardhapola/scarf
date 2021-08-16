@@ -72,6 +72,41 @@ def marker_search(datastore):
 
 
 @pytest.fixture(scope="class")
+def pseudotime_scoring(datastore, leiden_clustering):
+    datastore.run_pseudotime_scoring(
+        source_sink_key="RNA_leiden_cluster", sources=[6], sinks=[3]
+    )
+    yield datastore.cells.fetch("RNA_pseudotime")
+
+
+@pytest.fixture(scope="class")
+def pseudotime_markers(datastore, pseudotime_scoring):
+    datastore.run_pseudotime_marker_search(pseudotime_key="RNA_pseudotime")
+    df = datastore.RNA.feats.to_pandas_dataframe(
+        ["names", "I__RNA_pseudotime__r"], key="I"
+    )
+    yield df
+
+
+@pytest.fixture(scope="class")
+def pseudotime_aggregation(datastore, pseudotime_scoring):
+    datastore.run_pseudotime_aggregation(
+        pseudotime_key="RNA_pseudotime",
+        cluster_label="pseudotime_clusters",
+        n_clusters=15,
+        window_size=50,
+        chunk_size=10,
+    )
+
+
+@pytest.fixture(scope="class")
+def grouped_assay(datastore, pseudotime_aggregation):
+    datastore.add_grouped_assay(
+        group_key="pseudotime_clusters", assay_label="PTIME_MODULES"
+    )
+
+
+@pytest.fixture(scope="class")
 def run_mapping(make_graph, datastore):
     datastore.run_mapping(
         target_assay=datastore.RNA,
