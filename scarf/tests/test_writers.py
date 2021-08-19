@@ -19,15 +19,6 @@ def test_crtozarr_fromdir(crdir_reader):
     remove(fn)
 
 
-def test_mtxtozarr(mtx_reader):
-    from ..writers import MtxToZarr
-
-    fn = full_path("1K_pbmc_citeseq_dir_mtx.zarr")
-    writer = MtxToZarr(mtx_reader, zarr_fn=fn)
-    writer.dump()
-    remove(fn)
-
-
 def test_h5adtozarr(h5ad_reader):
     from ..writers import H5adToZarr
 

@@ -28,14 +28,6 @@ def crdir_reader(datastore, mtx_dir):
 
 
 @pytest.fixture(scope="session")
-def mtx_reader(datastore, mtx_dir):
-    from ..readers import MtxDirReader
-
-    reader = MtxDirReader(mtx_dir, "rna")
-    yield reader
-
-
-@pytest.fixture(scope="session")
 def h5ad_reader(bastidas_ponce_data):
     from ..readers import H5adReader
 
