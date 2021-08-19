@@ -1,12 +1,32 @@
 import pytest
-import tarfile
 from . import full_path, remove
 import numpy as np
 import pandas as pd
 
 
 @pytest.fixture(scope="session")
+def toy_crdir_writer(toy_crdir_reader):
+    from ..writers import CrToZarr
+
+    out_fn = full_path("toy_crdir.zarr")
+
+    writer = CrToZarr(toy_crdir_reader, out_fn)
+    writer.dump()
+    yield out_fn
+    remove(out_fn)
+
+
+@pytest.fixture(scope="session")
+def toy_crdir_ds(toy_crdir_writer):
+    from ..datastore import DataStore
+
+    yield DataStore(toy_crdir_writer, default_assay="RNA")
+
+
+@pytest.fixture(scope="session")
 def datastore():
+    import tarfile
+
     from ..datastore import DataStore
 
     fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
@@ -152,6 +172,7 @@ def cell_attrs():
 @pytest.fixture(scope="session")
 def atac_datastore():
     from ..datastore import DataStore
+    import tarfile
 
     fn = full_path("500_pbmc_atac.zarr.tar.gz")
     out_fn = fn.replace(".tar.gz", "")

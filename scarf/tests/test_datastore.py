@@ -3,6 +3,26 @@ import numpy as np
 from . import full_path, remove
 
 
+class TestToyDataStore:
+    def test_toy_crdir_metadata(self, toy_crdir_ds):
+        assert np.alltrue(
+            toy_crdir_ds.RNA.feats.fetch_all("ids") == ["g1", "g2", "g3", "g4"]
+        )
+        assert np.alltrue(toy_crdir_ds.ADT.feats.fetch_all("ids") == ["a1", "a2"])
+        assert np.alltrue(toy_crdir_ds.HTO.feats.fetch_all("ids") == ["h1"])
+        assert np.alltrue(toy_crdir_ds.cells.fetch_all("ids") == ["b1", "b2", "b3"])
+
+    def test_toy_crdir_rawdata(self, toy_crdir_ds):
+        assert np.alltrue(
+            toy_crdir_ds.RNA.rawData.compute()
+            == [[5, 0, 0, 2], [3, 3, 0, 7], [3, 3, 0, 7]]
+        )
+        assert np.alltrue(
+            toy_crdir_ds.ADT.rawData.compute() == [[30, 40], [30, 50], [0, 50]]
+        )
+        assert np.alltrue(toy_crdir_ds.HTO.rawData.compute() == [[200], [100], [100]])
+
+
 class TestDataStore:
     def test_graph_indices(self, make_graph, datastore):
         a = np.load(full_path("knn_indices.npy"))
