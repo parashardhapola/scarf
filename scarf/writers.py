@@ -18,7 +18,7 @@ Methods and classes for writing data to disk.
 """
 
 import zarr
-from typing import Any, Tuple, List, Union
+from typing import Any, Tuple, List, Union, Dict
 import numpy as np
 from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
 import os
@@ -36,7 +36,6 @@ __all__ = [
     "SubsetZarr",
     "CrToZarr",
     "H5adToZarr",
-    "MtxToZarr",
     "NaboH5ToZarr",
     "LoomToZarr",
     "SparseToZarr",
@@ -199,126 +198,80 @@ class CrToZarr:
         create_zarr_obj_array(g, "names", self.cr.cell_names())
         create_zarr_obj_array(g, "I", [True for _ in range(self.cr.nCells)], "bool")
 
+    @staticmethod
+    def _prep_assay_input_ranges(af: pd.DataFrame) -> Dict[str, List[List[int]]]:
+        assay_order = (
+            af.T.nFeatures.groupby(af.columns).sum().sort_values(ascending=False).index
+        )
+        ranges = {}
+        for assay in assay_order:
+            temp = []
+            if len(af[assay].shape) == 2:
+                for i in af[assay].values[1:3].T:
+                    temp.append([i[0], i[1]])
+            else:
+                idx = af[assay]
+                temp = [[idx.start, idx.end]]
+            ranges[assay] = temp
+        return ranges
+
+    @staticmethod
+    def _prep_feat_index_offset(
+        ranges: Dict[str, List[List[int]]]
+    ) -> Dict[str, List[int]]:
+        feat_offset = {}
+        for i in ranges:
+            feat_offset[i] = []
+            lv = 0
+            for j in ranges[i]:
+                feat_offset[i].append(-j[0] + lv)
+                lv += j[1] - j[0]
+        return feat_offset
+
     def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
-        # TODO: add informed description to docstring
         """
+        Writes the count values into the Zarr matrix
+
+        Args:
+            batch_size: Number of cells to save at a time. (Default value: 1000)
+            lines_in_mem: Number of lines to read at a time from MTX file (only used for CrDirReader)
+                          (Default value: 100000)
+
         Raises:
             AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
 
         Returns:
             None
+
         """
-        stores = [self.z["%s/counts" % x] for x in self.cr.assayFeats.columns]
-        assay_idx = [0] + list(self.cr.assayFeats.T.nFeatures.cumsum().values)
-        assay_idx = [(assay_idx[x - 1], assay_idx[x]) for x in range(1, len(assay_idx))]
+        input_ranges = self._prep_assay_input_ranges(self.cr.assayFeats)
+        stores = {x: self.z[f"{x}/counts"] for x in input_ranges}
+        feat_offset = self._prep_feat_index_offset(input_ranges)
         s = 0
         n_chunks = self.cr.nCells // batch_size + 1
         for a in tqdmbar(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
-            for j in range(len(stores)):
-                idx = (a.coords[1] >= assay_idx[j][0]) & (a.coords[1] < assay_idx[j][1])
-                feats_coords = a.coords[1][idx] - assay_idx[j][0]
-                stores[j].set_coordinate_selection(
-                    (s + a.coords[0][idx], feats_coords), a.data[idx]
-                )
+            for assay in input_ranges:
+                idx = np.zeros(a.coords.shape[1]).astype(bool)
+                feat_coords = a.coords[1].copy()
+                for r, of in zip(input_ranges[assay], feat_offset[assay]):
+                    temp = (a.coords[1] >= r[0]) & (a.coords[1] < r[1])
+                    if of != 0:
+                        feat_coords[temp] = (
+                            feat_coords[temp] + of
+                        )  # of is already a negative value
+                    idx = idx | temp
+                if idx.sum() > 0:
+                    stores[assay].set_coordinate_selection(
+                        (s + a.coords[0][idx], feat_coords[idx]), a.data[idx]
+                    )
+                else:
+                    logger.warning(
+                        f"No feature captured from chunk {s} to {s+a.shape[0]} for assay: {assay}"
+                    )
             s += a.shape[0]
         if s != self.cr.nCells:
             raise AssertionError(
                 "ERROR: This is a bug in CrToZarr. All cells might not have been successfully "
-                "written into the zarr file. Please report this issue"
-            )
-
-
-class MtxToZarr:
-    """
-    A class for converting data in the Cellranger Matrix Market format to a Zarr hierarchy.
-
-    Attributes:
-        cr: A CrReader object, containing the Cellranger data.
-        fn: The file name for the Zarr hierarchy.
-        chunkSizes: The requested size of chunks to load into memory and process.
-        z: The Zarr hierarchy (array or group).
-    """
-
-    def __init__(
-        self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = "uint32"
-    ):
-        """
-        Args:
-            cr: A CrReader object, containing the Cellranger data.
-            zarr_fn: The file name for the Zarr hierarchy.
-            chunk_size: The requested size of chunks to load into memory and process.
-            dtype: the dtype of the data.
-        """
-        self.cr = cr
-        self.fn = zarr_fn
-        self.chunkSizes = chunk_size
-        self.z = zarr.open(self.fn, mode="w")
-        self._ini_cell_data()
-        for assay_name in set(self.cr.assayFeats.columns):
-            create_zarr_count_assay(
-                self.z,
-                assay_name,
-                chunk_size,
-                self.cr.nCells,
-                self.cr.feature_ids(assay_name),
-                self.cr.feature_names(assay_name),
-                dtype,
-            )
-
-    def _ini_cell_data(self):
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.cr.cell_names())
-        create_zarr_obj_array(g, "names", self.cr.cell_names())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.cr.nCells)], "bool")
-
-    def _prep_assay_ranges(self):
-        ret_val = {}
-        for assay in set(self.cr.assayFeats.columns):
-            temp = []
-            if len(self.cr.assayFeats[assay].shape) == 2:
-                for i in self.cr.assayFeats[assay].values[1:3].T:
-                    temp.append([i[0], i[1]])
-            else:
-                idx = self.cr.assayFeats[assay]
-                temp = [[idx.start, idx.end]]
-            ret_val[assay] = temp
-        return ret_val
-
-    def dump(self, batch_size: int = 1000, lines_in_mem: int = 100000) -> None:
-        # TODO: add informed description to docstring
-        """
-        Raises:
-            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
-
-        Returns:
-            None
-        """
-        stores = {x: self.z["%s/counts" % x] for x in set(self.cr.assayFeats.columns)}
-        assay_ranges = self._prep_assay_ranges()
-        s, e, = (
-            0,
-            0,
-        )
-        n_chunks = self.cr.nCells // batch_size + 1
-        for a in tqdmbar(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
-            e += a.shape[0]
-            a = a.todense()
-            b = {x: [] for x in stores.keys()}
-            for store_name in stores.keys():
-                ar = assay_ranges[store_name]
-                temp = []
-                for i in ar:
-                    temp.append(a[:, i[0] : i[1]])
-                if len(temp) > 1:
-                    b[store_name] = np.hstack(temp)
-                else:
-                    b[store_name] = temp[0]
-            for store_name in stores.keys():
-                stores[store_name][s:e] = b[store_name]
-            s = e
-        if e != self.cr.nCells:
-            raise AssertionError(
-                "ERROR: This is a bug in MtxToZarr. All cells might not have been successfully "
                 "written into the zarr file. Please report this issue"
             )
 
