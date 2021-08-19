@@ -206,7 +206,9 @@ class BaseDataStore:
             "RNA": RNAassay,
             "ATAC": ATACassay,
             "ADT": ADTassay,
+            "HTO": ADTassay,
             "GeneActivity": RNAassay,
+            "GeneScores": RNAassay,
             "URNA": RNAassay,
             "Assay": Assay,
         }
