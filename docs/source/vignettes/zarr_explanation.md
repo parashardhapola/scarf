@@ -1,11 +1,10 @@
 ---
 jupytext:
-  formats: ipynb,md:myst
   text_representation:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.11.1
+    jupytext_version: 1.11.4
 kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
@@ -14,7 +13,19 @@ kernelspec:
 
 ## Understanding how data is organized in Scarf
 
-In this notebook, we provide a more detailed exploration of how the data is organized in Scarf. This can be useful for users who want to customize certain aspects of Scarf or want to extend its functionality. 
+In this notebook, we provide a more detailed exploration of how the data is organized in Scarf. This can be useful for users who want to customize certain aspects of Scarf or want to extend its functionality.
+
+The following figure shows how different Class structures are connected to each other and the methods they contain. The `DataStore` class is the primary class that allows users to access all the data and functions. In almost all scenarios the user has to directly interact only with the object of `DataStore` class's methods. `DataStore` object is linked to the underlying `Zarr` file hierarchy on the disk. We provide more details in the later sections.
+
+The individual assays (in non mulit-omics datasets there will be only one assay) are represented as objects of the `Assay` class. A subclass of `Assay` class is automatically chosen based on the type of data. For example, `RNAassay` is chosen for single-cell RNA-Seq while `ATACassay`subclass is chosen for scATAC-Seq. Each `Assay` subclass contains its own normalization and feature selection methods.
+
+The `Metadata` class acts like a DataFrame (it is not actually a Dataframe but collections of columns/arrays that are loaded from disk on demand) that contains information on either individual cells or features. The cell metadata can directly be accessed from `DataStore` but feature metdata has to be accessed by the `Assay` object (we show examples below).
+
+The `DataStore` class contains mutiple methods that allow generation of the KNN-graph that can be loaded to perform downsampling (sketching), clustering (Paris/Leiden) and UMAP/tSNE embedding (please see the basic workflows for usage of these methods).
+
++++
+
+<img src="https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/_static/scarf_organization.png" alt="Scarf Class design" width="800px">
 
 ```{code-cell} ipython3
 %load_ext autotime

@@ -42,7 +42,12 @@ ds = scarf.DataStore(f"scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data
 ```
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by=['RNA_cluster', 'clusters'],
+    width=4, height=4, 
+    legend_onside=False, cmap='tab20'
+)
 ```
 
 ---
@@ -280,10 +285,10 @@ Let's now do this the other way and visualize the cumulative expression of genes
 
 ```{code-cell} ipython3
 temp = list(set(ptime_based_markers.index).difference(cell_cluster_markers.index))
-ds.cells.insert('Pseudotime-based feature cluster', ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(), overwrite=True)
+ds.cells.insert('Cell cluster based markers', ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(), overwrite=True)
 ds.plot_layout(
     layout_key='RNA_UMAP',
-    color_by='Pseudotime-based feature cluster',
+    color_by='Cell cluster based markers',
     width=4, height=4, point_size=5, n_columns=5, cmap='coolwarm',
 )
 ```
