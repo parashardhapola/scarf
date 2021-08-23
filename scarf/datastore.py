@@ -4090,6 +4090,57 @@ class DataStore(MappingDatastore):
         self._load_assays(min_cells=0, custom_assay_types={assay_label: "Assay"})
         self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
 
+    def add_melded_assay(
+        self,
+        *,
+        from_assay: str = None,
+        feature_bed_fn: str = None,
+        assay_label: str = None,
+        peaks_col: str = "ids",
+    ) -> None:
+        """
+
+        Args:
+            from_assay:
+            feature_bed_fn:
+            assay_label:
+            peaks_col:
+
+        Returns:
+            None
+
+        """
+
+        from .meld_assay import coordinate_melding
+
+        if assay_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `assay_label`. "
+                "It will be used to create a new assay"
+            )
+        if feature_bed_fn is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `feature_bed_fn`. "
+                "This should be a BED format file with atleast 5 columns."
+            )
+
+        # TODO: test if peak_col is in correct format
+
+        assay = self._get_assay(from_assay)
+        feature_bed = pd.read_csv(feature_bed_fn, header=None, sep="\t").sort_values(
+            by=[0, 1]
+        )
+
+        coordinate_melding(
+            assay,
+            feature_bed=feature_bed,
+            new_assay_name=assay_label,
+            peaks_col=peaks_col,
+        )
+
+        self._load_assays(min_cells=0, custom_assay_types={assay_label: "Assay"})
+        self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
+
     def make_bulk(
         self,
         from_assay: str = None,

@@ -1,7 +1,13 @@
 """
+- Classes:
+    - GffReader: A class for reading and GFF3 format files and convert to BED format files
+
 - Methods:
-    - meld_assay:
-    - make_bed_from_gff: create pybedtools object for genes from a GFF file
+    - create_bed_from_coord_ids:
+    - binary_search:
+    - get_feature_mappings:
+    - create_counts_mat:
+    - coordinate_melding:
 """
 
 import logging
@@ -353,7 +359,9 @@ def get_feature_mappings(
             get_ranges(features_bed_df, feats_chrom_idx),
         ).astype(int)
 
-        peak_idx = peaks_bed_df.index[peaks_chrom_idx]
+        # Now this is the main trick. Since the peak_bed_df is a sorted dataframe.
+        # The dataframe index might itself not be in sorted order.
+        peak_idx = np.array(peaks_bed_df.index[peaks_chrom_idx])
         for i in match_indices:
             if i[0] == -1:
                 assert i[1] == -1
@@ -406,7 +414,9 @@ def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray) -> None:
 
     idx = np.where(cross_map)[0]
     feat_idx = np.repeat(idx, list(map(len, cross_map[idx])))
-    peak_idx = np.array(sum(list(cross_map[idx]), []))
+    peak_idx = np.array(
+        sum(list(cross_map[idx]), [])
+    )  # There is no guarantee that these are in sorted order
     assert feat_idx.shape == peak_idx.shape
 
     n_term_per_doc = assay.cells.fetch_all(assay.name + "_nFeatures")
