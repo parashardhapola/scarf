@@ -205,7 +205,7 @@ class GffReader:
             )
             bed.append(odf)
         bed = pd.concat(bed)
-        bed.to_csv(out_bed_fn, sep="\t", header=None, index=False)
+        bed.to_csv(out_bed_fn, sep="\t", header=False, index=False)
         logger.info(f"{bed.shape[0]} genes saved to BED file")
         return None
 
@@ -396,7 +396,8 @@ def get_feature_mappings(
     return feats_ids, feats_names, cross_indices
 
 
-def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray) -> None:
+def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray,
+                      scalar_coeff: float, renormalization: bool) -> None:
     """
     Populate the count matrix in the Zarr store.
 
@@ -404,6 +405,8 @@ def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray) -> None:
         assay: Scarf Assay object which contains the rawData attribute representing Dask array of count matrix
         store: Output Zarr Dataset
         cross_map: Mapping of indices. as obtained from get_feature_mappings function
+        scalar_coeff: An arbitrary scalar multiplier. Only used when renormalization is True.
+        renormalization: Whether to rescale the sum of feature values for each cell to `scalar_coeff`
 
     Returns:
         None
@@ -434,6 +437,8 @@ def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray) -> None:
         df = pd.DataFrame(a[:, peak_idx]).T
         df["fidx"] = feat_idx
         df = df.groupby("fidx").sum().T
+        if renormalization:
+            df = (scalar_coeff * df) / df.sum(axis=1).values.reshape(-1, 1)
         assert df.shape[1] == idx.shape[0]
 
         coord_renamer = dict(enumerate(df.columns))
@@ -450,6 +455,8 @@ def coordinate_melding(
     feature_bed: pd.DataFrame,
     new_assay_name: str,
     peaks_col: str = "ids",
+    scalar_coeff: float = 1e5,
+    renormalization: bool = True,
 ) -> None:
     """
     This function the coordinates of the features of the given assay and overlaps (genomics intersection)
@@ -467,6 +474,9 @@ def coordinate_melding(
         peaks_col: The name of the column in the feature metadata that contains the coordinate information. This
                    column should have coordinates in this format <chrom:start-end>. The values from this
                    column will be processed into BED format dataframe using `create_bed_from_coord_ids`
+        scalar_coeff: An arbitrary scalar multiplier. Only used when renormalization is True (Default value: 1e5)
+        renormalization: Whether to rescale the sum of feature values for each cell to `scalar_coeff`
+                         (Default value: True)
 
     Returns:
         None
@@ -490,5 +500,7 @@ def coordinate_melding(
         assay=assay,
         store=g,
         cross_map=mappings,
+        scalar_coeff=scalar_coeff,
+        renormalization=renormalization
     )
     return None
