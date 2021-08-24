@@ -4094,17 +4094,38 @@ class DataStore(MappingDatastore):
         self,
         *,
         from_assay: str = None,
-        feature_bed_fn: str = None,
+        external_bed_fn: str = None,
         assay_label: str = None,
         peaks_col: str = "ids",
+        scalar_coeff: float = 1e5,
+        renormalization: bool = True,
+        assay_type: str = 'Assay'
     ) -> None:
         """
+        This method performs "assay melding" and can be only be used for assay's wherein features
+        have genomic coordinates. In the process of melding the input genomic coordinates from
+        `external_bed_fn` are intersected with the assay's features. Based on this intersection
+        a mapping is created wherein each coordinate interval maps to one or more feature coordinates
+        from the assay.
+
+        This method has been designed for snATAC-Seq data and can be used to quantify accessibility of specific
+        genomic loci such as gene bodies, promoters, enhancers, motifs, etc.
 
         Args:
-            from_assay:
-            feature_bed_fn:
-            assay_label:
-            peaks_col:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            external_bed_fn: This is mandatory parameter. This file should be a BED format file with atleast five
+                             columns containing: chromosome, start position, end position, feature id and feature name.
+                             Coordinates should be in half open format. That means that actual end position is -1
+            assay_label: This is mandatory parameter. A name for the new assay.
+            peaks_col: The column in feature metadata table that contains the genomic coordinate information of each
+                       feature. The genomic coordinates are represented as strings in this format: chr:start-end
+                       (Default value: 'ids')
+            scalar_coeff: An arbitrary scalar multiplier. Only used when renormalization is True (Default value: 1e5)
+            renormalization: Whether to rescale the sum of feature values for each cell to `scalar_coeff`
+                         (Default value: True)
+            assay_type: The new assay (melded assay) is saved as this type. This can be any type of Assay class from
+                        `assay` module. Please provide string representation of class. By default the assay is assigned
+                        a generic class and has has a dummy normalization function (Default value: 'Assay')
 
         Returns:
             None
@@ -4118,27 +4139,36 @@ class DataStore(MappingDatastore):
                 "ERROR: Please provide a value for `assay_label`. "
                 "It will be used to create a new assay"
             )
-        if feature_bed_fn is None:
+        if external_bed_fn is None:
             raise ValueError(
                 "ERROR: Please provide a value for `feature_bed_fn`. "
                 "This should be a BED format file with atleast 5 columns."
             )
 
-        # TODO: test if peak_col is in correct format
-
         assay = self._get_assay(from_assay)
-        feature_bed = pd.read_csv(feature_bed_fn, header=None, sep="\t").sort_values(
+        feature_bed = pd.read_csv(external_bed_fn, header=None, sep="\t").sort_values(
             by=[0, 1]
         )
+
+        peaks_coords = assay.feats.fetch_all(peaks_col)
+        for n, i in enumerate(peaks_coords):
+            error_msg = f"ERROR: Coordinate format check failed for element: {i} (position {n}). The format should " \
+                        f"be chr:start-end. Please note the colon and hyphen position"
+            if len(i.split(':')) != 2:
+                raise ValueError(error_msg)
+            if len(i.split(':')[1].split('-')) != 2:
+                raise ValueError(error_msg)
 
         coordinate_melding(
             assay,
             feature_bed=feature_bed,
             new_assay_name=assay_label,
             peaks_col=peaks_col,
+            scalar_coeff=scalar_coeff,
+            renormalization=renormalization,
         )
 
-        self._load_assays(min_cells=0, custom_assay_types={assay_label: "Assay"})
+        self._load_assays(min_cells=0, custom_assay_types={assay_label: assay_type})
         self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
 
     def make_bulk(
