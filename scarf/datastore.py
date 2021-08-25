@@ -1047,6 +1047,7 @@ class GraphDataStore(BaseDataStore):
         return_ann_object: bool = False,
         custom_loadings: np.array = None,
         feat_scaling: bool = True,
+        lsi_skip_first: bool = True,
         show_elbow_plot: bool = False,
     ):
         """
@@ -1147,6 +1148,7 @@ class GraphDataStore(BaseDataStore):
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
+            lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
 
@@ -1335,6 +1337,7 @@ class GraphDataStore(BaseDataStore):
             do_kmeans_fit=fit_kmeans,
             disable_scaling=disable_scaling,
             ann_idx=ann_idx,
+            lsi_skip_first=lsi_skip_first,
             lsi_params={},
         )
 
@@ -4168,8 +4171,8 @@ class DataStore(MappingDatastore):
             renormalization=renormalization,
         )
 
-        self._load_assays(min_cells=0, custom_assay_types={assay_label: assay_type})
-        self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
+        self._load_assays(min_cells=10, custom_assay_types={assay_label: assay_type})
+        self._ini_cell_props(min_features=0, mito_pattern=None, ribo_pattern=None)
 
     def make_bulk(
         self,

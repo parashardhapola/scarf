@@ -69,6 +69,7 @@ class AnnStream:
         do_kmeans_fit: bool,
         disable_scaling: bool,
         ann_idx,
+        lsi_skip_first: bool,
         lsi_params: dict,
     ):
         self.data = data
@@ -127,8 +128,11 @@ class AnnStream:
             elif self.method == "lsi":
                 if self.loadings is None or len(self.loadings) == 0:
                     if disable_reduction is False:
-                        self._fit_lsi(lsi_params)
+                        self._fit_lsi(lsi_skip_first, lsi_params)
                 else:
+                    # First dimension of LSI captures depth
+                    if lsi_skip_first:
+                        self.loadings = self.loadings[:, 1:]
                     self.dims = self.loadings.shape[1]
                 if disable_reduction:
                     self.reducer = lambda x: x
@@ -239,9 +243,13 @@ class AnnStream:
             )
         self.loadings = self._pca.components_[:-1, :].T
 
-    def _fit_lsi(self, lsi_params) -> None:
-        from gensim.models import LsiModel
-        from gensim.matutils import Dense2Corpus
+    def _fit_lsi(self, lsi_skip_first, lsi_params) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            from gensim.models import LsiModel
+            from gensim.matutils import Dense2Corpus
 
         for i in ["corpus", "num_topics", "id2word", "chunksize", "dtype"]:
             if i in lsi_params:
@@ -253,7 +261,7 @@ class AnnStream:
             corpus=Dense2Corpus(
                 controlled_compute(self.data.blocks[0], self.nthreads).T
             ),
-            num_topics=self.dims,
+            num_topics=self.dims+1,  # +1 because first dim will be discarded
             chunksize=self.data.chunksize[0],
             id2word={x: x for x in range(self.data.shape[1])},
             **lsi_params,
@@ -262,7 +270,10 @@ class AnnStream:
             if n == 0:
                 continue
             self._lsiModel.add_documents(Dense2Corpus(i.T))
-        self.loadings = self._lsiModel.get_topics().T
+        if lsi_skip_first:
+            self.loadings = self._lsiModel.get_topics().T[:, 1:]
+        else:
+            self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
         dims = self.dims
