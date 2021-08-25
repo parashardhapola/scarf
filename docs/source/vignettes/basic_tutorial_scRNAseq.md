@@ -12,6 +12,10 @@ kernelspec:
   name: python3
 ---
 
+(scrna_seq_workflow)=
+
++++
+
 ## Scarf's basic workflow for scRNA-Seq
 
 This workflow is meant to familiarize users with the Scarf API and how data is internally handled in Scarf. Please checkout the quick start guide if you are interested in the minimal steps required to run the analysis.

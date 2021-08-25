@@ -11,6 +11,10 @@ kernelspec:
   name: python3
 ---
 
+(data_organization)=
+
++++
+
 ## Understanding how data is organized in Scarf
 
 In this notebook, we provide a more detailed exploration of how the data is organized in Scarf. This can be useful for users who want to customize certain aspects of Scarf or want to extend its functionality.
