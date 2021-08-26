@@ -26,11 +26,16 @@ scarf.__version__
 For this tutorial we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance. Throughout this tutorial we will refer to gene expression modality as `RNA` and surface protein as `ADT`. We start by downloading the data and converting it into Zarr format:
 
 ```{code-cell} ipython3
-scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets')
+scarf.fetch_dataset(
+    'tenx_8K_pbmc_citeseq',
+    save_path='scarf_datasets'
+)
 ```
 
 ```{code-cell} ipython3
-reader = scarf.CrH5Reader('scarf_datasets/tenx_8K_pbmc_citeseq/data.h5', 'rna')
+reader = scarf.CrH5Reader(
+    'scarf_datasets/tenx_8K_pbmc_citeseq/data.h5'
+)
 ```
 
 We can also quickly check the different kinds of assays present in the file and the number of features from each of them.
@@ -98,10 +103,28 @@ ds.auto_filter_cells()
 Now we process the RNA assay to perform feature selection, create KNN graph, run UMAP reduction and clustering. These steps are same as shown in the basic workflow for scRNA-Seq data.
 
 ```{code-cell} ipython3
-ds.mark_hvgs(min_cells=20, top_n=1000,
-             min_mean=-3, max_mean=2, max_var=6)
-ds.make_graph(feat_key='hvgs', k=21, dims=15, n_centroids=100)
-ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.mark_hvgs(
+    min_cells=20,
+    top_n=1000,
+    min_mean=-3,
+    max_mean=2,
+    max_var=6
+)
+
+ds.make_graph(
+    feat_key='hvgs',
+    k=21,
+    dims=15,
+    n_centroids=100
+)
+
+ds.run_umap(
+    n_epochs=250,
+    spread=5,
+    min_dist=1,
+    parallel=True
+)
+
 ds.run_leiden_clustering(resolution=1)
 ```
 
@@ -152,19 +175,33 @@ print (ds.ADT)
 print (ds.ADT.normMethod.__name__)
 ```
 
-Now we are ready to create a KNN graph of cells using only ADT data. Here we will use all the features (except those that were filtered out) and that is why we use `I` as value for `feat_key`. It is important to note the value for `from_assay` parameter which has now been set to `ADT`. If no value is provided for `from_assay` then it is automatically set to the default assay. 
+Now we are ready to create a KNN graph of cells using only ADT data. Here we will use all the features (except those that were filtered out) and that is why we use `I` as value for `feat_key`. It is important to note the value for `from_assay` parameter which has now been set to `ADT`. If no value is provided for `from_assay` then it is automatically set to the default assay. By setting `dims` to 0 we disable dimension reduction.
 
 ```{code-cell} ipython3
-ds.make_graph(from_assay='ADT', feat_key='I', 
-              k=21, dims=0, n_centroids=100)
+ds.make_graph(
+    from_assay='ADT',
+    feat_key='I', 
+    k=21,
+    dims=0,
+    n_centroids=100
+)
 ```
 
 UMAP and clustering can be run on ADT assay by simply setting `from_assay` parameter value to 'ADT':
 
 ```{code-cell} ipython3
-ds.run_umap(from_assay='ADT', n_epochs=250,
-            spread=5, min_dist=1, parallel=True)
-ds.run_leiden_clustering(from_assay='ADT', resolution=1)
+ds.run_umap(
+    from_assay='ADT',
+    n_epochs=250,
+    spread=5,
+    min_dist=1,
+    parallel=True
+)
+
+ds.run_leiden_clustering(
+    from_assay='ADT',
+    resolution=1
+)
 ```
 
 If we now check the cell attribute table, we will find the UMAP coordinates and clusters calculated using `ADT` assay:
@@ -176,7 +213,11 @@ ds.cells.head()
 Visualizing the UMAP and clustering calcualted using `ADT` only:
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='ADT_UMAP', color_by='ADT_leiden_cluster', cmap='tab20')
+ds.plot_layout(
+    layout_key='ADT_UMAP',
+    color_by='ADT_leiden_cluster',
+    cmap='tab20'
+)
 ```
 
 ---
@@ -186,12 +227,16 @@ It is generally of interest to see how different modalities corroborate each oth
 
 ```{code-cell} ipython3
 # UMAP on RNA and coloured with clusters calculated on ADT
-ds.plot_layout(layout_key=['RNA_UMAP', 'ADT_UMAP'],
-               color_by=['ADT_leiden_cluster', 'RNA_leiden_cluster'],
-               cmap='tab20',
-               width=4, height=4, 
-               n_columns=2, point_size=5,
-               legend_onside=False)
+ds.plot_layout(
+    layout_key=['RNA_UMAP', 'ADT_UMAP'],
+    color_by=['ADT_leiden_cluster', 'RNA_leiden_cluster'],
+    cmap='tab20',
+    width=4,
+    height=4, 
+    n_columns=2,
+    point_size=5,
+    legend_onside=False
+)
 ```
 
 We can quantify the overlap of cells between RNA and ADT clusters. The following table has ADT clusters on columns and RNA clusters on rows. This table shows a cross tabulation of cells across the clustering from the two modalities.
@@ -199,8 +244,10 @@ We can quantify the overlap of cells between RNA and ADT clusters. The following
 ```{code-cell} ipython3
 import pandas as pd
 
-df = pd.crosstab(ds.cells.fetch('RNA_leiden_cluster'),
-                 ds.cells.fetch('ADT_leiden_cluster'))
+df = pd.crosstab(
+    ds.cells.fetch('RNA_leiden_cluster'),
+    ds.cells.fetch('ADT_leiden_cluster')
+)
 df
 ```
 
@@ -213,12 +260,15 @@ There are possibly many interesting strategies to analyze this further. One simp
 Individual ADT expression can be visualized in both UMAPs easily.
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key=['RNA_UMAP', 'ADT_UMAP'],
-               color_by='CD16_TotalSeqB',
-               from_assay='ADT',
-               width=4, height=4,
-               n_columns=2, point_size=5,
-               )
+ds.plot_layout(
+    layout_key=['RNA_UMAP', 'ADT_UMAP'],
+    color_by='CD16_TotalSeqB',
+    from_assay='ADT',
+    width=4,
+    height=4,
+    n_columns=2,
+    point_size=5
+)
 ```
 
 We can also query gene expression and visualize it on both RNA and ADT UMAPs. Here we query gene FCGR3A which codes for CD16:
@@ -228,8 +278,10 @@ ds.plot_layout(
     layout_key=['RNA_UMAP', 'ADT_UMAP'],
     color_by='FCGR3A',
     from_assay='RNA',
-    width=4, height=4,
-    n_columns=2, point_size=5,
+    width=4,
+    height=4,
+    n_columns=2,
+    point_size=5
 )
 ```
 
@@ -241,7 +293,10 @@ The KNN graphs created individually for each of the modalities can be merged tog
 Here we will integrate the *RNA* and *ADT* assays and run UMAP and leiden clustering on the integrated graph.
 
 ```{code-cell} ipython3
-ds.integrate_assays(assays=['RNA', 'ADT'], label='RNA+ADT')
+ds.integrate_assays(
+    assays=['RNA', 'ADT'],
+    label='RNA+ADT'
+)
 ```
 
 `integrated_graph` parameter in `run_umap` and `run_leiden_clustering` allows running these steps on the integrated graph.
@@ -249,10 +304,16 @@ ds.integrate_assays(assays=['RNA', 'ADT'], label='RNA+ADT')
 ```{code-cell} ipython3
 ds.run_umap(
     integrated_graph='RNA+ADT',
-    n_epochs=500, spread=5, min_dist=0.5,
+    n_epochs=500,
+    spread=5,
+    min_dist=0.5,
     parallel=True
 )
-ds.run_leiden_clustering(integrated_graph='RNA+ADT', resolution=1.75)
+
+ds.run_leiden_clustering(
+    integrated_graph='RNA+ADT',
+    resolution=1.75
+)
 ```
 
 Lets visualize the UMAPs created using the integrated manifolds from the two modalities. Here we label the cells based on their modality specific cluster identity as well as integrated manifold cluster identity
@@ -260,10 +321,15 @@ Lets visualize the UMAPs created using the integrated manifolds from the two mod
 ```{code-cell} ipython3
 ds.plot_layout(
     layout_key=['RNA+ADT_UMAP'],
-    color_by=['RNA_leiden_cluster', 'ADT_leiden_cluster',
+    color_by=['RNA_leiden_cluster',
+              'ADT_leiden_cluster',
               'RNA+ADT_leiden_cluster'],
-    cmap='tab20', legend_onside=False, point_size=5,
-    width=4, height=4, n_columns=3
+    cmap='tab20',
+    legend_onside=False,
+    point_size=5,
+    width=4,
+    height=4,
+    n_columns=3
 )
 ```
 

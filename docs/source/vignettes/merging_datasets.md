@@ -35,7 +35,7 @@ scarf.fetch_dataset('kang_14K_ifnb-pbmc_rnaseq', save_path='scarf_datasets', as_
 The Zarr files need to be loaded as a DataStore before they can be merged:
 
 ```{code-cell} ipython3
-ds_ctrl = scarf.DataStore('scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr', nthreads=4)
+ds_ctrl = scarf.DataStore('scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr/', nthreads=4)
 ds_ctrl
 ```
 

@@ -39,7 +39,7 @@ Now using any of these dataset names we can download the dataset of our choice:
 
 ```{code-cell} ipython3
 # This dataset is in Cellranger (10x) HDF5 format.
-scarf.fetch_dataset('tenx_10K_pbmc_atacseq', save_path='./scarf_datasets')
+scarf.fetch_dataset('tenx_10K_pbmc-v1_atacseq', save_path='./scarf_datasets')
 ```
 
 The above dataset gets saved under the directory `scarf_datasets` in our current working directory. You can modify `save_path` parameter to save data in location of your choice. The dataset above was downloaded in 10x's HDF5 format. Let download few more datasets that are in differnet file formats.
@@ -65,7 +65,7 @@ Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.reader
 
 ```{code-cell} ipython3
 # Change file_type to 'rna' in case of sc-RNA-seq or CITE-Seq
-reader = scarf.CrH5Reader('scarf_datasets/tenx_10K_pbmc_atacseq/data.h5', file_type='atac')
+reader = scarf.CrH5Reader('scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.h5')
 
 writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/pbmc_atac.zarr')  # change value of `zarr_fn` to your choice of filename and path
 writer.dump()
@@ -77,7 +77,7 @@ writer.dump()
 
 ```{code-cell} ipython3
  # Note here we only give name of directory containing MTX file (along with barcodes and features file)
-reader = scarf.CrDirReader('scarf_datasets/xin_1K_pancreas_rnaseq', file_type='rna')
+reader = scarf.CrDirReader('scarf_datasets/xin_1K_pancreas_rnaseq')
 
 writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/xin_1K.zarr')  # change value of `zarr_fn` to your choice of filename and path
 writer.dump()
