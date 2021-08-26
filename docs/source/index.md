@@ -1,10 +1,5 @@
 [![PyPI][pypi]][pypiLink] [![Docs][docs]][docsLink] [![Github Stars][stars]][github]
 
-:::{important}
-Scarf's memory management fails with Dask version >2021.03.1.
-The issue is being [tracked here](https://github.com/parashardhapola/scarf/issues/49)
-:::
-
 # Overview of Scarf
 
 {ref}`Jump to installation <installation>` | {ref}`Try live code <colab>` | [Source code on Github]

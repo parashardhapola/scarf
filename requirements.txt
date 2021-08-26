@@ -6,7 +6,7 @@ sparse
 networkx
 hnswlib
 numba
-dask<=2021.03.1
+dask>=2021.8.1
 pandas
 zarr
 h5py
