@@ -70,7 +70,6 @@ def find_markers_by_rank(
         "Finding markers",
         **norm_params,
     ):
-        val.index = feature_ids[val.index]
         res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
         # Removing genes that were below the threshold in all the groups
         res = res.T[(res < threshold).sum() != n_groups]
@@ -111,7 +110,6 @@ def find_markers_by_regression(
         "Finding correlated features",
         **norm_params,
     ):
-        df.index = feature_ids[df.index]
         for i in df:
             v = df[i].values
             if (v > 0).sum() > min_cells:
