@@ -145,7 +145,7 @@ def handle_download(url: str, out_fn: str, seq_counter: str = "") -> None:
             if chunk:
                 handle.write(chunk)
     logger.debug(f"Download finished! File saved here: {out_fn}")
-    if out_fn.endswith('tar.gz'):
+    if out_fn.endswith("tar.gz"):
         tar = tarfile.open(out_fn, "r:gz")
         tar.extractall(str(Path(out_fn).parent.absolute()))
         tar.close()
