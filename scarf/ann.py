@@ -261,7 +261,7 @@ class AnnStream:
             corpus=Dense2Corpus(
                 controlled_compute(self.data.blocks[0], self.nthreads).T
             ),
-            num_topics=self.dims+1,  # +1 because first dim will be discarded
+            num_topics=self.dims + 1,  # +1 because first dim will be discarded
             chunksize=self.data.chunksize[0],
             id2word={x: x for x in range(self.data.shape[1])},
             **lsi_params,

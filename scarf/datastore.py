@@ -4102,7 +4102,7 @@ class DataStore(MappingDatastore):
         peaks_col: str = "ids",
         scalar_coeff: float = 1e5,
         renormalization: bool = True,
-        assay_type: str = 'Assay'
+        assay_type: str = "Assay",
     ) -> None:
         """
         This method performs "assay melding" and can be only be used for assay's wherein features
@@ -4155,11 +4155,13 @@ class DataStore(MappingDatastore):
 
         peaks_coords = assay.feats.fetch_all(peaks_col)
         for n, i in enumerate(peaks_coords):
-            error_msg = f"ERROR: Coordinate format check failed for element: {i} (position {n}). The format should " \
-                        f"be chr:start-end. Please note the colon and hyphen position"
-            if len(i.split(':')) != 2:
+            error_msg = (
+                f"ERROR: Coordinate format check failed for element: {i} (position {n}). The format should "
+                f"be chr:start-end. Please note the colon and hyphen position"
+            )
+            if len(i.split(":")) != 2:
                 raise ValueError(error_msg)
-            if len(i.split(':')[1].split('-')) != 2:
+            if len(i.split(":")[1].split("-")) != 2:
                 raise ValueError(error_msg)
 
         coordinate_melding(

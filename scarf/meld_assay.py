@@ -396,8 +396,13 @@ def get_feature_mappings(
     return feats_ids, feats_names, cross_indices
 
 
-def create_counts_mat(assay, store: hierarchy, cross_map: np.ndarray,
-                      scalar_coeff: float, renormalization: bool) -> None:
+def create_counts_mat(
+    assay,
+    store: hierarchy,
+    cross_map: np.ndarray,
+    scalar_coeff: float,
+    renormalization: bool,
+) -> None:
     """
     Populate the count matrix in the Zarr store.
 
@@ -501,6 +506,6 @@ def coordinate_melding(
         store=g,
         cross_map=mappings,
         scalar_coeff=scalar_coeff,
-        renormalization=renormalization
+        renormalization=renormalization,
     )
     return None
