@@ -41,11 +41,18 @@ scarf.__version__
 We download the CITE-Seq dataset that we [analyzed earlier](https://scarf.readthedocs.io/en/latest/vignettes/multiple_modalities.html)
 
 ```{code-cell} ipython3
-scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets', as_zarr=True)
+scarf.fetch_dataset(
+    dataset_name='tenx_8K_pbmc_citeseq',
+    save_path='scarf_datasets',
+    as_zarr=True
+)
 ```
 
 ```{code-cell} ipython3
-ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr', nthreads=4)
+ds = scarf.DataStore(
+    'scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
+    nthreads=4
+)
 ```
 
 ---
@@ -109,7 +116,9 @@ ds.RNA.feats.head()
 Even though the above 'head' command may make you think that `ds.cells` and `ds.RNA.feats` are Pandas dataframe, they in fact are not. If you wish to obtain a full table as Pandas dataframe, then you can export the columns of your choice as shown below.
 
 ```{code-cell} ipython3
-ds.cells.to_pandas_dataframe(['ids', 'RNA_UMAP1', 'RNA_UMAP2', 'RNA_cluster']).set_index('ids')
+ds.cells.to_pandas_dataframe(
+    columns=['ids', 'RNA_UMAP1', 'RNA_UMAP2', 'RNA_cluster']
+).set_index('ids')
 ```
 
 If you wish to export all the columns as a dataframe then simply provide `ds.cells.columns` or `ds.RNA.feats.columns` as an argument rather than a list of columns. If you are interested in one of the columns then it can fetched using either `fetch` or `fetch_all` command.
@@ -132,19 +141,29 @@ If you wish to add a new column then `insert` command can be used for either cel
 
 ```{code-cell} ipython3
 is_clust_1 = clusters == 1   # is_clust_1 has just 7549 elements (same as the number of cells with value True in `I`)
-ds.cells.insert(column_name='is_clust1', values=is_clust_1)
+ds.cells.insert(
+    column_name='is_clust1', 
+    values=is_clust_1
+)
 ```
 
 If we try to add values for a column that already exists then Scarf will throw an error. For example, if we simply rerun the command above, we should get an error
 
 ```{code-cell} ipython3
-ds.cells.insert(column_name='is_clust1', values=is_clust_1)
+ds.cells.insert(
+    column_name='is_clust1',
+    values=is_clust_1
+)
 ```
 
 To override this behaviour, you can use 'overwrite' parameter and set it to True
 
 ```{code-cell} ipython3
-ds.cells.insert(column_name='is_clust1', values=is_clust_1, overwrite=True)
+ds.cells.insert(
+    column_name='is_clust1', 
+    values=is_clust_1, 
+    overwrite=True
+)
 ```
 
 Please checkout the API of the `Metadata` class to get information on how to perform other operations like delete and update columns.
@@ -188,8 +207,11 @@ Following is an example of how one can override the method of normalization
 def my_cool_normalization_method(assay, counts):
     import numpy as np
 
-    lib_size = counts.sum(axis=1).reshape(-1, 1) # Calculate total counts for each cell
-    return np.log2(counts/lib_size)  # Library size normalization followed by log2 transformation
+    # Calculate total counts for each cell
+    lib_size = counts.sum(axis=1).reshape(-1, 1) 
+    
+    # Library size normalization followed by log2 transformation
+    return np.log2(counts/lib_size)
 
 ds.RNA.normMethod = my_cool_normalization_method
 ```
@@ -222,7 +244,13 @@ Next, we show how the graph can be accessed if required. However, as stated abov
 Because Scarf saves all the intermediate data, it might be the case that a lot of graphs are stored in the Zarr hierarchy. `load_graph` will load only the latest graph that was computed (for the given assay, cell key and feat key). 
 
 ```{code-cell} ipython3
-ds.load_graph(from_assay='RNA', cell_key='I', feat_key='hvgs', symmetric=False, upper_only=False)
+ds.load_graph(
+    from_assay='RNA',
+    cell_key='I',
+    feat_key='hvgs',
+    symmetric=False,
+    upper_only=False
+)
 ```
 
 The sparse matrix above will load the If you would like to load a graph generated using some other parameter, then simply run `make_graph` again using those parameters. `make_graph` will not recalculate the graph if it already exists and will simply set it as the latest graph. This graph can then be loaded using `load_graph`
@@ -237,19 +265,28 @@ The sparse matrix above will load the If you would like to load a graph generate
 Marker features (ex. marker genes) for a selection of cells can be calculated using `run_marker_search`. The markers for each group are stored under 'marker' group under the assay's group. Within the '{assay}/markers' level there are sublevels (only 1 here) created based on which cell set and cell groups were used: {cell_key}__{group_key}. Stored below this Zarr level are the individual group labels that contain the maker feature ids and their corresponding scores.
 
 ```{code-cell} ipython3
-ds.show_zarr_tree(start='RNA/markers', depth=2)
+ds.show_zarr_tree(
+    start='RNA/markers',
+    depth=2
+)
 ```
 
 Marker list for any group (e.x. cell cluster) can be fetched like below
 
 ```{code-cell} ipython3
-ds.get_markers(group_key='RNA_cluster', group_id=7)
+ds.get_markers(
+    group_key='RNA_cluster',
+    group_id=7
+)
 ```
 
 One can also export the names of markers for all the groups to a CSV file like below:
 
 ```{code-cell} ipython3
-ds.export_markers_to_csv(group_key='RNA_cluster', csv_filename='test.csv')
+ds.export_markers_to_csv(
+    group_key='RNA_cluster',
+    csv_filename='test.csv'
+)
 ```
 
 ---

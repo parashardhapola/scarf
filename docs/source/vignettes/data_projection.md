@@ -27,20 +27,43 @@ scarf.__version__
 ### 1) Fetch datasets in Zarr format
 
 ```{code-cell} ipython3
-scarf.fetch_dataset('kang_15K_pbmc_rnaseq', save_path='scarf_datasets', as_zarr=True)
-scarf.fetch_dataset('kang_14K_ifnb-pbmc_rnaseq', save_path='scarf_datasets', as_zarr=True)
+scarf.fetch_dataset(
+    dataset_name='kang_15K_pbmc_rnaseq',
+    save_path='scarf_datasets',
+    as_zarr=True
+)
+
+scarf.fetch_dataset(
+    dataset_name='kang_14K_ifnb-pbmc_rnaseq',
+    save_path='scarf_datasets',
+    as_zarr=True
+)
 ```
 
 ```{code-cell} ipython3
 # Control/untreated PBMC data
-ds_ctrl = scarf.DataStore('scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr', nthreads=4)
-ds_ctrl.plot_layout(layout_key='RNA_UMAP', color_by='cluster_labels')
+ds_ctrl = scarf.DataStore(
+    'scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr',
+    nthreads=4
+)
+
+ds_ctrl.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='cluster_labels'
+)
 ```
 
 ```{code-cell} ipython3
 # Interferon beta stimulated PBMC data
-ds_stim = scarf.DataStore('scarf_datasets/kang_14K_ifnb-pbmc_rnaseq/data.zarr', nthreads=4)
-ds_stim.plot_layout(layout_key='RNA_UMAP', color_by='cluster_labels')
+ds_stim = scarf.DataStore(
+    'scarf_datasets/kang_14K_ifnb-pbmc_rnaseq/data.zarr',
+    nthreads=4
+)
+
+ds_stim.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='cluster_labels'
+)
 ```
 
 ---
@@ -63,8 +86,13 @@ The ``run_mapping`` method of DataStore class performs KNN mapping/projection of
 # CORAL algorithm can be very slow with large number of features (> 5000).
 # Hence here it is recommended for only scRNA-Seq datasets.
 
-ds_ctrl.run_mapping(target_assay=ds_stim.RNA, target_name='stim',
-                    target_feat_key='hvgs_ctrl', save_k=5, run_coral=True)
+ds_ctrl.run_mapping(
+    target_assay=ds_stim.RNA,
+    target_name='stim',
+    target_feat_key='hvgs_ctrl',
+    save_k=5, 
+    run_coral=True
+)
 ```
 
 ---
@@ -77,13 +105,22 @@ We can use `mapping scores` to perform cross-dataset cluster similarity inspecti
 ```{code-cell} ipython3
 # Here we will generate plots for IFB-B stimulated cells from NK  and CD14 monocyte clusters.
 
-for g, ms in ds_ctrl.get_mapping_score(target_name='stim',
-                                       target_groups=ds_stim.cells.fetch('cluster_labels'),
-                                       log_transform=True):
+for g, ms in ds_ctrl.get_mapping_score(
+    target_name='stim',
+    target_groups=ds_stim.cells.fetch('cluster_labels'),
+    log_transform=True
+):
+    
     if g in ['NK', 'CD 14 Mono']:
         print (f"Target cluster {g}")
-        ds_ctrl.plot_layout(layout_key='RNA_UMAP', color_by='cluster_labels',
-                            size_vals=ms*10, height=4, width=4, legend_onside=False)
+        ds_ctrl.plot_layout(
+            layout_key='RNA_UMAP',
+            color_by='cluster_labels',
+            size_vals=ms*10,
+            height=4, 
+            width=4,
+            legend_onside=False
+        )
 ```
 
 ---
@@ -94,21 +131,29 @@ Using the nearest neighbours of the target cells in the reference data, we can t
 The `reference_class_group` parameter decides which labels to transfer. This can be any column from the cell attribute table that has categorical values, generally users would use `RNA_leiden_cluster` or `RNA_cluster` but they can also use other labels. Here, for example, we use the custom labels stored under `cluster_labels` column.
 
 ```{code-cell} ipython3
-transferred_labels = ds_ctrl.get_target_classes(target_name='stim',
-                                                reference_class_group='cluster_labels')
+transferred_labels = ds_ctrl.get_target_classes(
+    target_name='stim',
+    reference_class_group='cluster_labels'
+)
+
 transferred_labels
 ```
 
 We can now save these transferred labels into the stimulated cell dataset and visualize them of its UMAP.
 
 ```{code-cell} ipython3
-ds_stim.cells.insert('transferred_labels',
-                     transferred_labels.values,
-                     overwrite=True)
+ds_stim.cells.insert(
+    'transferred_labels',
+    transferred_labels.values,
+    overwrite=True
+)
 ```
 
 ```{code-cell} ipython3
-ds_stim.plot_layout(layout_key='RNA_UMAP', color_by='transferred_labels')
+ds_stim.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='transferred_labels'
+)
 ```
 
 It can be quite interesting to check how the predicted/transferred labels compare to the actual labels of the target cells:
@@ -116,8 +161,10 @@ It can be quite interesting to check how the predicted/transferred labels compar
 ```{code-cell} ipython3
 import pandas as pd
 
-df = pd.crosstab(ds_stim.cells.fetch('cluster_labels'),
-                 ds_stim.cells.fetch('transferred_labels'))
+df = pd.crosstab(
+    ds_stim.cells.fetch('cluster_labels'),
+    ds_stim.cells.fetch('transferred_labels')
+)
 df
 ```
 
@@ -133,21 +180,34 @@ This cross-tabulation can be presented as percentage accuracy, where the values 
 Scarf introduces Unified UMAPs, a strategy to embed target cells onto the reference manifold. To do so, we take the results of KNN projection and spike the graph of reference cells with target cells. We can control the weight of target-reference edges also, as well as the number of edges per target to retain. We rerun UMAP on this 'unified graph' to obtain a unified embdding. Following code shows how to call `run_unified_umap` method.
 
 ```{code-cell} ipython3
-ds_ctrl.run_unified_umap(target_names=['stim'], ini_embed_with='RNA_UMAP', target_weight=1,
-                         use_k=5, n_epochs=100)
+ds_ctrl.run_unified_umap(
+    target_names=['stim'],
+    ini_embed_with='RNA_UMAP',
+    target_weight=1,
+    use_k=5,
+    n_epochs=100
+)
 ```
 
 Since the results of unified embedding contain 'foreign' cells, `plot_layout` function cannot be used to visualize all the cells. A specialized method, `plot_unified_layout` takes care of this issue. The following example shows co-embedded control (reference) and stimulated  (target) PBMCs.
 
 ```{code-cell} ipython3
-ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=False, ref_name='ctrl')
+ds_ctrl.plot_unified_layout(
+    layout_key='unified_UMAP',
+    show_target_only=False,
+    ref_name='ctrl'
+)
 ```
 
 We can visualize only the target cells, i.e IFN-B stimulated cells, in the unified embedding. The target cells can be colored based on their original cluster identity. Target cells of similar types are close together on the unified embedding and overlap with the cell types of the reference data
 
 ```{code-cell} ipython3
-ds_ctrl.plot_unified_layout(layout_key='unified_UMAP', show_target_only=True, legend_ondata=True,
-                            target_groups=ds_stim.cells.fetch('cluster_labels'))
+ds_ctrl.plot_unified_layout(
+    layout_key='unified_UMAP',
+    show_target_only=True, 
+    legend_ondata=True,
+    target_groups=ds_stim.cells.fetch('cluster_labels')
+)
 ```
 
 ---

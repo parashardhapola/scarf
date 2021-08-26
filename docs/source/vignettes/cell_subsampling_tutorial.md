@@ -37,12 +37,20 @@ We need to install the TopACeDo algorithm to perform subsampling:
 
 ```{code-cell} ipython3
 # Loading preanalyzed dataset that was processed in the `basic_tutorial` vignette
-scarf.fetch_dataset('tenx_5K_pbmc_rnaseq', as_zarr=True, save_path='scarf_datasets')
+scarf.fetch_dataset(
+    dataset_name='tenx_5K_pbmc_rnaseq',
+    as_zarr=True, 
+    save_path='scarf_datasets'
+)
 ```
 
 ```{code-cell} ipython3
 ds = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr')
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster')
+
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='RNA_cluster'
+)
 ```
 
 ---
@@ -55,19 +63,30 @@ UMAP, clustering and marker identification together allow a good understanding o
 Here we run the TopACeDo downsampling algorithm that leverages Scarf's KNN graph to perform a manifold preserving subsampling of cells. The subsampler can be invoked directly from Scarf's DataStore object.
 
 ```{code-cell} ipython3
-ds.run_topacedo_sampler(cluster_key='RNA_cluster', max_sampling_rate=0.1)
+ds.run_topacedo_sampler(
+    cluster_key='RNA_cluster',
+    max_sampling_rate=0.1
+)
 ```
 
 As a result of subsampling the subsampled cells are marked True under the cell metadata column `RNA_sketched`. We can visualize these cells using `plot_layout`
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketched')
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='RNA_cluster',
+    subselection_key='RNA_sketched'
+)
 ```
 
 It may also be interesting to visualize the cells that were marked as `seed cells` used when PCST was run. These cells are marked under the column `RNA_sketch_seeds`.
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='RNA_sketch_seeds')
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='RNA_cluster', 
+    subselection_key='RNA_sketch_seeds'
+)
 ```
 
 ---
@@ -78,13 +97,19 @@ ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cluster', subselection_key='
 To identify the seed cells, the subsampling algorithm calculates cell densities based on neighbourhood degrees. Regions of higher cell density get a sampling penalty. The neighbourhood degree of individual cells are stored under the column `RNA_cell_density`.
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_cell_density')
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='RNA_cell_density'
+)
 ```
 
 The dowsampling algorithm also identifies regions of the graph where cells form tightly connected groups by calculating mean shared nearest neighbours of each cell's nieghbours. The tightly connected regions get a sampling award. These values can be accessed from under the cell metadata column `RNA_snn_value`.
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_snn_value')
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='RNA_snn_value'
+)
 ```
 
 ---

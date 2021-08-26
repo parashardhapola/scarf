@@ -31,19 +31,25 @@ We have stored this data on Scarf's online repository for quick access. We proce
 
 ```{code-cell} ipython3
 scarf.fetch_dataset(
-    'bastidas-ponce_4K_pancreas-d15_rnaseq',
+    dataset_name='bastidas-ponce_4K_pancreas-d15_rnaseq',
     save_path='./scarf_datasets',
     as_zarr=True,
 )
 ```
 
 ```{code-cell} ipython3
-ds = scarf.DataStore(f"scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.zarr",
-                     nthreads=4, default_assay='RNA')
+ds = scarf.DataStore(
+    f"scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.zarr",
+    nthreads=4, 
+    default_assay='RNA'
+)
 ```
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='clusters')
+ds.plot_layout(
+    layout_key='RNA_UMAP', 
+    color_by='clusters'
+)
 ```
 
 ---
@@ -88,6 +94,7 @@ color_key = {
     'S': 'orange',
     'G2M': 'crimson',
 }
+
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by='RNA_cell_cycle_phase',

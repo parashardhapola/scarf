@@ -31,7 +31,7 @@ We will use 10x Genomics's singel-cell ATAC-Seq data from peripheral blood monon
 
 ```{code-cell} ipython3
 scarf.fetch_dataset(
-    'tenx_10K_pbmc-v1_atacseq',
+    dataset_name='tenx_10K_pbmc-v1_atacseq',
     save_path='scarf_datasets'
 )
 ```
@@ -62,7 +62,10 @@ writer.dump(batch_size=1000)
 We load the Zarr file on using `DataStore` class. The obtained `DataStore` object will be our single point on interaction for rest of this analysis. When loaded, Scarf will automatically calculate the number of cells where each peak is present and number of peaks that are accessible in cell (nFeatures). Scarf will also calculate the total number of fragments/cut sites within each cell.
 
 ```{code-cell} ipython3
-ds = scarf.DataStore('scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.zarr', nthreads=4)
+ds = scarf.DataStore(
+    'scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.zarr', 
+    nthreads=4
+)
 ```
 
 We will use `auto_filter_cells` method which automatically remove outliers from the data. To identify outliers we generate a normal distribution using sample mean and variance. Using this normal distribution Scarf estimates the values with probability less 0.01 (default value) on both ends of the distribution and flags them for removal.
@@ -108,7 +111,12 @@ ds.make_graph(
 Non-linear dimension reduction using UMAP and tSNE are performed in the same way as for scRNA-Seq data. Because, in Scarf the core UMAP step are run directly on the neighbourhood graph, the scATAC-Seq data is handled similar to any other data.
 
 ```{code-cell} ipython3
-ds.run_umap(n_epochs=500, min_dist=0.1, spread=1, parallel=True)
+ds.run_umap(
+    n_epochs=500,
+    min_dist=0.1, 
+    spread=1, 
+    parallel=True
+)
 ```
 
 Same goes for clustering as well. The leiden clustering acts on the neighbourhood graph directly.
@@ -126,7 +134,10 @@ ds.cells.head()
 We can visualize the UMAP embedding and the clusters of cells on the embedding
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='ATAC_UMAP', color_by='ATAC_leiden_cluster')
+ds.plot_layout(
+    layout_key='ATAC_UMAP', 
+    color_by='ATAC_leiden_cluster'
+)
 ```
 
 Those familiar with PBMC datasets might already be able to identify different cell types in the UMAP plot.
@@ -154,7 +165,10 @@ The start/end coordinate can extend through transcription start site (TSS) to in
 For convenience we have generated such BED files for human and mouse assemblies using the annotation information from GENCODE project. We downloaded the GFF3 format primary chromosome annotations and used Scarf's `GFFReader` to convert the files into BED and add promoter offset of 2KB. These BED files containing gene annotations can be downloaded using `fetch_dataset` command and passing 'annotations' parameter.
 
 ```{code-cell} ipython3
-scarf.fetch_dataset('annotations', save_path='scarf_datasets')
+scarf.fetch_dataset(
+    dataset_name='annotations', 
+    save_path='scarf_datasets'
+)
 ```
 
 ----
@@ -194,8 +208,11 @@ Let's now visualize some 'GeneScores' for some of the known marker genes for PBM
 ds.plot_layout(
     layout_key='ATAC_UMAP', from_assay='GeneScores', 
     color_by=['CD3D', 'MS4A1', 'LEF1', 'NKG7', 'TREM1', 'LYZ'],
-    clip_fraction=0.01, n_columns=3,
-    width=3, height=3, point_size=5,
+    clip_fraction=0.01, 
+    n_columns=3,
+    width=3,
+    height=3,
+    point_size=5,
     scatter_kwargs={'lw': 0.01},
 )
 ```

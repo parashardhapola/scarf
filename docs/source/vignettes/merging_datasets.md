@@ -28,19 +28,36 @@ scarf.__version__
 Here we will use the same datasets are we use in the ['data projection'](https://scarf.readthedocs.io/en/latest/vignettes/data_projection.html) vignette. We download the files in zarr format.
 
 ```{code-cell} ipython3
-scarf.fetch_dataset('kang_15K_pbmc_rnaseq', save_path='scarf_datasets', as_zarr=True)
-scarf.fetch_dataset('kang_14K_ifnb-pbmc_rnaseq', save_path='scarf_datasets', as_zarr=True)
+scarf.fetch_dataset(
+    dataset_name='kang_15K_pbmc_rnaseq',
+    save_path='scarf_datasets',
+    as_zarr=True
+)
+
+scarf.fetch_dataset(
+    dataset_name='kang_14K_ifnb-pbmc_rnaseq', 
+    save_path='scarf_datasets',
+    as_zarr=True
+)
 ```
 
 The Zarr files need to be loaded as a DataStore before they can be merged:
 
 ```{code-cell} ipython3
-ds_ctrl = scarf.DataStore('scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr/', nthreads=4)
+ds_ctrl = scarf.DataStore(
+    'scarf_datasets/kang_15K_pbmc_rnaseq/data.zarr/',
+    nthreads=4
+)
+
 ds_ctrl
 ```
 
 ```{code-cell} ipython3
-ds_stim = scarf.DataStore('scarf_datasets/kang_14K_ifnb-pbmc_rnaseq/data.zarr', nthreads=4)
+ds_stim = scarf.DataStore(
+    'scarf_datasets/kang_14K_ifnb-pbmc_rnaseq/data.zarr',
+    nthreads=4
+)
+
 ds_stim
 ```
 
@@ -51,16 +68,29 @@ The merging step will make sure that the features are in the same order as in th
 
 ```{code-cell} ipython3
 #Can be used to merge multiple assays
-scarf.ZarrMerge(zarr_path='scarf_datasets/kang_merged_pbmc_rnaseq.zarr',  # Path where merged Zarr files will be saved
-                assays=[ds_ctrl.RNA, ds_stim.RNA],                        # assays to be merged
-                names=['ctrl', 'stim'],                                   # these names will be preprended to the cell ids with '__' delimiter
-                merge_assay_name='RNA', overwrite=True).dump()           # Name of the merged assay. `overwrite` will remove an existing Zarr file.
+scarf.ZarrMerge(
+    # Path where merged Zarr files will be saved
+    zarr_path='scarf_datasets/kang_merged_pbmc_rnaseq.zarr',  
+    
+    # assays to be merged
+    assays=[ds_ctrl.RNA, ds_stim.RNA],
+    
+    # these names will be preprended to the cell ids with '__' delimiter
+    names=['ctrl', 'stim'],
+    
+    # Name of the merged assay. `overwrite` will remove an existing Zarr file.
+    merge_assay_name='RNA',
+    overwrite=True
+).dump()
 ```
 
 Load the merged Zarr file as a DataStore:
 
 ```{code-cell} ipython3
-ds = scarf.DataStore('scarf_datasets/kang_merged_pbmc_rnaseq.zarr', nthreads=4)
+ds = scarf.DataStore(
+    'scarf_datasets/kang_merged_pbmc_rnaseq.zarr',
+    nthreads=4
+)
 ```
 
 So now we print the merged datastore. The merging removed all the precalculated data. Even the information on which cells were filtered out is lost in the process. This is done deliberately, to allow users to start fresh with the merged dataset.
@@ -113,7 +143,10 @@ ds.cells.update_key(
 Now we can check the number of cells from each of the samples:
 
 ```{code-cell} ipython3
-ds.cells.to_pandas_dataframe(['sample_id'], key='I')['sample_id'].value_counts()
+ds.cells.to_pandas_dataframe(
+    ['sample_id'],
+    key='I'
+)['sample_id'].value_counts()
 ```
 
 ---
@@ -127,19 +160,35 @@ It is usually a good idea to perform a 'naive' pipeline to get an idea about the
 We start with detecting the highly variable genes:
 
 ```{code-cell} ipython3
-ds.mark_hvgs(min_cells=10, top_n=2000, min_mean=-3, max_mean=2, max_var=6)
+ds.mark_hvgs(
+    min_cells=10,
+    top_n=2000,
+    min_mean=-3, 
+    max_mean=2,
+    max_var=6
+)
 ```
 
 Next, we create a graph of cells in a standard way.
 
 ```{code-cell} ipython3
-ds.make_graph(feat_key='hvgs', k=21, dims=25, n_centroids=100)
+ds.make_graph(
+    feat_key='hvgs',
+    k=21, 
+    dims=25,
+    n_centroids=100
+)
 ```
 
 Calculating UMAP embedding of cells:
 
 ```{code-cell} ipython3
-ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True)
+ds.run_umap(
+    n_epochs=250, 
+    spread=5,
+    min_dist=1,
+    parallel=True
+)
 ```
 
 ```{code-cell} ipython3
@@ -149,13 +198,22 @@ ds.cells.head()
 Visualization of cells from the two samples in the 2D UMAP space:
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='sample_id', cmap='RdBu', legend_ondata=False)
+ds.plot_layout(
+    layout_key='RNA_UMAP',
+    color_by='sample_id',
+    cmap='RdBu', 
+    legend_ondata=False
+)
 ```
 
 Visualization of cluster labels in the 2D UMAP space:
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_UMAP', color_by='imported_labels', legend_ondata=False)
+ds.plot_layout(
+    layout_key='RNA_UMAP', 
+    color_by='imported_labels',
+    legend_ondata=False
+)
 ```
 
 ---
@@ -170,33 +228,56 @@ We will now attempt to integrate the cells from the two samples so that we obtai
 First, we need to create a boolean column in the cell attribute table. This column will indicate whether a cell belongs to one of the samples. Here we will create a new column `is_ctrl` and mark the values as True when a cell belongs to the `ctrl` sample.
 
 ```{code-cell} ipython3
-ds.cells.insert(column_name=f'is_ctrl',
-                           values=(ds.cells.fetch_all('sample_id') == 'ctrl'),
-                           overwrite=True)
+ds.cells.insert(
+    column_name=f'is_ctrl',
+    values=(ds.cells.fetch_all('sample_id') == 'ctrl'),
+    overwrite=True
+)
 ```
 
 The next step is to perform the partial PCA training. PCA is trained during the graph creation step. We will now use `pca_cell_key` parameter and set it to `is_ctrl` so that only 'ctrl' cells are used for PCA training.
 
 ```{code-cell} ipython3
-ds.make_graph(feat_key='hvgs', k=21, dims=25, n_centroids=100, pca_cell_key='is_ctrl')
+ds.make_graph(
+    feat_key='hvgs',
+    k=21, 
+    dims=25,
+    n_centroids=100,
+    pca_cell_key='is_ctrl'
+)
 ```
 
 We run UMAP as usual, but the UMAP embeddings are saved in a new cell attribute column so as to not overwrite the previous UMAP values. The new column will be called `RNA_pUMAP`; 'RNA' is automatically prepend because the assay name is `RNA`
 
 ```{code-cell} ipython3
-ds.run_umap(n_epochs=250, spread=5, min_dist=1, parallel=True, label='pUMAP')
+ds.run_umap(
+    n_epochs=250, 
+    spread=5,
+    min_dist=1,
+    parallel=True,
+    label='pUMAP'
+)
 ```
 
 Visualize the new UMAP
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_pUMAP', color_by='sample_id', cmap='RdBu', legend_ondata=False)
+ds.plot_layout(
+    layout_key='RNA_pUMAP',
+    color_by='sample_id',
+    cmap='RdBu',
+    legend_ondata=False
+)
 ```
 
 Visualization of cluster labels in the new UMAP space shows that the cells from the same cell-type do not split into separate clusters like they did before.
 
 ```{code-cell} ipython3
-ds.plot_layout(layout_key='RNA_pUMAP', color_by='imported_labels', legend_ondata=False)
+ds.plot_layout(
+    layout_key='RNA_pUMAP',
+    color_by='imported_labels',
+    legend_ondata=False
+)
 ```
 
 ---

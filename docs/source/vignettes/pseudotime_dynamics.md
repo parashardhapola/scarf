@@ -30,23 +30,28 @@ We have stored this data on Scarf's online repository for quick access. We proce
 
 ```{code-cell} ipython3
 scarf.fetch_dataset(
-    'bastidas-ponce_4K_pancreas-d15_rnaseq',
+    dataset_name='bastidas-ponce_4K_pancreas-d15_rnaseq',
     save_path='./scarf_datasets',
     as_zarr=True,
 )
 ```
 
 ```{code-cell} ipython3
-ds = scarf.DataStore(f"scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.zarr",
-                     nthreads=4, default_assay='RNA')
+ds = scarf.DataStore(
+    f"scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.zarr",
+    nthreads=4, 
+    default_assay='RNA'
+)
 ```
 
 ```{code-cell} ipython3
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by=['RNA_cluster', 'clusters'],
-    width=4, height=4, 
-    legend_onside=False, cmap='tab20'
+    width=4,
+    height=4, 
+    legend_onside=False,
+    cmap='tab20'
 )
 ```
 
@@ -95,11 +100,13 @@ In this section will do deeper on how to use the pseudotime correlation values f
 The first step is to export the values in a convenient dataframe format. we can use the `to_pandas_dataframe` methods of the feature attribute table to export the dataframe containing only the columns of choice
 
 ```{code-cell} ipython3
-corr_genes_df = ds.RNA.feats.to_pandas_dataframe([
-    'names',
-    'I__RNA_pseudotime__p',
-    'I__RNA_pseudotime__r'
-], key='I')
+corr_genes_df = ds.RNA.feats.to_pandas_dataframe(
+    columns=[
+        'names',
+        'I__RNA_pseudotime__p',
+        'I__RNA_pseudotime__r'
+    ],
+    key='I')
 
 # Rename the columns to be shorter
 corr_genes_df.columns = ['names', 'p_value', 'r_value']
@@ -117,7 +124,9 @@ Let's visualize the expression of some of these genes on the UMAP plot
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by=['Spp1', 'Dbi', 'Sparc'],
-    width=3.5, height=3.5, point_size=5,
+    width=3.5, 
+    height=3.5,
+    point_size=5,
 )
 ```
 
@@ -131,7 +140,9 @@ corr_genes_df.sort_values('r_value', ascending=False)[:10]
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by=['Aplp1', 'Gnas', 'Cpe'],
-    width=3.5, height=3.5, point_size=5,
+    width=3.5,
+    height=3.5, 
+    point_size=5,
 )
 ```
 
@@ -188,8 +199,12 @@ We can visualize the expression of the above selected genes on UMAP to check whe
 
 ```{code-cell} ipython3
 ds.plot_layout(
-    layout_key='RNA_UMAP', color_by=genes_to_label,
-    width=3, height=3, point_size=5, n_columns=5,
+    layout_key='RNA_UMAP', 
+    color_by=genes_to_label,
+    width=3,
+    height=3, 
+    point_size=5,
+    n_columns=5,
 )
 ```
 
@@ -226,7 +241,11 @@ ds.plot_layout(
     from_assay='PTIME_MODULES',
     layout_key='RNA_UMAP', 
     color_by=[f"group_{i}" for i in range(1,n_clusters+1)],
-    width=3, height=3, point_size=5, n_columns=5, cmap='coolwarm',
+    width=3, 
+    height=3,
+    point_size=5,
+    n_columns=5,
+    cmap='coolwarm',
 )
 ```
 
@@ -247,7 +266,9 @@ ds.run_marker_search(group_key='RNA_cluster')
 Here we extract features from pseudotime-based cluster/group 13. These genes are the ones that show high expressio in Beta cells. 
 
 ```{code-cell} ipython3
-ptime_feat_clusts = ds.RNA.feats.to_pandas_dataframe(['names', 'pseudotime_clusters'])
+ptime_feat_clusts = ds.RNA.feats.to_pandas_dataframe(
+    columns=['names', 'pseudotime_clusters']
+)
 ptime_based_markers = ptime_feat_clusts.names[ptime_feat_clusts.pseudotime_clusters == 13]
 ptime_based_markers.head()
 ```
@@ -255,7 +276,11 @@ ptime_based_markers.head()
 Now we extract all the marker genes for cell cluster 8, this cluster predominantly contains the Beta cells.
 
 ```{code-cell} ipython3
-cell_cluster_markers = ds.get_markers(group_key='RNA_cluster', group_id='8')['names']
+cell_cluster_markers = ds.get_markers(
+    group_key='RNA_cluster',
+    group_id='8'
+)['names']
+
 cell_cluster_markers.head()
 ```
 
@@ -273,7 +298,11 @@ Let's visualize the cumulative expression of genes that are present only in clus
 
 ```{code-cell} ipython3
 temp = list(set(cell_cluster_markers.index).difference(ptime_based_markers.index))
-ds.cells.insert('Cell cluster based markers', ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(), overwrite=True)
+ds.cells.insert(
+    column_name='Cell cluster based markers', 
+    values=ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(),
+    overwrite=True)
+
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by='Cell cluster based markers',
@@ -285,7 +314,11 @@ Let's now do this the other way and visualize the cumulative expression of genes
 
 ```{code-cell} ipython3
 temp = list(set(ptime_based_markers.index).difference(cell_cluster_markers.index))
-ds.cells.insert('Cell cluster based markers', ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(), overwrite=True)
+ds.cells.insert(
+    column_name='Cell cluster based markers',
+    values=ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(),
+    overwrite=True)
+
 ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by='Cell cluster based markers',

@@ -39,19 +39,28 @@ Now using any of these dataset names we can download the dataset of our choice:
 
 ```{code-cell} ipython3
 # This dataset is in Cellranger (10x) HDF5 format.
-scarf.fetch_dataset('tenx_10K_pbmc-v1_atacseq', save_path='./scarf_datasets')
+scarf.fetch_dataset(
+    dataset_name='tenx_10K_pbmc-v1_atacseq',
+    save_path='./scarf_datasets'
+)
 ```
 
 The above dataset gets saved under the directory `scarf_datasets` in our current working directory. You can modify `save_path` parameter to save data in location of your choice. The dataset above was downloaded in 10x's HDF5 format. Let download few more datasets that are in differnet file formats.
 
 ```{code-cell} ipython3
 # This dataset is in MTX format along with barcodes and features TSV files.
-scarf.fetch_dataset('xin_1K_pancreas_rnaseq', save_path='./scarf_datasets')
+scarf.fetch_dataset(
+    dataset_name='xin_1K_pancreas_rnaseq',
+    save_path='./scarf_datasets'
+)
 ```
 
 ```{code-cell} ipython3
 # This dataset is in H5ad (anndata) format.
-scarf.fetch_dataset('bastidas-ponce_4K_pancreas-d15_rnaseq', save_path='./scarf_datasets')
+scarf.fetch_dataset(
+    dataset_name='bastidas-ponce_4K_pancreas-d15_rnaseq',
+    save_path='./scarf_datasets'
+)
 ```
 
 ---
@@ -65,9 +74,15 @@ Scarf stores data as dense, compressed chunks in Zarr file format. `scarf.reader
 
 ```{code-cell} ipython3
 # Change file_type to 'rna' in case of sc-RNA-seq or CITE-Seq
-reader = scarf.CrH5Reader('scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.h5')
+reader = scarf.CrH5Reader(
+    'scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.h5'
+)
 
-writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/pbmc_atac.zarr')  # change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_fn` to your choice of filename and path
+writer = scarf.CrToZarr(
+    reader,
+    zarr_fn='scarf_datasets/pbmc_atac.zarr'  
+)  
 writer.dump()
 ```
 
@@ -77,9 +92,15 @@ writer.dump()
 
 ```{code-cell} ipython3
  # Note here we only give name of directory containing MTX file (along with barcodes and features file)
-reader = scarf.CrDirReader('scarf_datasets/xin_1K_pancreas_rnaseq')
+reader = scarf.CrDirReader(
+    'scarf_datasets/xin_1K_pancreas_rnaseq'
+)
 
-writer = scarf.CrToZarr(reader, zarr_fn='scarf_datasets/xin_1K.zarr')  # change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_fn` to your choice of filename and path
+writer = scarf.CrToZarr(
+    reader, 
+    zarr_fn='scarf_datasets/xin_1K.zarr'
+)
 writer.dump()
 ```
 
@@ -87,12 +108,18 @@ writer.dump()
 
 ```{code-cell} ipython3
  # Note here we only give name of directory containing MTX file (along with barcodes and features file)
-reader = scarf.H5adReader('scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.h5ad', 
-                          cell_ids_key = 'index',               # Where Cell/barcode ids are saved under 'obs' slot
-                          feature_ids_key = 'index',            # Where gene ids are saved under 'var' slot
-                          feature_name_key = 'gene_short_name')  # Where gene names are saved under 'var' slot
+reader = scarf.H5adReader(
+    'scarf_datasets/bastidas-ponce_4K_pancreas-d15_rnaseq/data.h5ad', 
+    cell_ids_key = 'index',               # Where Cell/barcode ids are saved under 'obs' slot
+    feature_ids_key = 'index',            # Where gene ids are saved under 'var' slot
+    feature_name_key = 'gene_short_name'  # Where gene names are saved under 'var' slot
+)  
 
-writer = scarf.H5adToZarr(reader, zarr_fn='scarf_datasets/differentiating_pancreatic_cells.zarr') # change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_fn` to your choice of filename and path
+writer = scarf.H5adToZarr(
+    reader,
+    zarr_fn='scarf_datasets/differentiating_pancreatic_cells.zarr'
+)
 writer.dump()
 ```
 
@@ -112,7 +139,10 @@ ds = scarf.DataStore('scarf_datasets/differentiating_pancreatic_cells.zarr')
 ```
 
 ```{code-cell} ipython3
-scarf.writers.to_mtx(ds.RNA, mtx_directory='scarf_datasets/diff_pancreas')
+scarf.writers.to_mtx(
+    assay=ds.RNA,
+    mtx_directory='scarf_datasets/diff_pancreas'
+)
 ```
 
 #### To H5ad format
@@ -124,7 +154,10 @@ ds = scarf.DataStore('scarf_datasets/differentiating_pancreatic_cells.zarr')
 ```
 
 ```{code-cell} ipython3
-scarf.writers.to_h5ad(ds.RNA, h5ad_filename='scarf_datasets/diff_pancreas.h5ad')
+scarf.writers.to_h5ad(
+    assay=ds.RNA,
+    h5ad_filename='scarf_datasets/diff_pancreas.h5ad'
+)
 ```
 
 ---
