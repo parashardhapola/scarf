@@ -6,6 +6,19 @@ If you already have Python version 3.8.0 or greater, then you can install scarf 
 
     pip install scarf
 
+
+````{note}
+On Windows you will need to run the following on PowerShell (run as Administrator):
+
+```{code-block} powershell
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+-Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+```
+
+This will enable long path lengths on Window. Read more [here](https://docs.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
+
+````
+
 ## Installing Python
 
 To use Scarf you need the Python programming language, version 3.8 or upwards, installed.
