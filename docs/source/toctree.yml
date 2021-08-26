@@ -16,8 +16,9 @@ subtrees:
       - file: vignettes/basic_tutorial_scATACseq
         title: Workflow for scATAC-Seq data
   - caption: Multi-omics/Multimodal analysis
-      entries: vignettes/multiple_modalities
-      title: Transcriptome + Surface Proteome
+    entries: 
+      - file: vignettes/multiple_modalities
+        title: Transcriptome + Surface Proteome
   - caption: Data integration tutorials
     entries:
       - file: vignettes/data_projection
