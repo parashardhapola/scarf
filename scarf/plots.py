@@ -501,7 +501,7 @@ def _scatter_make_colors(
                 pal = custom_palettes[10]
             elif len(uv) <= 20:
                 pal = custom_palettes[20]
-            elif len(uv) <= 30:
+            elif len(uv) <= 28:
                 pal = custom_palettes[28]
             else:
                 pal = custom_palettes[102]
