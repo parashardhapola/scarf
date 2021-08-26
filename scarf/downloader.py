@@ -128,6 +128,7 @@ def handle_download(url: str, out_fn: str, seq_counter: str = "") -> None:
     """
 
     import requests
+    from pathlib import Path
 
     chunk_size = int(1e7)
     r = requests.head(url, allow_redirects=True)
@@ -146,7 +147,7 @@ def handle_download(url: str, out_fn: str, seq_counter: str = "") -> None:
     logger.debug(f"Download finished! File saved here: {out_fn}")
     if out_fn.endswith('tar.gz'):
         tar = tarfile.open(out_fn, "r:gz")
-        tar.extractall(out_fn.replace('.tar.gz', ''))
+        tar.extractall(str(Path(out_fn).parent.absolute()))
         tar.close()
 
 
