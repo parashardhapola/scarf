@@ -304,11 +304,11 @@ class AnnStream:
             random_state=self.randState,
             batch_size=self.batchSize,
         )
+        temp = []
         with threadpool_limits(limits=self.nthreads):
             for i in self.iter_blocks(msg="Fitting kmeans"):
                 kmeans.partial_fit(self.reducer(i))
-        temp = []
-        for i in self.iter_blocks(msg="Estimating seed partitions"):
-            temp.extend(kmeans.predict(self.reducer(i)))
+            for i in self.iter_blocks(msg="Estimating seed partitions"):
+                temp.extend(kmeans.predict(self.reducer(i)))
         self.clusterLabels = np.array(temp)
         return kmeans
