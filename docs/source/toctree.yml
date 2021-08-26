@@ -15,17 +15,16 @@ subtrees:
         title: Workflow for scRNA-Seq data
       - file: vignettes/basic_tutorial_scATACseq
         title: Workflow for scATAC-Seq data
-      - file: vignettes/multiple_modalities
-        title: Multi-omics/Multimodal analysis
-      - file: vignettes/cell_subsampling_tutorial
-        title: Automated cell downsampling
-  - caption: Data integration Tutorials
+  - caption: Multi-omics/Multimodal analysis
+      entries: vignettes/multiple_modalities
+      title: Transcriptome + Surface Proteome
+  - caption: Data integration tutorials
     entries:
       - file: vignettes/data_projection
         title: Integration through projection
       - file: vignettes/merging_datasets
         title: Merging samples and datasets
-  - caption: Trajectory analysis
+  - caption: Trajectory analysis tutorials
     entries:
       - file: vignettes/pseudotime_dynamics.md
         title: Pseudotime dynamics
@@ -35,6 +34,8 @@ subtrees:
         title: Data organization in Scarf
       - file: vignettes/download_conversion
         title: Data import and export
+      - file: vignettes/cell_subsampling_tutorial
+        title: Automated cell downsampling
       - file: vignettes/cell_cycle
         title: Estimate cell-cycle phases
       - file: vignettes/mnist
