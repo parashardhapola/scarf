@@ -61,7 +61,6 @@ def find_markers_by_rank(
     idx_map = dict(zip(group_set, range(n_groups)))
     rev_idx_map = {v: k for k, v in idx_map.items()}
     int_indices = np.array([idx_map[x] for x in groups])
-    feature_ids = assay.feats.fetch_all("ids")
     results = {x: [] for x in group_set}
     for val in assay.iter_normed_feature_wise(
         cell_key,
@@ -101,7 +100,6 @@ def find_markers_by_regression(
 
     """
 
-    feature_ids = assay.feats.fetch_all("ids")
     res = {}
     for df in assay.iter_normed_feature_wise(
         cell_key,
