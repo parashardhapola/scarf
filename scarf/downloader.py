@@ -143,7 +143,11 @@ def handle_download(url: str, out_fn: str, seq_counter: str = "") -> None:
         ):
             if chunk:
                 handle.write(chunk)
-    logger.info(f"Download finished! File saved here: {out_fn}")
+    logger.debug(f"Download finished! File saved here: {out_fn}")
+    if out_fn.endswith('tar.gz'):
+        tar = tarfile.open(out_fn, "r:gz")
+        tar.extractall(out_fn.replace('.tar.gz', ''))
+        tar.close()
 
 
 def show_available_datasets() -> None:
@@ -211,10 +215,6 @@ def fetch_dataset(
         sp, url = get_zarr_entry(files)
         sp = os.path.abspath(os.path.join(save_dir, sp))
         handle_download(url, sp)
-        logger.info(f"Extracting Zarr file for {dataset_name}")
-        tar = tarfile.open(sp, "r:gz")
-        tar.extractall(save_dir)
-        tar.close()
     else:
         valid_files = [x for x in files if not x.endswith(zarr_ext)]
         for n, i in enumerate(valid_files, start=1):
