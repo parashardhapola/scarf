@@ -1307,7 +1307,8 @@ class GraphDataStore(BaseDataStore):
         if ann_loc in self.z:
             import hnswlib
 
-            ann_idx = hnswlib.Index(space=ann_metric, dim=dims)
+            temp = dims if dims > 0 else data.shape[1]
+            ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
             ann_idx.load_index(ann_idx_loc)
             logger.info(f"Using existing ANN index")
         else:
@@ -3870,7 +3871,7 @@ class DataStore(MappingDatastore):
             g = assay.z["markers"][f"{cell_key}__{group_key}"]
         except KeyError:
             raise KeyError(
-                "ERROR: Couldnt find the location of markers. Please make sure that you have already called "
+                "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
                 "`run_marker_search` method with same value of `cell_key` and `group_key`"
             )
         if group_id is None:
@@ -3878,9 +3879,16 @@ class DataStore(MappingDatastore):
                 f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
                 f"{list(g.keys())}"
             )
-        df = pd.DataFrame(
-            [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
-        ).T.set_index("ids")
+        try:
+            df = pd.DataFrame(
+                [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
+            ).T.set_index("ids")
+        except KeyError:
+            logger.debug(f"No markers found for {group_id} returning empty dataframe")
+            df = pd.DataFrame(
+                [[], [], []], index=["ids", "score", []]
+            ).T.set_index("ids")
+            return df
         try:
             df.index = list(map(int, df.index))
             idx = df.index
