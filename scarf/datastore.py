@@ -3936,15 +3936,15 @@ class DataStore(MappingDatastore):
         clusters = self.cells.fetch(group_key)
         markers_table = {}
         for group_id in sorted(set(clusters)):
-            try:
-                m = self.get_markers(
-                    from_assay=from_assay,
-                    cell_key=cell_key,
-                    group_key=group_key,
-                    group_id=group_id,
-                )
+            m = self.get_markers(
+                from_assay=from_assay,
+                cell_key=cell_key,
+                group_key=group_key,
+                group_id=group_id,
+            )
+            if len(m) > 0:
                 markers_table[group_id] = m["names"].reset_index(drop=True)
-            except KeyError:
+            else:
                 markers_table[group_id] = pd.Series([])
         pd.DataFrame(markers_table).fillna("").to_csv(csv_filename, index=False)
         return None
