@@ -3886,7 +3886,7 @@ class DataStore(MappingDatastore):
         except KeyError:
             logger.debug(f"No markers found for {group_id} returning empty dataframe")
             df = pd.DataFrame(
-                [[], [], []], index=["ids", "score", []]
+                [[], [], []], index=['ids', 'score', 'names']
             ).T.set_index("ids")
             return df
         try:
