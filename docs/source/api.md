@@ -1,48 +1,52 @@
 # API
 
-## BaseDataStore
+## DataStore classes
+
+### BaseDataStore
 :::{eval-rst}
 .. autoclass:: scarf.datastore.BaseDataStore
     :members:
 :::
 
-## GraphDataStore
+### GraphDataStore
 :::{eval-rst}
 .. autoclass:: scarf.datastore.GraphDataStore
     :members:
 :::
 
-## MappingDatastore
+### MappingDatastore
 :::{eval-rst}
 .. autoclass:: scarf.datastore.MappingDatastore
     :members:
 :::
 
-## DataStore
+### DataStore
 :::{eval-rst}
 .. autoclass:: scarf.datastore.DataStore
     :members:
 :::
 
-## Assay
+## Assay classes
+
+### Assay
 :::{eval-rst}
 .. autoclass:: scarf.assay.Assay
     :members:
 :::
 
-## RNAassay
+### RNAassay
 :::{eval-rst}
 .. autoclass:: scarf.assay.RNAassay
     :members:
 :::
 
-## ATACassay
+### ATACassay
 :::{eval-rst}
 .. autoclass:: scarf.assay.ATACassay
     :members:
 :::
 
-## ADTassay
+### ADTassay
 :::{eval-rst}
 .. autoclass:: scarf.assay.ADTassay
     :members:
@@ -54,14 +58,72 @@
     :members:
 :::
 
-## Readers
+## Reader classes
+
+### Cellranger H5 reader
 :::{eval-rst}
-.. automodule:: scarf.readers
+.. autoclass:: scarf.readers.CrH5Reader
     :members:
 :::
 
-## Writers
+### Cellranger directory (MTX) reader
 :::{eval-rst}
-.. automodule:: scarf.writers
+.. autoclass:: scarf.readers.CrDirReader
+    :members:
+:::
+
+### H5ad (Anndata) reader
+:::{eval-rst}
+.. autoclass:: scarf.readers.H5adReader
+    :members:
+:::
+
+### Loom reader
+:::{eval-rst}
+.. autoclass:: scarf.readers.LoomReader
+    :members:
+:::
+
+### Nabo H5 reader
+:::{eval-rst}
+.. autoclass:: scarf.readers.NaboH5Reader
+    :members:
+:::
+
+## Writer classes
+
+### Cellranger to Zarr
+:::{eval-rst}
+.. autoclass:: scarf.writers.CrToZarr
+    :members:
+:::
+
+### H5ad (Anndata) to Zarr
+:::{eval-rst}
+.. autoclass:: scarf.writers.H5adToZarr
+    :members:
+:::
+
+### Nabo H5 to Zarr
+:::{eval-rst}
+.. autoclass:: scarf.writers.NaboH5ToZarr
+    :members:
+:::
+
+### Loom to Zarr
+:::{eval-rst}
+.. autoclass:: scarf.writers.LoomToZarr
+    :members:
+:::
+
+### Zarr Merge
+:::{eval-rst}
+.. autoclass:: scarf.writers.ZarrMerge
+    :members:
+:::
+
+### Subset Zarr
+:::{eval-rst}
+.. autoclass:: scarf.writers.SubsetZarr
     :members:
 :::
