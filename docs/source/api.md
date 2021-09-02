@@ -50,18 +50,18 @@
 
 ## MetaData
 :::{eval-rst}
-.. autoclass:: scarf.metadata
+.. autoclass:: scarf.metadata.MetaData
     :members:
 :::
 
 ## Readers
 :::{eval-rst}
-.. autoclass:: scarf.readers
+.. automodule:: scarf.readers
     :members:
 :::
 
 ## Writers
 :::{eval-rst}
-.. autoclass:: scarf.writers
+.. automodule:: scarf.writers
     :members:
 :::

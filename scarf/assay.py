@@ -691,7 +691,8 @@ class RNAassay(Assay):
             z (zarr.Group): Zarr hierarchy where raw data is located
             name (str): A label/name for assay.
             cell_data: Metadata class object for the cell attributes.
-            **kwargs:
+            **kwargs: kwargs to be passed to the Assay class
+
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
@@ -712,9 +713,9 @@ class RNAassay(Assay):
     ) -> daskarr:
         """
         This function normalizes the raw and returns a delayed dask array of the normalized
-        data. Unlike the `normed` method in the generic Assay class this method is optimized for scRNA-Seq data and
-        takes additional parameters that will be used by `norm_lib_size` (default normalization
-        method for this class).
+        data. Unlike the `normed` method in the generic Assay class this method is optimized for
+        scRNA-Seq data and takes additional parameters that will be used by `norm_lib_size`
+         (default normalization method for this class).
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -725,11 +726,12 @@ class RNAassay(Assay):
                       feature attribute table)
             renormalize_subset: If True, then the data is normalized using only those features that are True in
                                 `feat_key` column rather using total expression of all features in a cell
-                                 (Default value: False)
+                                (Default value: False)
             log_transform: If True, then the normalized data is log-transformed (Default value: False).
-            **kwargs:
+            **kwargs: kwargs have no effect here.
 
-        Returns: A dask array (delayed matrix) containing normalized data.
+        Returns:
+            A dask array (delayed matrix) containing normalized data.
 
         """
         if cell_idx is None:
