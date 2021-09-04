@@ -588,7 +588,8 @@ def _scatter_legends(
         return None
     if v.dtype.name == "category":
         if hide_title is False:
-            ax.title.set_text(vc, fontsize=title_fontsize)
+            ax.title.set_text(vc)
+            ax.title.set_fontsize(title_fontsize)
         centers = df[[x, y, vc]].groupby(vc).median().T
         for i in centers:
             if ondata:
