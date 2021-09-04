@@ -888,9 +888,9 @@ class ZarrMerge:
         """
         self.assays = assays
         self.names = names
-        self.mergedCells = self._merge_cell_table(reset_cell_filter, prepend_text)
-        self.nCells = self.mergedCells.shape[0]
-        self.featCollection = self._get_feat_ids(assays)
+        self.mergedCells: pd.DataFrame = self._merge_cell_table(reset_cell_filter, prepend_text)
+        self.nCells: int = self.mergedCells.shape[0]
+        self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
         self.mergedFeats = self._merge_order_feats()
         self.nFeats = self.mergedFeats.shape[0]
         self.featOrder = self._ref_order_feat_idx()
@@ -911,7 +911,19 @@ class ZarrMerge:
             dtype,
         )
 
-    def _merge_cell_table(self, reset, prepend_text):
+    def _merge_cell_table(self, reset: bool, prepend_text: str) -> pd.DataFrame:
+        """
+        Merges the cell metadata table for each sample
+
+        Args:
+            reset: whether to remove filtering information
+            prepend_text: string to add as prefix for each cell column
+
+        Returns:
+
+        """
+        #TODO: This method is not very memory efficient
+
         if len(self.assays) != len(set(self.names)):
             raise ValueError(
                 "ERROR: A unique name should be provided for each of the assay"
@@ -932,7 +944,18 @@ class ZarrMerge:
         return pd.concat(ret_val).reset_index(drop=True)
 
     @staticmethod
-    def _get_feat_ids(assays):
+    def _get_feat_ids(assays) -> List[Dict[str, str]]:
+        """
+        Fetches ID->names mapping of features from each assay
+
+        Args:
+            assays: List of Assay objects
+
+        Returns:
+            A list of dictionaries. Each dictionary is a id to name
+            mapping for each feature in the corresponding assay
+
+        """
         ret_val = []
         for i in assays:
             ret_val.append(
@@ -942,7 +965,13 @@ class ZarrMerge:
             )
         return ret_val
 
-    def _merge_order_feats(self):
+    def _merge_order_feats(self) -> pd.DataFrame:
+        """
+        Merge features from all the assays and determine their order
+
+        Returns:
+
+        """
         union_set = {}
         for ids in self.featCollection:
             for i in ids:
@@ -956,10 +985,10 @@ class ZarrMerge:
             }
         ).set_index("ids")
 
-    def _ref_order_feat_idx(self):
+    def _ref_order_feat_idx(self) -> List[np.ndarray]:
         ret_val = []
         for ids in self.featCollection:
-            ret_val.append(self.mergedFeats["idx"].reindex(ids).values)
+            ret_val.append(self.mergedFeats["idx"].reindex(list(ids.keys())).values)
         return ret_val
 
     def _use_existing_zarr(self, zarr_path, merge_assay_name, overwrite):
@@ -998,7 +1027,14 @@ class ZarrMerge:
             # creating a new zarr file
             return zarr.open(zarr_path, mode="w")
 
-    def _ini_cell_data(self):
+    def _ini_cell_data(self) -> None:
+        """
+        Save cell attributes to Zarr
+
+        Returns:
+            None
+
+        """
         if "cellData" not in self.z:
             g = self.z.create_group("cellData")
             for i in self.mergedCells:
@@ -1008,7 +1044,15 @@ class ZarrMerge:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
     def dump(self, nthreads=2):
-        # TODO: add docstring
+        """
+        Copy the values from individual assays to the merged assay.
+
+        Args:
+            nthreads: Number of compute threads to use. (Default value: 2)
+
+        Returns:
+
+        """
         pos_start, pos_end = 0, 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdmbar(
@@ -1017,7 +1061,7 @@ class ZarrMerge:
                 desc=f"Writing data to merged file",
             ):
                 pos_end += i.shape[0]
-                a = np.ones((i.shape[0], self.nFeats))
+                a = np.zeros((i.shape[0], self.nFeats))
                 a[:, feat_order] = controlled_compute(i, nthreads)
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end
