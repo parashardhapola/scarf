@@ -4486,6 +4486,8 @@ class DataStore(MappingDatastore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
+        title_size: int = 12,
+        hide_title: bool = False,
         cbar_shrink: float = 0.6,
         marker_scale: float = 70,
         lspacing: float = 0.1,
@@ -4570,6 +4572,8 @@ class DataStore(MappingDatastore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            title_size: Size of each axis/subplots title (Default value: 12)
+            hide_title: If True, then the title of the sublots is not shown (Default value: False)
             cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
@@ -4605,10 +4609,8 @@ class DataStore(MappingDatastore):
 
         """
 
-        # TODO: add support for subplots
         # TODO: add support for providing a list of subselections, from_assay and cell_keys
         # TODO: add support for different kinds of point markers
-        # TODO: add support for cell zorder randomization
 
         from .plots import shade_scatter, plot_scatter
 
@@ -4692,6 +4694,8 @@ class DataStore(MappingDatastore):
                 legend_onside,
                 legend_size,
                 legends_per_col,
+                title_size,
+                hide_title,
                 cbar_shrink,
                 marker_scale,
                 lspacing,
@@ -4726,6 +4730,8 @@ class DataStore(MappingDatastore):
                 legend_onside,
                 legend_size,
                 legends_per_col,
+                title_size,
+                hide_title,
                 cbar_shrink,
                 marker_scale,
                 lspacing,

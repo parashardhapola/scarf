@@ -549,6 +549,8 @@ def _scatter_legends(
     ondata: bool,
     onside: bool,
     fontsize: float,
+    title_fontsize: float,
+    hide_title: bool,
     n_per_col: int,
     scale: float,
     ls: float,
@@ -565,6 +567,7 @@ def _scatter_legends(
         ondata: display legend over scatter plot?
         onside: display legend on side?
         fontsize: fontsize of legend text
+        hide_title: Whether to hide the title
         n_per_col: number of legends per column
         scale: scale legend marker size
         ls: line spacing
@@ -584,7 +587,8 @@ def _scatter_legends(
         cax.set_axis_off()
         return None
     if v.dtype.name == "category":
-        ax.title.set_text(vc)
+        if hide_title is False:
+            ax.title.set_text(vc, fontsize=title_fontsize)
         centers = df[[x, y, vc]].groupby(vc).median().T
         for i in centers:
             if ondata:
@@ -622,7 +626,8 @@ def _scatter_legends(
     else:
         norm = Normalize(vmin=v.min(), vmax=v.max())
         cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation="horizontal")
-        cb.set_label(vc, fontsize=fontsize)
+        if hide_title is False:
+            cb.set_label(vc, fontsize=title_fontsize)
         cb.ax.xaxis.set_label_position("bottom")
         cb.ax.xaxis.set_ticks_position("top")
         cb.outline.set_visible(False)
@@ -698,6 +703,8 @@ def plot_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    title_size: int = 12,
+    hide_title: bool = False,
     cbar_shrink: float = 0.6,
     marker_scale: float = 70,
     lspacing: float = 0.1,
@@ -768,6 +775,8 @@ def plot_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title_size,
+            hide_title,
             legends_per_col,
             marker_scale,
             lspacing,
@@ -805,6 +814,8 @@ def shade_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    title_size: int = 12,
+    hide_title: bool = False,
     cbar_shrink: float = 0.6,
     marker_scale: float = 70,
     lspacing: float = 0.1,
@@ -870,6 +881,8 @@ def shade_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title_size,
+            hide_title,
             legends_per_col,
             marker_scale,
             lspacing,
