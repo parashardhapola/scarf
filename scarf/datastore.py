@@ -3131,6 +3131,8 @@ class MappingDatastore(GraphDataStore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
+        title_size: int = 12,
+        hide_title: bool = False,
         cbar_shrink: float = 0.6,
         marker_scale: float = 70,
         lspacing: float = 0.1,
@@ -3186,6 +3188,8 @@ class MappingDatastore(GraphDataStore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            title_size: Size of each axis/subplots title (Default value: 12)
+            hide_title: If True, then the title of the sublots is not shown (Default value: False)
             cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
@@ -3303,6 +3307,8 @@ class MappingDatastore(GraphDataStore):
             legend_onside,
             legend_size,
             legends_per_col,
+            title_size,
+            hide_title,
             cbar_shrink,
             marker_scale,
             lspacing,
