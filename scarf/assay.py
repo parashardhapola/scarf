@@ -16,7 +16,7 @@ import zarr
 from .metadata import MetaData
 from .utils import show_dask_progress, controlled_compute, logger
 from scipy.sparse import csr_matrix, vstack
-from typing import Tuple, List, Generator
+from typing import Tuple, List, Generator, Optional
 import pandas as pd
 
 __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
@@ -487,39 +487,89 @@ class Assay:
 
     def iter_normed_feature_wise(
         self,
-        cell_key: str,
-        feat_key: str,
+        cell_key: Optional[str],
+        feat_key: Optional[str],
         batch_size: int,
-        msg: str,
+        msg: Optional[str],
         **norm_params,
     ) -> Generator[pd.DataFrame, None, None]:
         """
+        This generator iterates over all the features marked by `feat_key` in batches.
 
         Args:
-            cell_key:
-            feat_key:
-            batch_size:
-            msg:
+            cell_key: Name of the key (column) from cell attribute table. The data will be fetched
+                      for only those cells that have a True value in this column. If None then all the cells are used
+            feat_key: Name of the key (column) from feature attribute table. The data will be fetched
+                      for only those features that have a True value in this column. If None then all the features are
+                      used
+            batch_size: Number of genes to be loaded in the memory at a time.
+            msg: Message to be displayed in the progress bar
 
         Returns:
 
         """
         from .utils import tqdmbar
 
+        if cell_key is None:
+            cell_idx = np.array(list(range(self.cells.N)))
+        else:
+            cell_idx = self.cells.active_index(cell_key)
+
+        if feat_key is None:
+            feat_idx = np.array(list(range(self.feats.N)))
+        else:
+            feat_idx = self.feats.active_index(feat_key)
+        if msg is None:
+            msg = ''
+
         data = self.normed(
-            cell_idx=self.cells.active_index(cell_key),
-            feat_key=self.feats.active_index(feat_key),
+            cell_idx=cell_idx,
+            feat_key=feat_idx,
             **norm_params,
         )
         chunks = np.array_split(
             np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
         )
-        indices = self.feats.active_index(key=feat_key)
         for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
             yield pd.DataFrame(
                 controlled_compute(data[:, chunk], self.nthreads),
-                columns=indices[chunk],
+                columns=feat_idx[chunk],
             )
+
+    def save_normed_for_query(
+        self,
+        feat_key: Optional[str],
+        batch_size: int,
+    ) -> None:
+        """
+        This methods dumps normalized values for features (as marked by `feat_key`) onto disk  in the 'prenormed'
+        slot under the assay's own slot.
+
+        Args:
+            feat_key: Name of the key (column) from feature attribute table. The data will be fetched
+                      for only those features that have a True value in this column. If None then all the features are
+                      used
+            batch_size: Number of genes to be loaded in the memory at a time.
+
+        Returns:
+            None
+
+        """
+        from .writers import create_zarr_obj_array
+
+        g = self.z.create_group('prenormed', overwrite=True)
+        skip_count = 0
+        count = 0
+        for df in self.iter_normed_feature_wise(None, feat_key, batch_size, "Saving features"):
+            for i in df:
+                v = df[i].values
+                idx = np.nonzero(v)[0]
+                if len(idx) > 0:
+                    count += 1
+                    create_zarr_obj_array(g, i, [idx, v[idx]], np.float64, True, False)
+                else:
+                    skip_count += 1
+        logger.debug(f"{count} feature saved while {skip_count} skipped due to empty values")
 
     def save_aggregated_ordering(
         self,
