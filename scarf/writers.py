@@ -87,6 +87,7 @@ def create_zarr_obj_array(
     data,
     dtype: Union[str, Any] = None,
     overwrite: bool = True,
+    chunk_size: int = 100000
 ) -> zarr.hierarchy:
     """
     Creates and returns a Zarr object array.
@@ -100,23 +101,34 @@ def create_zarr_obj_array(
         data ():
         dtype (Union[str, Any]):
         overwrite (bool):
+        chunk_size (int):
 
     Returns:
         A Zarr object Array.
     """
+
+    from numcodecs import Blosc
+
+    compressor = Blosc(cname="lz4", clevel=5, shuffle=Blosc.BITSHUFFLE)
+
     data = np.array(data)
     if dtype is None or dtype == object:
         dtype = "U" + str(max([len(str(x)) for x in data]))
     if np.issubdtype(data.dtype, np.dtype("S")):
         data = data.astype("U")
         dtype = data.dtype
+    if chunk_size is None or chunk_size is False:
+        chunks = False
+    else:
+        chunks = (chunk_size,)
     return g.create_dataset(
         name,
         data=data,
-        chunks=(100000,),
+        chunks=chunks,
         shape=len(data),
         dtype=dtype,
         overwrite=overwrite,
+        compressor=compressor,
     )
 
 
