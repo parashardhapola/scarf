@@ -437,7 +437,7 @@ class BaseDataStore:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
     def get_cell_vals(
-        self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0
+        self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0, use_precached: bool = True,
     ):
         """
         Fetches data from the Zarr file.
@@ -452,6 +452,8 @@ class BaseDataStore:
             k: A cell metadata column or name of a feature.
             clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
                            (Default value: 0)
+            use_precached: Whether to use pre calculated values from 'prenormed' slot. Used only if 'prenormed' is
+                           present (Default value: True)
 
         Returns:
             The requested values
@@ -467,9 +469,30 @@ class BaseDataStore:
                     logger.warning(
                         f"Plotting mean of {len(feat_idx)} features because {k} is not unique."
                     )
-            vals = controlled_compute(
-                assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
-            ).astype(np.float_)
+            vals = None
+            cache_key = 'prenormed'
+            if cache_key in assay.z and use_precached:
+                g = assay.z[cache_key]
+                vals = np.zeros(assay.cells.N)
+                n_feats = 0
+                for i in feat_idx:
+                    if i in g:
+                        idx, v = assay.z[cache_key][i][:]
+                        vals[idx.astype(int)] += v
+                        n_feats += 1
+                if n_feats == 0:
+                    logger.debug(f"Could not find prenormed values for feat: {k}")
+                    vals = None
+                elif n_feats > 1:
+                    vals = vals/n_feats
+                else:
+                    pass
+                if vals is not None:
+                    vals = vals[cell_idx]
+            if vals is None:
+                vals = controlled_compute(
+                    assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
+                ).astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction < 0 or clip_fraction > 1:
