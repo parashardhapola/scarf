@@ -3887,12 +3887,13 @@ class DataStore(MappingDatastore):
             )
         try:
             df = pd.DataFrame(
-                [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
+                [g[group_id]["names"][:], g[group_id]["scores"][:]],
+                index=["ids", "score"],
             ).T.set_index("ids")
         except KeyError:
             logger.debug(f"No markers found for {group_id} returning empty dataframe")
             df = pd.DataFrame(
-                [[], [], []], index=['ids', 'score', 'names']
+                [[], [], []], index=["ids", "score", "names"]
             ).T.set_index("ids")
             return df
         try:

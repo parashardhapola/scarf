@@ -888,7 +888,9 @@ class ZarrMerge:
         """
         self.assays = assays
         self.names = names
-        self.mergedCells: pd.DataFrame = self._merge_cell_table(reset_cell_filter, prepend_text)
+        self.mergedCells: pd.DataFrame = self._merge_cell_table(
+            reset_cell_filter, prepend_text
+        )
         self.nCells: int = self.mergedCells.shape[0]
         self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
         self.mergedFeats = self._merge_order_feats()
@@ -922,7 +924,7 @@ class ZarrMerge:
         Returns:
 
         """
-        #TODO: This method is not very memory efficient
+        # TODO: This method is not very memory efficient
 
         if len(self.assays) != len(set(self.names)):
             raise ValueError(
