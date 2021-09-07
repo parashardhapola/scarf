@@ -520,7 +520,7 @@ class Assay:
         else:
             feat_idx = self.feats.active_index(feat_key)
         if msg is None:
-            msg = ''
+            msg = ""
 
         data = self.normed(
             cell_idx=cell_idx,
@@ -557,10 +557,12 @@ class Assay:
         """
         from .writers import create_zarr_obj_array
 
-        g = self.z.create_group('prenormed', overwrite=True)
+        g = self.z.create_group("prenormed", overwrite=True)
         skip_count = 0
         count = 0
-        for df in self.iter_normed_feature_wise(None, feat_key, batch_size, "Saving features"):
+        for df in self.iter_normed_feature_wise(
+            None, feat_key, batch_size, "Saving features"
+        ):
             for i in df:
                 v = df[i].values
                 idx = np.nonzero(v)[0]
@@ -569,7 +571,9 @@ class Assay:
                     create_zarr_obj_array(g, i, [idx, v[idx]], np.float64, True, False)
                 else:
                     skip_count += 1
-        logger.debug(f"{count} feature saved while {skip_count} skipped due to empty values")
+        logger.debug(
+            f"{count} feature saved while {skip_count} skipped due to empty values"
+        )
 
     def save_aggregated_ordering(
         self,

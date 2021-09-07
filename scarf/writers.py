@@ -87,7 +87,7 @@ def create_zarr_obj_array(
     data,
     dtype: Union[str, Any] = None,
     overwrite: bool = True,
-    chunk_size: int = 100000
+    chunk_size: int = 100000,
 ) -> zarr.hierarchy:
     """
     Creates and returns a Zarr object array.

@@ -437,7 +437,13 @@ class BaseDataStore:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
     def get_cell_vals(
-        self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0, use_precached: bool = True,
+        self,
+        *,
+        from_assay: str,
+        cell_key: str,
+        k: str,
+        clip_fraction: float = 0,
+        use_precached: bool = True,
     ):
         """
         Fetches data from the Zarr file.
@@ -470,7 +476,7 @@ class BaseDataStore:
                         f"Plotting mean of {len(feat_idx)} features because {k} is not unique."
                     )
             vals = None
-            cache_key = 'prenormed'
+            cache_key = "prenormed"
             if cache_key in assay.z and use_precached:
                 g = assay.z[cache_key]
                 vals = np.zeros(assay.cells.N)
@@ -484,7 +490,7 @@ class BaseDataStore:
                     logger.debug(f"Could not find prenormed values for feat: {k}")
                     vals = None
                 elif n_feats > 1:
-                    vals = vals/n_feats
+                    vals = vals / n_feats
                 else:
                     pass
                 if vals is not None:
