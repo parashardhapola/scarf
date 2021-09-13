@@ -524,7 +524,7 @@ class Assay:
 
         data = self.normed(
             cell_idx=cell_idx,
-            feat_key=feat_idx,
+            feat_idx=feat_idx,
             **norm_params,
         )
         chunks = np.array_split(
