@@ -65,6 +65,10 @@ class CrReader(ABC):
     """
     A class to read in CellRanger (Cr) data.
 
+    Args:
+        grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
+
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
         grpNames: A dictionary that specifies where to find the matrix, features and barcodes.
@@ -74,11 +78,6 @@ class CrReader(ABC):
     """
 
     def __init__(self, grp_names, file_type: str = None):
-        """
-        Args:
-            grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
-            file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
-        """
         self.autoNames = {
             "Gene Expression": "RNA",
             "Peaks": "ATAC",
@@ -205,6 +204,10 @@ class CrH5Reader(CrReader):
 
     Subclass of CrReader.
 
+    Args:
+        h5_fn: File name for the h5 file.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
+
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
         grpNames: A dictionary that specifies where to find the matrix, features and barcodes.
@@ -216,11 +219,6 @@ class CrH5Reader(CrReader):
     """
 
     def __init__(self, h5_fn, file_type: str = None):
-        """
-        Args:
-            h5_fn: File name for the h5 file.
-            file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
-        """
         self.h5obj = h5py.File(h5_fn, mode="r")
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -280,6 +278,12 @@ class CrDirReader(CrReader):
 
     Subclass of CrReader.
 
+    Args:
+        loc (str): Path for the directory containing the cellranger output.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
+        mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
+        index_offset (int): This value is added to each feature index (Default value: -1)
+
     Attributes:
         loc: Path for the directory containing the cellranger output.
         matFn: The file name for the matrix file.
@@ -294,13 +298,6 @@ class CrDirReader(CrReader):
         mtx_separator: str = " ",
         index_offset: int = -1,
     ):
-        """
-        Args:
-            loc (str): Path for the directory containing the cellranger output.
-            file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
-            mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
-            index_offset (int): This value is added to each feature index (Default value: -1)
-        """
         self.loc: str = loc.rstrip("/") + "/"
         self.matFn = None
         self.sep = mtx_separator
@@ -407,6 +404,19 @@ class H5adReader:
     """
     A class to read in data from a H5ad file (h5 file with AnnData information).
 
+    Args:
+        h5ad_fn: Path to H5AD file
+        cell_attrs_key: H5 group under which cell attributes are saved.(Default value: 'obs')
+        feature_attrs_key: H5 group under which feature attributes are saved.(Default value: 'var')
+        cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
+        feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
+        feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
+        matrix_key: Group where in the sparse matrix resides (default: 'X')
+        category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
+                            corresponding index value within this group.
+        dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+               method. (Default value: Automatically determined)
+
     Attributes:
         h5: A File object from the h5py package.
         matrix_key: Group where in the sparse matrix resides (default: 'X')
@@ -435,21 +445,6 @@ class H5adReader:
         category_names_key: str = "__categories",
         dtype: str = None,
     ):
-        """
-        Args:
-            h5ad_fn: Path to H5AD file
-            cell_attrs_key: H5 group under which cell attributes are saved.(Default value: 'obs')
-            feature_attrs_key: H5 group under which feature attributes are saved.(Default value: 'var')
-            cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
-            feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
-            feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
-            matrix_key: Group where in the sparse matrix resides (default: 'X')
-            category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
-                                corresponding index value within this group.
-            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
-                   method. (Default value: Automatically determined)
-        """
-
         self.h5 = h5py.File(h5ad_fn, mode="r")
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
@@ -708,6 +703,9 @@ class NaboH5Reader:
     """
     A class to read in data in the form of a Nabo H5 file.
 
+    Args:
+        h5_fn: Path to H5 file.
+
     Attributes:
         h5: A File object from the h5py package.
         nCells: Number of cells in dataset.
@@ -715,10 +713,6 @@ class NaboH5Reader:
     """
 
     def __init__(self, h5_fn: str):
-        """
-        Args:
-            h5_fn: Path to H5 file.
-        """
         self.h5 = h5py.File(h5_fn, mode="r")
         self._check_integrity()
         self.nCells = self.h5["names"]["cells"].shape[0]
@@ -772,6 +766,23 @@ class LoomReader:
     """
     A class to read in data in the form of a Loom file.
 
+    Args:
+        loom_fn: Path to loom format file.
+        matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
+                    This matrix is expected to be of form (nFeatures x nCells)
+        cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
+                        (Default value: col_attrs)
+        cell_names_key: Child node under the `cell_attrs_key` wherein the cell names are stored.
+                        (Default value: obs_names)
+        feature_attrs_key: Child node under the HDF5 file wherein the feature/gene attributes are stored.
+                           (Default value: row_attrs)
+        feature_names_key: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
+                           (Default value: var_names)
+        feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
+                         (Default value: None)
+        dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+               method. (Default value: Automatically determined)
+
     Attributes:
         h5: A File object from the h5py package.
         matrixKey: Child node under HDF5 file root wherein the chunked matrix is stored.
@@ -796,24 +807,6 @@ class LoomReader:
         feature_ids_key: str = None,
         dtype: str = None,
     ) -> None:
-        """
-        Args:
-            loom_fn: Path to loom format file.
-            matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
-                        This matrix is expected to be of form (nFeatures x nCells)
-            cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
-                            (Default value: col_attrs)
-            cell_names_key: Child node under the `cell_attrs_key` wherein the cell names are stored.
-                            (Default value: obs_names)
-            feature_attrs_key: Child node under the HDF5 file wherein the feature/gene attributes are stored.
-                               (Default value: row_attrs)
-            feature_names_key: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
-                               (Default value: var_names)
-            feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
-                               (Default value: None)
-            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
-                   method. (Default value: Automatically determined)
-        """
         self.h5 = h5py.File(loom_fn, mode="r")
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
