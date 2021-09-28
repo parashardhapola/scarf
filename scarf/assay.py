@@ -106,6 +106,13 @@ class Assay:
     A generic Assay class that contains methods to calculate feature level statistics.
     It also provides a method for saving normalized subset of data for later KNN graph construction.
 
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        nthreads: number for threads to use for dask parallel computations
+        min_cells_per_feature:
+
     Attributes:
         name: A label for the assay instance
         z: Zarr group that contains the assay
@@ -126,14 +133,6 @@ class Assay:
         nthreads: int,
         min_cells_per_feature: int = 10,
     ):
-        """
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            nthreads: number for threads to use for dask parallel computations
-            min_cells_per_feature:
-        """
         self.name = name
         self.z = z[self.name]
         self.cells = cell_data
@@ -737,18 +736,22 @@ class Assay:
 class RNAassay(Assay):
     """
     This subclass of Assay is designed for feature selection and normalization of scRNA-Seq data.
+
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        **kwargs: kwargs to be passed to the Assay class
+
+    Attributes:
+        normMethod: A pointer to the function to be used for normalization of the raw data
+        sf: scaling factor for doing library-size normalization
+        scalar: This is used to cache the library size of the cells.
+                It is set to None until normed method is called.
+
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
-        """
-
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            **kwargs: kwargs to be passed to the Assay class
-
-        """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
         if "size_factor" in self.attrs:
@@ -1026,6 +1029,13 @@ class ATACassay(Assay):
             name (str): A label/name for assay.
             cell_data: Metadata class object for the cell attributes.
             **kwargs:
+
+        Attributes:
+            normMethod: Pointer to the function to be used for normalization of the raw data
+            n_term_per_doc: Number of features per cell. Used for TF-IDF normalization
+            n_docs: Number of cells. Used for TF-IDF normalization
+            n_docs_per_term: Number of cells per feature. Used for TF-IDF normalization
+
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
@@ -1142,18 +1152,22 @@ class ADTassay(Assay):
     """
     This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
     CITE-Seq experiments.
+
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        **kwargs:
+
+    Attributes:
+        normMethod: Pointer to the function to be used for normalization of the raw data
+
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         """
         This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
         CITE-Seq experiments.
-
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            **kwargs:
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_clr
