@@ -6,7 +6,7 @@ import matplotlib as mpl
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union, List
 from cmocean import cm
 from .utils import logger
 
@@ -549,6 +549,7 @@ def _scatter_legends(
     ondata: bool,
     onside: bool,
     fontsize: float,
+    title: str,
     title_fontsize: float,
     hide_title: bool,
     n_per_col: int,
@@ -567,6 +568,7 @@ def _scatter_legends(
         ondata: display legend over scatter plot?
         onside: display legend on side?
         fontsize: fontsize of legend text
+        title: Title of subplot/axes
         hide_title: Whether to hide the title
         n_per_col: number of legends per column
         scale: scale legend marker size
@@ -588,7 +590,10 @@ def _scatter_legends(
         return None
     if v.dtype.name == "category":
         if hide_title is False:
-            ax.title.set_text(vc)
+            if title is not None:
+                ax.title.set_text(title)
+            else:
+                ax.title.set_text(vc)
             ax.title.set_fontsize(title_fontsize)
         centers = df[[x, y, vc]].groupby(vc).median().T
         for i in centers:
@@ -628,7 +633,10 @@ def _scatter_legends(
         norm = Normalize(vmin=v.min(), vmax=v.max())
         cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation="horizontal")
         if hide_title is False:
-            cb.set_label(vc, fontsize=title_fontsize)
+            if title is not None:
+                cb.set_label(title, fontsize=title_fontsize)
+            else:
+                cb.set_label(vc, fontsize=title_fontsize)
         cb.ax.xaxis.set_label_position("bottom")
         cb.ax.xaxis.set_ticks_position("top")
         cb.outline.set_visible(False)
@@ -683,6 +691,20 @@ def _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         yield n, df
 
 
+def _handle_titles_type(titles, n_df):
+    if titles is not None:
+        if n_df > 1:
+            if len(titles) != n_df or type(titles) != list:
+                logger.warning(
+                    "Number of titles is not same as the the number of titles. Provided titles cannot be used"
+                )
+                titles = None
+        else:
+            if type(titles) == str:
+                titles = [titles]
+    return titles
+
+
 def plot_scatter(
     dfs,
     in_ax=None,
@@ -704,6 +726,7 @@ def plot_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    titles: str = None,
     title_size: int = 12,
     hide_title: bool = False,
     cbar_shrink: float = 0.6,
@@ -739,6 +762,8 @@ def plot_scatter(
             sk["edgecolors"] = "k"
         return sk
 
+    titles = _handle_titles_type(titles, len(dfs))
+
     axs = _create_axes(dfs, in_ax, width, height, w_pad, h_pad, n_columns)
     for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         v = df[df.columns[2]]
@@ -768,6 +793,10 @@ def plot_scatter(
         )
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+        if titles is not None:
+            title = titles[n]
+        else:
+            title = None
         _scatter_legends(
             df,
             ax,
@@ -776,6 +805,7 @@ def plot_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title,
             title_size,
             hide_title,
             legends_per_col,
@@ -815,6 +845,7 @@ def shade_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    titles: Union[str, List[str]] = None,
     title_size: int = 12,
     hide_title: bool = False,
     cbar_shrink: float = 0.6,
@@ -837,6 +868,7 @@ def shade_scatter(
     import datashader.transfer_functions as tf
     from functools import partial
 
+    titles = _handle_titles_type(titles, len(dfs))
     axs = _create_axes(dfs, in_ax, figsize, figsize, w_pad, h_pad, n_columns)
     for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         dim1, dim2, vc = df.columns[:3]
@@ -874,6 +906,10 @@ def shade_scatter(
 
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+        if titles is not None:
+           title = titles[n]
+        else:
+            title = None
         _scatter_legends(
             df,
             ax,
@@ -882,6 +918,7 @@ def shade_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title,
             title_size,
             hide_title,
             legends_per_col,
