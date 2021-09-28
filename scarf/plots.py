@@ -907,7 +907,7 @@ def shade_scatter(
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
         if titles is not None:
-           title = titles[n]
+            title = titles[n]
         else:
             title = None
         _scatter_legends(
