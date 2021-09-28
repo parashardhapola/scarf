@@ -3364,8 +3364,23 @@ class DataStore(MappingDatastore):
     subsetting and aggregating cells. This class also contains methods that perform in-memory data exports.
     In other words, DataStore objects provide the primary interface to interact with the data.
 
-    Attributes:
-
+    Args:
+        zarr_loc: Path to Zarr file created using one of writer functions of Scarf.
+        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'.
+        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                       when DataStore loads a Zarr file for the first time.
+        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                               will be filtered out.
+        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                               less than this will be filtered out.
+        mito_pattern: Regex pattern to capture mitochondrial genes. (default: 'MT-')
+        ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
+        nthreads: Number of maximum threads to use in all multi-threaded functions
+        zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
+        synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
+                      more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
+                      ThreadSynchronizer will be used.
     """
 
     def __init__(
@@ -3381,25 +3396,6 @@ class DataStore(MappingDatastore):
         zarr_mode: str = "r+",
         synchronizer=None,
     ):
-        """
-        Args:
-            zarr_loc: Path to Zarr file created using one of writer functions of Scarf.
-            assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'.
-            default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                           when DataStore loads a Zarr file for the first time.
-            min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
-                                   will be filtered out.
-            min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                                   less than this will be filtered out.
-            mito_pattern: Regex pattern to capture mitochondrial genes. (default: 'MT-')
-            ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
-            nthreads: Number of maximum threads to use in all multi-threaded functions
-            zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
-            synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
-                          more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
-                          ThreadSynchronizer will be used.
-        """
         if zarr_mode not in ["r", "r+"]:
             raise ValueError(
                 "ERROR: Zarr file can only be accessed using either 'r' ot 'r+' mode"
