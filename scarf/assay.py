@@ -527,6 +527,7 @@ class Assay:
             feat_idx=feat_idx,
             **norm_params,
         )
+        logger.debug("Will iterate over data of shape: ", data.shape)
         chunks = np.array_split(
             np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
         )
