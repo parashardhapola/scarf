@@ -415,7 +415,7 @@ class BaseDataStore:
             ret_val = "_".join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
-    def set_default_assay(self, assay_name: str) -> None:
+    def set_default_assay(self, *, assay_name: str) -> None:
         """
         Override assigning of default assay.
 
@@ -2433,6 +2433,7 @@ class GraphDataStore(BaseDataStore):
 
     def integrate_assays(
         self,
+        *,
         assays: List[str],
         label: str,
         chunk_size: int = 10000,
@@ -4218,6 +4219,7 @@ class DataStore(MappingDatastore):
 
     def make_bulk(
         self,
+        *,
         from_assay: str = None,
         group_key: str = None,
         pseudo_reps: int = 3,
@@ -4273,7 +4275,7 @@ class DataStore(MappingDatastore):
         return vals
 
     def to_anndata(
-        self, from_assay: str = None, cell_key: str = None, layers: dict = None
+        self, *, from_assay: str = None, cell_key: str = None, layers: dict = None
     ):
         """
         Writes an assay of the Zarr hierarchy to AnnData file format.
@@ -4313,25 +4315,23 @@ class DataStore(MappingDatastore):
                 )
         return adata
 
-    def show_zarr_tree(self, start="/", depth=None) -> None:
+    def show_zarr_tree(self, *, start: str = "/", depth: int = 2) -> None:
         """
         Prints the Zarr hierarchy of the DataStore.
 
         Args:
-            start:
-            depth:
+            start: Location in Zarr hierarchy to be used as the root for display
+            depth: Depth of Zarr hierarchy to be displayed.
 
         Returns:
             None
 
         """
-        if depth is None:
-            print(self.z[start].tree(expand=True))
-        else:
-            print(self.z[start].tree(expand=True, level=depth))
+        print(self.z[start].tree(expand=True, level=depth))
 
     def smart_label(
         self,
+        *,
         to_relabel: str,
         base_label: str,
         cell_key: str = "I",
@@ -4381,6 +4381,7 @@ class DataStore(MappingDatastore):
 
     def plot_cells_dists(
         self,
+        *,
         from_assay: str = None,
         cols: List[str] = None,
         cell_key: str = None,
