@@ -2,11 +2,12 @@
 Module to find biomarkers.
 """
 from .assay import Assay
-from .utils import logger
+from .utils import logger, tqdmbar
 from numba import jit
 import numpy as np
 import pandas as pd
 from scipy.stats import linregress
+from typing import Optional
 
 
 __all__ = [
@@ -16,15 +17,29 @@ __all__ = [
 ]
 
 
+def read_prenormed_batches(store, cell_idx: np.ndarray, batch_size: int, desc: str):
+    batch = {}
+    for i in tqdmbar(store.keys(), desc=desc):
+        batch[int(i)] = store[i][:][cell_idx]
+        if len(batch) == batch_size:
+            yield pd.DataFrame(batch)
+            batch = {}
+    if len(batch) > 0:
+        yield pd.DataFrame(batch)
+
+
 def find_markers_by_rank(
     assay: Assay,
     group_key: str,
     cell_key: str,
-    threshold: float = 0.25,
-    batch_size: int = 50,
+    threshold: float,
+    batch_size: int,
+    use_prenormed: bool,
+    prenormed_store: Optional[str],
     **norm_params,
 ) -> dict:
     """
+    Identify marker genes for given groups
 
     Args:
         assay:
@@ -32,6 +47,8 @@ def find_markers_by_rank(
         cell_key:
         threshold:
         batch_size:
+        use_prenormed:
+        prenormed_store:
 
     Returns:
 
@@ -62,18 +79,36 @@ def find_markers_by_rank(
     rev_idx_map = {v: k for k, v in idx_map.items()}
     int_indices = np.array([idx_map[x] for x in groups])
     results = {x: [] for x in group_set}
-    for val in assay.iter_normed_feature_wise(
-        cell_key,
-        "I",
-        batch_size,
-        "Finding markers",
-        **norm_params,
-    ):
+    if use_prenormed:
+        if prenormed_store is None:
+            if 'prenormed' in assay.z:
+                prenormed_store = assay.z['prenormed']
+            else:
+                use_prenormed = False
+
+    if use_prenormed:
+        batch_iterator = read_prenormed_batches(
+            prenormed_store,
+            assay.cells.active_index(cell_key),
+            batch_size,
+            desc="Finding markers"
+        )
+    else:
+        batch_iterator = assay.iter_normed_feature_wise(
+            cell_key,
+            "I",
+            batch_size,
+            "Finding markers",
+            **norm_params
+        )
+
+    for val in batch_iterator:
         res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
         # Removing genes that were below the threshold in all the groups
         res = res.T[(res < threshold).sum() != n_groups]
         for j in res:
             results[rev_idx_map[j]].append(res[j][res[j] > threshold])
+
     for i in results:
         results[i] = pd.concat(results[i]).sort_values(ascending=False)
     return results

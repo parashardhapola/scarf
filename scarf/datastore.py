@@ -3651,6 +3651,8 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         threshold: float = 0.25,
         gene_batch_size: int = 50,
+        use_prenormed: bool = True,
+        prenormed_store: Optional[str] = None,
         **norm_params,
     ) -> None:
         """
@@ -3670,6 +3672,10 @@ class DataStore(MappingDatastore):
                        (Default value: 0.25)
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
+            use_prenormed: If True then prenormalized cache generated using Assay.save_normed_for_query is used.
+                           This can speed up the results. (Default value: True)
+            prenormed_store: If prenormalized values were computed in a custom manner then, the Zarr group's location
+                             can be provided here. (Default value: None)
 
         Returns:
             None
@@ -3690,6 +3696,8 @@ class DataStore(MappingDatastore):
             cell_key,
             threshold,
             gene_batch_size,
+            use_prenormed,
+            prenormed_store,
             **norm_params,
         )
         z = self.z[assay.name]
