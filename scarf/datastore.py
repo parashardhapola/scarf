@@ -475,14 +475,13 @@ class BaseDataStore:
                     )
             vals = None
             cache_key = "prenormed"
-            if cache_key in assay.z and use_precached:
+            if use_precached and cache_key in assay.z:
                 g = assay.z[cache_key]
                 vals = np.zeros(assay.cells.N)
                 n_feats = 0
                 for i in feat_idx:
                     if i in g:
-                        idx, v = assay.z[cache_key][i][:]
-                        vals[idx.astype(int)] += v
+                        vals += assay.z[cache_key][i][:]
                         n_feats += 1
                 if n_feats == 0:
                     logger.debug(f"Could not find prenormed values for feat: {k}")
@@ -1827,7 +1826,7 @@ class GraphDataStore(BaseDataStore):
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
-        resolution: int = 1,
+        resolution: float = 1.0,
         integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
         graph_upper_only: bool = False,
