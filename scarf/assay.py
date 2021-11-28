@@ -540,6 +540,7 @@ class Assay:
         self,
         feat_key: Optional[str],
         batch_size: int,
+        overwrite: bool = True
     ) -> None:
         """
         This methods dumps normalized values for features (as marked by `feat_key`) onto disk  in the 'prenormed'
@@ -550,6 +551,8 @@ class Assay:
                       for only those features that have a True value in this column. If None then all the features are
                       used
             batch_size: Number of genes to be loaded in the memory at a time.
+            overwrite: If True (default value), then will overwrite the existing 'prenormed' slot in the
+                       assay hierarchy
 
         Returns:
             None
@@ -557,23 +560,15 @@ class Assay:
         """
         from .writers import create_zarr_obj_array
 
+        if 'prenormed' in self.z and overwrite is False:
+            return None
+
         g = self.z.create_group("prenormed", overwrite=True)
-        skip_count = 0
-        count = 0
         for df in self.iter_normed_feature_wise(
             None, feat_key, batch_size, "Saving features"
         ):
             for i in df:
-                v = df[i].values
-                idx = np.nonzero(v)[0]
-                if len(idx) > 0:
-                    count += 1
-                    create_zarr_obj_array(g, i, [idx, v[idx]], np.float64, True, False)
-                else:
-                    skip_count += 1
-        logger.debug(
-            f"{count} feature saved while {skip_count} skipped due to empty values"
-        )
+                create_zarr_obj_array(g, i, df[i].values, np.float64, True, False)
 
     def save_aggregated_ordering(
         self,
