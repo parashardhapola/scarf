@@ -320,7 +320,7 @@ class BaseDataStore:
         return assay.attrs["latest_cell_key"]
 
     def _ini_cell_props(
-        self, min_features: int, mito_pattern: str, ribo_pattern: str
+        self, min_features: int, mito_pattern: Optional[str], ribo_pattern: Optional[str]
     ) -> None:
         """
         This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
