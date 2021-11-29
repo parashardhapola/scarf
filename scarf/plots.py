@@ -403,6 +403,7 @@ def plot_heatmap(
     save_dpi: int = 300,
     figsize=None,
     show_fig: bool = True,
+    **heatmap_kwargs
 ):
     """
     Shows a heatmap plot.
@@ -420,6 +421,7 @@ def plot_heatmap(
         figsize=figsize,
         cmap=cmap,
         rasterized=True,
+        **heatmap_kwargs
     )
     cgx.ax_heatmap.set_yticklabels(
         cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize
