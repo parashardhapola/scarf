@@ -26,6 +26,6 @@ leidenalg
 packaging
 importlib_metadata
 requests
-jinja2~=2.11
+jinja2
 kneed
 ipywidgets
