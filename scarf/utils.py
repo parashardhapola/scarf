@@ -22,6 +22,7 @@ from numba import jit
 __all__ = [
     "logger",
     "tqdmbar",
+    "tqdm_params",
     "set_verbosity",
     "get_log_level",
     "system_call",
