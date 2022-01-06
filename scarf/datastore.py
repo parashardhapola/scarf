@@ -91,12 +91,11 @@ class BaseDataStore:
         zarr_mode: str,
         synchronizer,
     ):
-        self._fn: str = zarr_loc
-        if type(self._fn) != str:
-            self.z: zarr.hierarchy = zarr.group(self._fn, synchronizer=synchronizer)
+        if type(zarr_loc) != str:
+            self.z: zarr.hierarchy = zarr.group(zarr_loc, synchronizer=synchronizer)
         else:
             self.z: zarr.hierarchy = zarr.open(
-                self._fn, mode=zarr_mode, synchronizer=synchronizer
+                zarr_loc, mode=zarr_mode, synchronizer=synchronizer
             )
         self.nthreads = nthreads
         # The order is critical here:
@@ -1075,6 +1074,7 @@ class GraphDataStore(BaseDataStore):
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
         show_elbow_plot: bool = False,
+        ann_index_save_path: str = None
     ):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
@@ -1177,11 +1177,13 @@ class GraphDataStore(BaseDataStore):
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
+            ann_index_save_path: Used to save ANN index binary file when the DataStore is not a Zarr Directory Store.
 
         Returns:
             Either None or `AnnStream` object
         """
         from .ann import AnnStream
+        from pathlib import Path
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1254,10 +1256,20 @@ class GraphDataStore(BaseDataStore):
             f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
         )
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
-        ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
         knn_loc = f"{ann_loc}/knn__{k}"
         kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
+
+        if hasattr(self.z.chunk_store, 'path'):
+            ann_idx_loc = os.path.join(self.z.chunk_store.path, ann_loc)
+        else:
+            if ann_index_save_path is None:
+                logger.warning("Zarr hierarchy is not a DirectoryStore so Ann index will not be saved. Please provide"
+                               "a path manually using `ann_index_save_path` parameter")
+                ann_idx_loc = None
+            else:
+                ann_idx_loc = os.path.join(ann_index_save_path, ann_loc)
+                Path(ann_idx_loc).mkdir(parents=True, exist_ok=True)
 
         data = assay.save_normalized_data(
             cell_key,
@@ -1330,12 +1342,12 @@ class GraphDataStore(BaseDataStore):
                 if reduction_loc in self.z:
                     del self.z[reduction_loc]
 
-        if ann_loc in self.z:
+        if ann_loc in self.z and ann_idx_loc is not None:
             import hnswlib
 
             temp = dims if dims > 0 else data.shape[1]
             ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
-            ann_idx.load_index(ann_idx_loc)
+            ann_idx.load_index(os.path.join(ann_idx_loc, 'ann_idx'))
             logger.info(f"Using existing ANN index")
         else:
             ann_idx = None
@@ -1394,7 +1406,8 @@ class GraphDataStore(BaseDataStore):
         if ann_loc not in self.z:
             logger.debug(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
-            ann_obj.annIdx.save_index(ann_idx_loc)
+            if ann_idx_loc is not None:
+                ann_obj.annIdx.save_index(os.path.join(ann_idx_loc, 'ann_idx'))
         if fit_kmeans:
             logger.debug(f"Saving kmeans clusters to {kmeans_loc}")
             self.z.create_group(kmeans_loc, overwrite=True)
