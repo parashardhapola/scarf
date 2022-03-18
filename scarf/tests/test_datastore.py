@@ -3,6 +3,26 @@ import numpy as np
 from . import full_path, remove
 
 
+class TestToyDataStore:
+    def test_toy_crdir_metadata(self, toy_crdir_ds):
+        assert np.alltrue(
+            toy_crdir_ds.RNA.feats.fetch_all("ids") == ["g1", "g2", "g3", "g4"]
+        )
+        assert np.alltrue(toy_crdir_ds.ADT.feats.fetch_all("ids") == ["a1", "a2"])
+        assert np.alltrue(toy_crdir_ds.HTO.feats.fetch_all("ids") == ["h1"])
+        assert np.alltrue(toy_crdir_ds.cells.fetch_all("ids") == ["b1", "b2", "b3"])
+
+    def test_toy_crdir_rawdata(self, toy_crdir_ds):
+        assert np.alltrue(
+            toy_crdir_ds.RNA.rawData.compute()
+            == [[5, 0, 0, 2], [3, 3, 0, 7], [3, 3, 0, 7]]
+        )
+        assert np.alltrue(
+            toy_crdir_ds.ADT.rawData.compute() == [[30, 40], [30, 50], [0, 50]]
+        )
+        assert np.alltrue(toy_crdir_ds.HTO.rawData.compute() == [[200], [100], [100]])
+
+
 class TestDataStore:
     def test_graph_indices(self, make_graph, datastore):
         a = np.load(full_path("knn_indices.npy"))
@@ -107,11 +127,42 @@ class TestDataStore:
         values = datastore.get_imputed(feature_name="CD4")
         assert values.shape == datastore.cells.fetch("I").shape
 
-    def test_run_pseudotime_scoring(self, datastore):
-        # TODO: Test the output values
-        datastore.run_pseudotime_scoring()
-        values = datastore.cells.fetch("RNA_pseudotime")
-        assert values.shape == datastore.cells.fetch("I").shape
+    def test_run_pseudotime_scoring(self, pseudotime_scoring, cell_attrs):
+        diff = pseudotime_scoring - cell_attrs["RNA_pseudotime"].values
+        assert np.all(diff < 1e-3)
+
+    def test_run_pseudotime_marker_search(self, pseudotime_markers):
+        precalc_markers = pd.read_csv(
+            full_path("pseudotime_markers_r_values.csv"), index_col=0
+        )
+        assert np.alltrue(precalc_markers.index == pseudotime_markers.index)
+        assert np.alltrue(
+            precalc_markers.names.values == pseudotime_markers.names.values
+        )
+        assert np.allclose(
+            precalc_markers.I__RNA_pseudotime__r.values,
+            pseudotime_markers.I__RNA_pseudotime__r.values,
+        )
+
+    def test_run_pseudotime_aggregation(self, pseudotime_aggregation, datastore):
+        precalc_values = np.load(full_path("aggregated_feat_idx.npy"))
+        test_values = datastore.z.RNA.aggregated_I_I_RNA_pseudotime.feature_indices[:]
+        assert np.all(precalc_values == test_values)
+
+        precalc_values = np.load(full_path("aggregated_df_top_10.npy"))
+        test_values = datastore.z.RNA.aggregated_I_I_RNA_pseudotime.data[:10]
+        assert np.all(precalc_values == test_values)
+
+        precalc_values = np.load(full_path("pseudotime_clusters.npy"))
+        test_values = datastore.RNA.feats.fetch_all("pseudotime_clusters")
+        assert np.all(precalc_values == test_values)
+
+    def test_add_grouped_assay(self, grouped_assay, datastore):
+        precalc_values = np.load(full_path("ptime_modules_group_1.npy"))
+        test_values = datastore.get_cell_vals(
+            from_assay="PTIME_MODULES", cell_key="I", k="group_1"
+        )
+        assert np.allclose(precalc_values, test_values)
 
     def test_make_bulk(self, paris_clustering, datastore):
         df = datastore.make_bulk(group_key="RNA_cluster")
@@ -148,3 +199,13 @@ class TestDataStore:
 
     def test_plot_unified_layout(self, run_unified_umap, datastore):
         datastore.plot_unified_layout(layout_key="unified_UMAP", show_fig=False)
+
+    def test_plot_pseudotime_heatmap(self, pseudotime_aggregation, datastore):
+        datastore.plot_pseudotime_heatmap(
+            cell_key="I",
+            feat_key="I",
+            feature_cluster_key="pseudotime_clusters",
+            pseudotime_key="RNA_pseudotime",
+            show_features=["Wsb1", "Rest"],
+            show_fig=False,
+        )

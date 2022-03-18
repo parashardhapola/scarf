@@ -1,21 +1,18 @@
 ---
-jupyter:
-  jupytext:
-    formats: ipynb,md
-    text_representation:
-      extension: .md
-      format_name: markdown
-      format_version: '1.3'
-      jupytext_version: 1.11.3
-  kernelspec:
-    display_name: Python 3
-    language: python
-    name: python3
+jupytext:
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.11.4
+kernelspec:
+  display_name: Python 3 (ipykernel)
+  language: python
+  name: python3
 ---
 
-```python
+```{code-cell} ipython3
 %load_ext autotime
-%config InlineBackend.figure_format = 'retina'
 
 import scarf
 scarf.__version__
@@ -23,6 +20,7 @@ scarf.__version__
 
 # Some plotting functionality
 
++++
 
 ## Scatter plots
 This vignette will go through scarfs scatter plot functionality in more detail. The different topics are as follows:
@@ -31,36 +29,38 @@ This vignette will go through scarfs scatter plot functionality in more detail. 
 * Grid plotting
 * Shaded scatter plots for bigger datasets
 
++++
 
 ## The most basic plot
 
++++
 
 First we will use CITE-Seq data from 10x genomics. This dataset contains two modalities: gene expression and surface protein abundance.
 
-```python
+```{code-cell} ipython3
 scarf.fetch_dataset('tenx_8K_pbmc_citeseq', save_path='scarf_datasets', as_zarr=True)
 ```
 
-```python
+```{code-cell} ipython3
 ds = scarf.DataStore('scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr')
 ```
 
 Minimum requirements to make a plot is to give the prefix for the cell metadata columns that contain the 2D coordinates. 
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP')
 ```
 
 ## Coloured plots
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='CD14')
 ```
 
 The default colormap is [cmocean.deep](https://matplotlib.org/cmocean/) and is changed with the `cmap` argument. 
 In the example below we also set `spine_width=0` to remove the frames around the graph. 
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key='RNA_UMAP', color_by='RNA_nCounts', cmap="coolwarm", spine_width=0)
 ```
 
@@ -69,18 +69,20 @@ If you, instead of providing just one value in color_by, you give a list of valu
 
 In the example below we first plot the umap without any coloring by the empty string, then som numerical values such as a few different gene expressions and RNA_nCounts (total amount of features per cell) and lastly categorical cluster information.  
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key="RNA_UMAP", color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"])
 ```
 
-<!-- #region tags=[] -->
++++ {"tags": []}
+
 ## Modifying the grid
-<!-- #endregion -->
+
++++
 
 ### Padding
 By default the padding between the plots will be automatically decided to avoid overlap. However, if you prefer to decide the padding yourself you can change it with `w_pad` and `h_pad`.
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key="RNA_UMAP",
                color_by=["", "CD14", "CD4", "MS4A1", "CD79A", "CD3D", "RNA_nCounts", "RNA_leiden_cluster"], w_pad=10, h_pad=10)
 ```
@@ -101,7 +103,7 @@ Using the `legend_size` you can increase the size of the cluster legend and labe
 
 `marker_scale` will increase the colored legend markers. 
 
-```python
+```{code-cell} ipython3
 ds.plot_layout(layout_key=["RNA_UMAP", "ADT_UMAP"], color_by=["RNA_leiden_cluster", "CD14"],
                n_columns=2, width=10, height=10, legend_size=20, point_size=25, marker_scale=100)
 ```
@@ -111,18 +113,18 @@ Plotting for larger datasets can a lot of times lead to some problems. One such 
 
 To properly demonstrate the value of using shaded scatter plots we will need a bigger dataset. For this we will use the hca_783K_blood_rnaseq dataset (which you can download via the `fetch_dataset` function. This dataset takes longer to preprocess and to calculate the UMAP for. For the purpose of this vignette we will instead show the results as pre rendered images.
 
-```python
+```{code-cell} ipython3
 #ds = scarf.DataStore('D:/scarf_datasets/hca_783K_blood_rnaseq.zarr') # preprocessed data
 #ds.plot_layout(layout_key=['RNA_UMAP'], color_by=['', 'CD14'], point_size=5, savename="hca_783K_blood_rnaseq_normalscatter")
 
 # Non scarf code to show the pre rendered images
-import matplotlib.image as mpimg
-import matplotlib.pyplot as plt
+# import matplotlib.image as mpimg
+# import matplotlib.pyplot as plt
 
-fig = plt.figure(figsize=[14, 14], facecolor='white')
-fig.gca().axis('off')
-img = mpimg.imread('hca_783K_blood_rnaseq_normalscatter.png')
-fig = plt.imshow(img)
+# fig = plt.figure(figsize=[14, 14], facecolor='white')
+# fig.gca().axis('off')
+# img = mpimg.imread('hca_783K_blood_rnaseq_normalscatter.png')
+# fig = plt.imshow(img)
 ```
 
 To avoid the problem of overplotting and other issues that come with larger dataset sizes scarf uses the datashader library. A shaded scatter plot is created by setting `do_shading=True` which otherwise defaults to False.
@@ -131,16 +133,16 @@ Read more in depth about problems that can occur when plotting and how the datas
 The `shade_npixels` decides the resolution of the output image (width and height). 
 These shaded scatter plots can be grid plotted just as the normal scatter plots.
 
-```python
+```{code-cell} ipython3
 #ds.plot_layout(layout_key=['RNA_UMAP'], color_by=['', 'CD14'], shade_npixels=700, do_shading=True, savename="hca_783K_blood_rnaseq_shadedscatter")
 
 # Non scarf code to show the pre rendered images
-fig = plt.figure(figsize=[14, 14], facecolor='white')
-fig.gca().axis('off')
-img = mpimg.imread('hca_783K_blood_rnaseq_shadedscatter.png')
-fig = plt.imshow(img)
+# fig = plt.figure(figsize=[14, 14], facecolor='white')
+# fig.gca().axis('off')
+# img = mpimg.imread('hca_783K_blood_rnaseq_shadedscatter.png')
+# fig = plt.imshow(img)
 ```
 
-```python
+```{code-cell} ipython3
 
 ```

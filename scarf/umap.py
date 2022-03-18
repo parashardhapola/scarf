@@ -91,34 +91,35 @@ def simplicial_set_embedding(
 
     with threadpool_limits(limits=nthreads):
         embedding = optimize_layout_euclidean(
-            embedding,
-            embedding,
-            g.row,
-            g.col,
-            n_epochs,
-            g.shape[1],
-            epochs_per_sample,
-            a,
-            b,
-            rng_state,
-            gamma,
-            initial_alpha,
-            negative_sample_rate,
+            head_embedding=embedding,
+            tail_embedding=embedding,
+            head=g.row,
+            tail=g.col,
+            n_epochs=n_epochs,
+            n_vertices=g.shape[1],
+            epochs_per_sample=epochs_per_sample,
+            a=a,
+            b=b,
+            rng_state=rng_state,
+            gamma=gamma,
+            initial_alpha=initial_alpha,
+            negative_sample_rate=negative_sample_rate,
             parallel=parallel,
             verbose=verbose,
             densmap=densmap,
             densmap_kwds=densmap_kwds,
-            # tqdm_kwds=tqdm_params,
+            tqdm_kwds=tqdm_params,
+            move_other=True,
         )
     return embedding
 
 
-# def fuzzy_simplicial_set(g, set_op_mix_ratio):
-#     tg = g.transpose()
-#     prod = g.multiply(tg)
-#     res = set_op_mix_ratio * (g + tg - prod) + (1.0 - set_op_mix_ratio) * prod
-#     res.eliminate_zeros()
-#     return res.tocoo()
+def fuzzy_simplicial_set(g, set_op_mix_ratio):
+    tg = g.transpose()
+    prod = g.multiply(tg)
+    res = set_op_mix_ratio * (g + tg - prod) + (1.0 - set_op_mix_ratio) * prod
+    res.eliminate_zeros()
+    return res.tocoo()
 
 
 def fit_transform(
@@ -141,11 +142,11 @@ def fit_transform(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        a, b = find_ab_params(spread, min_dist)
+        a, b = find_ab_params(spread=spread, min_dist=min_dist)
     logger.trace("Found ab params")
 
     embedding = simplicial_set_embedding(
-        graph,
+        fuzzy_simplicial_set(graph, 1.0),
         ini_embed,
         n_epochs,
         a,

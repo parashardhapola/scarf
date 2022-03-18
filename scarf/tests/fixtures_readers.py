@@ -3,6 +3,22 @@ from . import full_path, remove
 
 
 @pytest.fixture(scope="session")
+def toy_crdir_reader():
+    from ..readers import CrDirReader
+    import tarfile
+
+    fn = full_path("toy_cr_dir.tar.gz")
+    out_fn = fn.replace(".tar.gz", "")
+    remove(out_fn)
+    tar = tarfile.open(fn, "r:gz")
+    tar.extractall(out_fn)
+    reader = CrDirReader(out_fn)
+    reader.rename_assays({"ASSAY4": "HTO"})
+    yield reader
+    remove(out_fn)
+
+
+@pytest.fixture(scope="session")
 def crh5_reader():
     from ..readers import CrH5Reader
 
@@ -24,14 +40,6 @@ def crdir_reader(datastore, mtx_dir):
     from ..readers import CrDirReader
 
     reader = CrDirReader(mtx_dir, "rna")
-    yield reader
-
-
-@pytest.fixture(scope="session")
-def mtx_reader(datastore, mtx_dir):
-    from ..readers import MtxDirReader
-
-    reader = MtxDirReader(mtx_dir, "rna")
     yield reader
 
 

@@ -54,9 +54,26 @@ class BaseDataStore:
     This is the base datastore class that deals with loading of assays from Zarr files and generating basic cell
     statistics like nCounts and nFeatures. Superclass of the other DataStores.
 
+    Args:
+        zarr_loc: Path to Zarr file created using one of writer functions of Scarf
+        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'
+        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                       when DataStore loads a Zarr file for the first time
+        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                               will be filtered out.
+        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                               less than this will be filtered out
+        mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
+        ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
+        nthreads: Number of maximum threads to use in all multi-threaded functions
+        zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
+        synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
+                      more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
+                      ThreadSynchronizer will be used.
+
     Attributes:
         cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
-        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: Number of threads to use for this datastore instance.
         z: The Zarr file (directory) used for for this datastore instance.
     """
@@ -74,37 +91,15 @@ class BaseDataStore:
         zarr_mode: str,
         synchronizer,
     ):
-        """
-        Args:
-            zarr_loc: Path to Zarr file created using one of writer functions of Scarf
-            assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'
-            default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                           when DataStore loads a Zarr file for the first time
-            min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
-                                   will be filtered out.
-            min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                                   less than this will be filtered out
-            mito_pattern: Regex pattern to capture mitochondrial genes (default: 'MT-')
-            ribo_pattern: Regex pattern to capture ribosomal genes (default: 'RPS|RPL|MRPS|MRPL')
-            nthreads: Number of maximum threads to use in all multi-threaded functions
-            zarr_mode: For read-write mode use r+' or for read-only use 'r' (Default value: 'r+')
-            synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
-                          more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
-                          ThreadSynchronizer will be used.
-        """
-
-        self._fn: str = zarr_loc
-        if type(self._fn) != str:
-            self.z: zarr.hierarchy = zarr.group(self._fn, synchronizer=synchronizer)
+        if type(zarr_loc) != str:
+            self.z: zarr.hierarchy = zarr.group(zarr_loc, synchronizer=synchronizer)
         else:
             self.z: zarr.hierarchy = zarr.open(
-                self._fn, mode=zarr_mode, synchronizer=synchronizer
+                zarr_loc, mode=zarr_mode, synchronizer=synchronizer
             )
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()
-        self.assayNames = self._get_assay_names()
         self._defaultAssay = self._load_default_assay(default_assay)
         self._load_assays(min_cells_per_feature, assay_types)
         # TODO: Reset all attrs, pca, dendrogram etc
@@ -127,7 +122,8 @@ class BaseDataStore:
             raise KeyError("ERROR: cellData not found in zarr file")
         return MetaData(self.z["cellData"])
 
-    def _get_assay_names(self) -> List[str]:
+    @property
+    def assay_names(self) -> List[str]:
         """
         Load all assay names present in the Zarr file. Zarr writers create an 'is_assay' attribute in the assay level
         and this function looks for presence of those attributes to load assay names.
@@ -159,17 +155,17 @@ class BaseDataStore:
             if "defaultAssay" in self.z.attrs:
                 assay_name = self.z.attrs["defaultAssay"]
             else:
-                if len(self.assayNames) == 1:
-                    assay_name = self.assayNames[0]
+                if len(self.assay_names) == 1:
+                    assay_name = self.assay_names[0]
                     self.z.attrs["defaultAssay"] = assay_name
                 else:
                     raise ValueError(
                         "ERROR: You have more than one assay data. "
-                        f"Choose one from: {' '.join(self.assayNames)}\n using 'default_assay' parameter. "
+                        f"Choose one from: {' '.join(self.assay_names)}\n using 'default_assay' parameter. "
                         "Please note that names are case-sensitive."
                     )
         else:
-            if assay_name in self.assayNames:
+            if assay_name in self.assay_names:
                 if "defaultAssay" in self.z.attrs:
                     if assay_name != self.z.attrs["defaultAssay"]:
                         logger.info(
@@ -179,7 +175,7 @@ class BaseDataStore:
             else:
                 raise ValueError(
                     f"ERROR: The provided default assay name: {assay_name} was not found. "
-                    f"Please Choose one from: {' '.join(self.assayNames)}\n"
+                    f"Please Choose one from: {' '.join(self.assay_names)}\n"
                     "Please note that the names are case-sensitive."
                 )
         return assay_name
@@ -207,7 +203,9 @@ class BaseDataStore:
             "RNA": RNAassay,
             "ATAC": ATACassay,
             "ADT": ADTassay,
+            "HTO": ADTassay,
             "GeneActivity": RNAassay,
+            "GeneScores": RNAassay,
             "URNA": RNAassay,
             "Assay": Assay,
         }
@@ -227,7 +225,7 @@ class BaseDataStore:
         z_attrs = dict(self.z.attrs["assayTypes"])
         if custom_assay_types is None:
             custom_assay_types = {}
-        for i in self.assayNames:
+        for i in self.assay_names:
             if i in custom_assay_types:
                 if custom_assay_types[i] in preset_assay_types:
                     assay = preset_assay_types[custom_assay_types[i]]
@@ -321,7 +319,7 @@ class BaseDataStore:
         return assay.attrs["latest_cell_key"]
 
     def _ini_cell_props(
-        self, min_features: int, mito_pattern: str, ribo_pattern: str
+        self, min_features: int, mito_pattern: Optional[str], ribo_pattern: Optional[str]
     ) -> None:
         """
         This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
@@ -335,7 +333,7 @@ class BaseDataStore:
         Returns:
 
         """
-        for from_assay in self.assayNames:
+        for from_assay in self.assay_names:
             assay = self._get_assay(from_assay)
 
             var_name = from_assay + "_nCounts"
@@ -363,15 +361,21 @@ class BaseDataStore:
                 self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
 
             if type(assay) == RNAassay:
-                if mito_pattern is None:
-                    mito_pattern = "MT-|mt"
-                var_name = from_assay + "_percentMito"
-                assay.add_percent_feature(mito_pattern, var_name)
+                if mito_pattern == "":
+                    pass
+                else:
+                    if mito_pattern is None:
+                        mito_pattern = "MT-|mt"
+                    var_name = from_assay + "_percentMito"
+                    assay.add_percent_feature(mito_pattern, var_name)
 
-                if ribo_pattern is None:
-                    ribo_pattern = "RPS|RPL|MRPS|MRPL"
-                var_name = from_assay + "_percentRibo"
-                assay.add_percent_feature(ribo_pattern, var_name)
+                if ribo_pattern == "":
+                    pass
+                else:
+                    if ribo_pattern is None:
+                        ribo_pattern = "RPS|RPL|MRPS|MRPL"
+                    var_name = from_assay + "_percentRibo"
+                    assay.add_percent_feature(ribo_pattern, var_name)
 
             if from_assay == self._defaultAssay:
                 v = self.cells.fetch(from_assay + "_nFeatures")
@@ -410,7 +414,7 @@ class BaseDataStore:
             ret_val = "_".join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
-    def set_default_assay(self, assay_name: str) -> None:
+    def set_default_assay(self, *, assay_name: str) -> None:
         """
         Override assigning of default assay.
 
@@ -423,14 +427,20 @@ class BaseDataStore:
             ValueError: if `assay_name` is not found in attribute `assayNames`
 
         """
-        if assay_name in self.assayNames:
+        if assay_name in self.assay_names:
             self._defaultAssay = assay_name
             self.z.attrs["defaultAssay"] = assay_name
         else:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
     def get_cell_vals(
-        self, *, from_assay: str, cell_key: str, k: str, clip_fraction: float = 0
+        self,
+        *,
+        from_assay: str,
+        cell_key: str,
+        k: str,
+        clip_fraction: float = 0,
+        use_precached: bool = True,
     ):
         """
         Fetches data from the Zarr file.
@@ -445,6 +455,8 @@ class BaseDataStore:
             k: A cell metadata column or name of a feature.
             clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
                            (Default value: 0)
+            use_precached: Whether to use pre calculated values from 'prenormed' slot. Used only if 'prenormed' is
+                           present (Default value: True)
 
         Returns:
             The requested values
@@ -460,9 +472,29 @@ class BaseDataStore:
                     logger.warning(
                         f"Plotting mean of {len(feat_idx)} features because {k} is not unique."
                     )
-            vals = controlled_compute(
-                assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
-            ).astype(np.float_)
+            vals = None
+            cache_key = "prenormed"
+            if use_precached and cache_key in assay.z:
+                g = assay.z[cache_key]
+                vals = np.zeros(assay.cells.N)
+                n_feats = 0
+                for i in feat_idx:
+                    if i in g:
+                        vals += assay.z[cache_key][i][:]
+                        n_feats += 1
+                if n_feats == 0:
+                    logger.debug(f"Could not find prenormed values for feat: {k}")
+                    vals = None
+                elif n_feats > 1:
+                    vals = vals / n_feats
+                else:
+                    pass
+                if vals is not None:
+                    vals = vals[cell_idx]
+            if vals is None:
+                vals = controlled_compute(
+                    assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
+                ).astype(np.float_)
         else:
             vals = self.cells.fetch(k, cell_key)
         if clip_fraction < 0 or clip_fraction > 1:
@@ -480,7 +512,7 @@ class BaseDataStore:
     def __repr__(self):
         res = (
             f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with"
-            f" {len(self.assayNames)} assays: {' '.join(self.assayNames)}"
+            f" {len(self.assay_names)} assays: {' '.join(self.assay_names)}"
         )
         htabs = " " * 3
         stabs = htabs * 2
@@ -497,7 +529,7 @@ class BaseDataStore:
             )
         )
         res = res.rstrip("\n\t")[:-2]
-        for i in self.assayNames:
+        for i in self.assay_names:
             assay = self._get_assay(i)
             res += (
                 f"\n{htabs}{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) "
@@ -1040,7 +1072,9 @@ class GraphDataStore(BaseDataStore):
         return_ann_object: bool = False,
         custom_loadings: np.array = None,
         feat_scaling: bool = True,
+        lsi_skip_first: bool = True,
         show_elbow_plot: bool = False,
+        ann_index_save_path: str = None
     ):
         """
         Creates a cell neighbourhood graph. Performs following steps in the process:
@@ -1140,13 +1174,16 @@ class GraphDataStore(BaseDataStore):
                           keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
+            lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
+            ann_index_save_path: Used to save ANN index binary file when the DataStore is not a Zarr Directory Store.
 
         Returns:
             Either None or `AnnStream` object
         """
         from .ann import AnnStream
+        from pathlib import Path
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1219,10 +1256,20 @@ class GraphDataStore(BaseDataStore):
             f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
         )
         ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
-        ann_idx_loc = f"{self._fn}/{ann_loc}/ann_idx"
         knn_loc = f"{ann_loc}/knn__{k}"
         kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
+
+        if hasattr(self.z.chunk_store, 'path'):
+            ann_idx_loc = os.path.join(self.z.chunk_store.path, ann_loc)
+        else:
+            if ann_index_save_path is None:
+                logger.warning("Zarr hierarchy is not a DirectoryStore so Ann index will not be saved. Please provide"
+                               "a path manually using `ann_index_save_path` parameter")
+                ann_idx_loc = None
+            else:
+                ann_idx_loc = os.path.join(ann_index_save_path, ann_loc)
+                Path(ann_idx_loc).mkdir(parents=True, exist_ok=True)
 
         data = assay.save_normalized_data(
             cell_key,
@@ -1295,11 +1342,12 @@ class GraphDataStore(BaseDataStore):
                 if reduction_loc in self.z:
                     del self.z[reduction_loc]
 
-        if ann_loc in self.z:
+        if ann_loc in self.z and ann_idx_loc is not None:
             import hnswlib
 
-            ann_idx = hnswlib.Index(space=ann_metric, dim=dims)
-            ann_idx.load_index(ann_idx_loc)
+            temp = dims if dims > 0 else data.shape[1]
+            ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
+            ann_idx.load_index(os.path.join(ann_idx_loc, 'ann_idx'))
             logger.info(f"Using existing ANN index")
         else:
             ann_idx = None
@@ -1328,6 +1376,7 @@ class GraphDataStore(BaseDataStore):
             do_kmeans_fit=fit_kmeans,
             disable_scaling=disable_scaling,
             ann_idx=ann_idx,
+            lsi_skip_first=lsi_skip_first,
             lsi_params={},
         )
 
@@ -1357,7 +1406,8 @@ class GraphDataStore(BaseDataStore):
         if ann_loc not in self.z:
             logger.debug(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
-            ann_obj.annIdx.save_index(ann_idx_loc)
+            if ann_idx_loc is not None:
+                ann_obj.annIdx.save_index(os.path.join(ann_idx_loc, 'ann_idx'))
         if fit_kmeans:
             logger.debug(f"Saving kmeans clusters to {kmeans_loc}")
             self.z.create_group(kmeans_loc, overwrite=True)
@@ -1568,7 +1618,7 @@ class GraphDataStore(BaseDataStore):
             symmetric=symmetric_graph,
             upper_only=graph_upper_only,
         )
-        export_knn_to_mtx(knn_mtx_fn, graph)
+        export_knn_to_mtx(str(knn_mtx_fn), graph)
 
         ini_emb_fn = Path(temp_file_loc, f"{uid}.txt").resolve()
         with open(ini_emb_fn, "w") as h:
@@ -1789,7 +1839,7 @@ class GraphDataStore(BaseDataStore):
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
-        resolution: int = 1,
+        resolution: float = 1.0,
         integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
         graph_upper_only: bool = False,
@@ -1951,7 +2001,7 @@ class GraphDataStore(BaseDataStore):
             dendrogram = self.z[dendrogram_loc][:]
             logger.info("Using existing dendrogram")
         else:
-            paris = skn.hierarchy.Paris()
+            paris = skn.hierarchy.Paris(reorder=False)
             graph = self.load_graph(
                 from_assay=from_assay,
                 cell_key=cell_key,
@@ -2226,26 +2276,40 @@ class GraphDataStore(BaseDataStore):
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
-        k_singular: int = 20,
-        r_vec: np.ndarray = None,
+        n_singular_vals: int = 30,
+        source_sink_key: str = None,
+        sources: List = None,
+        sinks: List = None,
+        ss_vec: np.ndarray = None,
+        min_max_norm_ptime: bool = True,
+        random_seed: int = 4444,
         label: str = "pseudotime",
     ) -> None:
         """
         Calculate differentiation potential of cells. This function is a reimplementation of population balance
         analysis (PBA) approach published in Weinreb et al. 2017, PNAS. This function computes the random walk
         normalized Laplacian matrix of the reference graph, L_rw = I-A/D and then calculates a Moore-Penrose
-        pseudoinverse of L_rw. The method takes an optional but recommended parameter 'r' which represents the
-        relative rates of proliferation and loss in different gene expression states (R). If not provided then a vector
-        with ones is used. The differentiation potential is the dot product of inverse L_rw and R
+        pseudoinverse of L_rw.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
                         used feature for the given assay will be used.
-            k_singular: Number of smallest singular values to save.
-            r_vec: Same as parameter R in the above said reference.
-            label:
+            n_singular_vals: Number of smallest singular values to save.
+            source_sink_key: Name of a column from cell attributes table that shall be used for fetching source and
+                             sink groups. Usually this will a column containing cell cluster/group identities.
+            sources: A list of group/clusters ids from `source_sink_key` column to be treated as sources. Sources are
+                     usually progenitor/precursor or other actively dividing cell states.
+            sinks: A list of group/clusters ids from `source_sink_key` column to be treated as sinks. Sinks are usually
+                   more differentiated (or terminally differentiated) cell states.
+            ss_vec: A vector that contains source sink values for each cell. If not provided then, this vector is
+                    internally computed using the `sources` and `sinks` parameter. This vector should add up to 0 and
+                    should have negative values for source cells and positive values for sink cells.
+            min_max_norm_ptime: Whether to perform min-max normalization on the final pseudotime values so that values
+                                are in 0 to 1 range. (Default: True)
+            random_seed: A random seed for svds (Defaul: 4444)
+            label: label: Base label for pseudotime in the cell metadata column (Default value: 'pseudotime')
 
         Returns:
 
@@ -2262,11 +2326,43 @@ class GraphDataStore(BaseDataStore):
         def laplacian(g, inv_deg):
             n = g.shape[0]
             identity = csr_matrix((np.ones(n), (range(n), range(n))), shape=[n, n])
-            return identity - graph.dot(inv_deg)
+            return identity - g.dot(inv_deg)
 
-        def pseudo_inverse(lap):
-            u, s, vt = svds(lap, k=k_singular, which="SM")
-            return vt.T @ np.diag(np.linalg.pinv([s]).reshape(1, -1)[0]) @ u.T
+        def make_source_sink_vector(clusts, source, sink):
+            ss = list(source) + list(sink)
+
+            r = np.zeros(clusts.shape[0])
+            r[clusts.isin(sink)] = 1
+            r[clusts.isin(source)] = -1
+
+            n = clusts.isin(ss).sum()
+            v = (0 - r.sum()) / (r.shape[0] - n)
+            r[~clusts.isin(ss)] = v
+            return r
+
+        def pseudo_inverse(lap, k, rseed, r):
+            random_state = np.random.RandomState(rseed)
+            # noinspection PyArgumentList
+            v0 = random_state.rand(lap.shape[0])
+            # TODO: add thread management here
+            logger.info(
+                "Calculating SVD of graph laplacian. This might take a while...",
+            )
+            u, s, vt = svds(lap, k=k, which="SM", v0=v0)
+            # Because the order of singular values is not guaranteed
+            idx = np.argsort(s)
+            # Extracting the second smallest values
+            s = s[idx][1:].T
+            s = 1 / s
+            u = u[:, idx][:, 1:]
+            vt = vt[idx, :][1:, :].T
+            # Computing matmul in an iterative way to save memory
+            n = u.shape[0]
+            # TODO: Use numba for this part
+            ilap = np.zeros(n)
+            for i in tqdmbar(range(n), desc="Calculating pseudotime"):
+                ilap[i] = (vt * u[i, :] * s * r).sum()
+            return ilap
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
@@ -2278,13 +2374,71 @@ class GraphDataStore(BaseDataStore):
             symmetric=True,
             upper_only=False,
         )
-        inv_lap = pseudo_inverse(laplacian(graph, inverse_degree(graph)))
-        if r_vec is None:
-            r_vec = np.ones(inv_lap.shape[0])
-        v = np.dot(inv_lap, r_vec)
+
+        if source_sink_key is None:
+            if sources is not None or sinks is not None:
+                logger.warning(
+                    "Provide `sources` and `sinks` will not be used because `source_sink_key` has not been "
+                    "provided"
+                )
+        if ss_vec is None:
+            if source_sink_key is None:
+                logger.warning(
+                    "No source/sink info or custom source sink vector provided. The results might not be "
+                    "reflect true pseudotime."
+                )
+                ss_vec = np.ones(graph.shape[0])
+            else:
+                clusts = pd.Series(self.cells.fetch(source_sink_key))
+                if sources is None:
+                    sources = []
+                else:
+                    if isinstance(sources, list) is False:
+                        raise ValueError(
+                            "ERROR: Parameter `sources` should be of 'list' type"
+                        )
+                if sinks is None:
+                    sinks = []
+                else:
+                    if isinstance(sinks, list) is False:
+                        raise ValueError(
+                            "ERROR: Parameter `sinks` should be of 'list' type"
+                        )
+                ss_vec = make_source_sink_vector(clusts, sources, sinks)
+        else:
+            if source_sink_key is not None:
+                logger.warning(
+                    "Sources/sinks from `source_sink_key` will not be because custom vector `ss_vec` is "
+                    "provided"
+                )
+            ss_vec = np.array(ss_vec)
+            if ss_vec.shape[0] != graph.shape[0]:
+                raise ValueError(
+                    f"ERROR: Size mismatch between `ss_vec` ({ss_vec.shape[0]}) and "
+                    f"graph ({graph.shape[0]:})"
+                )
+            if ss_vec.sum() > 1e-10:
+                raise ValueError(
+                    f"ERROR: The sum of all the values in `ss_vec` should be zero. Here we test if the sum is less"
+                    f" 1e-10"
+                )
+
+        ss_vec = ss_vec.reshape(-1, 1)
+
+        ptime = pseudo_inverse(
+            laplacian(graph, inverse_degree(graph)),
+            n_singular_vals,
+            random_seed,
+            ss_vec,
+        )
+        if min_max_norm_ptime:
+            # noinspection PyArgumentList
+            ptime = ptime - ptime.min()
+            ptime = ptime / ptime.max()
+
         self.cells.insert(
             self._col_renamer(from_assay, cell_key, label),
-            v,
+            ptime,
             key=cell_key,
             overwrite=True,
         )
@@ -2292,6 +2446,7 @@ class GraphDataStore(BaseDataStore):
 
     def integrate_assays(
         self,
+        *,
         assays: List[str],
         label: str,
         chunk_size: int = 10000,
@@ -2304,6 +2459,8 @@ class GraphDataStore(BaseDataStore):
 
         Args:
             assays: Name of the input assays. The latest constructed graph from each assay is used.
+            label: label: Label for integrated graph
+            chunk_size: number of cells to be loaded at a time while reading and writing the graph
 
         Returns: None
 
@@ -2312,7 +2469,7 @@ class GraphDataStore(BaseDataStore):
 
         merged_graph = []
         for assay in assays:
-            if assay not in self.assayNames:
+            if assay not in self.assay_names:
                 raise ValueError(f"ERROR: Assay {assay} was not found.")
             merged_graph.append(
                 self.load_graph(
@@ -2975,7 +3132,7 @@ class MappingDatastore(GraphDataStore):
             h.write("\n".join(map(str, ini_embed.flatten())))
         del ini_embed
         knn_mtx_fn = Path(temp_file_loc, f"{uid}.mtx").resolve()
-        export_knn_to_mtx(knn_mtx_fn, graph)
+        export_knn_to_mtx(str(knn_mtx_fn), graph)
         out_fn = Path(temp_file_loc, f"{uid}_output.txt").resolve()
         cmd = (
             f"sgtsne -m {max_iter} -l {lambda_scale} -d {2} -e {early_iter} -p 1 -a {alpha}"
@@ -3014,6 +3171,9 @@ class MappingDatastore(GraphDataStore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
+        title: Union[str, List[str]] = None,
+        title_size: int = 12,
+        hide_title: bool = False,
         cbar_shrink: float = 0.6,
         marker_scale: float = 70,
         lspacing: float = 0.1,
@@ -3069,6 +3229,9 @@ class MappingDatastore(GraphDataStore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            title: Title to be used for plot. (Default value: None)
+            title_size: Size of each axis/subplots title (Default value: 12)
+            hide_title: If True, then the title of the sublots is not shown (Default value: False)
             cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
@@ -3186,6 +3349,9 @@ class MappingDatastore(GraphDataStore):
             legend_onside,
             legend_size,
             legends_per_col,
+            title,
+            title_size,
+            hide_title,
             cbar_shrink,
             marker_scale,
             lspacing,
@@ -3212,8 +3378,23 @@ class DataStore(MappingDatastore):
     subsetting and aggregating cells. This class also contains methods that perform in-memory data exports.
     In other words, DataStore objects provide the primary interface to interact with the data.
 
-    Attributes:
-
+    Args:
+        zarr_loc: Path to Zarr file created using one of writer functions of Scarf.
+        assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
+                     'RNA', 'ADT', 'ATAC' or 'GeneActivity'.
+        default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
+                       when DataStore loads a Zarr file for the first time.
+        min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
+                               will be filtered out.
+        min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
+                               less than this will be filtered out.
+        mito_pattern: Regex pattern to capture mitochondrial genes. (default: 'MT-')
+        ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
+        nthreads: Number of maximum threads to use in all multi-threaded functions
+        zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
+        synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
+                      more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
+                      ThreadSynchronizer will be used.
     """
 
     def __init__(
@@ -3229,25 +3410,6 @@ class DataStore(MappingDatastore):
         zarr_mode: str = "r+",
         synchronizer=None,
     ):
-        """
-        Args:
-            zarr_loc: Path to Zarr file created using one of writer functions of Scarf.
-            assay_types: A dictionary with keys as assay names present in the Zarr file and values as either one of:
-                         'RNA', 'ADT', 'ATAC' or 'GeneActivity'.
-            default_assay: Name of assay that should be considered as default. It is mandatory to provide this value
-                           when DataStore loads a Zarr file for the first time.
-            min_features_per_cell: Minimum number of non-zero features in a cell. If lower than this then the cell
-                                   will be filtered out.
-            min_cells_per_feature: Minimum number of cells where a feature has a non-zero value. Genes with values
-                                   less than this will be filtered out.
-            mito_pattern: Regex pattern to capture mitochondrial genes. (default: 'MT-')
-            ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
-            nthreads: Number of maximum threads to use in all multi-threaded functions
-            zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
-            synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
-                          more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
-                          ThreadSynchronizer will be used.
-        """
         if zarr_mode not in ["r", "r+"]:
             raise ValueError(
                 "ERROR: Zarr file can only be accessed using either 'r' ot 'r+' mode"
@@ -3502,6 +3664,9 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         threshold: float = 0.25,
         gene_batch_size: int = 50,
+        use_prenormed: bool = True,
+        prenormed_store: Optional[str] = None,
+        **norm_params,
     ) -> None:
         """
         Identifies group specific features for a given assay.
@@ -3520,6 +3685,10 @@ class DataStore(MappingDatastore):
                        (Default value: 0.25)
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
+            use_prenormed: If True then prenormalized cache generated using Assay.save_normed_for_query is used.
+                           This can speed up the results. (Default value: True)
+            prenormed_store: If prenormalized values were computed in a custom manner then, the Zarr group's location
+                             can be provided here. (Default value: None)
 
         Returns:
             None
@@ -3535,7 +3704,14 @@ class DataStore(MappingDatastore):
             cell_key = "I"
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(
-            assay, group_key, cell_key, self.nthreads, threshold, gene_batch_size
+            assay,
+            group_key,
+            cell_key,
+            threshold,
+            gene_batch_size,
+            use_prenormed,
+            prenormed_store,
+            **norm_params,
         )
         z = self.z[assay.name]
         slot_name = f"{cell_key}__{group_key}"
@@ -3546,11 +3722,167 @@ class DataStore(MappingDatastore):
             g = group.create_group(i)
             vals = markers[i]
             if len(vals) != 0:
-                create_zarr_obj_array(g, "names", list(vals.index))
+                create_zarr_obj_array(
+                    g, "names", np.array(list(vals.index)), dtype="uint64"
+                )
                 g_s = create_zarr_dataset(
                     g, "scores", (10000,), float, vals.values.shape
                 )
                 g_s[:] = vals.values
+        return None
+
+    def run_pseudotime_marker_search(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        pseudotime_key: str = None,
+        min_cells: int = 10,
+        gene_batch_size: int = 50,
+        **norm_params,
+    ) -> None:
+        """
+        Identify genes that a correlated with a given pseudotime ordering of cells.
+        The results are saved in feature attribute tables. For example, the r value can be found under,
+        'I__RNA_pseudotime__r' and the corresponding p values can be found under 'I__RNA_pseudotime__p'
+        The values are saved with patten {cell_key}__{regressor_key}__r/p
+
+        Args:
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                        the cell metadata table. (Default value: 'I')
+            pseudotime_key: Required parameter. This has to be a column name from cell metadata table. This column
+                            contains values for pseudotime ordering of the cells.
+            min_cells: Minimum number of cells where a gene should have non-zero value to be considered for test.
+                       (Default: 10)
+            gene_batch_size: Number of genes to be loaded in memory at a time. (Default value: 50).
+
+        Returns: None
+
+        """
+
+        from .markers import find_markers_by_regression
+
+        if pseudotime_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `pseudotime_key`. This should be the name of a column from "
+                "cell metadata object where pseudotime values are stored. If you ran `run_pseudotime_scoring` then "
+                "the values are stored under `RNA_pseudotime` by default."
+            )
+        if cell_key is None:
+            cell_key = "I"
+        assay = self._get_assay(from_assay)
+        ptime = assay.cells.fetch(pseudotime_key, key=cell_key)
+        markers = find_markers_by_regression(
+            assay, cell_key, ptime, min_cells, gene_batch_size, **norm_params
+        )
+        assay.feats.insert(
+            f"{cell_key}__{pseudotime_key}__r",
+            markers["r_value"].values,
+            overwrite=True,
+        )
+        assay.feats.insert(
+            f"{cell_key}__{pseudotime_key}__p",
+            markers["p_value"].values,
+            overwrite=True,
+        )
+
+    def run_pseudotime_aggregation(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        feat_key: str = None,
+        pseudotime_key: str = None,
+        cluster_label: str = None,
+        min_exp: float = 10,
+        window_size: int = 200,
+        chunk_size: int = 50,
+        smoothen: bool = True,
+        z_scale: bool = True,
+        n_neighbours: int = 11,
+        n_clusters: int = 10,
+        batch_size: int = 100,
+        ann_params: dict = None,
+    ) -> None:
+        """
+        This method performs clustering of features based on pseudotime ordered cells. The values from the pseudotime
+        ordered cells are smoothened, scaled and binned. The resulting binned matrix is used to perform a KNN-Paris
+        clustering of the features. This function can be used an alternative to `run_marker_search` and
+        `run_pseudotime_marker_search`
+
+        Args:
+            from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
+                      the cell metadata table. (Default value: The cell key that was used to generate the latest graph)
+            feat_key: To use only a subset of features, provide the name of a boolean column in the feature
+                      metadata/attribute table. Default value: The cell key that was used to generate the latest graph)
+            pseudotime_key: Required parameter. This has to be a column name from cell attribute table. This
+                            column contains values for pseudotime ordering of the cells.
+            cluster_label: Required parameter. Name of the column under which the feature cluster identity will be
+                           saved in the feature attribute table.
+            min_exp: Features with cumulative normalized expression than this value are dropped and hence not assigned
+                     a cluster identity (Default value: 10)
+            window_size: The window for calculating rolling mean of feature values along pseudotime ordering. Larger
+                         values will slow down processing but produce more smoothened. The choice of value here depends
+                         on the number of cells in the analysis. Larger value will be useful to produce smooth profiles
+                         when number of cells are large. (Default value: 200)
+            chunk_size: Number of bins of cells to be create. Larger values will increase memory consumption but will
+                        provide improved resolution (Default value: 50)
+            smoothen: Whether to perform the rolling window averaging (Default value: True)
+            z_scale: Whether to perform standard scaling of each feature. Turning this off maynot be a good choice.
+                     (Default value: True)
+            n_neighbours: Number of neighbours to save in the KNN graph of features(Default value: 11)
+            n_clusters: Number of feauture clusters to create. (Default value: 10)
+            batch_size: Number of features to load at a time when processing the data. Larger values will increase
+                        memory consumption (Default value: 100)
+            ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
+
+        Returns: None
+
+        """
+        from .markers import knn_clustering
+
+        from_assay, cell_key, _ = self._get_latest_keys(from_assay, cell_key, feat_key)
+        if feat_key is None:
+            feat_key = "I"
+        assay = self._get_assay(from_assay)
+
+        if pseudotime_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `pseudotime_key` parameter. This is the column in "
+                "the cell attribute table that contains the pseudotime values."
+            )
+        if cluster_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for cluster_label. "
+                "It will be used to create new column in feature attribute table. The module identity "
+                "of each feature will be saved under this column name. If this column already exists "
+                "then it will be overwritten."
+            )
+
+        df, feat_ids = assay.save_aggregated_ordering(
+            cell_key=cell_key,
+            feat_key=feat_key,
+            ordering_key=pseudotime_key,
+            min_exp=min_exp,
+            window_size=window_size,
+            chunk_size=chunk_size,
+            smoothen=smoothen,
+            z_scale=z_scale,
+            batch_size=batch_size,
+        )
+
+        clusts = knn_clustering(
+            d_array=df,
+            n_neighbours=n_neighbours,
+            n_clusters=n_clusters,
+            n_threads=self.nthreads,
+            ann_params=ann_params,
+        )
+        temp = np.ones(assay.feats.N) * -1
+        temp[feat_ids] = clusts
+        assay.feats.insert(cluster_label, temp.astype(int), overwrite=True)
         return None
 
     def get_markers(
@@ -3568,7 +3900,7 @@ class DataStore(MappingDatastore):
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table.
             group_key: Required parameter. This has to be a column name from cell metadata table.
                        Usually this would be a column denoting cell clusters. Please use the same value as used
@@ -3592,7 +3924,7 @@ class DataStore(MappingDatastore):
             g = assay.z["markers"][f"{cell_key}__{group_key}"]
         except KeyError:
             raise KeyError(
-                "ERROR: Couldnt find the location of markers. Please make sure that you have already called "
+                "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
                 "`run_marker_search` method with same value of `cell_key` and `group_key`"
             )
         if group_id is None:
@@ -3600,14 +3932,24 @@ class DataStore(MappingDatastore):
                 f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
                 f"{list(g.keys())}"
             )
-        df = pd.DataFrame(
-            [g[group_id]["names"][:], g[group_id]["scores"][:]], index=["ids", "score"]
-        ).T.set_index("ids")
-        id_idx = assay.feats.get_index_by(df.index, "ids")
-        if len(id_idx) != df.shape[0]:
-            logger.warning("Internal error in fetching names of the features IDs")
+        try:
+            df = pd.DataFrame(
+                [g[group_id]["names"][:], g[group_id]["scores"][:]],
+                index=["ids", "score"],
+            ).T.set_index("ids")
+        except KeyError:
+            logger.debug(f"No markers found for {group_id} returning empty dataframe")
+            df = pd.DataFrame(
+                [[], [], []], index=["ids", "score", "names"]
+            ).T.set_index("ids")
             return df
-        df["names"] = assay.feats.fetch_all("names")[id_idx]
+        try:
+            df.index = list(map(int, df.index))
+            idx = df.index
+        except ValueError:
+            # Backward compatibility when we using 'ids' as indices
+            idx = assay.feats.get_index_by(df.index, "ids")
+        df["names"] = assay.feats.fetch_all("names")[idx]
         return df
 
     def export_markers_to_csv(
@@ -3648,15 +3990,15 @@ class DataStore(MappingDatastore):
         clusters = self.cells.fetch(group_key)
         markers_table = {}
         for group_id in sorted(set(clusters)):
-            try:
-                m = self.get_markers(
-                    from_assay=from_assay,
-                    cell_key=cell_key,
-                    group_key=group_key,
-                    group_id=group_id,
-                )
+            m = self.get_markers(
+                from_assay=from_assay,
+                cell_key=cell_key,
+                group_key=group_key,
+                group_id=group_id,
+            )
+            if len(m) > 0:
                 markers_table[group_id] = m["names"].reset_index(drop=True)
-            except KeyError:
+            else:
                 markers_table[group_id] = pd.Series([])
         pd.DataFrame(markers_table).fillna("").to_csv(csv_filename, index=False)
         return None
@@ -3673,7 +4015,7 @@ class DataStore(MappingDatastore):
         s_score_label: str = "S_score",
         g2m_score_label: str = "G2M_score",
         phase_label: str = "cell_cycle_phase",
-    ):
+    ) -> None:
         """
         Computes S and G2M phase scores by taking into account the average expression of S and G2M phase genes
         respectively. Following steps are taken for each phase:
@@ -3704,7 +4046,7 @@ class DataStore(MappingDatastore):
             phase_label: A base label for saving the inferred cell cycle phase into a cell metadata column
                            (Default value: 'cell_cycle_phase')
 
-        Returns:
+        Returns: None
 
         """
         if from_assay is None:
@@ -3740,8 +4082,165 @@ class DataStore(MappingDatastore):
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
         self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
 
+    def add_grouped_assay(
+        self,
+        *,
+        from_assay: str = None,
+        group_key: str = None,
+        assay_label: str = None,
+        exclude_values: list = None,
+    ) -> None:
+        """
+        Add a new assay to the DataStore by grouping together multiple features and taking their means.
+        This method requires that the features are already assigned a group/cluster identity. The new assay will have
+        all the cells but only features that marked by 'feat_key' and contain a group identity not present in
+        `exclude_values`.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            group_key: This is mandatory parameter. Name of the column in feature metadata table to be used for
+                       grouping features.
+            assay_label: This is mandatory parameter. A name for the new assay.
+            exclude_values: These groups/clusters will ignored and not added to new assay. By default it is set to [-1],
+                            this means that all the features that have the group identity of -1 are not used.
+
+        Returns: None
+
+        """
+
+        from .writers import create_zarr_count_assay
+
+        if assay_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `assay_label`. "
+                "It will be used to create a new assay"
+            )
+        if group_key is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `group_key`. "
+                "This should be name of the column in the feature attribute table that contains the group/cluster "
+                "identity of each feature."
+            )
+
+        assay = self._get_assay(from_assay)
+        groups = assay.feats.fetch_all(group_key)
+        if exclude_values is None:
+            exclude_values = [-1]
+        group_set = sorted(set(groups).difference(exclude_values))
+
+        module_ids = [f"group_{x}" for x in group_set]
+        g = create_zarr_count_assay(
+            z=assay.z["/"],
+            assay_name=assay_label,
+            chunk_size=assay.rawData.chunksize,
+            n_cells=assay.cells.N,
+            feat_ids=module_ids,
+            feat_names=module_ids,
+            dtype="float",
+        )
+
+        cell_idx = np.array(list(range(assay.cells.N)))
+        for n, i in tqdmbar(
+            enumerate(group_set), desc="Writing to Zarr", total=len(group_set)
+        ):
+            feat_idx = np.where(groups == i)[0]
+            temp = np.zeros(assay.cells.N)
+            temp[cell_idx] = (
+                assay.normed(cell_idx=cell_idx, feat_idx=feat_idx)
+                .mean(axis=1)
+                .compute()
+            )
+            g[:, n] = temp
+
+        self._load_assays(min_cells=0, custom_assay_types={assay_label: "Assay"})
+        self._ini_cell_props(min_features=0, mito_pattern="", ribo_pattern="")
+
+    def add_melded_assay(
+        self,
+        *,
+        from_assay: str = None,
+        external_bed_fn: str = None,
+        assay_label: str = None,
+        peaks_col: str = "ids",
+        scalar_coeff: float = 1e5,
+        renormalization: bool = True,
+        assay_type: str = "Assay",
+    ) -> None:
+        """
+        This method performs "assay melding" and can be only be used for assay's wherein features
+        have genomic coordinates. In the process of melding the input genomic coordinates from
+        `external_bed_fn` are intersected with the assay's features. Based on this intersection
+        a mapping is created wherein each coordinate interval maps to one or more feature coordinates
+        from the assay.
+
+        This method has been designed for snATAC-Seq data and can be used to quantify accessibility of specific
+        genomic loci such as gene bodies, promoters, enhancers, motifs, etc.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            external_bed_fn: This is mandatory parameter. This file should be a BED format file with atleast five
+                             columns containing: chromosome, start position, end position, feature id and feature name.
+                             Coordinates should be in half open format. That means that actual end position is -1
+            assay_label: This is mandatory parameter. A name for the new assay.
+            peaks_col: The column in feature metadata table that contains the genomic coordinate information of each
+                       feature. The genomic coordinates are represented as strings in this format: chr:start-end
+                       (Default value: 'ids')
+            scalar_coeff: An arbitrary scalar multiplier. Only used when renormalization is True (Default value: 1e5)
+            renormalization: Whether to rescale the sum of feature values for each cell to `scalar_coeff`
+                         (Default value: True)
+            assay_type: The new assay (melded assay) is saved as this type. This can be any type of Assay class from
+                        `assay` module. Please provide string representation of class. By default the assay is assigned
+                        a generic class and has has a dummy normalization function (Default value: 'Assay')
+
+        Returns:
+            None
+
+        """
+
+        from .meld_assay import coordinate_melding
+
+        if assay_label is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `assay_label`. "
+                "It will be used to create a new assay"
+            )
+        if external_bed_fn is None:
+            raise ValueError(
+                "ERROR: Please provide a value for `feature_bed_fn`. "
+                "This should be a BED format file with atleast 5 columns."
+            )
+
+        assay = self._get_assay(from_assay)
+        feature_bed = pd.read_csv(external_bed_fn, header=None, sep="\t").sort_values(
+            by=[0, 1]
+        )
+
+        peaks_coords = assay.feats.fetch_all(peaks_col)
+        for n, i in enumerate(peaks_coords):
+            error_msg = (
+                f"ERROR: Coordinate format check failed for element: {i} (position {n}). The format should "
+                f"be chr:start-end. Please note the colon and hyphen position"
+            )
+            if len(i.split(":")) != 2:
+                raise ValueError(error_msg)
+            if len(i.split(":")[1].split("-")) != 2:
+                raise ValueError(error_msg)
+
+        coordinate_melding(
+            assay,
+            feature_bed=feature_bed,
+            new_assay_name=assay_label,
+            peaks_col=peaks_col,
+            scalar_coeff=scalar_coeff,
+            renormalization=renormalization,
+        )
+
+        self._load_assays(min_cells=10, custom_assay_types={assay_label: assay_type})
+        self._ini_cell_props(min_features=0, mito_pattern=None, ribo_pattern=None)
+
     def make_bulk(
         self,
+        *,
         from_assay: str = None,
         group_key: str = None,
         pseudo_reps: int = 3,
@@ -3797,7 +4296,7 @@ class DataStore(MappingDatastore):
         return vals
 
     def to_anndata(
-        self, from_assay: str = None, cell_key: str = None, layers: dict = None
+        self, *, from_assay: str = None, cell_key: str = None, layers: dict = None
     ):
         """
         Writes an assay of the Zarr hierarchy to AnnData file format.
@@ -3837,25 +4336,23 @@ class DataStore(MappingDatastore):
                 )
         return adata
 
-    def show_zarr_tree(self, start="/", depth=None) -> None:
+    def show_zarr_tree(self, *, start: str = "/", depth: int = 2) -> None:
         """
         Prints the Zarr hierarchy of the DataStore.
 
         Args:
-            start:
-            depth:
+            start: Location in Zarr hierarchy to be used as the root for display
+            depth: Depth of Zarr hierarchy to be displayed.
 
         Returns:
             None
 
         """
-        if depth is None:
-            print(self.z[start].tree(expand=True))
-        else:
-            print(self.z[start].tree(expand=True, level=depth))
+        print(self.z[start].tree(expand=True, level=depth))
 
     def smart_label(
         self,
+        *,
         to_relabel: str,
         base_label: str,
         cell_key: str = "I",
@@ -3888,12 +4385,12 @@ class DataStore(MappingDatastore):
         missing_vals = list(set(df.index).difference(idxmax.unique()))
         new_names = {}
         for i in sorted(idxmax.unique()):
-            j = normed_frac[idxmax[idxmax == i].index].iloc[i]
+            j = normed_frac[idxmax[idxmax == i].index].loc[i]
             j = j.sort_values(ascending=False).index
             for n, k in enumerate(j, start=1):
                 a = chr(ord("@") + n)
                 new_names[k] = f"{i}{a.lower()}"
-        miss_idxmax = df.iloc[missing_vals].idxmax(axis=1).to_dict()
+        miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
         for k, v in miss_idxmax.items():
             new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
 
@@ -3905,6 +4402,7 @@ class DataStore(MappingDatastore):
 
     def plot_cells_dists(
         self,
+        *,
         from_assay: str = None,
         cols: List[str] = None,
         cell_key: str = None,
@@ -4042,6 +4540,9 @@ class DataStore(MappingDatastore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
+        title: Union[str, List[str]] = None,
+        title_size: int = 12,
+        hide_title: bool = False,
         cbar_shrink: float = 0.6,
         marker_scale: float = 70,
         lspacing: float = 0.1,
@@ -4126,6 +4627,11 @@ class DataStore(MappingDatastore):
             legend_size: Font size of the legend text. (Default value: 12)
             legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
                              legend columns will be drawn (Default value: 20)
+            title: Title to be used for plot/plots. If more than one plot are being plotted then the value should be a
+                   list of strings. By default the titles are automatically inferred from color_by parameter
+                   (Default value: None)
+            title_size: Size of each axis/subplots title (Default value: 12)
+            hide_title: If True, then the title of the sublots is not shown (Default value: False)
             cbar_shrink: Shrinking factor for the width of color bar (Default value: 0.6)
             marker_scale: The relative size of legend markers compared with the originally drawn ones.
                           (Default value: 70)
@@ -4161,10 +4667,8 @@ class DataStore(MappingDatastore):
 
         """
 
-        # TODO: add support for subplots
         # TODO: add support for providing a list of subselections, from_assay and cell_keys
         # TODO: add support for different kinds of point markers
-        # TODO: add support for cell zorder randomization
 
         from .plots import shade_scatter, plot_scatter
 
@@ -4248,6 +4752,9 @@ class DataStore(MappingDatastore):
                 legend_onside,
                 legend_size,
                 legends_per_col,
+                title,
+                title_size,
+                hide_title,
                 cbar_shrink,
                 marker_scale,
                 lspacing,
@@ -4282,6 +4789,9 @@ class DataStore(MappingDatastore):
                 legend_onside,
                 legend_size,
                 legends_per_col,
+                title,
+                title_size,
+                hide_title,
                 cbar_shrink,
                 marker_scale,
                 lspacing,
@@ -4547,35 +5057,30 @@ class DataStore(MappingDatastore):
                 f"{cell_key} as `cell_key`"
             )
         g = self.z[assay.name]["markers"][slot_name]
-        goi = []
+        feat_idx = []
         for i in g.keys():
             if "names" in g[i]:
-                goi.extend(g[i]["names"][:][:topn])
-        goi = np.array(sorted(set(goi)))
+                feat_idx.extend(g[i]["names"][:][:topn])
+        if len(feat_idx) == 0:
+            raise ValueError("ERROR: Marker list is empty for all the groups")
+        feat_idx = np.array(sorted(set(feat_idx)))
         cell_idx = np.array(assay.cells.active_index(cell_key))
-        feat_idx = np.array(assay.feats.get_index_by(goi, "ids"))
-        feat_argsort = np.argsort(feat_idx)
         normed_data = assay.normed(
             cell_idx=cell_idx,
-            feat_idx=feat_idx[feat_argsort],
+            feat_idx=feat_idx,
             log_transform=log_transform,
         )
         nc = normed_data.chunks[0]
         # FIXME: avoid conversion to dask dataframe here
+        # Unfortunately doing this dask array in a loop is 10x slower
         normed_data = normed_data.to_dask_dataframe()
         groups = daskarr.from_array(
             assay.cells.fetch(group_key, cell_key), chunks=nc
         ).to_dask_dataframe()
         df = controlled_compute(normed_data.groupby(groups).mean(), 4)
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
-        df.columns = goi[feat_argsort]
+        df.columns = assay.feats.fetch_all("names")[feat_idx]
         df = df.T
-        df.index = (
-            assay.feats.to_pandas_dataframe(["ids", "names"])
-            .set_index("ids")
-            .reindex(df.index)["names"]
-            .values
-        )
         # noinspection PyTypeChecker
         df[df < vmin] = vmin
         # noinspection PyTypeChecker
@@ -4586,4 +5091,136 @@ class DataStore(MappingDatastore):
             save_dpi=save_dpi,
             show_fig=show_fig,
             **heatmap_kwargs,
+        )
+
+    def plot_pseudotime_heatmap(
+        self,
+        *,
+        from_assay: str = None,
+        cell_key: str = None,
+        feat_key: str = None,
+        feature_cluster_key: str = None,
+        pseudotime_key: str = None,
+        show_features: list = None,
+        width: int = 5,
+        height: int = 10,
+        vmin: float = -2.0,
+        vmax: float = 2.0,
+        heatmap_cmap: str = None,
+        pseudotime_cmap: str = None,
+        clusterbar_cmap: str = None,
+        tick_fontsize: int = 10,
+        axis_fontsize: int = 12,
+        feature_label_fontsize: int = 12,
+        savename: str = None,
+        save_dpi: int = 300,
+        show_fig: bool = True,
+    ) -> None:
+        """
+        Plot heatmap for the matrix calculated by running `run_pseudotime_aggregation`. The heatmap shows the cell bins
+        ordered as per pseudotime values and features ordered by clusters. The clusters themselves are ordered in a
+        fashion such that features that have mean maximum expression in early pseudotime appear first and the feature
+        cluster that has mean maxima in the later pseudotime appears last.
+
+        CAUTION: This make take a long time to render and consume large amount of memory if your data has too many
+                 features or you created many bins across cell ordering.
+
+        Args:
+            from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Required paramter. One of the columns from cell attribute table that indicates the cells to be
+                      used. The values in the chosen column should be boolean. This value should be same as used for
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+            feat_key: Required parameter. One of the columns from feature attribute table that indicates the cells to be
+                      used. The values in the chosen column should be boolean. This value should be same as used for
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+            feature_cluster_key: Required parameter. The name of column from feature attribute table that contains
+                                 information about feature clusters.
+            pseudotime_key: Required parameter. The name of the column from cell attribute table that contains the
+                            pseudotime values. This should be same as the one used from the relevent run of
+                            `run_pseudotime_aggregation`.
+            show_features: A list of feature names to be highlighted/labelled on the heatmap.
+            width: Width of the heatmap (Default value: 5)
+            height: Height of the heatmap (Default value: 10)
+            vmin: The minimum value to be displayed on the heatmap. The values lower than this will ceiled to this
+                  value. (Default value: -2.0)
+            vmax: The maximum value to be displayed on the heatmap. The values higher than this will floored to this
+                  value. (Default value: 2.0)
+            heatmap_cmap: Colormap for the heatmap (Default value: coolwarm)
+            pseudotime_cmap: Colormap for the pseudotime bar. It should be some kind of continuous colormap.
+                             (Default value: cmocean.deep)
+            clusterbar_cmap: Colormap for the cluster bar showing the span of each feature cluster.
+                             (Default value: tab20)
+            tick_fontsize: Fontsize for cbar ticks (Default value: 10)
+            axis_fontsize: Font size for labels along each axis(Default value: 12)
+            feature_label_fontsize: Fontsize for feature labels on the heatmap (Default value: 12)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+                      the extension present in the parameter value. (Default value: None)
+            save_dpi: DPI when saving figure (Default value: 300)
+            show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
+
+        Returns: None
+
+        """
+
+        from .plots import plot_annotated_heatmap
+
+        assay = self._get_assay(from_assay)
+        for i in [cell_key, feat_key, feature_cluster_key, feature_cluster_key]:
+            if i is None:
+                var_name = list(dict(i=i).keys())[0]  # Trick to get variables own name
+                raise ValueError(
+                    f"ERROR: Please provide a value for parameter `{var_name}`"
+                )
+
+        cell_ordering = assay.cells.fetch(pseudotime_key, key=cell_key)
+        # noinspection PyProtectedMember
+        cell_idx, feat_idx = assay._get_cell_feat_idx(cell_key, feat_key)
+        hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
+        location = f"aggregated_{cell_key}_{feat_key}_{pseudotime_key}"
+        if location not in assay.z:
+            raise KeyError(
+                f"ERROR: Could not find aggregated feature values at location '{location}' "
+                f"Please make sure that you have run `run_pseudotime_aggregation` with the same values for "
+                f"parameters: `cell_key`, `feat_key` and `pseudotime_key`"
+            )
+        else:
+            if hashes != assay.z[location].attrs["hashes"]:
+                raise ValueError(
+                    f"ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
+                    f"`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
+                )
+
+        da = daskarr.from_zarr(assay.z[location + "/data"], inline_array=True)
+        feature_indices = assay.z[location + "/feature_indices"][:]
+        da = da[: feature_indices.shape[0]]
+
+        feature_clusters = assay.feats.fetch_all(feature_cluster_key)[feature_indices]
+        feature_labels = assay.feats.fetch_all("names")[feature_indices]
+
+        idx = np.argsort(feature_clusters)
+        feature_clusters = feature_clusters[idx]
+        feature_labels = feature_labels[idx]
+        da = da.compute()[idx]
+
+        ordering = assay.cells.fetch(pseudotime_key, key=cell_key)
+
+        plot_annotated_heatmap(
+            df=da,
+            xbar_values=ordering,
+            ybar_values=feature_clusters,
+            display_row_labels=show_features,
+            row_labels=feature_labels,
+            width=width,
+            height=height,
+            vmin=vmin,
+            vmax=vmax,
+            heatmap_cmap=heatmap_cmap,
+            xbar_cmap=pseudotime_cmap,
+            ybar_cmap=clusterbar_cmap,
+            tick_fontsize=tick_fontsize,
+            axis_fontsize=axis_fontsize,
+            row_label_fontsize=feature_label_fontsize,
+            savename=savename,
+            save_dpi=save_dpi,
+            show_fig=show_fig,
         )

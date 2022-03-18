@@ -6,7 +6,6 @@ A collection of classes for reading in different data formats.
     - CrDirReader: A class to read in CellRanger (Cr) data, in the form of a directory.
     - CrReader: A class to read in CellRanger (Cr) data.
     - H5adReader: A class to read in data in the form of a H5ad file (h5 file with AnnData information).
-    - MtxDirReader: A class to read in data in the form of a directory containing a Matrix Market file + accompanying files.
     - NaboH5Reader: A class to read in data in the form of a Nabo H5 file.
     - LoomReader: A class to read in data in the form of a Loom file.
 """
@@ -27,7 +26,6 @@ __all__ = [
     "CrDirReader",
     "CrReader",
     "H5adReader",
-    "MtxDirReader",
     "NaboH5Reader",
     "LoomReader",
 ]
@@ -67,6 +65,10 @@ class CrReader(ABC):
     """
     A class to read in CellRanger (Cr) data.
 
+    Args:
+        grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
+
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
         grpNames: A dictionary that specifies where to find the matrix, features and barcodes.
@@ -75,22 +77,12 @@ class CrReader(ABC):
         assayFeats: A DataFrame with information about the features in the assay.
     """
 
-    def __init__(self, grp_names, file_type):
-        """
-        Args:
-            grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
-            file_type (str): Type of sequencing data ('rna' | 'atac')
-        """
-        if file_type == "rna":
-            self.autoNames = {"Gene Expression": "RNA"}
-        elif file_type == "atac":
-            self.autoNames = {"Peaks": "ATAC"}
-        else:
-            raise ValueError(
-                "ERROR: Please provide a value for parameter 'file_type'.\n"
-                "The value can be either 'rna' or 'atac' depending on whether is is scRNA-Seq or "
-                "scATAC-Seq data"
-            )
+    def __init__(self, grp_names, file_type: str = None):
+        self.autoNames = {
+            "Gene Expression": "RNA",
+            "Peaks": "ATAC",
+            "Antibody Capture": "ADT",
+        }
         self.grpNames: Dict = grp_names
         self.nFeatures: int = len(self.feature_names())
         self.nCells: int = len(self.cell_names())
@@ -116,9 +108,19 @@ class CrReader(ABC):
         if assay is None:
             return v
         elif assay not in self.assayFeats:
-            raise ValueError("ERROR: Assay ID %s is not valid" % assay)
-        idx = self.assayFeats[assay]
-        return v[idx.start : idx.end]
+            raise ValueError(f"ERROR: Assay ID {assay} is not valid")
+        if len(self.assayFeats[assay].shape) == 2:
+            ret_val = []
+            for i in self.assayFeats[assay].values[1:3].T:
+                ret_val.extend(list(v[i[0] : i[1]]))
+            return ret_val
+        elif len(self.assayFeats[assay].shape) == 1:
+            idx = self.assayFeats[assay]
+            return v[idx.start : idx.end]
+        else:
+            raise ValueError(
+                "ERROR: assay feats is 3D. Something went really wrong. Create a github issue"
+            )
 
     def _make_feat_table(self) -> pd.DataFrame:
         s = self.feature_types()
@@ -133,28 +135,18 @@ class CrReader(ABC):
                 span.append((last, last_n, n + 1))
             last = i
         df = pd.DataFrame(span, columns=["type", "start", "end"])
-        df.index = ["assay%s" % str(x + 1) for x in df.index]
+        df.index = ["ASSAY%s" % str(x + 1) for x in df.index]
         df["nFeatures"] = df.end - df.start
         return df.T
 
     def _auto_rename_assay_names(self):
-        anames = list(map(str.upper, self.assayFeats.columns))
-        main_name_k = list(self.autoNames.keys())[0]
-        main_name_v = list(self.autoNames.values())[0]
-        if main_name_v in anames:
-            logger.info(f"{main_name_v} already present")
-            # Making sure that column name is in uppercase 'RNA'
-            newnames = list(self.assayFeats.columns)
-            newnames[anames.index(main_name_v)] = main_name_v
-            self.assayFeats.columns = newnames
-        else:
-            at = self.assayFeats.T["type"] == main_name_k
-            if at.sum() == 1:
-                main_assay = at[at].index[0]
+        new_names = []
+        for k, v in self.assayFeats.T["type"].to_dict().items():
+            if v in self.autoNames:
+                new_names.append(self.autoNames[v])
             else:
-                # FIXME: raise warning here
-                main_assay = self.assayFeats.T[at].nFeatures.astype(int).idxmax()
-            self.rename_assays({main_assay: main_name_v})
+                new_names.append(k)
+        self.assayFeats.columns = new_names
 
     def rename_assays(self, name_map: Dict[str, str]) -> None:
         """
@@ -206,10 +198,15 @@ class CrReader(ABC):
 
 
 class CrH5Reader(CrReader):
+    # noinspection PyUnresolvedReferences
     """
     A class to read in CellRanger (Cr) data, in the form of an H5 file.
 
     Subclass of CrReader.
+
+    Args:
+        h5_fn: File name for the h5 file.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
 
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
@@ -222,11 +219,6 @@ class CrH5Reader(CrReader):
     """
 
     def __init__(self, h5_fn, file_type: str = None):
-        """
-        Args:
-            h5_fn: File name for the h5 file.
-            file_type (str): Type of sequencing data ('rna' | 'atac')
-        """
         self.h5obj = h5py.File(h5_fn, mode="r")
         self.grp = None
         super().__init__(self._handle_version(), file_type)
@@ -286,39 +278,63 @@ class CrDirReader(CrReader):
 
     Subclass of CrReader.
 
+    Args:
+        loc (str): Path for the directory containing the cellranger output.
+        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
+        mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
+        index_offset (int): This value is added to each feature index (Default value: -1)
+
     Attributes:
         loc: Path for the directory containing the cellranger output.
         matFn: The file name for the matrix file.
+        mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
+        index_offset (int): This value is added to each feature index (Default value: -1)
     """
 
-    def __init__(self, loc, file_type: str = None):
-        """
-        Args:
-            loc (str): Path for the directory containing the cellranger output.
-            file_type (str): Type of sequencing data ('rna' | 'atac')
-        """
+    def __init__(
+        self,
+        loc,
+        file_type: str = None,
+        mtx_separator: str = " ",
+        index_offset: int = -1,
+    ):
         self.loc: str = loc.rstrip("/") + "/"
         self.matFn = None
-        super().__init__(self._handle_version(), file_type)
+        self.sep = mtx_separator
+        self.indexOffset = index_offset
+        super().__init__(self._handle_version())
 
     def _handle_version(self):
-        if os.path.isfile(self.loc + "features.tsv.gz"):
+        show_error = False
+        if os.path.isfile(self.loc + "matrix.mtx.gz"):
             self.matFn = self.loc + "matrix.mtx.gz"
-            grps = {
-                "feature_ids": ("features.tsv.gz", 0),
-                "feature_names": ("features.tsv.gz", 1),
-                "feature_types": ("features.tsv.gz", 2),
-                "cell_names": ("barcodes.tsv.gz", 0),
-            }
-        elif os.path.isfile(self.loc + "genes.tsv"):
+        elif os.path.isfile(self.loc + "matrix.mtx"):
             self.matFn = self.loc + "matrix.mtx"
-            grps = {
-                "feature_ids": ("genes.tsv", 0),
-                "feature_names": ("genes.tsv", 1),
-                "feature_types": None,
-                "cell_names": ("barcodes.tsv", 0),
-            }
         else:
+            show_error = True
+        if os.path.isfile(self.loc + "features.tsv.gz"):
+            feat_fn = "features.tsv.gz"
+        elif os.path.isfile(self.loc + "features.tsv"):
+            feat_fn = "features.tsv"
+        elif os.path.isfile(self.loc + "genes.tsv.gz"):
+            feat_fn = "genes.tsv.gz"
+        elif os.path.isfile(self.loc + "genes.tsv"):
+            feat_fn = "genes.tsv"
+        elif os.path.isfile(self.loc + "peaks.bed"):
+            feat_fn = "peaks.bed"
+        elif os.path.isfile(self.loc + "peaks.bed.gz"):
+            feat_fn = "peaks.bed.gz"
+        else:
+            feat_fn = None
+            show_error = True
+        if os.path.isfile(self.loc + "barcodes.tsv.gz"):
+            cell_fn = "barcodes.tsv.gz"
+        elif os.path.isfile(self.loc + "barcodes.tsv"):
+            cell_fn = "barcodes.tsv"
+        else:
+            cell_fn = None
+            show_error = True
+        if show_error:
             raise IOError(
                 "ERROR: Couldn't find either of these expected combinations of files:\n"
                 "\t- matrix.mtx, barcodes.tsv and genes.tsv\n"
@@ -326,7 +342,12 @@ class CrDirReader(CrReader):
                 "Please make sure that you have not compressed or uncompressed the Cellranger output files "
                 "manually"
             )
-        return grps
+        return {
+            "feature_ids": (feat_fn, 0),
+            "feature_names": (feat_fn, 1),
+            "feature_types": (feat_fn, 2),
+            "cell_names": (cell_fn, 0),
+        }
 
     def _read_dataset(self, key: Optional[str] = None):
         try:
@@ -351,152 +372,12 @@ class CrDirReader(CrReader):
         Args:
             a: Sparse matrix, contains a chunk of data from the MTX file.
         """
-        idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
-        return sparse.COO(
-            [(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] - 1).astype(int)],
-            a[:, 2],
-            shape=(len(idx) + 1, self.nFeatures),
-        )
-
-    # noinspection DuplicatedCode
-    def consume(
-        self, batch_size: int, lines_in_mem: int = int(1e5)
-    ) -> Generator[List[np.ndarray], None, None]:
-        stream = pd.read_csv(
-            self.matFn, skiprows=3, sep=" ", header=None, chunksize=lines_in_mem
-        )
-        start = 1
-        dfs = []
-        for df in stream:
-            if df.iloc[-1, 1] - start >= batch_size:
-                idx = df[1] < batch_size + start
-                dfs.append(df[idx])
-                yield self.to_sparse(np.vstack(dfs))
-                dfs = [df[~idx]]
-                start += batch_size
-            else:
-                dfs.append(df)
-        yield self.to_sparse(np.vstack(dfs))
-
-
-class MtxDirReader(CrReader):
-    """
-    A class to read a directory with a Matrix Market file and its accompanying files.
-
-    Subclass of CrReader.
-
-    Attributes:
-        loc: Path for the directory containing the cellranger output.
-        matFn: The file name for the matrix file.
-    """
-
-    def __init__(
-        self,
-        loc,
-        file_type: str = None,
-        mtx_separator: str = " ",
-        index_offset: int = -1,
-    ):
-        """
-        Args:
-            loc (str): Path for the directory containing the cellranger output.
-            file_type (str): Type of sequencing data ('rna' | 'atac')
-            mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
-            index_offset (int): This value is added to each feature index (Default value: -1)
-        """
-        self.loc: str = loc.rstrip("/") + "/"
-        self.matFn = None
-        self.sep = mtx_separator
-        self.indexOffset = index_offset
-        super().__init__(self._handle_version(), file_type)
-
-    def _handle_version(self):
-        if os.path.isfile(self.loc + "features.tsv.gz"):
-            self.matFn = self.loc + "matrix.mtx.gz"
-            grps = {
-                "feature_ids": ("features.tsv.gz", 0),
-                "feature_names": ("features.tsv.gz", 1),
-                "feature_types": ("features.tsv.gz", 2),
-                "cell_names": ("barcodes.tsv.gz", 0),
-            }
-        elif os.path.isfile(
-            self.loc + "features.tsv.gz"
-        ):  # sometimes somebody might have gunziped these files...
-            self.matFn = self.loc + "matrix.mtx"
-            grps = {
-                "feature_ids": ("features.tsv", 0),
-                "feature_names": ("features.tsv", 1),
-                "feature_types": None,
-                "cell_names": ("barcodes.tsv", 0),
-            }
-        elif os.path.isfile(self.loc + "genes.tsv"):
-            self.matFn = self.loc + "matrix.mtx"
-            grps = {
-                "feature_ids": ("genes.tsv", 0),
-                "feature_names": ("genes.tsv", 1),
-                "feature_types": None,
-                "cell_names": ("barcodes.tsv", 0),
-            }
-        elif os.path.isfile(self.loc + "genes.tsv.gz"):
-            self.matFn = self.loc + "matrix.mtx.gz"
-            grps = {
-                "feature_ids": ("genes.tsv.gz", 0),
-                "feature_names": ("genes.tsv.gz", 1),
-                "feature_types": ("genes.tsv.gz", 2),
-                "cell_names": ("barcodes.tsv.gz", 0),
-            }
-        else:
-            raise IOError(
-                "ERROR: Couldn't find either of these expected combinations of files:\n"
-                "\t- matrix.mtx, barcodes.tsv and genes.tsv\n"
-                "\t- matrix.mtx.gz, barcodes.tsv.gz and features.tsv.gz\n"
-                "Please make sure that you have not compressed or uncompressed the Cellranger output files "
-                "manually"
-            )
-        return grps
-
-    def _read_dataset(self, key: Optional[str] = None):
-        try:
-            vals = [
-                x.split("\t")[self.grpNames[key][1]]
-                for x in read_file(self.loc + self.grpNames[key][0])
-            ]
-        except IndexError:
-            vals = None
-        return vals
-
-    # noinspection DuplicatedCode
-    def to_sparse(self, a):
-        """
-        Returns the input data as a sparse (COO) matrix.
-
-        Args:
-            a: a dense numpy matrix
-        """
-        idx = np.where(np.diff(a[:, 1]) == 1)[0] + 1
+        idx = np.where(np.diff(a[:, 1]) > 0)[0] + 1
         return sparse.COO(
             [(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] + self.indexOffset).astype(int)],
             a[:, 2],
             shape=(len(idx) + 1, self.nFeatures),
         )
-
-    def _subset_by_assay(self, v, assay) -> List:
-        if assay is None:
-            return v
-        elif assay not in self.assayFeats:
-            raise ValueError("ERROR: Assay ID %s is not valid" % assay)
-        if len(self.assayFeats[assay].shape) == 2:
-            ret_val = []
-            for i in self.assayFeats[assay].values[1:3].T:
-                ret_val.extend(list(v[i[0] : i[1]]))
-            return ret_val
-        elif len(self.assayFeats[assay].shape) == 1:
-            idx = self.assayFeats[assay]
-            return v[idx.start : idx.end]
-        else:
-            raise ValueError(
-                "ERROR: assay feats is 3D. Something went really wrong. Create a github issue"
-            )
 
     # noinspection DuplicatedCode
     def consume(
@@ -522,6 +403,19 @@ class MtxDirReader(CrReader):
 class H5adReader:
     """
     A class to read in data from a H5ad file (h5 file with AnnData information).
+
+    Args:
+        h5ad_fn: Path to H5AD file
+        cell_attrs_key: H5 group under which cell attributes are saved.(Default value: 'obs')
+        feature_attrs_key: H5 group under which feature attributes are saved.(Default value: 'var')
+        cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
+        feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
+        feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
+        matrix_key: Group where in the sparse matrix resides (default: 'X')
+        category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
+                            corresponding index value within this group.
+        dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+               method. (Default value: Automatically determined)
 
     Attributes:
         h5: A File object from the h5py package.
@@ -551,21 +445,6 @@ class H5adReader:
         category_names_key: str = "__categories",
         dtype: str = None,
     ):
-        """
-        Args:
-            h5ad_fn: Path to H5AD file
-            cell_attrs_key: H5 group under which cell attributes are saved.(Default value: 'obs')
-            feature_attrs_key: H5 group under which feature attributes are saved.(Default value: 'var')
-            cell_ids_key: Key in `obs` group that contains unique cell IDs. By default the index will be used.
-            feature_ids_key: Key in `var` group that contains unique feature IDs. By default the index will be used.
-            feature_name_key: Key in `var` group that contains feature names. (Default: gene_short_name)
-            matrix_key: Group where in the sparse matrix resides (default: 'X')
-            category_names_key: Looks up this group and replaces the values in `var` and 'obs' child datasets with the
-                                corresponding index value within this group.
-            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
-                   method. (Default value: Automatically determined)
-        """
-
         self.h5 = h5py.File(h5ad_fn, mode="r")
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
@@ -824,6 +703,9 @@ class NaboH5Reader:
     """
     A class to read in data in the form of a Nabo H5 file.
 
+    Args:
+        h5_fn: Path to H5 file.
+
     Attributes:
         h5: A File object from the h5py package.
         nCells: Number of cells in dataset.
@@ -831,10 +713,6 @@ class NaboH5Reader:
     """
 
     def __init__(self, h5_fn: str):
-        """
-        Args:
-            h5_fn: Path to H5 file.
-        """
         self.h5 = h5py.File(h5_fn, mode="r")
         self._check_integrity()
         self.nCells = self.h5["names"]["cells"].shape[0]
@@ -888,6 +766,23 @@ class LoomReader:
     """
     A class to read in data in the form of a Loom file.
 
+    Args:
+        loom_fn: Path to loom format file.
+        matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
+                    This matrix is expected to be of form (nFeatures x nCells)
+        cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
+                        (Default value: col_attrs)
+        cell_names_key: Child node under the `cell_attrs_key` wherein the cell names are stored.
+                        (Default value: obs_names)
+        feature_attrs_key: Child node under the HDF5 file wherein the feature/gene attributes are stored.
+                           (Default value: row_attrs)
+        feature_names_key: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
+                           (Default value: var_names)
+        feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
+                         (Default value: None)
+        dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
+               method. (Default value: Automatically determined)
+
     Attributes:
         h5: A File object from the h5py package.
         matrixKey: Child node under HDF5 file root wherein the chunked matrix is stored.
@@ -912,24 +807,6 @@ class LoomReader:
         feature_ids_key: str = None,
         dtype: str = None,
     ) -> None:
-        """
-        Args:
-            loom_fn: Path to loom format file.
-            matrix_key: Child node under HDF5 file root wherein the chunked matrix is stored. (Default value: matrix).
-                        This matrix is expected to be of form (nFeatures x nCells)
-            cell_attrs_key: Child node under the HDF5 file wherein the cell attributes are stored.
-                            (Default value: col_attrs)
-            cell_names_key: Child node under the `cell_attrs_key` wherein the cell names are stored.
-                            (Default value: obs_names)
-            feature_attrs_key: Child node under the HDF5 file wherein the feature/gene attributes are stored.
-                               (Default value: row_attrs)
-            feature_names_key: Child node under the `feature_attrs_key` wherein the feature/gene names are stored.
-                               (Default value: var_names)
-            feature_ids_key: Child node under the `feature_attrs_key` wherein the feature/gene ids are stored.
-                               (Default value: None)
-            dtype: Numpy dtype of the matrix data. This dtype is enforced when streaming the data through `consume`
-                   method. (Default value: Automatically determined)
-        """
         self.h5 = h5py.File(loom_fn, mode="r")
         self.matrixKey = matrix_key
         self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key

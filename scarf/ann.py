@@ -3,7 +3,24 @@ from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
 from numpy.linalg import LinAlgError
 
-__all__ = ["AnnStream"]
+__all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
+
+
+def instantiate_knn_index(
+    space, dim, max_elements, ef_construction, M, random_seed, ef, num_threads
+):
+    import hnswlib
+
+    ann_idx = hnswlib.Index(space=space, dim=dim)
+    ann_idx.init_index(
+        max_elements=max_elements,
+        ef_construction=ef_construction,
+        M=M,
+        random_seed=random_seed,
+    )
+    ann_idx.set_ef(ef)
+    ann_idx.set_num_threads(num_threads)
+    return ann_idx
 
 
 def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarray):
@@ -52,6 +69,7 @@ class AnnStream:
         do_kmeans_fit: bool,
         disable_scaling: bool,
         ann_idx,
+        lsi_skip_first: bool,
         lsi_params: dict,
     ):
         self.data = data
@@ -110,8 +128,11 @@ class AnnStream:
             elif self.method == "lsi":
                 if self.loadings is None or len(self.loadings) == 0:
                     if disable_reduction is False:
-                        self._fit_lsi(lsi_params)
+                        self._fit_lsi(lsi_skip_first, lsi_params)
                 else:
+                    # First dimension of LSI captures depth
+                    if lsi_skip_first:
+                        self.loadings = self.loadings[:, 1:]
                     self.dims = self.loadings.shape[1]
                 if disable_reduction:
                     self.reducer = lambda x: x
@@ -135,7 +156,7 @@ class AnnStream:
             else:
                 self.annIdx = ann_idx
                 self.annIdx.set_ef(self.annEf)
-                self.annIdx.set_num_threads(1)
+                self.annIdx.set_num_threads(self.annThreads)
             self.kmeans = self._fit_kmeans(do_kmeans_fit)
 
     def _handle_batch_size(self):
@@ -222,9 +243,13 @@ class AnnStream:
             )
         self.loadings = self._pca.components_[:-1, :].T
 
-    def _fit_lsi(self, lsi_params) -> None:
-        from gensim.models import LsiModel
-        from gensim.matutils import Dense2Corpus
+    def _fit_lsi(self, lsi_skip_first, lsi_params) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            from gensim.models import LsiModel
+            from gensim.matutils import Dense2Corpus
 
         for i in ["corpus", "num_topics", "id2word", "chunksize", "dtype"]:
             if i in lsi_params:
@@ -236,7 +261,7 @@ class AnnStream:
             corpus=Dense2Corpus(
                 controlled_compute(self.data.blocks[0], self.nthreads).T
             ),
-            num_topics=self.dims,
+            num_topics=self.dims + 1,  # +1 because first dim will be discarded
             chunksize=self.data.chunksize[0],
             id2word={x: x for x in range(self.data.shape[1])},
             **lsi_params,
@@ -245,23 +270,26 @@ class AnnStream:
             if n == 0:
                 continue
             self._lsiModel.add_documents(Dense2Corpus(i.T))
-        self.loadings = self._lsiModel.get_topics().T
+        if lsi_skip_first:
+            self.loadings = self._lsiModel.get_topics().T[:, 1:]
+        else:
+            self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
-        import hnswlib
-
         dims = self.dims
         if dims < 1:
             dims = self.data.shape[1]
-        ann_idx = hnswlib.Index(space=self.annMetric, dim=dims)
-        ann_idx.init_index(
-            max_elements=self.nCells,
-            ef_construction=self.annEfc,
-            M=self.annM,
-            random_seed=self.randState,
+
+        ann_idx = instantiate_knn_index(
+            self.annMetric,
+            dims,
+            self.nCells,
+            self.annEfc,
+            self.annM,
+            self.randState,
+            self.annEf,
+            self.annThreads,
         )
-        ann_idx.set_ef(self.annEf)
-        ann_idx.set_num_threads(self.annThreads)
         for i in self.iter_blocks(msg="Fitting ANN"):
             ann_idx.add_items(self.reducer(i))
         return ann_idx
@@ -276,11 +304,11 @@ class AnnStream:
             random_state=self.randState,
             batch_size=self.batchSize,
         )
+        temp = []
         with threadpool_limits(limits=self.nthreads):
             for i in self.iter_blocks(msg="Fitting kmeans"):
                 kmeans.partial_fit(self.reducer(i))
-        temp = []
-        for i in self.iter_blocks(msg="Estimating seed partitions"):
-            temp.extend(kmeans.predict(self.reducer(i)))
+            for i in self.iter_blocks(msg="Estimating seed partitions"):
+                temp.extend(kmeans.predict(self.reducer(i)))
         self.clusterLabels = np.array(temp)
         return kmeans

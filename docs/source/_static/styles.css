@@ -1,0 +1,44 @@
+.wy-nav-content {
+    max-width: 900px !important;
+}
+h1 {
+    color: #003B71 !important;
+    font-size: 1.75em
+}
+h2 {
+    font-size: 1.45em
+}
+h3 {
+    font-size: 1.2em
+}
+h4 {
+    font-size: 1em
+}
+h5 {
+    font-size: 1em
+}
+h6 {
+    font-size: 1em
+}
+p {
+    font-size: 1em
+}
+.dataframe {
+    font-size: 0.8em !important;
+}
+@media (min-width: 768px) {
+	div.navbar-brand-box a.navbar-brand img {
+		max-height: 25vh !important;
+	}
+}
+div.navbar-brand-box a.navbar-brand img {
+    display: block;
+    height: auto;
+    width: auto;
+    max-height: 30vh !important;
+    max-width: 100%;
+    margin: 0 auto;
+}
+.navbar-brand-box {
+    padding-top: unset !important;
+}

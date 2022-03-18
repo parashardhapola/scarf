@@ -6,7 +6,7 @@ import matplotlib as mpl
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union, List
 from cmocean import cm
 from .utils import logger
 
@@ -403,6 +403,7 @@ def plot_heatmap(
     save_dpi: int = 300,
     figsize=None,
     show_fig: bool = True,
+    **heatmap_kwargs
 ):
     """
     Shows a heatmap plot.
@@ -420,6 +421,7 @@ def plot_heatmap(
         figsize=figsize,
         cmap=cmap,
         rasterized=True,
+        **heatmap_kwargs
     )
     cgx.ax_heatmap.set_yticklabels(
         cdf.index[cgx.dendrogram_row.reordered_ind], fontsize=fontsize
@@ -501,7 +503,7 @@ def _scatter_make_colors(
                 pal = custom_palettes[10]
             elif len(uv) <= 20:
                 pal = custom_palettes[20]
-            elif len(uv) <= 30:
+            elif len(uv) <= 28:
                 pal = custom_palettes[28]
             else:
                 pal = custom_palettes[102]
@@ -549,6 +551,9 @@ def _scatter_legends(
     ondata: bool,
     onside: bool,
     fontsize: float,
+    title: str,
+    title_fontsize: float,
+    hide_title: bool,
     n_per_col: int,
     scale: float,
     ls: float,
@@ -565,6 +570,8 @@ def _scatter_legends(
         ondata: display legend over scatter plot?
         onside: display legend on side?
         fontsize: fontsize of legend text
+        title: Title of subplot/axes
+        hide_title: Whether to hide the title
         n_per_col: number of legends per column
         scale: scale legend marker size
         ls: line spacing
@@ -584,7 +591,12 @@ def _scatter_legends(
         cax.set_axis_off()
         return None
     if v.dtype.name == "category":
-        ax.title.set_text(vc)
+        if hide_title is False:
+            if title is not None:
+                ax.title.set_text(title)
+            else:
+                ax.title.set_text(vc)
+            ax.title.set_fontsize(title_fontsize)
         centers = df[[x, y, vc]].groupby(vc).median().T
         for i in centers:
             if ondata:
@@ -622,7 +634,11 @@ def _scatter_legends(
     else:
         norm = Normalize(vmin=v.min(), vmax=v.max())
         cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation="horizontal")
-        cb.set_label(vc, fontsize=fontsize)
+        if hide_title is False:
+            if title is not None:
+                cb.set_label(title, fontsize=title_fontsize)
+            else:
+                cb.set_label(vc, fontsize=title_fontsize)
         cb.ax.xaxis.set_label_position("bottom")
         cb.ax.xaxis.set_ticks_position("top")
         cb.outline.set_visible(False)
@@ -677,6 +693,20 @@ def _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         yield n, df
 
 
+def _handle_titles_type(titles, n_df):
+    if titles is not None:
+        if n_df > 1:
+            if len(titles) != n_df or type(titles) != list:
+                logger.warning(
+                    "Number of titles is not same as the the number of titles. Provided titles cannot be used"
+                )
+                titles = None
+        else:
+            if type(titles) == str:
+                titles = [titles]
+    return titles
+
+
 def plot_scatter(
     dfs,
     in_ax=None,
@@ -698,6 +728,9 @@ def plot_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    titles: str = None,
+    title_size: int = 12,
+    hide_title: bool = False,
     cbar_shrink: float = 0.6,
     marker_scale: float = 70,
     lspacing: float = 0.1,
@@ -731,6 +764,8 @@ def plot_scatter(
             sk["edgecolors"] = "k"
         return sk
 
+    titles = _handle_titles_type(titles, len(dfs))
+
     axs = _create_axes(dfs, in_ax, width, height, w_pad, h_pad, n_columns)
     for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         v = df[df.columns[2]]
@@ -760,6 +795,10 @@ def plot_scatter(
         )
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+        if titles is not None:
+            title = titles[n]
+        else:
+            title = None
         _scatter_legends(
             df,
             ax,
@@ -768,6 +807,9 @@ def plot_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title,
+            title_size,
+            hide_title,
             legends_per_col,
             marker_scale,
             lspacing,
@@ -805,6 +847,9 @@ def shade_scatter(
     legend_onside: bool = True,
     legend_size: float = 12,
     legends_per_col: int = 20,
+    titles: Union[str, List[str]] = None,
+    title_size: int = 12,
+    hide_title: bool = False,
     cbar_shrink: float = 0.6,
     marker_scale: float = 70,
     lspacing: float = 0.1,
@@ -825,6 +870,7 @@ def shade_scatter(
     import datashader.transfer_functions as tf
     from functools import partial
 
+    titles = _handle_titles_type(titles, len(dfs))
     axs = _create_axes(dfs, in_ax, figsize, figsize, w_pad, h_pad, n_columns)
     for n, df in _iter_dataframes(dfs, mask_values, mask_name, force_ints_as_cats):
         dim1, dim2, vc = df.columns[:3]
@@ -862,6 +908,10 @@ def shade_scatter(
 
         _scatter_label_axis(df, ax, ax_label_size, frame_offset)
         _scatter_cleanup(ax, spine_width, spine_color, displayed_sides)
+        if titles is not None:
+            title = titles[n]
+        else:
+            title = None
         _scatter_legends(
             df,
             ax,
@@ -870,6 +920,9 @@ def shade_scatter(
             legend_ondata,
             legend_onside,
             legend_size,
+            title,
+            title_size,
+            hide_title,
             legends_per_col,
             marker_scale,
             lspacing,
@@ -1186,3 +1239,99 @@ def plot_cluster_hierarchy(
         plt.show()
     else:
         return ax
+
+
+def plot_annotated_heatmap(
+    df: np.array,
+    xbar_values: np.ndarray,
+    ybar_values: np.ndarray,
+    display_row_labels: list = None,
+    row_labels: list = None,
+    width: int = 5,
+    height: int = 10,
+    vmin: float = -2.0,
+    vmax: float = 2.0,
+    heatmap_cmap: str = None,
+    xbar_cmap: str = None,
+    ybar_cmap: str = None,
+    tick_fontsize: int = 10,
+    axis_fontsize: int = 12,
+    row_label_fontsize: int = 12,
+    savename: str = None,
+    save_dpi: int = 300,
+    show_fig: bool = True,
+):
+
+    import matplotlib.gridspec as gridspec
+    import matplotlib.ticker as mticker
+
+    if display_row_labels is None:
+        display_row_labels = []
+    if row_labels is None:
+        row_labels = list(map(str, range(df.shape[0])))
+    else:
+        if len(row_labels) != df.shape[0]:
+            raise ValueError(
+                "ERROR: Number of provided feature labels and size of the data array does not match"
+            )
+
+    whr = height / width
+    fig = plt.figure(constrained_layout=False, figsize=(width, height))
+    gs = fig.add_gridspec(nrows=int(20 * whr), ncols=20, wspace=0, hspace=0)
+    heatmap_ax = fig.add_subplot(gs[:-2, 1:16])
+    clustbar_ax = fig.add_subplot(gs[:-2, 17:18])
+    cbar_ax = fig.add_subplot(gs[round(7 * whr) : round(12 * whr), -1:])
+    ptime_ax = fig.add_subplot(gs[-1:, 1:16])
+
+    if heatmap_cmap is None:
+        heatmap_cmap = "coolwarm"
+    sns.heatmap(
+        df,
+        ax=heatmap_ax,
+        cbar_ax=cbar_ax,
+        xticklabels=[],
+        yticklabels=[],
+        vmin=vmin,
+        vmax=vmax,
+        cmap=heatmap_cmap,
+    )
+
+    if len(display_row_labels) > 0:
+        row_labels = {x.lower(): n for n, x in enumerate(row_labels)}
+        display_row_labels = [x for x in display_row_labels if x.lower() in row_labels]
+        heatmap_ax.set_yticks([row_labels[x.lower()] for x in display_row_labels])
+        heatmap_ax.set_yticklabels(display_row_labels, fontsize=row_label_fontsize)
+
+    heatmap_ax.set_title(f"{df.shape[0]} features", fontsize=axis_fontsize)
+    ticks_loc = cbar_ax.get_yticks().tolist()
+    cbar_ax.yaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+    cbar_ax.set_yticklabels([x for x in ticks_loc], fontsize=tick_fontsize)
+
+    if ybar_cmap is None:
+        ybar_cmap = "tab20"
+    clustbar_ax.imshow(ybar_values.reshape(-1, 1), aspect="auto", cmap=ybar_cmap)
+    clustbar_ax.set_xticks([])
+    clustbar_ax.set_yticks([])
+
+    for i in set(ybar_values):
+        y = np.where(ybar_values == i)[0].mean()
+        clustbar_ax.text(
+            0,
+            y,
+            i,
+            fontsize=axis_fontsize,
+            ha="center",
+            va="center",
+        )
+
+    binned_ptime = [x.mean() for x in np.array_split(sorted(xbar_values), df.shape[1])]
+    if xbar_cmap is None:
+        xbar_cmap = cm.deep
+    ptime_ax.imshow([binned_ptime], aspect="auto", cmap=xbar_cmap)
+    ptime_ax.set_xticks([])
+    ptime_ax.set_yticks([])
+    ptime_ax.set_xlabel("------ Pseudotime----->", fontsize=axis_fontsize)
+    if savename is not None:
+        plt.savefig(savename, dpi=save_dpi)
+    if show_fig:
+        plt.show()

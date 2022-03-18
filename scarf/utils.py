@@ -7,6 +7,7 @@ Utility methods.
     - rescale_array: performs edge trimming on values of the input vector
     - show_progress: performs computation with Dask and shows progress bar
     - system_call: executes a command in the underlying operative system
+    - rolling_window: applies rolling window mean over a vector
 """
 
 from loguru import logger
@@ -15,11 +16,13 @@ import numpy as np
 from tqdm.dask import TqdmCallback
 from dask.array.core import Array
 from tqdm.auto import tqdm as std_tqdm
+from numba import jit
 
 
 __all__ = [
     "logger",
     "tqdmbar",
+    "tqdm_params",
     "set_verbosity",
     "get_log_level",
     "system_call",
@@ -27,6 +30,7 @@ __all__ = [
     "clean_array",
     "show_dask_progress",
     "controlled_compute",
+    "rolling_window",
 ]
 
 logger.remove()
@@ -185,3 +189,24 @@ def system_call(command):
             logger.info(output.strip())
     process.poll()
     return None
+
+
+@jit(nopython=True)
+def rolling_window(a, w):
+    n, m = a.shape
+    b = np.zeros(shape=(n, m))
+    for i in range(n):
+        if i < w:
+            x = i
+            y = w - i
+        elif (n - i) < w:
+            x = w - (n - i)
+            y = n - i
+        else:
+            x = w // 2
+            y = w // 2
+        x = i - x
+        y = i + y
+        for j in range(m):
+            b[i, j] = a[x:y, j].mean()
+    return b

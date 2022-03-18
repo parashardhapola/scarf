@@ -16,7 +16,7 @@ import zarr
 from .metadata import MetaData
 from .utils import show_dask_progress, controlled_compute, logger
 from scipy.sparse import csr_matrix, vstack
-from typing import Tuple, List
+from typing import Tuple, List, Generator, Optional
 import pandas as pd
 
 __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
@@ -106,6 +106,13 @@ class Assay:
     A generic Assay class that contains methods to calculate feature level statistics.
     It also provides a method for saving normalized subset of data for later KNN graph construction.
 
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        nthreads: number for threads to use for dask parallel computations
+        min_cells_per_feature:
+
     Attributes:
         name: A label for the assay instance
         z: Zarr group that contains the assay
@@ -126,14 +133,6 @@ class Assay:
         nthreads: int,
         min_cells_per_feature: int = 10,
     ):
-        """
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            nthreads: number for threads to use for dask parallel computations
-            min_cells_per_feature:
-        """
         self.name = name
         self.z = z[self.name]
         self.cells = cell_data
@@ -485,6 +484,194 @@ class Assay:
             self.attrs["latest_cell_key"] = cell_key
         return daskarr.from_zarr(self.z[location + "/data"], inline_array=True)
 
+    def iter_normed_feature_wise(
+        self,
+        cell_key: Optional[str],
+        feat_key: Optional[str],
+        batch_size: int,
+        msg: Optional[str],
+        **norm_params,
+    ) -> Generator[pd.DataFrame, None, None]:
+        """
+        This generator iterates over all the features marked by `feat_key` in batches.
+
+        Args:
+            cell_key: Name of the key (column) from cell attribute table. The data will be fetched
+                      for only those cells that have a True value in this column. If None then all the cells are used
+            feat_key: Name of the key (column) from feature attribute table. The data will be fetched
+                      for only those features that have a True value in this column. If None then all the features are
+                      used
+            batch_size: Number of genes to be loaded in the memory at a time.
+            msg: Message to be displayed in the progress bar
+
+        Returns:
+
+        """
+        from .utils import tqdmbar
+
+        if cell_key is None:
+            cell_idx = np.array(list(range(self.cells.N)))
+        else:
+            cell_idx = self.cells.active_index(cell_key)
+
+        if feat_key is None:
+            feat_idx = np.array(list(range(self.feats.N)))
+        else:
+            feat_idx = self.feats.active_index(feat_key)
+        if msg is None:
+            msg = ""
+
+        data = self.normed(
+            cell_idx=cell_idx,
+            feat_idx=feat_idx,
+            **norm_params,
+        )
+        logger.debug("Will iterate over data of shape: ", data.shape)
+        chunks = np.array_split(
+            np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
+        )
+        for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
+            yield pd.DataFrame(
+                controlled_compute(data[:, chunk], self.nthreads),
+                columns=feat_idx[chunk],
+            )
+
+    def save_normed_for_query(
+        self,
+        feat_key: Optional[str],
+        batch_size: int,
+        overwrite: bool = True
+    ) -> None:
+        """
+        This methods dumps normalized values for features (as marked by `feat_key`) onto disk  in the 'prenormed'
+        slot under the assay's own slot.
+
+        Args:
+            feat_key: Name of the key (column) from feature attribute table. The data will be fetched
+                      for only those features that have a True value in this column. If None then all the features are
+                      used
+            batch_size: Number of genes to be loaded in the memory at a time.
+            overwrite: If True (default value), then will overwrite the existing 'prenormed' slot in the
+                       assay hierarchy
+
+        Returns:
+            None
+
+        """
+        from .writers import create_zarr_obj_array
+
+        if 'prenormed' in self.z and overwrite is False:
+            return None
+
+        g = self.z.create_group("prenormed", overwrite=True)
+        for df in self.iter_normed_feature_wise(
+            None, feat_key, batch_size, "Saving features"
+        ):
+            for i in df:
+                create_zarr_obj_array(g, i, df[i].values, np.float64, True, False)
+
+    def save_aggregated_ordering(
+        self,
+        cell_key: str,
+        feat_key: str,
+        ordering_key: str,
+        min_exp: float = 10,
+        window_size: int = 200,
+        chunk_size: int = 50,
+        smoothen: bool = True,
+        z_scale: bool = True,
+        batch_size: int = 100,
+        **norm_params,
+    ):
+        """
+
+        Args:
+            cell_key:
+            feat_key:
+            ordering_key:
+            min_exp:
+            window_size:
+            chunk_size:
+            smoothen:
+            z_scale:
+            batch_size:
+            **norm_params:
+
+        Returns:
+
+        """
+
+        from .utils import rolling_window
+        from .writers import create_zarr_dataset
+
+        cell_ordering = self.cells.fetch(ordering_key, key=cell_key)
+        cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
+        hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
+        params = {
+            "min_exp": min_exp,
+            "window_size": window_size,
+            "chunk_size": chunk_size,
+            "smoothen": smoothen,
+            "z_scale": z_scale,
+            "norm_params": norm_params,
+        }
+        location = f"aggregated_{cell_key}_{feat_key}_{ordering_key}"
+        if (
+            location in self.z
+            and hashes == self.z[location].attrs["hashes"]
+            and params == self.z[location].attrs["params"]
+        ):
+            logger.info(f"Using existing aggregated data from {location}")
+        else:
+            if location in self.z:
+                del self.z[location]
+
+            # The actual size might be smaller due to dynamic filtering of features
+            g = create_zarr_dataset(
+                self.z,
+                location + "/data",
+                (batch_size,),
+                "float64",
+                (feat_idx.shape[0], chunk_size),
+            )
+            ordering_idx = np.argsort(cell_ordering)
+            valid_feat_idx = []
+            s = 0
+            for df in self.iter_normed_feature_wise(
+                cell_key,
+                feat_key,
+                batch_size,
+                "Binning over cell-ordering",
+                **norm_params,
+            ):
+                valid_features = df.columns[df.sum() > min_exp]
+                df = df[valid_features]
+                if smoothen:
+                    df = rolling_window(df.reindex(ordering_idx).values, window_size)
+                if z_scale:
+                    df = (df - df.mean(axis=0)) / df.std(axis=0)
+                df = np.array(
+                    [x.mean(axis=0) for x in np.array_split(df, chunk_size)]
+                ).T
+                valid_feat_idx.extend(list(valid_features))
+                g[s : s + df.shape[0]] = df
+                s += df.shape[0]
+
+            g = create_zarr_dataset(
+                self.z,
+                location + "/feature_indices",
+                (len(valid_feat_idx),),
+                "uint64",
+                (len(valid_feat_idx),),
+            )
+            g[:] = np.array(valid_feat_idx).astype(int)
+            self.z[location].attrs["hashes"] = hashes
+            self.z[location].attrs["params"] = params
+
+        ret_val1 = daskarr.from_zarr(self.z[location + "/data"], inline_array=True)
+        ret_val2 = self.z[location + "/feature_indices"][:]
+        return ret_val1[: ret_val2.shape[0]], ret_val2
+
     def score_features(
         self,
         feature_names: List[str],
@@ -544,17 +731,22 @@ class Assay:
 class RNAassay(Assay):
     """
     This subclass of Assay is designed for feature selection and normalization of scRNA-Seq data.
+
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        **kwargs: kwargs to be passed to the Assay class
+
+    Attributes:
+        normMethod: A pointer to the function to be used for normalization of the raw data
+        sf: scaling factor for doing library-size normalization
+        scalar: This is used to cache the library size of the cells.
+                It is set to None until normed method is called.
+
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
-        """
-
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            **kwargs:
-        """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_lib_size
         if "size_factor" in self.attrs:
@@ -574,9 +766,9 @@ class RNAassay(Assay):
     ) -> daskarr:
         """
         This function normalizes the raw and returns a delayed dask array of the normalized
-        data. Unlike the `normed` method in the generic Assay class this method is optimized for scRNA-Seq data and
-        takes additional parameters that will be used by `norm_lib_size` (default normalization
-        method for this class).
+        data. Unlike the `normed` method in the generic Assay class this method is optimized for
+        scRNA-Seq data and takes additional parameters that will be used by `norm_lib_size`
+         (default normalization method for this class).
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -587,11 +779,12 @@ class RNAassay(Assay):
                       feature attribute table)
             renormalize_subset: If True, then the data is normalized using only those features that are True in
                                 `feat_key` column rather using total expression of all features in a cell
-                                 (Default value: False)
+                                (Default value: False)
             log_transform: If True, then the normalized data is log-transformed (Default value: False).
-            **kwargs:
+            **kwargs: kwargs have no effect here.
 
-        Returns: A dask array (delayed matrix) containing normalized data.
+        Returns:
+            A dask array (delayed matrix) containing normalized data.
 
         """
         if cell_idx is None:
@@ -831,6 +1024,13 @@ class ATACassay(Assay):
             name (str): A label/name for assay.
             cell_data: Metadata class object for the cell attributes.
             **kwargs:
+
+        Attributes:
+            normMethod: Pointer to the function to be used for normalization of the raw data
+            n_term_per_doc: Number of features per cell. Used for TF-IDF normalization
+            n_docs: Number of cells. Used for TF-IDF normalization
+            n_docs_per_term: Number of cells per feature. Used for TF-IDF normalization
+
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
@@ -947,18 +1147,22 @@ class ADTassay(Assay):
     """
     This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
     CITE-Seq experiments.
+
+    Args:
+        z (zarr.Group): Zarr hierarchy where raw data is located
+        name (str): A label/name for assay.
+        cell_data: Metadata class object for the cell attributes.
+        **kwargs:
+
+    Attributes:
+        normMethod: Pointer to the function to be used for normalization of the raw data
+
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
         """
         This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
         CITE-Seq experiments.
-
-        Args:
-            z (zarr.Group): Zarr hierarchy where raw data is located
-            name (str): A label/name for assay.
-            cell_data: Metadata class object for the cell attributes.
-            **kwargs:
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_clr
