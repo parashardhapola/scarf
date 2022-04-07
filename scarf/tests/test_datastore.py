@@ -24,6 +24,21 @@ class TestToyDataStore:
 
 
 class TestDataStore:
+    def test_init_wrong_zarr_mode(self):
+        import pytest
+        import tarfile
+
+        from ..datastore import DataStore
+
+        fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
+        out_fn = fn.replace(".tar.gz", "")
+        remove(out_fn)
+        tar = tarfile.open(fn, "r:gz")
+        tar.extractall(out_fn)
+        with pytest.raises(ValueError):
+            ds = DataStore(out_fn, zarr_mode="wrong", default_assay="RNA")
+        remove(out_fn)
+
     def test_graph_indices(self, make_graph, datastore):
         a = np.load(full_path("knn_indices.npy"))
         b = datastore.z[make_graph]["indices"][:]
