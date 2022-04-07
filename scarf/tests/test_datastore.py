@@ -39,6 +39,21 @@ class TestDataStore:
             ds = DataStore(out_fn, zarr_mode="wrong", default_assay="RNA")
         remove(out_fn)
 
+    def test_auto_filter_cells(self, datastore_ephemeral):
+        assert datastore_ephemeral.auto_filter_cells(attrs=["nCounts", "nFeatures",
+                                                     "non_existing_column"],
+                                                     show_qc_plots=False) is None
+                                                     # show_qc_plots=True
+                                                     #  howto test plots?
+
+    def test_filter_cells(self, datastore_ephemeral):
+        assert datastore_ephemeral.filter_cells(attrs=["nCounts", "nFeatures",
+                                                "non_existing_column"],
+                                                lows=[None, None, None],
+                                                highs=[None, None, None],
+                                                reset_previous=True) is None
+        # still doesn't access `if j is None:` cases for j and k
+
     def test_graph_indices(self, make_graph, datastore):
         a = np.load(full_path("knn_indices.npy"))
         b = datastore.z[make_graph]["indices"][:]
