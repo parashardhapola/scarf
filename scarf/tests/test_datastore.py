@@ -239,3 +239,21 @@ class TestDataStore:
             show_features=["Wsb1", "Rest"],
             show_fig=False,
         )
+
+    def test_mark_hvgs_with_atac_assay(self, atac_datastore):
+        import pytest
+        with pytest.raises(TypeError):
+            atac_datastore.mark_hvgs()
+
+    def test_mark_prevalent_peaks_with_rna_assay(self, datastore):
+        import pytest
+        with pytest.raises(TypeError):
+            datastore.mark_prevalent_peaks()
+
+    def test_run_marker_search_with_no_groupkey(self, datastore):
+        import pytest
+        with pytest.raises(ValueError):
+            datastore.run_marker_search(group_key=None)
+
+    def test_run_marker_search_with_cellkey(self, datastore, paris_clustering):
+        datastore.run_marker_search(group_key="RNA_cluster", cell_key="I")
