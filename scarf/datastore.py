@@ -3412,7 +3412,7 @@ class DataStore(MappingDatastore):
     ):
         if zarr_mode not in ["r", "r+"]:
             raise ValueError(
-                "ERROR: Zarr file can only be accessed using either 'r' ot 'r+' mode"
+                "ERROR: Zarr file can only be accessed using either 'r' or 'r+' mode"
             )
         if synchronizer is None:
             synchronizer = zarr.ThreadSynchronizer()

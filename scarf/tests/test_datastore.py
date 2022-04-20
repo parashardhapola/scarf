@@ -24,6 +24,36 @@ class TestToyDataStore:
 
 
 class TestDataStore:
+    def test_init_wrong_zarr_mode(self):
+        import pytest
+        import tarfile
+
+        from ..datastore import DataStore
+
+        fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
+        out_fn = fn.replace(".tar.gz", "")
+        remove(out_fn)
+        tar = tarfile.open(fn, "r:gz")
+        tar.extractall(out_fn)
+        with pytest.raises(ValueError):
+            ds = DataStore(out_fn, zarr_mode="wrong", default_assay="RNA")
+        remove(out_fn)
+
+    def test_auto_filter_cells(self, datastore_ephemeral):
+        assert datastore_ephemeral.auto_filter_cells(attrs=["nCounts", "nFeatures",
+                                                     "non_existing_column"],
+                                                     show_qc_plots=False) is None
+                                                     # show_qc_plots=True
+                                                     #  howto test plots?
+
+    def test_filter_cells(self, datastore_ephemeral):
+        assert datastore_ephemeral.filter_cells(attrs=["nCounts", "nFeatures",
+                                                "non_existing_column"],
+                                                lows=[None, None, None],
+                                                highs=[None, None, None],
+                                                reset_previous=True) is None
+        # still doesn't access `if j is None:` cases for j and k
+
     def test_graph_indices(self, make_graph, datastore):
         a = np.load(full_path("knn_indices.npy"))
         b = datastore.z[make_graph]["indices"][:]
@@ -209,3 +239,21 @@ class TestDataStore:
             show_features=["Wsb1", "Rest"],
             show_fig=False,
         )
+
+    def test_mark_hvgs_with_atac_assay(self, atac_datastore):
+        import pytest
+        with pytest.raises(TypeError):
+            atac_datastore.mark_hvgs()
+
+    def test_mark_prevalent_peaks_with_rna_assay(self, datastore):
+        import pytest
+        with pytest.raises(TypeError):
+            datastore.mark_prevalent_peaks()
+
+    def test_run_marker_search_with_no_groupkey(self, datastore):
+        import pytest
+        with pytest.raises(ValueError):
+            datastore.run_marker_search(group_key=None)
+
+    def test_run_marker_search_with_cellkey(self, datastore, paris_clustering):
+        datastore.run_marker_search(group_key="RNA_cluster", cell_key="I")
