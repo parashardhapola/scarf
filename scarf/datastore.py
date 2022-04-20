@@ -3664,8 +3664,9 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         threshold: float = 0.25,
         gene_batch_size: int = 50,
-        use_prenormed: bool = True,
+        use_prenormed: bool = False,
         prenormed_store: Optional[str] = None,
+        n_threads: int = None,
         **norm_params,
     ) -> None:
         """
@@ -3689,6 +3690,7 @@ class DataStore(MappingDatastore):
                            This can speed up the results. (Default value: True)
             prenormed_store: If prenormalized values were computed in a custom manner then, the Zarr group's location
                              can be provided here. (Default value: None)
+            n_threads: Number of threads to use to run the marker search. Only used if use_prenormed is True.
 
         Returns:
             None
@@ -3702,6 +3704,8 @@ class DataStore(MappingDatastore):
             )
         if cell_key is None:
             cell_key = "I"
+        if n_threads is None:
+            n_threads = self.nthreads
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(
             assay,
@@ -3711,6 +3715,7 @@ class DataStore(MappingDatastore):
             gene_batch_size,
             use_prenormed,
             prenormed_store,
+            n_threads,
             **norm_params,
         )
         z = self.z[assay.name]
