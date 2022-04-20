@@ -13,7 +13,7 @@ h5py
 numcodecs
 umap-learn
 scikit-learn
-scikit-network
+scikit-network==0.24.0
 scipy
 statsmodels
 seaborn
@@ -29,3 +29,4 @@ requests
 jinja2
 kneed
 ipywidgets
+joblib

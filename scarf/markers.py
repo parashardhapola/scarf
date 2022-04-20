@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 from typing import Optional
-
+from joblib import Parallel, delayed
+from scipy.stats import rankdata
 
 __all__ = [
     "find_markers_by_rank",
@@ -36,6 +37,7 @@ def find_markers_by_rank(
     batch_size: int,
     use_prenormed: bool,
     prenormed_store: Optional[str],
+    n_threads: int,
     **norm_params,
 ) -> dict:
     """
@@ -49,6 +51,7 @@ def find_markers_by_rank(
         batch_size:
         use_prenormed:
         prenormed_store:
+        n_threads:
 
     Returns:
 
@@ -70,6 +73,14 @@ def find_markers_by_rank(
         """
         return calc_mean_rank(v.values)
 
+    def prenormed_mean_rank_wrapper(gene_idx):
+        mr = calc_mean_rank(rankdata(prenormed_store[gene_idx][:][cell_idx], method='dense'))
+        idx = mr > threshold
+        if np.any(idx):
+            return np.array([ii[idx], np.repeat(gene_idx, idx.sum()), mr[idx]])
+        else:
+            return None
+
     groups = assay.cells.fetch(group_key, cell_key)
     group_set = sorted(set(groups))
     n_groups = len(group_set)
@@ -87,12 +98,17 @@ def find_markers_by_rank(
                 use_prenormed = False
 
     if use_prenormed:
-        batch_iterator = read_prenormed_batches(
-            prenormed_store,
-            assay.cells.active_index(cell_key),
-            batch_size,
-            desc="Finding markers"
-        )
+        ii = np.array(list(rev_idx_map.values()))
+        cell_idx = assay.cells.active_index(cell_key)
+        batch_iterator = tqdmbar(prenormed_store.keys(), desc="Finding markers")
+        res = Parallel(n_jobs=n_threads)(delayed(prenormed_mean_rank_wrapper)(i) for i in batch_iterator)
+        res = pd.DataFrame(np.hstack([x for x in res if x is not None])).T
+        res[1] = res[1].astype(int)
+        res[2] = res[2].astype(float)
+        results = {}
+        for i in group_set:
+            results[i] = res[res[0] == str(i)].sort_values(by=2, ascending=False)[[1, 2]].set_index(1)[2]
+        return results
     else:
         batch_iterator = assay.iter_normed_feature_wise(
             cell_key,
@@ -101,17 +117,16 @@ def find_markers_by_rank(
             "Finding markers",
             **norm_params
         )
+        for val in batch_iterator:
+            res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
+            # Removing genes that were below the threshold in all the groups
+            res = res.T[(res < threshold).sum() != n_groups]
+            for j in res:
+                results[rev_idx_map[j]].append(res[j][res[j] > threshold])
 
-    for val in batch_iterator:
-        res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
-        # Removing genes that were below the threshold in all the groups
-        res = res.T[(res < threshold).sum() != n_groups]
-        for j in res:
-            results[rev_idx_map[j]].append(res[j][res[j] > threshold])
-
-    for i in results:
-        results[i] = pd.concat(results[i]).sort_values(ascending=False)
-    return results
+        for i in results:
+            results[i] = pd.concat(results[i]).sort_values(ascending=False)
+        return results
 
 
 def find_markers_by_regression(
