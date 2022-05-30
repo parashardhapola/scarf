@@ -10,3 +10,5 @@ sphinx-external-toc>=0.2.1
 sphinx-tabs>=0.3.1
 ipython-autotime>=0.3.1
 topacedo>=0.2.6
+nbclient<0.6
+
