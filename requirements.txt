@@ -26,7 +26,5 @@ leidenalg
 packaging
 importlib_metadata
 requests
-jinja2
 kneed
-ipywidgets
 joblib
