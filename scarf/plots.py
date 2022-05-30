@@ -498,7 +498,7 @@ def _scatter_make_colors(
                 color_key[mask_name] = mpl.colors.to_hex(mask_color)
         return None, color_key
     else:
-        if cmap == "custom":
+        if cmap == "custom" and len(uv) <= 102:
             if len(uv) <= 10:
                 pal = custom_palettes[10]
             elif len(uv) <= 20:
@@ -508,7 +508,7 @@ def _scatter_make_colors(
             else:
                 pal = custom_palettes[102]
         else:
-            pal = sns.color_palette(cmap, n_colors=len(uv)).as_hex()
+            pal = sns.color_palette(palette=cmap, n_colors=len(uv)).as_hex()
         color_key = dict(zip(sorted(uv), pal))
         if na_idx.sum() > 0:
             color_key[mask_name] = mpl.colors.to_hex(mask_color)
