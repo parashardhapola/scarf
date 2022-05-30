@@ -508,6 +508,8 @@ def _scatter_make_colors(
             else:
                 pal = custom_palettes[102]
         else:
+            if cmap == "custom":
+                cmap = None
             pal = sns.color_palette(palette=cmap, n_colors=len(uv)).as_hex()
         color_key = dict(zip(sorted(uv), pal))
         if na_idx.sum() > 0:
