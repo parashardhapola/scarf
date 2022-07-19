@@ -118,7 +118,7 @@ def create_zarr_obj_array(
         try:
             data = data.astype("U")
         except UnicodeDecodeError:
-            data = np.array([x.decode('UTF-8') for x in data]).astype("U")
+            data = np.array([x.decode("UTF-8") for x in data]).astype("U")
         dtype = data.dtype
     if chunk_size is None or chunk_size is False:
         chunks = False

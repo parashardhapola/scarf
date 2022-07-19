@@ -537,10 +537,7 @@ class Assay:
             )
 
     def save_normed_for_query(
-        self,
-        feat_key: Optional[str],
-        batch_size: int,
-        overwrite: bool = True
+        self, feat_key: Optional[str], batch_size: int, overwrite: bool = True
     ) -> None:
         """
         This methods dumps normalized values for features (as marked by `feat_key`) onto disk  in the 'prenormed'
@@ -560,7 +557,7 @@ class Assay:
         """
         from .writers import create_zarr_obj_array
 
-        if 'prenormed' in self.z and overwrite is False:
+        if "prenormed" in self.z and overwrite is False:
             return None
 
         g = self.z.create_group("prenormed", overwrite=True)
@@ -954,13 +951,13 @@ class RNAassay(Assay):
             self.feats.insert(c_var_col, c_var, overwrite=True, location=identifier)
 
         if max_mean != np.Inf:
-            max_mean = 2 ** max_mean
+            max_mean = 2**max_mean
         if max_var != np.Inf:
-            max_var = 2 ** max_var
+            max_var = 2**max_var
         if min_mean != -np.Inf:
-            min_mean = 2 ** min_mean
+            min_mean = 2**min_mean
         if min_var != -np.Inf:
-            min_var = 2 ** min_var
+            min_var = 2**min_var
 
         bl = self.feats.index_to_bool(
             self.feats.get_index_by(self.feats.grep(blacklist), "names"), invert=True

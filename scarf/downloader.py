@@ -56,12 +56,18 @@ class OSFdownloader:
     def get_all_pages(self, storage, endpoint=""):
         data = []
         url = None
+        n_attempts = 0
         while True:
             r = self.get_json(storage, endpoint, url)
-            data.extend(r["data"])
-            url = r["links"]["next"]
-            if url is None:
-                break
+            if "data" in r:
+                data.extend(r["data"])
+                url = r["links"]["next"]
+                if url is None:
+                    break
+            else:
+                n_attempts += 1
+                if n_attempts > 3:
+                    break
         return data
 
     @staticmethod

@@ -100,7 +100,7 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
         if i + chunk_size > n_cells:
             ki, kv = z_idx[i:n_cells, :], z_dist[i:n_cells, :]
         else:
-            ki, kv = z_idx[i: i + chunk_size, :], z_dist[i: i + chunk_size, :]
+            ki, kv = z_idx[i : i + chunk_size, :], z_dist[i : i + chunk_size, :]
         kv = kv.astype(np.float32, order="C")
         sigmas, rhos = smooth_knn_dist(
             kv, k=n_neighbors, local_connectivity=lc, bandwidth=bw

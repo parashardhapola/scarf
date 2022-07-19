@@ -74,7 +74,9 @@ def find_markers_by_rank(
         return calc_mean_rank(v.values)
 
     def prenormed_mean_rank_wrapper(gene_idx):
-        mr = calc_mean_rank(rankdata(prenormed_store[gene_idx][:][cell_idx], method='dense'))
+        mr = calc_mean_rank(
+            rankdata(prenormed_store[gene_idx][:][cell_idx], method="dense")
+        )
         idx = mr > threshold
         if np.any(idx):
             return np.array([ii[idx], np.repeat(gene_idx, idx.sum()), mr[idx]])
@@ -92,8 +94,8 @@ def find_markers_by_rank(
     results = {x: [] for x in group_set}
     if use_prenormed:
         if prenormed_store is None:
-            if 'prenormed' in assay.z:
-                prenormed_store = assay.z['prenormed']
+            if "prenormed" in assay.z:
+                prenormed_store = assay.z["prenormed"]
             else:
                 use_prenormed = False
 
@@ -101,21 +103,23 @@ def find_markers_by_rank(
         ii = np.array(list(rev_idx_map.values()))
         cell_idx = assay.cells.active_index(cell_key)
         batch_iterator = tqdmbar(prenormed_store.keys(), desc="Finding markers")
-        res = Parallel(n_jobs=n_threads)(delayed(prenormed_mean_rank_wrapper)(i) for i in batch_iterator)
+        res = Parallel(n_jobs=n_threads)(
+            delayed(prenormed_mean_rank_wrapper)(i) for i in batch_iterator
+        )
         res = pd.DataFrame(np.hstack([x for x in res if x is not None])).T
         res[1] = res[1].astype(int)
         res[2] = res[2].astype(float)
         results = {}
         for i in group_set:
-            results[i] = res[res[0] == str(i)].sort_values(by=2, ascending=False)[[1, 2]].set_index(1)[2]
+            results[i] = (
+                res[res[0] == str(i)]
+                .sort_values(by=2, ascending=False)[[1, 2]]
+                .set_index(1)[2]
+            )
         return results
     else:
         batch_iterator = assay.iter_normed_feature_wise(
-            cell_key,
-            "I",
-            batch_size,
-            "Finding markers",
-            **norm_params
+            cell_key, "I", batch_size, "Finding markers", **norm_params
         )
         for val in batch_iterator:
             res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
