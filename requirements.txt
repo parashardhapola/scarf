@@ -9,7 +9,7 @@ numba
 dask>=2021.8.1
 pandas
 zarr
-h5py
+h5py>=3.3.0
 numcodecs
 umap-learn
 scikit-learn
