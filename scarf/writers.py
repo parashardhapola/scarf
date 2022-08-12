@@ -20,9 +20,9 @@ Methods and classes for writing data to disk.
 """
 
 import zarr
-from typing import Any, Tuple, List, Union, Dict
+from typing import Any, Tuple, List, Union, Dict, Optional
 import numpy as np
-from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader
+from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 import os
 import pandas as pd
 from .utils import controlled_compute, logger, tqdmbar
@@ -43,6 +43,7 @@ __all__ = [
     "SparseToZarr",
     "to_h5ad",
     "to_mtx",
+    "CSVtoZarr",
 ]
 
 
@@ -81,6 +82,18 @@ def create_zarr_dataset(
     )
 
 
+def dtype_fix(dtype, data: np.ndarray):
+    if dtype is None or dtype == object:
+        return "U" + str(max([len(str(x)) for x in data]))
+    if np.issubdtype(data.dtype, np.dtype("S")):
+        try:
+            adata = data.astype("U")
+        except UnicodeDecodeError:
+            adata = np.array([x.decode("UTF-8") for x in data]).astype("U")
+        return adata.dtype
+    return dtype
+
+
 def create_zarr_obj_array(
     g: zarr.Group,
     name: str,
@@ -88,6 +101,7 @@ def create_zarr_obj_array(
     dtype: Union[str, Any] = None,
     overwrite: bool = True,
     chunk_size: int = 100000,
+    shape: Optional[int] = None,
 ) -> zarr.hierarchy:
     """
     Creates and returns a Zarr object array.
@@ -102,6 +116,7 @@ def create_zarr_obj_array(
         dtype (Union[str, Any]):
         overwrite (bool):
         chunk_size (int):
+        shape:
 
     Returns:
         A Zarr object Array.
@@ -111,28 +126,33 @@ def create_zarr_obj_array(
 
     compressor = Blosc(cname="lz4", clevel=5, shuffle=Blosc.BITSHUFFLE)
 
-    data = np.array(data)
-    if dtype is None or dtype == object:
-        dtype = "U" + str(max([len(str(x)) for x in data]))
-    if np.issubdtype(data.dtype, np.dtype("S")):
-        try:
-            data = data.astype("U")
-        except UnicodeDecodeError:
-            data = np.array([x.decode("UTF-8") for x in data]).astype("U")
-        dtype = data.dtype
     if chunk_size is None or chunk_size is False:
         chunks = False
     else:
         chunks = (chunk_size,)
-    return g.create_dataset(
-        name,
-        data=data,
-        chunks=chunks,
-        shape=len(data),
-        dtype=dtype,
-        overwrite=overwrite,
-        compressor=compressor,
-    )
+
+    if data is not None:
+        data = np.array(data)
+        dtype = dtype_fix(dtype, data)
+
+        return g.create_dataset(
+            name,
+            data=data,
+            chunks=chunks,
+            shape=len(data),
+            dtype=dtype,
+            overwrite=overwrite,
+            compressor=compressor,
+        )
+    else:
+        return g.create_dataset(
+            name,
+            chunks=chunks,
+            shape=shape,
+            dtype=dtype,
+            overwrite=overwrite,
+            compressor=compressor,
+        )
 
 
 def create_zarr_count_assay(
@@ -1186,3 +1206,102 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
     assay.feats.to_pandas_dataframe(["ids", "names"]).to_csv(
         os.path.join(mtx_directory, features_fn), sep="\t", header=False, index=False
     )
+
+
+class CSVtoZarr:
+    """
+    A class for converting data from CSV format to a Zarr hierarchy.
+
+    Args:
+        cr: A CSVReader object
+        zarr_fn: The file name for the Zarr hierarchy.
+        assay_name: A label for the assay. Ex. "RNA" or "ATAC"
+        chunk_size: The requested size of chunks to load into memory and process.
+        dtype: the dtype of the data.
+
+    Attributes:
+        csvr: A CSVReader object
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to store in Zarr file
+        z: The Zarr hierarchy (array or group).
+    """
+
+    def __init__(
+        self,
+        cr: CSVReader,
+        zarr_fn: str,
+        assay_name: str,
+        chunk_size=(1000, 1000),
+        dtype: Optional[np.dtype] = None,
+    ):
+        self.csvr = cr
+        self.fn = zarr_fn
+        self.assayName = assay_name
+        self.chunkSizes = chunk_size
+        self.z = zarr.open(self.fn, mode="w")
+        if dtype is not None:
+            self.dtype = dtype
+        else:
+            self.dtype = next(self.csvr.consume())[0].dtype
+        self._ini_cell_data()
+        create_zarr_count_assay(
+            self.z,
+            assay_name,
+            chunk_size,
+            self.csvr.nCells,
+            self.csvr.feature_ids(),
+            self.csvr.feature_ids(),
+            self.dtype,
+        )
+
+    def _ini_cell_data(self) -> None:
+        g = self.z.create_group("cellData")
+        create_zarr_obj_array(g, "ids", self.csvr.cell_ids())
+        create_zarr_obj_array(g, "names", self.csvr.cell_ids())
+        create_zarr_obj_array(g, "I", [True for _ in range(self.csvr.nCells)], "bool")
+
+    def dump(self) -> None:
+        """
+        Writes the count values into the Zarr matrix
+
+        Args:
+
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+
+        """
+
+        store = self.z["%s/counts" % self.assayName]
+        cell_data = [
+            create_zarr_obj_array(
+                self.z["cellData"], name=x, data=None, dtype=y, shape=self.csvr.nCells
+            )
+            for x, y in zip(self.csvr.cellDataCols, self.csvr.cellDataDtypes)
+        ]
+        batch_size = self.csvr.pandas_kwargs["chunksize"]
+        s, e, = (
+            0,
+            0,
+        )
+        if self.csvr.nCells % batch_size == 0:
+            n_chunks = int(self.csvr.nCells / batch_size)
+        else:
+            n_chunks = (self.csvr.nCells // batch_size) + 1
+        for a, c in tqdmbar(self.csvr.consume(), total=n_chunks):
+            e += a.shape[0]
+            if self.dtype is not None:
+                store[s:e] = a.astype(self.dtype)
+            else:
+                store[s:e] = a
+            if c is not None:
+                for n, i in enumerate(c.T):
+                    cell_data[n][s:e] = i
+            s = e
+        if e != self.csvr.nCells:
+            raise AssertionError(
+                "ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
+                "written into the zarr file. Please report this issue"
+            )

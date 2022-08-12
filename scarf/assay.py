@@ -944,7 +944,7 @@ class RNAassay(Assay):
             for i in slots:
                 i = col_renamer(i)
                 if i not in self.feats.columns:
-                    raise KeyError("ERROR: {i} not found in feature metadata")
+                    raise KeyError(f"ERROR: {i} not found in feature metadata")
             c_var = self.feats.remove_trend(
                 col_renamer("avg"), col_renamer("sigmas"), n_bins, lowess_frac
             )
