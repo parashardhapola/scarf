@@ -1,5 +1,15 @@
 # FAQs
 
+
+## How to cite Scarf?
+
+Article describing Scarf is published in [Nature Communications](https://www.nature.com/articles/s41467-022-32097-3). 
+Cite this article:
+
+Dhapola, P., Rodhe, J., Olofzon, R. et al. Scarf enables a highly memory-efficient 
+analysis of large-scale single-cell genomics data. Nat Commun 13, 4616 (2022). 
+https://doi.org/10.1038/s41467-022-32097-3
+
 ## How does Scarf compare to Scanpy?
 
 Scarf performs many of the essential steps of scRNA-Seq analysis that can be

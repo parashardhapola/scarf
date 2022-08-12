@@ -43,8 +43,8 @@ subtrees:
         title: Exploring MNIST dataset
   - caption: Useful links
     entries:
-        - url: https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1
-          title: Read Scarf's preprint
+        - url: https://www.nature.com/articles/s41467-022-32097-3
+          title: Scarf paper in Nature Comm
         - url: https://github.com/parashardhapola/scarf/discussions
           title: Discussion page
         - url: https://github.com/parashardhapola/scarf/issues
