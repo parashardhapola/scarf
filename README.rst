@@ -1,4 +1,4 @@
-|PyPI| |Docs| |Tests| |Coverage| |Black|
+|PyPI| |Docs| |Tests| |Coverage| |Downloads| |Black|
 
 `Installation`_ | `Documentation`_ | `Tutorials`_ | `Preprint`_
 
@@ -12,6 +12,8 @@
           :target: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
 .. |Coverage| image:: https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd
              :target: https://codecov.io/gh/parashardhapola/scarf
+.. |Downloads| image:: https://pepy.tech/badge/scarf
+         :target: https://pepy.tech/project/scarf
 .. |Black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
               :target: https://github.com/psf/black
 .. |IMG1| image:: https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png
