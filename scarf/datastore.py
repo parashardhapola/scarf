@@ -2141,8 +2141,10 @@ class GraphDataStore(BaseDataStore):
         try:
             dendrogram = self.z[f"{graph_loc}/dendrogram"][:]
         except KeyError:
-            raise KeyError("ERROR: Couldn't find the dendrogram for clustering. Please note that "
-                           "TopACeDo requires a dendrogram from Paris clustering.")
+            raise KeyError(
+                "ERROR: Couldn't find the dendrogram for clustering. Please note that "
+                "TopACeDo requires a dendrogram from Paris clustering."
+            )
 
         if len(clusters) != graph.shape[0]:
             raise ValueError(

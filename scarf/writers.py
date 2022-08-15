@@ -1107,7 +1107,9 @@ class ZarrMerge:
                 pos_start = pos_end
 
 
-def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = None) -> None:
+def to_h5ad(
+    assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = None
+) -> None:
     """
     Save an assay as an h5ad file.
 
@@ -1132,7 +1134,7 @@ def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = No
         try:
             h5[group].create_dataset(col, data=d.astype(dtype))
         except TypeError:
-            print ("Yo", dtype, d.dtype, col)
+            print("Yo", dtype, d.dtype, col)
 
     h5 = h5py.File(h5ad_filename, "w")
     for i in ["X", "obs", "var", "obsm"]:
@@ -1147,7 +1149,11 @@ def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = No
         h5["X"].create_dataset(i, (s,), chunks=True, compression="gzip", dtype=int)
     h5["X/indptr"][:] = np.array([0] + list(n_feats_per_cell.cumsum())).astype(int)
     s, e = 0, 0
-    for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0], desc="Writing raw counts"):
+    for i in tqdmbar(
+        assay.rawData.blocks,
+        total=assay.rawData.numblocks[0],
+        desc="Writing raw counts",
+    ):
         i = csr_matrix(i.compute()).astype(int)
         e += i.data.shape[0]
         h5["X/data"][s:e] = i.data
@@ -1164,11 +1170,11 @@ def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = No
     out_cols = []
     emb_cols = []
     if embeddings_cols is None:
-        embeddings_cols = ['UMAP', 'tSNE']
+        embeddings_cols = ["UMAP", "tSNE"]
     for i in assay.cells.columns:
-        if i == 'ids':
+        if i == "ids":
             save_attr("obs", "_index", "ids", assay.cells)
-            out_cols.append('_index')
+            out_cols.append("_index")
         else:
             is_emb = False
             if len(embeddings_cols) > 0:
@@ -1192,12 +1198,12 @@ def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = No
 
     out_cols = []
     for i in assay.feats.columns:
-        if i == 'ids':
+        if i == "ids":
             save_attr("var", "_index", "ids", assay.feats)
-            out_cols.append('_index')
-        elif i == 'names':
+            out_cols.append("_index")
+        elif i == "names":
             save_attr("var", "gene_short_name", "names", assay.feats)
-            out_cols.append('gene_short_name')
+            out_cols.append("gene_short_name")
         else:
             save_attr("var", i, i, assay.feats)
             out_cols.append(i)
@@ -1212,12 +1218,14 @@ def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = No
         h5["var"].attrs[i] = j
 
     if len(emb_cols) > 0:
-        attrs = {'encoding-type': 'array', 'encoding-version': '0.1.0'}
+        attrs = {"encoding-type": "array", "encoding-version": "0.1.0"}
         emb_cols = np.array(emb_cols)
         c = pd.Series([x[:-1] for x in emb_cols])
         for i in c.unique():
             data = np.array([assay.cells.fetch_all(x) for x in emb_cols[c == i]]).T
-            h5['obsm'].create_dataset(i.lower().replace(f"{assay.name.lower()}_", "X_"), data=data)
+            h5["obsm"].create_dataset(
+                i.lower().replace(f"{assay.name.lower()}_", "X_"), data=data
+            )
 
     h5.close()
     return None
