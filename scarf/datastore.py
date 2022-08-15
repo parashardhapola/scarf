@@ -2138,7 +2138,11 @@ class GraphDataStore(BaseDataStore):
             use_k=use_k,
         )
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        dendrogram = self.z[f"{graph_loc}/dendrogram"][:]
+        try:
+            dendrogram = self.z[f"{graph_loc}/dendrogram"][:]
+        except KeyError:
+            raise KeyError("ERROR: Couldn't find the dendrogram for clustering. Please note that "
+                           "TopACeDo requires a dendrogram from Paris clustering.")
 
         if len(clusters) != graph.shape[0]:
             raise ValueError(
@@ -4337,7 +4341,7 @@ class DataStore(MappingDatastore):
         df = self.cells.to_pandas_dataframe(self.cells.columns, key=cell_key)
         obs = df.reset_index(drop=True).set_index("ids")
         df = assay.feats.to_pandas_dataframe(assay.feats.columns)
-        var = df.set_index("names").rename(columns={"ids": "gene_ids"})
+        var = df.rename(columns={"ids": "gene_ids"}).set_index("gene_ids")
         adata = AnnData(assay.to_raw_sparse(cell_key), obs=obs, var=var)
         if layers is not None:
             for layer, assay_name in layers.items():

@@ -314,7 +314,7 @@ class CrToZarr:
 
 class H5adToZarr:
     """
-    A class for converting data in the Cellranger Matrix Market format to a Zarr hierarchy.
+    A class for converting data in anndata's H5ad format to Zarr hierarchy.
 
     Args:
         h5ad: A H5adReader object, containing the Cellranger data.
@@ -740,7 +740,7 @@ class SubsetZarr:
     Args:
         in_zarr: Path of input Zarr file to be subsetted.
         out_zarr: Path of output Zarr files containing only a subset of cells.
-        cell_key: Name of a boolean column in cell metadata. The cells with with value True are included in the
+        cell_key: Name of a boolean column in cell metadata. The cells with value True are included in the
                   subset.
         cell_idx: Indices of the cells to be included in the subsetted. Only used when cell_key is None.
         reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
@@ -968,8 +968,10 @@ class ZarrMerge:
             ret_val.append(a)
         ret_val = pd.concat(ret_val).reset_index(drop=True)
         if sum([x.cells.N for x in self.assays]) != ret_val.shape[0]:
-            raise AssertionError("Unexpected number of cells in the merged table. This is unexpected, "
-                                 " please report this bug")
+            raise AssertionError(
+                "Unexpected number of cells in the merged table. This is unexpected, "
+                " please report this bug"
+            )
         return ret_val
 
     @staticmethod
@@ -1015,8 +1017,10 @@ class ZarrMerge:
         ).set_index("ids")
         r = ret_val.shape[0] / sum([x.feats.N for x in self.assays])
         if r == 1:
-            raise ValueError("No overlapping features found! Will not merge the files. Please check the features ids "
-                             " are comparable across the assays")
+            raise ValueError(
+                "No overlapping features found! Will not merge the files. Please check the features ids "
+                " are comparable across the assays"
+            )
         if r > 0.9:
             logger.warning("The number overlapping features is very low.")
         return ret_val
@@ -1103,13 +1107,15 @@ class ZarrMerge:
                 pos_start = pos_end
 
 
-def to_h5ad(assay, h5ad_filename: str) -> None:
+def to_h5ad(assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = None) -> None:
     """
     Save an assay as an h5ad file.
 
     Args:
         assay: Assay to save.
         h5ad_filename: Name for the h5ad file to be created.
+        embeddings_cols: Columns in cell metadata to be treated as embeddings e. UMAP, tSNE
+                         (Default value: ['UMAP', 'tSNE'])
 
     Returns:
         None
@@ -1118,10 +1124,18 @@ def to_h5ad(assay, h5ad_filename: str) -> None:
 
     def save_attr(group, col, scarf_col, md):
         d = md.fetch_all(scarf_col)
-        h5[group].create_dataset(col, data=d.astype(h5py.special_dtype(vlen=str)))
+        dtype = d.dtype
+        if np.issubdtype(dtype, np.number) or np.issubdtype(dtype, np.bool):
+            pass
+        else:
+            dtype = h5py.special_dtype(vlen=str)
+        try:
+            h5[group].create_dataset(col, data=d.astype(dtype))
+        except TypeError:
+            print ("Yo", dtype, d.dtype, col)
 
     h5 = h5py.File(h5ad_filename, "w")
-    for i in ["X", "obs", "var"]:
+    for i in ["X", "obs", "var", "obsm"]:
         h5.create_group(i)
 
     n_feats_per_cell = assay.cells.fetch_all(f"{assay.name}_nFeatures").astype(int)
@@ -1133,16 +1147,12 @@ def to_h5ad(assay, h5ad_filename: str) -> None:
         h5["X"].create_dataset(i, (s,), chunks=True, compression="gzip", dtype=int)
     h5["X/indptr"][:] = np.array([0] + list(n_feats_per_cell.cumsum())).astype(int)
     s, e = 0, 0
-    for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
+    for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0], desc="Writing raw counts"):
         i = csr_matrix(i.compute()).astype(int)
         e += i.data.shape[0]
         h5["X/data"][s:e] = i.data
         h5["X/indices"][s:e] = i.indices
         s = e
-    save_attr("obs", "_index", "ids", assay.cells)
-    save_attr("var", "_index", "ids", assay.feats)
-    save_attr("var", "gene_short_name", "names", assay.feats)
-
     attrs = {
         "encoding-type": "csr_matrix",
         "encoding-version": "0.1.0",
@@ -1151,23 +1161,63 @@ def to_h5ad(assay, h5ad_filename: str) -> None:
     for i, j in attrs.items():
         h5["X"].attrs[i] = j
 
+    out_cols = []
+    emb_cols = []
+    if embeddings_cols is None:
+        embeddings_cols = ['UMAP', 'tSNE']
+    for i in assay.cells.columns:
+        if i == 'ids':
+            save_attr("obs", "_index", "ids", assay.cells)
+            out_cols.append('_index')
+        else:
+            is_emb = False
+            if len(embeddings_cols) > 0:
+                for j in embeddings_cols:
+                    if i.startswith(f"{assay.name}_{j}"):
+                        emb_cols.append(i)
+                        is_emb = True
+                        break
+            if is_emb is False:
+                save_attr("obs", i, i, assay.cells)
+                out_cols.append(i)
+
     attrs = {
         "_index": "_index",
-        "column-order": np.array(["_index"], dtype=object),
+        "column-order": np.array(out_cols, dtype=object),
         "encoding-type": "dataframe",
         "encoding-version": "0.1.0",
     }
     for i, j in attrs.items():
         h5["obs"].attrs[i] = j
 
+    out_cols = []
+    for i in assay.feats.columns:
+        if i == 'ids':
+            save_attr("var", "_index", "ids", assay.feats)
+            out_cols.append('_index')
+        elif i == 'names':
+            save_attr("var", "gene_short_name", "names", assay.feats)
+            out_cols.append('gene_short_name')
+        else:
+            save_attr("var", i, i, assay.feats)
+            out_cols.append(i)
+
     attrs = {
         "_index": "_index",
-        "column-order": np.array(["_index", "gene_short_name"], dtype=object),
+        "column-order": np.array(out_cols, dtype=object),
         "encoding-type": "dataframe",
         "encoding-version": "0.1.0",
     }
     for i, j in attrs.items():
         h5["var"].attrs[i] = j
+
+    if len(emb_cols) > 0:
+        attrs = {'encoding-type': 'array', 'encoding-version': '0.1.0'}
+        emb_cols = np.array(emb_cols)
+        c = pd.Series([x[:-1] for x in emb_cols])
+        for i in c.unique():
+            data = np.array([assay.cells.fetch_all(x) for x in emb_cols[c == i]]).T
+            h5['obsm'].create_dataset(i.lower().replace(f"{assay.name.lower()}_", "X_"), data=data)
 
     h5.close()
     return None
