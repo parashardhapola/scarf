@@ -871,7 +871,7 @@ class ZarrMerge:
     Args:
         zarr_path: Name of the new, merged Zarr file with path.
         assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
-        names: Names of the each assay objects in the `assays` parameter. They should be in the same order as in
+        names: Names of each of the assay objects in the `assays` parameter. They should be in the same order as in
                `assays` parameter.
         merge_assay_name: Name of assay in the merged Zarr file. For example, for scRNA-Seq it could be simply,
                           'RNA'.
@@ -920,7 +920,7 @@ class ZarrMerge:
         self.nFeats = self.mergedFeats.shape[0]
         self.featOrder = self._ref_order_feat_idx()
         self.z = self._use_existing_zarr(zarr_path, merge_assay_name, overwrite)
-        self._ini_cell_data()
+        self._ini_cell_data(overwrite)
         if dtype is None:
             if len(set([str(x.rawData.dtype) for x in self.assays])) == 1:
                 dtype = str(self.assays[0].rawData.dtype)
@@ -966,7 +966,11 @@ class ZarrMerge:
             if reset:
                 a["I"] = np.ones(len(a["ids"])).astype(bool)
             ret_val.append(a)
-        return pd.concat(ret_val).reset_index(drop=True)
+        ret_val = pd.concat(ret_val).reset_index(drop=True)
+        if sum([x.cells.N for x in self.assays]) != ret_val.shape[0]:
+            raise AssertionError("Unexpected number of cells in the merged table. This is unexpected, "
+                                 " please report this bug")
+        return ret_val
 
     @staticmethod
     def _get_feat_ids(assays) -> List[Dict[str, str]]:
@@ -1002,13 +1006,20 @@ class ZarrMerge:
             for i in ids:
                 if i not in union_set:
                     union_set[i] = ids[i]
-        return pd.DataFrame(
+        ret_val = pd.DataFrame(
             {
                 "idx": range(len(union_set)),
                 "names": list(union_set.values()),
                 "ids": list(union_set.keys()),
             }
         ).set_index("ids")
+        r = ret_val.shape[0] / sum([x.feats.N for x in self.assays])
+        if r == 1:
+            raise ValueError("No overlapping features found! Will not merge the files. Please check the features ids "
+                             " are comparable across the assays")
+        if r > 0.9:
+            logger.warning("The number overlapping features is very low.")
+        return ret_val
 
     def _ref_order_feat_idx(self) -> List[np.ndarray]:
         ret_val = []
@@ -1052,7 +1063,7 @@ class ZarrMerge:
             # creating a new zarr file
             return zarr.open(zarr_path, mode="w")
 
-    def _ini_cell_data(self) -> None:
+    def _ini_cell_data(self, overwrite) -> None:
         """
         Save cell attributes to Zarr
 
@@ -1060,11 +1071,11 @@ class ZarrMerge:
             None
 
         """
-        if "cellData" not in self.z:
-            g = self.z.create_group("cellData")
+        if ("cellData" in self.z and overwrite is True) or "cellData" not in self.z:
+            g = self.z.create_group("cellData", overwrite=True)
             for i in self.mergedCells:
                 vals = self.mergedCells[i].values
-                create_zarr_obj_array(g, i, vals, vals.dtype)
+                create_zarr_obj_array(g, i, vals, vals.dtype, overwrite=True)
         else:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
