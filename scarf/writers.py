@@ -582,7 +582,7 @@ class SparseToZarr:
         AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
 
     Attributes:
-        csr_mat:
+        csr_mat: Input CSR matrix
         fn: The file name for the Zarr hierarchy.
         chunkSizes: The requested size of chunks to load into memory and process.
         assayName: The Zarr hierarchy (array or group).
@@ -597,10 +597,15 @@ class SparseToZarr:
         feature_ids: List[str],
         assay_name: str = None,
         chunk_size=(1000, 1000),
+        matrix_dtype: Optional[np.dtype] = None
     ):
         self.mat = csr_mat
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
+        if matrix_dtype is None:
+            self.matrixDtype = self.mat.dtype
+        else:
+            self.matrixDtype = matrix_dtype
         if assay_name is None:
             logger.info(
                 f"No value provided for assay names. Will use default value: 'RNA'"
@@ -608,7 +613,7 @@ class SparseToZarr:
             self.assayName = "RNA"
         else:
             self.assayName = assay_name
-        self.nFeatures, self.nCells = self.mat.shape
+        self.nCells, self.nFeatures = self.mat.shape
         if len(cell_ids) != self.nCells:
             raise ValueError(
                 "ERROR: Number of cell ids are not same as number of cells in the matrix"
@@ -627,7 +632,7 @@ class SparseToZarr:
             self.nCells,
             feature_ids,
             feature_ids,
-            "int64",
+            self.matrixDtype,
         )
 
     def _ini_cell_data(self, cell_ids):
@@ -636,24 +641,33 @@ class SparseToZarr:
         create_zarr_obj_array(g, "names", cell_ids)
         create_zarr_obj_array(g, "I", [True for _ in range(self.nCells)], "bool")
 
-    def dump(self, batch_size: int = 1000) -> None:
-        # TODO: add informed description to docstring
+    def dump(self, batch_size: Optional[int] = None) -> None:
         """
-        Raises:
+        Write out the data matrix into the Zarr hierarchy
+
+        Args:
+            batch_size: Number of cells to be written in one go. By default, this value will automatically be chosen
+                        based on the chunk size in the cell dimension.
+
+         Raises:
             ValueError: Raised if there is any unexpected errors when writing to the Zarr hierarchy.
             AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
 
         Returns:
             None
+
         """
         store = self.z["%s/counts" % self.assayName]
+        if batch_size is None:
+            batch_size = store.chunks[0]
         s, e, = (
             0,
             0,
         )
         n_chunks = self.nCells // batch_size + 1
         for e in tqdmbar(
-            range(batch_size, self.nCells + batch_size, batch_size), total=n_chunks
+            range(batch_size, self.nCells + batch_size, batch_size), total=n_chunks,
+            desc="Writing data matrix"
         ):
             if s == self.nCells:
                 raise ValueError(
@@ -662,7 +676,9 @@ class SparseToZarr:
                 )
             if e > self.nCells:
                 e = self.nCells
-            store[s:e] = self.mat[:, s:e].todense().T
+
+            a = self.mat[s:e].tocoo()
+            store.set_coordinate_selection((a.row + s, a.col), a.data.astype(self.matrixDtype))
             s = e
         if e != self.nCells:
             raise AssertionError(
