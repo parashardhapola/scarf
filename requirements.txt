@@ -13,7 +13,7 @@ h5py>=3.3.0
 numcodecs
 umap-learn
 scikit-learn
-scikit-network==0.24.0
+scikit-network
 scipy
 statsmodels
 seaborn
