@@ -639,9 +639,13 @@ class H5adReader:
                 self.h5[group].keys(), desc=f"Reading attributes from group {group}"
             ):
                 g = self.h5[group][i]
+                if g.shape[0] != self.nCells:
+                    logger.error(f"Dimension of {i}({g.shape}) is not correct."
+                                 f" Will not save this specific slot into Zarr.")
+                    continue
                 if type(g) == h5py.Dataset:
-                    for j in range(g.shape[0]):
-                        yield f"{i}_{j}", g[j]
+                    for j in range(g.shape[1]):
+                        yield f"{i}{j+1}", g[:, j]
         else:
             logger.warning(f"Reading of obsm failed because it either does not exist or is not in expected format")
 
