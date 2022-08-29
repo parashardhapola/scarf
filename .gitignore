@@ -17,3 +17,4 @@ docs/jupyter_execute
 .coverage
 .pytest_cache
 interrogate_badge.svg
+scarf/tests/datasets/*
