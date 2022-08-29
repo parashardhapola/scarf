@@ -44,8 +44,8 @@ def test_sparsetozarr():
     cols = [1, 3, 8, 2, 3, 1, 2, 8, 9]
     rows = [0, 0, 0, 1, 1, 1, 2, 2, 2]
     data = [1, 10, 15, 10, 20, 2, 3, 1, 5]
-    mat = (data, (cols, rows))
-    mat = csr_matrix(mat, shape=(10, 3))
+    mat = (data, (rows, cols))
+    mat = csr_matrix(mat, shape=(3, 10))
 
     fn = full_path("dummy_sparse.zarr")
 
