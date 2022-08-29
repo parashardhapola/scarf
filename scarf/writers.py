@@ -597,7 +597,7 @@ class SparseToZarr:
         feature_ids: List[str],
         assay_name: str = None,
         chunk_size=(1000, 1000),
-        matrix_dtype: Optional[np.dtype] = None
+        matrix_dtype: Optional[np.dtype] = None,
     ):
         self.mat = csr_mat
         self.fn = zarr_fn
@@ -666,8 +666,9 @@ class SparseToZarr:
         )
         n_chunks = self.nCells // batch_size + 1
         for e in tqdmbar(
-            range(batch_size, self.nCells + batch_size, batch_size), total=n_chunks,
-            desc="Writing data matrix"
+            range(batch_size, self.nCells + batch_size, batch_size),
+            total=n_chunks,
+            desc="Writing data matrix",
         ):
             if s == self.nCells:
                 raise ValueError(
@@ -677,7 +678,9 @@ class SparseToZarr:
             if e > self.nCells:
                 e = self.nCells
             a = self.mat[s:e].tocoo()
-            store.set_coordinate_selection((a.row + s, a.col), a.data.astype(self.matrixDtype))
+            store.set_coordinate_selection(
+                (a.row + s, a.col), a.data.astype(self.matrixDtype)
+            )
             s = e
         if e != self.nCells:
             raise AssertionError(

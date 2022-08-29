@@ -246,7 +246,9 @@ class CrH5Reader(CrReader):
         return [x.decode("UTF-8") for x in self.grp[self.grpNames[key]][:]]
 
     # noinspection DuplicatedCode
-    def consume(self, batch_size: int, lines_in_mem: int) -> Generator[coo_matrix, None, None]:
+    def consume(
+        self, batch_size: int, lines_in_mem: int
+    ) -> Generator[coo_matrix, None, None]:
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = self.grp["indptr"][ind_n : ind_n + batch_size]
@@ -258,9 +260,7 @@ class CrH5Reader(CrReader):
                 idx = np.array(i)
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield coo_matrix(
-                (self.grp["data"][s:e], (nidx, self.grp["indices"][s:e]))
-            )
+            yield coo_matrix((self.grp["data"][s:e], (nidx, self.grp["indices"][s:e])))
             s = e
 
     def close(self) -> None:
@@ -370,7 +370,13 @@ class CrDirReader(CrReader):
             a: Sparse matrix, contains a chunk of data from the MTX file.
         """
         return coo_matrix(
-            (a[:, 2], ((a[:, 1] - a[0, 1]).astype(int), (a[:, 0] + self.indexOffset).astype(int)))
+            (
+                a[:, 2],
+                (
+                    (a[:, 1] - a[0, 1]).astype(int),
+                    (a[:, 0] + self.indexOffset).astype(int),
+                ),
+            )
         )
 
     # noinspection DuplicatedCode
@@ -442,7 +448,11 @@ class H5adReader:
     ):
         self.h5 = h5py.File(h5ad_fn, mode="r")
         self.matrixKey = matrix_key
-        self.cellAttrsKey, self.featureAttrsKey, self.obsmAttrsKey = cell_attrs_key, feature_attrs_key, obsm_attrs_key
+        self.cellAttrsKey, self.featureAttrsKey, self.obsmAttrsKey = (
+            cell_attrs_key,
+            feature_attrs_key,
+            obsm_attrs_key,
+        )
         self.groupCodes = {
             self.cellAttrsKey: self._validate_group(self.cellAttrsKey),
             self.featureAttrsKey: self._validate_group(self.featureAttrsKey),
@@ -633,21 +643,27 @@ class H5adReader:
                         self.h5[group][i][:], i, group
                     )
 
-    def _get_obsm_data(self, group: str) -> Generator[Tuple[str, np.ndarray], None, None]:
+    def _get_obsm_data(
+        self, group: str
+    ) -> Generator[Tuple[str, np.ndarray], None, None]:
         if self.groupCodes[group] == 2:
             for i in tqdmbar(
                 self.h5[group].keys(), desc=f"Reading attributes from group {group}"
             ):
                 g = self.h5[group][i]
                 if g.shape[0] != self.nCells:
-                    logger.error(f"Dimension of {i}({g.shape}) is not correct."
-                                 f" Will not save this specific slot into Zarr.")
+                    logger.error(
+                        f"Dimension of {i}({g.shape}) is not correct."
+                        f" Will not save this specific slot into Zarr."
+                    )
                     continue
                 if type(g) == h5py.Dataset:
                     for j in range(g.shape[1]):
                         yield f"{i}{j+1}", g[:, j]
         else:
-            logger.warning(f"Reading of obsm failed because it either does not exist or is not in expected format")
+            logger.warning(
+                f"Reading of obsm failed because it either does not exist or is not in expected format"
+            )
 
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         """
@@ -698,9 +714,7 @@ class H5adReader:
                 idx = np.array(i)
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield coo_matrix(
-                (grp["data"][s:e], (nidx, grp["indices"][s:e]))
-            )
+            yield coo_matrix((grp["data"][s:e], (nidx, grp["indices"][s:e])))
             s = e
 
     def consume(self, batch_size: int):

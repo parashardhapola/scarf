@@ -52,9 +52,9 @@ def get_log_level():
 def is_notebook() -> bool:
     try:
         shell = get_ipython().__class__.__name__
-        if shell == 'ZMQInteractiveShell':
+        if shell == "ZMQInteractiveShell":
             return True
-        elif shell == 'TerminalInteractiveShell':
+        elif shell == "TerminalInteractiveShell":
             return False
         else:
             return False
@@ -74,9 +74,11 @@ def tqdmbar(*args, **kwargs):
             params["disable"] = True
     if is_notebook():
         from tqdm import tqdm_notebook
+
         return tqdm_notebook(*args, **kwargs, **params)
     else:
         from tqdm.auto import tqdm
+
         return tqdm(*args, **kwargs, **params)
 
 
