@@ -287,10 +287,10 @@ class CrToZarr:
         n_chunks = self.cr.nCells // batch_size + 1
         for a in tqdmbar(self.cr.consume(batch_size, lines_in_mem), total=n_chunks):
             for assay in input_ranges:
-                idx = np.zeros(a.coords.shape[1]).astype(bool)
-                feat_coords = a.coords[1].copy()
+                idx = np.zeros(a.col.shape[0]).astype(bool)
+                feat_coords = a.col.copy()
                 for r, of in zip(input_ranges[assay], feat_offset[assay]):
-                    temp = (a.coords[1] >= r[0]) & (a.coords[1] < r[1])
+                    temp = (a.col >= r[0]) & (a.col < r[1])
                     if of != 0:
                         feat_coords[temp] = (
                             feat_coords[temp] + of
@@ -298,7 +298,7 @@ class CrToZarr:
                     idx = idx | temp
                 if idx.sum() > 0:
                     stores[assay].set_coordinate_selection(
-                        (s + a.coords[0][idx], feat_coords[idx]), a.data[idx]
+                        (s + a.row[idx], feat_coords[idx]), a.data[idx]
                     )
                 else:
                     logger.warning(
@@ -676,7 +676,6 @@ class SparseToZarr:
                 )
             if e > self.nCells:
                 e = self.nCells
-
             a = self.mat[s:e].tocoo()
             store.set_coordinate_selection((a.row + s, a.col), a.data.astype(self.matrixDtype))
             s = e

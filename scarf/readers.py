@@ -12,11 +12,9 @@ A collection of classes for reading in different data formats.
 
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
-
 import numpy as np
 import pandas as pd
 import os
-import sparse
 from scipy.sparse import coo_matrix
 from typing import IO
 import h5py
@@ -248,7 +246,7 @@ class CrH5Reader(CrReader):
         return [x.decode("UTF-8") for x in self.grp[self.grpNames[key]][:]]
 
     # noinspection DuplicatedCode
-    def consume(self, batch_size: int, lines_in_mem: int):
+    def consume(self, batch_size: int, lines_in_mem: int) -> Generator[coo_matrix, None, None]:
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
             i = self.grp["indptr"][ind_n : ind_n + batch_size]
@@ -260,10 +258,8 @@ class CrH5Reader(CrReader):
                 idx = np.array(i)
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield sparse.COO(
-                [nidx, self.grp["indices"][s:e]],
-                self.grp["data"][s:e],
-                shape=(n, self.nFeatures),
+            yield coo_matrix(
+                (self.grp["data"][s:e], (nidx, self.grp["indices"][s:e]))
             )
             s = e
 
@@ -366,25 +362,21 @@ class CrDirReader(CrReader):
             vals = None
         return vals
 
-    # noinspection DuplicatedCode
-    def to_sparse(self, a: np.ndarray) -> sparse.COO:
+    def to_sparse(self, a: np.ndarray) -> coo_matrix:
         """
         Returns the input data as a sparse (COO) matrix.
 
         Args:
             a: Sparse matrix, contains a chunk of data from the MTX file.
         """
-        idx = np.where(np.diff(a[:, 1]) > 0)[0] + 1
-        return sparse.COO(
-            [(a[:, 1] - a[0, 1]).astype(int), (a[:, 0] + self.indexOffset).astype(int)],
-            a[:, 2],
-            shape=(len(idx) + 1, self.nFeatures),
+        return coo_matrix(
+            (a[:, 2], ((a[:, 1] - a[0, 1]).astype(int), (a[:, 0] + self.indexOffset).astype(int)))
         )
 
     # noinspection DuplicatedCode
     def consume(
         self, batch_size: int, lines_in_mem: int = int(1e5)
-    ) -> Generator[List[np.ndarray], None, None]:
+    ) -> Generator[coo_matrix, None, None]:
         stream = pd.read_csv(
             self.matFn, skiprows=3, sep=self.sep, header=None, chunksize=lines_in_mem
         )
