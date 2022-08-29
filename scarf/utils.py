@@ -15,7 +15,6 @@ import sys
 import numpy as np
 from tqdm.dask import TqdmCallback
 from dask.array.core import Array
-from tqdm.auto import tqdm as std_tqdm
 from numba import jit
 
 
@@ -50,6 +49,19 @@ def get_log_level():
     return logger._core.min_level
 
 
+def is_notebook() -> bool:
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True
+        elif shell == 'TerminalInteractiveShell':
+            return False
+        else:
+            return False
+    except NameError:
+        return False
+
+
 def tqdmbar(*args, **kwargs):
     params = dict(tqdm_params)
     for i in kwargs:
@@ -60,7 +72,12 @@ def tqdmbar(*args, **kwargs):
             params["disable"] = False
         else:
             params["disable"] = True
-    return std_tqdm(*args, **kwargs, **params)
+    if is_notebook():
+        from tqdm import tqdm_notebook
+        return tqdm_notebook(*args, **kwargs, **params)
+    else:
+        from tqdm.auto import tqdm
+        return tqdm(*args, **kwargs, **params)
 
 
 def set_verbosity(level: str = None, filepath: str = None):
