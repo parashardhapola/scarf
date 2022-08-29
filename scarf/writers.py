@@ -391,7 +391,7 @@ class H5adToZarr:
         n_chunks = self.h5ad.nCells // batch_size + 1
         for a in tqdmbar(self.h5ad.consume(batch_size), total=n_chunks):
             e += a.shape[0]
-            store[s:e] = a
+            store.set_coordinate_selection((a.row + s, a.col), a.data)
             s = e
         if e != self.h5ad.nCells:
             raise AssertionError(

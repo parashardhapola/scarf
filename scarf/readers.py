@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import os
 import sparse
+from scipy.sparse import coo_matrix
 from typing import IO
 import h5py
 from .utils import logger, tqdmbar
@@ -443,15 +444,17 @@ class H5adReader:
         feature_ids_key: str = "_index",
         feature_name_key: str = "gene_short_name",
         matrix_key: str = "X",
+        obsm_attrs_key: str = "obsm",
         category_names_key: str = "__categories",
         dtype: str = None,
     ):
         self.h5 = h5py.File(h5ad_fn, mode="r")
         self.matrixKey = matrix_key
-        self.cellAttrsKey, self.featureAttrsKey = cell_attrs_key, feature_attrs_key
+        self.cellAttrsKey, self.featureAttrsKey, self.obsmAttrsKey = cell_attrs_key, feature_attrs_key, obsm_attrs_key
         self.groupCodes = {
             self.cellAttrsKey: self._validate_group(self.cellAttrsKey),
             self.featureAttrsKey: self._validate_group(self.featureAttrsKey),
+            self.obsmAttrsKey: self._validate_group(self.obsmAttrsKey),
             self.matrixKey: self._validate_group(self.matrixKey),
         }
         self.nCells, self.nFeatures = self._get_n(self.cellAttrsKey), self._get_n(
@@ -638,11 +641,25 @@ class H5adReader:
                         self.h5[group][i][:], i, group
                     )
 
+    def _get_obsm_data(self, group: str) -> Generator[Tuple[str, np.ndarray], None, None]:
+        if self.groupCodes[group] == 2:
+            for i in tqdmbar(
+                self.h5[group].keys(), desc=f"Reading attributes from group {group}"
+            ):
+                g = self.h5[group][i]
+                if type(g) == h5py.Dataset:
+                    for j in range(g.shape[0]):
+                        yield f"{i}_{j}", g[j]
+        else:
+            logger.warning(f"Reading of obsm failed because it either does not exist or is not in expected format")
+
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
         """
         Creates a Generator that yields the cell columns.
         """
         for i, j in self._get_col_data(self.cellAttrsKey, [self.cellIdsKey]):
+            yield i, j
+        for i, j in self._get_obsm_data(self.obsmAttrsKey):
             yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
@@ -657,7 +674,7 @@ class H5adReader:
     # noinspection DuplicatedCode
     def consume_dataset(
         self, batch_size: int = 1000
-    ) -> Generator[sparse.COO, None, None]:
+    ) -> Generator[coo_matrix, None, None]:
         """
         Returns a generator that yield chunks of data.
         """
@@ -666,10 +683,10 @@ class H5adReader:
         for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
             if e > dset.shape[0]:
                 e = dset.shape[0]
-            yield dset[s:e]
+            yield coo_matrix(dset[s:e])
             s = e
 
-    def consume_group(self, batch_size: int) -> Generator[sparse.COO, None, None]:
+    def consume_group(self, batch_size: int) -> Generator[coo_matrix, None, None]:
         """
         Returns a generator that yield chunks of data.
         """
@@ -685,12 +702,12 @@ class H5adReader:
                 idx = np.array(i)
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield sparse.COO(
-                [nidx, grp["indices"][s:e]], grp["data"][s:e], shape=(n, self.nFeatures)
-            ).todense()
+            yield coo_matrix(
+                (grp["data"][s:e], (nidx, grp["indices"][s:e]))
+            )
             s = e
 
-    def consume(self, batch_size: int = 1000):
+    def consume(self, batch_size: int):
         """
         Returns a generator that yield chunks of data.
         """
