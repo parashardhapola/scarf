@@ -14,11 +14,13 @@ import logging
 from typing import Tuple, List
 import pandas as pd
 import numpy as np
-from .writers import create_zarr_count_assay
-from .utils import controlled_compute, logger, tqdmbar
 import gzip
 from numba import jit
 from zarr import hierarchy
+from scipy.sparse import coo_matrix
+from .writers import create_zarr_count_assay
+from .utils import controlled_compute, logger, tqdmbar
+
 
 __all__ = ["GffReader", "coordinate_melding"]
 
@@ -418,8 +420,6 @@ def create_counts_mat(
 
     """
 
-    from sparse import COO
-
     idx = np.where(cross_map)[0]
     feat_idx = np.repeat(idx, list(map(len, cross_map[idx])))
     peak_idx = np.array(
@@ -447,11 +447,9 @@ def create_counts_mat(
         assert df.shape[1] == idx.shape[0]
 
         coord_renamer = dict(enumerate(df.columns))
-        coo = COO(df.values)
-        coo.coords[1] = np.array([coord_renamer[x] for x in coo.coords[1]])
-        coo.shape = (coo.shape[0], store.shape[1])
-
-        store.set_coordinate_selection((s + coo.coords[0], coo.coords[1]), coo.data)
+        coo = coo_matrix(df.values)
+        coo.col = np.array([coord_renamer[x] for x in coo.col])
+        store.set_coordinate_selection((s + coo.row, coo.col), coo.data)
         s += a.shape[0]
 
 
