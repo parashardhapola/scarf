@@ -689,6 +689,105 @@ class SparseToZarr:
             )
 
 
+class CSVtoZarr:
+    """
+    A class for converting data from CSV format to a Zarr hierarchy.
+
+    Args:
+        cr: A CSVReader object
+        zarr_fn: The file name for the Zarr hierarchy.
+        assay_name: A label for the assay. Ex. "RNA" or "ATAC"
+        chunk_size: The requested size of chunks to load into memory and process.
+        dtype: the dtype of the data.
+
+    Attributes:
+        csvr: A CSVReader object
+        fn: The file name for the Zarr hierarchy.
+        chunkSizes: The requested size of chunks to store in Zarr file
+        z: The Zarr hierarchy (array or group).
+    """
+
+    def __init__(
+        self,
+        cr: CSVReader,
+        zarr_fn: str,
+        assay_name: str,
+        chunk_size=(1000, 1000),
+        dtype: Optional[np.dtype] = None,
+    ):
+        self.csvr = cr
+        self.fn = zarr_fn
+        self.assayName = assay_name
+        self.chunkSizes = chunk_size
+        self.z = zarr.open(self.fn, mode="w")
+        if dtype is not None:
+            self.dtype = dtype
+        else:
+            self.dtype = next(self.csvr.consume())[0].dtype
+        self._ini_cell_data()
+        create_zarr_count_assay(
+            self.z,
+            assay_name,
+            chunk_size,
+            self.csvr.nCells,
+            self.csvr.feature_ids(),
+            self.csvr.feature_ids(),
+            self.dtype,
+        )
+
+    def _ini_cell_data(self) -> None:
+        g = self.z.create_group("cellData")
+        create_zarr_obj_array(g, "ids", self.csvr.cell_ids())
+        create_zarr_obj_array(g, "names", self.csvr.cell_ids())
+        create_zarr_obj_array(g, "I", [True for _ in range(self.csvr.nCells)], "bool")
+
+    def dump(self) -> None:
+        """
+        Writes the count values into the Zarr matrix
+
+        Args:
+
+        Raises:
+            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
+
+        Returns:
+            None
+
+        """
+
+        store = self.z["%s/counts" % self.assayName]
+        cell_data = [
+            create_zarr_obj_array(
+                self.z["cellData"], name=x, data=None, dtype=y, shape=self.csvr.nCells
+            )
+            for x, y in zip(self.csvr.cellDataCols, self.csvr.cellDataDtypes)
+        ]
+        batch_size = self.csvr.pandas_kwargs["chunksize"]
+        s, e, = (
+            0,
+            0,
+        )
+        if self.csvr.nCells % batch_size == 0:
+            n_chunks = int(self.csvr.nCells / batch_size)
+        else:
+            n_chunks = (self.csvr.nCells // batch_size) + 1
+        for a, c in tqdmbar(self.csvr.consume(), total=n_chunks):
+            e += a.shape[0]
+            if self.dtype is not None:
+                store[s:e] = a.astype(self.dtype)
+            else:
+                store[s:e] = a
+            if c is not None:
+                for n, i in enumerate(c.T):
+                    cell_data[n][s:e] = i
+            s = e
+        if e != self.csvr.nCells:
+            raise AssertionError(
+                "ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
+                "written into the zarr file. Please report this issue"
+            )
+
+
 def subset_assay_zarr(
     zarr_fn: str,
     in_grp: str,
@@ -1295,100 +1394,87 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
     )
 
 
-class CSVtoZarr:
+def bed_to_sparse_array(
+    bed_fn: str,
+    bin_size: int,
+    chrom_sizes: Dict[str, int],
+    min_counts_per_cell: int = 500,
+    read_chunk_size=1e6,
+    sep: str = "\t",
+    chrom_col: int = 0,
+    start_col: int = 1,
+    end_col: int = 2,
+    barcode_col: int = 3,
+    count_col: int = 4,
+    comments_startswith: str = "#",
+    disable_tqdm: bool = False,
+    chrom_modifier=None,
+):
     """
-    A class for converting data from CSV format to a Zarr hierarchy.
 
     Args:
-        cr: A CSVReader object
-        zarr_fn: The file name for the Zarr hierarchy.
-        assay_name: A label for the assay. Ex. "RNA" or "ATAC"
-        chunk_size: The requested size of chunks to load into memory and process.
-        dtype: the dtype of the data.
+        bed_fn:
+        bin_size:
+        chrom_sizes:
+        min_counts_per_cell:
+        read_chunk_size:
+        sep:
+        chrom_col:
+        start_col:
+        end_col:
+        barcode_col:
+        count_col:
+        comments_startswith:
+        disable_tqdm:
+        chrom_modifier:
 
-    Attributes:
-        csvr: A CSVReader object
-        fn: The file name for the Zarr hierarchy.
-        chunkSizes: The requested size of chunks to store in Zarr file
-        z: The Zarr hierarchy (array or group).
+    Returns:
+
     """
+    import gc
 
-    def __init__(
-        self,
-        cr: CSVReader,
-        zarr_fn: str,
-        assay_name: str,
-        chunk_size=(1000, 1000),
-        dtype: Optional[np.dtype] = None,
+    feat_idx = {}
+    for i in tqdmbar(chrom_sizes, disable=disable_tqdm, desc="Calculating bin indices"):
+        for j in range((chrom_sizes[i] // bin_size) + 1):
+            feat_idx[f"{i}_{j}"] = len(feat_idx)
+    cell_idx = {}
+    mat = []
+    n_feats = len(feat_idx)
+    feat_mapper = lambda x: feat_idx.get(x, n_feats)
+    if chrom_modifier is None:
+        chrom_modifier = lambda x: x + "_"
+
+    stream = pd.read_csv(
+        bed_fn,
+        sep=sep,
+        header=None,
+        comment=comments_startswith,
+        usecols=[chrom_col, start_col, end_col, barcode_col, count_col],
+        chunksize=int(read_chunk_size),
+    )
+    for df in tqdmbar(
+        stream, disable=disable_tqdm, desc="Building in memory sparse matrix"
     ):
-        self.csvr = cr
-        self.fn = zarr_fn
-        self.assayName = assay_name
-        self.chunkSizes = chunk_size
-        self.z = zarr.open(self.fn, mode="w")
-        if dtype is not None:
-            self.dtype = dtype
-        else:
-            self.dtype = next(self.csvr.consume())[0].dtype
-        self._ini_cell_data()
-        create_zarr_count_assay(
-            self.z,
-            assay_name,
-            chunk_size,
-            self.csvr.nCells,
-            self.csvr.feature_ids(),
-            self.csvr.feature_ids(),
-            self.dtype,
+        df[chrom_col] = df[chrom_col].map(chrom_modifier) + (
+            (df[start_col] + (df[end_col] - df[start_col]) // 2).values // bin_size
+        ).astype(str)
+        for i in df[barcode_col].unique():
+            if i not in cell_idx:
+                cell_idx[i] = len(cell_idx)
+        mat.append(
+            np.vstack(
+                [
+                    np.fromiter(map(cell_idx.get, df[barcode_col].values), dtype=int),
+                    np.fromiter(map(feat_mapper, df[chrom_col].values), dtype=int),
+                    df[count_col].values,
+                ]
+            ).T
         )
-
-    def _ini_cell_data(self) -> None:
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.csvr.cell_ids())
-        create_zarr_obj_array(g, "names", self.csvr.cell_ids())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.csvr.nCells)], "bool")
-
-    def dump(self) -> None:
-        """
-        Writes the count values into the Zarr matrix
-
-        Args:
-
-        Raises:
-            AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
-
-        Returns:
-            None
-
-        """
-
-        store = self.z["%s/counts" % self.assayName]
-        cell_data = [
-            create_zarr_obj_array(
-                self.z["cellData"], name=x, data=None, dtype=y, shape=self.csvr.nCells
-            )
-            for x, y in zip(self.csvr.cellDataCols, self.csvr.cellDataDtypes)
-        ]
-        batch_size = self.csvr.pandas_kwargs["chunksize"]
-        s, e, = (
-            0,
-            0,
-        )
-        if self.csvr.nCells % batch_size == 0:
-            n_chunks = int(self.csvr.nCells / batch_size)
-        else:
-            n_chunks = (self.csvr.nCells // batch_size) + 1
-        for a, c in tqdmbar(self.csvr.consume(), total=n_chunks):
-            e += a.shape[0]
-            if self.dtype is not None:
-                store[s:e] = a.astype(self.dtype)
-            else:
-                store[s:e] = a
-            if c is not None:
-                for n, i in enumerate(c.T):
-                    cell_data[n][s:e] = i
-            s = e
-        if e != self.csvr.nCells:
-            raise AssertionError(
-                "ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
-                "written into the zarr file. Please report this issue"
-            )
+    mat = np.vstack(mat)
+    gc.collect()
+    mat = csr_matrix(
+        (mat[:, 2], (mat[:, 0], mat[:, 1])), shape=(len(cell_idx), n_feats + 1)
+    )
+    gc.collect()
+    idx = np.array(mat.sum(axis=1))[:, 0] > min_counts_per_cell
+    return mat[idx, :-1], pd.Series(cell_idx.keys())[idx], pd.Series(feat_idx.keys())
