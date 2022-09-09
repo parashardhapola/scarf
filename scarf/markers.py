@@ -1,8 +1,8 @@
 """
 Module to find biomarkers.
 """
-from .assay import Assay
-from .utils import logger, tqdmbar
+from scarf.assay import Assay
+from scarf.utils import logger, tqdmbar
 from numba import jit
 import numpy as np
 import pandas as pd
@@ -10,12 +10,6 @@ from scipy.stats import linregress
 from typing import Optional
 from joblib import Parallel, delayed
 from scipy.stats import rankdata
-
-__all__ = [
-    "find_markers_by_rank",
-    "find_markers_by_regression",
-    "knn_clustering",
-]
 
 
 def read_prenormed_batches(store, cell_idx: np.ndarray, batch_size: int, desc: str):
@@ -33,7 +27,6 @@ def find_markers_by_rank(
     assay: Assay,
     group_key: str,
     cell_key: str,
-    threshold: float,
     batch_size: int,
     use_prenormed: bool,
     prenormed_store: Optional[str],
@@ -47,7 +40,6 @@ def find_markers_by_rank(
         assay:
         group_key:
         cell_key:
-        threshold:
         batch_size:
         use_prenormed:
         prenormed_store:
@@ -58,7 +50,7 @@ def find_markers_by_rank(
     """
 
     @jit(nopython=True)
-    def calc_mean_rank(v):
+    def calc_rank_mean(v):
         """
         Calculates the mean rank of the data.
         """
@@ -67,70 +59,89 @@ def find_markers_by_rank(
             r[x] = v[int_indices == x].mean()
         return r / r.sum()
 
-    def mean_rank_wrapper(v):
+    @jit(nopython=True)
+    def calc_frac_fc(v):
         """
-        Wraps `calc_mean_rank` function.
+        Calculates the mean rank of the data.
         """
-        return calc_mean_rank(v.values)
+        m = np.zeros(n_groups)
+        m_o = np.zeros(n_groups)
+        e = np.zeros(n_groups)
+        e_o = np.zeros(n_groups)
+        fc = np.zeros(n_groups)
+        for x in range(n_groups):
+            i = int_indices == x
+            m[x] = v[i].mean()
+            m_o[x] = v[~i].mean()
+            e[x] = v[i].nonzero()[0].shape[0] / i.sum()
+            e_o[x] = v[~i].nonzero()[0].shape[0] / (i.shape[0] - i.sum())
+            if m_o[x] == 0:
+                fc[x] = 100.100
+            else:
+                fc[x] = m[x] / (m_o[x])
+        return m, m_o, e, e_o, fc
 
     def prenormed_mean_rank_wrapper(gene_idx):
-        mr = calc_mean_rank(
-            rankdata(prenormed_store[gene_idx][:][cell_idx], method="dense")
-        )
-        idx = mr > threshold
-        if np.any(idx):
-            return np.array([ii[idx], np.repeat(gene_idx, idx.sum()), mr[idx]])
-        else:
-            return None
+        d = prenormed_store[gene_idx][:][cell_idx]
+        r = calc_rank_mean(rankdata(d, method="dense"))
+        m, m_o, e, e_o, fc = calc_frac_fc(d)
+        return gene_idx, np.vstack([r, m, m_o, e, e_o, fc])
 
     groups = assay.cells.fetch(group_key, cell_key)
-    group_set = sorted(set(groups))
+    group_set = np.array(sorted(set(groups)))
     n_groups = len(group_set)
-    # Since, numba needs int arrays to work properly but the dtype of 'groups' may not be integer type
-    # Hence we need to create a indexed version of 'groups'
     idx_map = dict(zip(group_set, range(n_groups)))
-    rev_idx_map = {v: k for k, v in idx_map.items()}
     int_indices = np.array([idx_map[x] for x in groups])
+    out_cols = [
+        "feature_index",
+        "score",
+        "mean",
+        "mean_rest",
+        "frac_exp",
+        "frac_exp_rest",
+        "fold_change",
+    ]
     results = {x: [] for x in group_set}
     if use_prenormed:
         if prenormed_store is None:
             if "prenormed" in assay.z:
                 prenormed_store = assay.z["prenormed"]
             else:
+                logger.warning("Could not find prenormed values")
                 use_prenormed = False
 
     if use_prenormed:
-        ii = np.array(list(rev_idx_map.values()))
         cell_idx = assay.cells.active_index(cell_key)
         batch_iterator = tqdmbar(prenormed_store.keys(), desc="Finding markers")
-        res = Parallel(n_jobs=n_threads)(
+        temp = Parallel(n_jobs=n_threads)(
             delayed(prenormed_mean_rank_wrapper)(i) for i in batch_iterator
         )
-        res = pd.DataFrame(np.hstack([x for x in res if x is not None])).T
-        res[1] = res[1].astype(int)
-        res[2] = res[2].astype(float)
-        results = {}
-        for i in group_set:
-            results[i] = (
-                res[res[0] == str(i)]
-                .sort_values(by=2, ascending=False)[[1, 2]]
-                .set_index(1)[2]
-            )
-        return results
     else:
         batch_iterator = assay.iter_normed_feature_wise(
             cell_key, "I", batch_size, "Finding markers", **norm_params
         )
+        temp = []
         for val in batch_iterator:
-            res = val.rank(method="dense").astype(int).apply(mean_rank_wrapper)
-            # Removing genes that were below the threshold in all the groups
-            res = res.T[(res < threshold).sum() != n_groups]
-            for j in res:
-                results[rev_idx_map[j]].append(res[j][res[j] > threshold])
-
-        for i in results:
-            results[i] = pd.concat(results[i]).sort_values(ascending=False)
-        return results
+            temp1 = (
+                val.rank(method="dense")
+                .astype(int)
+                .apply(lambda x: calc_rank_mean(x.values))
+            )
+            temp2 = val.apply(lambda x: calc_frac_fc(x.values))
+            for i in temp1.columns:
+                temp.append(
+                    (i, np.vstack([temp1[i].values, np.vstack(temp2[i].values)]))
+                )
+    for i in tqdmbar(temp, desc="Aggregating results"):
+        for j, k in zip(group_set, i[1].T):
+            results[j].append([i[0]] + list(k))
+    for i in results:
+        results[i] = (
+            pd.DataFrame(results[i], columns=out_cols)
+            .sort_values(by="score", ascending=False)
+            .round(5)
+        )
+    return results
 
 
 def find_markers_by_regression(

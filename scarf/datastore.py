@@ -3692,9 +3692,9 @@ class DataStore(MappingDatastore):
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
             cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table. (Default value: 'I')
-            threshold: This value dictates how specific the feature value has to be in a group before it is considered a
-                       marker for that group. The value has to be greater than 0 but less than or equal to 1
-                       (Default value: 0.25)
+            threshold: [Deprecated] This value dictates how specific the feature value has to be in a group before it is
+                       considered a marker for that group. The value has to be greater than 0 but less than or equal to
+                       1 (Default value: 0.25)
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
             use_prenormed: If True then prenormalized cache generated using Assay.save_normed_for_query is used.
@@ -3722,7 +3722,6 @@ class DataStore(MappingDatastore):
             assay,
             group_key,
             cell_key,
-            threshold,
             gene_batch_size,
             use_prenormed,
             prenormed_store,
@@ -3738,13 +3737,8 @@ class DataStore(MappingDatastore):
             g = group.create_group(i)
             vals = markers[i]
             if len(vals) != 0:
-                create_zarr_obj_array(
-                    g, "names", np.array(list(vals.index)), dtype="uint64"
-                )
-                g_s = create_zarr_dataset(
-                    g, "scores", (10000,), float, vals.values.shape
-                )
-                g_s[:] = vals.values
+                for j in vals.columns:
+                    create_zarr_obj_array(g, j, vals[j].values, dtype=vals[j].dtype)
         return None
 
     def run_pseudotime_marker_search(
@@ -3908,6 +3902,8 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         group_key: str = None,
         group_id: Union[str, int] = None,
+        min_score: float = 0.25,
+        min_frac_exp: float = 0.2,
     ) -> pd.DataFrame:
         """
         Returns a table of markers features obtained through `run_marker_search` for a given group.
@@ -3923,9 +3919,14 @@ class DataStore(MappingDatastore):
                        when ran `run_marker_search`
             group_id: This is one of the value in `group_key` column of cell metadata.
                       Results are returned for this group
+            min_score: This value dictates how specific the feature value has to be in a group before it is
+                       considered a marker for that group. The value has to be greater than 0 but less than or equal to
+                       1 (Default value: 0.25)
+            min_frac_exp: Minimum fraction of cells in a group that must have a non-zero value for a gene to be
+                          considered a marker for that group.
 
         Returns:
-            Pandas dataframe with marker feature names and scores
+            Pandas dataframe
         """
 
         if cell_key is None:
@@ -3943,30 +3944,44 @@ class DataStore(MappingDatastore):
                 "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
                 "`run_marker_search` method with same value of `cell_key` and `group_key`"
             )
-        if group_id is None:
-            raise ValueError(
-                f"ERROR: Please provide a value for `group_id` parameter. The value can be one of these: "
-                f"{list(g.keys())}"
-            )
-        try:
-            df = pd.DataFrame(
-                [g[group_id]["names"][:], g[group_id]["scores"][:]],
-                index=["ids", "score"],
-            ).T.set_index("ids")
-        except KeyError:
-            logger.debug(f"No markers found for {group_id} returning empty dataframe")
-            df = pd.DataFrame(
-                [[], [], []], index=["ids", "score", "names"]
-            ).T.set_index("ids")
-            return df
-        try:
-            df.index = list(map(int, df.index))
-            idx = df.index
-        except ValueError:
-            # Backward compatibility when we using 'ids' as indices
-            idx = assay.feats.get_index_by(df.index, "ids")
-        df["names"] = assay.feats.fetch_all("names")[idx]
-        return df
+        out_cols = [
+            "feature_index",
+            "score",
+            "mean",
+            "mean_rest",
+            "frac_exp",
+            "frac_exp_rest",
+            "fold_change",
+        ]
+        gids = sorted(set(assay.cells.fetch(group_key, key=cell_key)))
+        if group_id is not None:
+            gids = [group_id]
+
+        dfs = []
+        for gid in gids:
+            if gid in g:
+                cols = [g[gid][x][:] for x in out_cols]
+                df = (
+                    pd.DataFrame(
+                        cols,
+                        index=out_cols,
+                    )
+                    .T
+                )
+                df["group_id"] = gid
+                df["feature_name"] = assay.feats.fetch_all("names")[df.feature_index.astype("int")]
+            else:
+                logger.debug(f"No markers found for {gid} returning empty dataframe")
+                df = (
+                    pd.DataFrame([[] for x in out_cols], index=out_cols)
+                    .T
+                )
+                df["group_id"] = []
+                df["feature_name"] = []
+            df = df[["group_id", "feature_name"] + out_cols]
+            dfs.append(df)
+        dfs = pd.concat(dfs)
+        return dfs[(dfs.score >= min_score) & (dfs.frac_exp >= min_frac_exp)].reset_index(drop=True)
 
     def export_markers_to_csv(
         self,
@@ -3975,6 +3990,8 @@ class DataStore(MappingDatastore):
         cell_key: str = None,
         group_key: str = None,
         csv_filename: str = None,
+        min_score: float = 0.25,
+        min_frac_exp: float = 0.2,
     ) -> None:
         """
         Export markers of each cluster/group to a CSV file where each column contains the marker names sorted by
@@ -3983,12 +4000,17 @@ class DataStore(MappingDatastore):
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: To run run the the test on specific subset of cells, provide the name of a boolean column in
+            cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table.
             group_key: Required parameter. This has to be a column name from cell metadata table.
                        Usually this would be a column denoting cell clusters. Please use the same value as used
                        when ran `run_marker_search`
             csv_filename: Required parameter. Name, with path, of CSV file where the marker table is to be saved.
+            min_score: This value dictates how specific the feature value has to be in a group before it is
+                       considered a marker for that group. The value has to be greater than 0 but less than or equal to
+                       1 (Default value: 0.25)
+            min_frac_exp: Minimum fraction of cells in a group that must have a non-zero value for a gene to be
+                          considered a marker for that group.
 
         Returns:
 
@@ -4011,9 +4033,11 @@ class DataStore(MappingDatastore):
                 cell_key=cell_key,
                 group_key=group_key,
                 group_id=group_id,
+                min_score=min_score,
+                min_frac_exp=min_frac_exp
             )
             if len(m) > 0:
-                markers_table[group_id] = m["names"].reset_index(drop=True)
+                markers_table[group_id] = m["feature_name"].reset_index(drop=True)
             else:
                 markers_table[group_id] = pd.Series([])
         pd.DataFrame(markers_table).fillna("").to_csv(csv_filename, index=False)
@@ -5075,8 +5099,8 @@ class DataStore(MappingDatastore):
         g = self.z[assay.name]["markers"][slot_name]
         feat_idx = []
         for i in g.keys():
-            if "names" in g[i]:
-                feat_idx.extend(g[i]["names"][:][:topn])
+            if "feature_index" in g[i]:
+                feat_idx.extend(g[i]["feature_index"][:][:topn])
         if len(feat_idx) == 0:
             raise ValueError("ERROR: Marker list is empty for all the groups")
         feat_idx = np.array(sorted(set(feat_idx)))
