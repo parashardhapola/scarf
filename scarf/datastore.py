@@ -1,4 +1,4 @@
-"""Contains the primary interface to interact with data (i. e. DataStore) and
+"""Contains the primary interface to interact with data (i.e. DataStore) and
 its superclasses.
 
 - Classes:
@@ -73,7 +73,7 @@ class BaseDataStore:
     Attributes:
         cells: MetaData object with cells and info about each cell (e. g. RNA_nCounts ids).
         nthreads: Number of threads to use for this datastore instance.
-        z: The Zarr file (directory) used for for this datastore instance.
+        z: The Zarr file (directory) used for this datastore instance.
     """
 
     def __init__(
@@ -275,7 +275,7 @@ class BaseDataStore:
         self, from_assay: str
     ) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """This is a convenience function used internally to quickly obtain the
-        assay object that is linked to a assay name.
+        assay object that is linked to an assay name.
 
         Args:
             from_assay: Name of the assay whose object is to be returned.
@@ -287,7 +287,7 @@ class BaseDataStore:
         return self.__getattribute__(from_assay)
 
     def _get_latest_feat_key(self, from_assay: str) -> str:
-        """Looks up the the value in assay level attributes for key
+        """Looks up the value in assay level attributes for key
         'latest_feat_key'.
 
         Args:
@@ -300,7 +300,7 @@ class BaseDataStore:
         return assay.attrs["latest_feat_key"]
 
     def _get_latest_cell_key(self, from_assay: str) -> str:
-        """Looks up the the value in assay level attributes for key
+        """Looks up the value in assay level attributes for key
         'latest_cell_key'.
 
         Args:
@@ -448,7 +448,7 @@ class BaseDataStore:
             k: A cell metadata column or name of a feature.
             clip_fraction: This value is multiplied by 100 and the percentiles are soft-clipped from either end.
                            (Default value: 0)
-            use_precached: Whether to use pre calculated values from 'prenormed' slot. Used only if 'prenormed' is
+            use_precached: Whether to use pre-calculated values from 'prenormed' slot. Used only if 'prenormed' is
                            present (Default value: True)
 
         Returns:
@@ -589,7 +589,7 @@ class GraphDataStore(BaseDataStore):
         cells: List of cell barcodes.
         assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: Number of threads to use for this datastore instance.
-        z: The Zarr file (directory) used for for this datastore instance.
+        z: The Zarr file (directory) used for this datastore instance.
     """
 
     def __init__(self, **kwargs):
@@ -599,7 +599,7 @@ class GraphDataStore(BaseDataStore):
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
         """This is a convenience function to determine the linear dimension
         reduction method to be used for a given assay. It is uses a
-        predetermine rule to make this determination.
+        predetermined rule to make this determination.
 
         Args:
             assay: Assay object.
@@ -649,7 +649,7 @@ class GraphDataStore(BaseDataStore):
         """This function allows determination of values for the parameters of
         `make_graph` function. This function harbours the default values for
         each parameter.  If parameter value is None, then before choosing the
-        default, it tries to use the values from latest iteration of the step
+        default, it tries to use the values from the latest iteration of the step
         within the same hierarchy tree. Find details for parameters in the
         `make_graph` method.
 
@@ -933,7 +933,7 @@ class GraphDataStore(BaseDataStore):
     def _get_latest_graph_loc(
         self, from_assay: str, cell_key: str, feat_key: str
     ) -> str:
-        """Convenience function to identify location of latest graph in the
+        """Convenience function to identify location of the latest graph in the
         Zarr hierarchy.
 
         Args:
@@ -956,7 +956,7 @@ class GraphDataStore(BaseDataStore):
         """Runs PCA on kmeans cluster centers and ascribes the PC values to
         individual cells based on their cluster labels. This is used in
         `run_umap` and `run_tsne` for initial embedding of cells. Uses
-        `rescale_array` to to reduce the magnitude of extreme values.
+        `rescale_array` to reduce the magnitude of extreme values.
 
         Args:
             from_assay: Name fo the assay for which Kmeans was fit.
@@ -1116,7 +1116,7 @@ class GraphDataStore(BaseDataStore):
                           useful, for example, the data has cells from multiple replicates which wont merge together, in
                           which case the `pca_cell_key` can be used to fit PCA on cells from only one of the replicate.
             reduction_method: Method to use for linear dimension reduction. Could be either 'pca', 'lsi' or 'auto'. In
-                              case of 'auto' `_choose_reduction_method` will be used to determine best reduction type
+                              case of 'auto' `_choose_reduction_method` will be used to determine the best reduction type
                               for the assay.
             dims: Number of top reduced dimensions to use (Default value: 11)
             k: Number of nearest neighbours to query for each cell (Default value: 11)
@@ -1125,15 +1125,15 @@ class GraphDataStore(BaseDataStore):
             ann_ef: Refer to HNSWlib link above (Default value: min(100, max(k * 3, 50)))
             ann_m: Refer to HNSWlib link above (Default value: min(max(48, int(dims * 1.5)), 64) )
             ann_parallel: If True, then ANN graph is created in parallel mode using DataStore.nthreads number of
-                          threads. Results obtained in parallel mode will not be reproducible. (Defaul: False)
+                          threads. Results obtained in parallel mode will not be reproducible. (Default: False)
             rand_state: Random seed number (Default value: 4466)
-            n_centroids: Number of centroids for Kmeans clustering. As a general idication, have a value of 1+ for every
-                         100 cells. Small small (<2000 cells) and very small (<500 cells) use a ballpark number for max
+            n_centroids: Number of centroids for Kmeans clustering. As a general indication, have a value of 1+ for every
+                         100 cells. Small (<2000 cells) and very small (<500 cells) use a ballpark number for max
                          expected number of clusters (Default value: 500). The results of kmeans clustering are only
                          used to provide initial embedding for UMAP and tSNE. (Default value: 500)
             batch_size: Number of cells in a batch. This number is guided by number of features being used and the
                         amount of available free memory. Though the full data is already divided into chunks, however,
-                        if only a fraction of features are being used in the normalized dataset, then the chunk size
+                        if only a fraction of features is being used in the normalized dataset, then the chunk size
                         can be increased to speed up the computation (i.e. PCA fitting and ANN index building).
                         (Default value: 1000)
             log_transform: If True, then the normalized data is log-transformed (only affects RNAassay type assays).
@@ -1159,8 +1159,8 @@ class GraphDataStore(BaseDataStore):
                              (d x p) where d is same the number of active features in feat_key and p is the number of
                              reduced dimensions. `dims` parameter is ignored when this is provided.
                              (Default value: None)
-            feat_scaling: If True (default) then the feature will be z-scaled otherwise not. It is highly recommended to
-                          keep this as True unless you know what you are doing. `feat_scaling` is internally turned off
+            feat_scaling: If True (default) then the feature will be z-scaled otherwise not. It is highly recommended that
+                          this is kept as True unless you know what you are doing. `feat_scaling` is internally turned off
                           when during cross sample mapping using CORAL normalized values are being used. Read more about
                           this in `run_mapping` method.
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
@@ -1485,7 +1485,7 @@ class GraphDataStore(BaseDataStore):
             upper_only: If True, then only the values from upper triangular of the matrix are returned. This is only
                        used when symmetric is True.
             use_k: Number of top k-nearest neighbours to keep in the graph. This value must be greater than 0 and less
-                   the parameter k used. By default all neighbours are used. (Default value: None)
+                   the parameter k used. By default, all neighbours are used. (Default value: None)
             graph_loc: Zarr hierarchy where the graph is stored. If no value is provided then graph location is
                        obtained from `_get_latest_graph_loc` method.
 
@@ -1561,11 +1561,11 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
-            ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
+            ini_embed: Initial embedding coordinates for the cells in cell_key. Should have the same number of columns as
                        tsne_dims. If not value is provided then the initial embedding is obtained using `get_ini_embed`.
             tsne_dims: Number of tSNE dimensions to compute (Default value: 2)
             lambda_scale: λ rescaling parameter (Default value: 1.0)
@@ -1574,7 +1574,7 @@ class GraphDataStore(BaseDataStore):
             alpha: Early exaggeration multiplier (Default value: 10)
             box_h: Grid side length (accuracy control). Lower values might drastically slow down
                    the algorithm (Default value: 0.7)
-            temp_file_loc: Location of temporary file. By default these files will be created in the current working
+            temp_file_loc: Location of temporary file. By default, these files will be created in the current working
                            directory. These files are deleted before the method returns.
             label: base label for tSNE dimensions in the cell metadata column (Default value: 'tSNE')
             verbose: If True (default) then the full log from SGtSNEpi algorithm is shown.
@@ -1691,11 +1691,11 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
-            ini_embed: Initial embedding coordinates for the cells in cell_key. Should have same number of columns as
+            ini_embed: Initial embedding coordinates for the cells in cell_key. Should have the same number of columns as
                        umap_dims. If not value is provided then the initial embedding is obtained using `get_ini_embed`.
             umap_dims: Number of dimensions of UMAP embedding (Default value: 2)
             spread: Same as spread in UMAP package.  The effective scale of embedded points. In combination with
@@ -1726,7 +1726,7 @@ class GraphDataStore(BaseDataStore):
             integrated_graph:
             parallel: Whether to run UMAP in parallel mode. Setting value to True will use `nthreads` threads.
                       The results are not reproducible in parallel mode. (Default value: False)
-            nthreads: If parallel=True then this number of threads will be used to run UMAP. By default the `nthreads`
+            nthreads: If parallel=True then this number of threads will be used to run UMAP. By default, the `nthreads`
                       attribute of the class is used. (Default value: None)
 
         Returns:
@@ -1839,7 +1839,7 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             resolution: Resolution parameter for `RBConfigurationVertexPartition` configuration
             integrated_graph:
@@ -1923,16 +1923,16 @@ class GraphDataStore(BaseDataStore):
         """Executes Paris clustering algorithm
         (https://arxiv.org/pdf/1806.01664.pdf) on the cell-neighbourhood graph.
         The algorithm captures the multiscale structure of the graph in to an
-        ordinary dendrogram structure. The distances in the dendrogram are are
-        based on probability of sampling node (aka cell) pairs. This methods
-        creates this dendrogram if it doesn't already exits for the graph and
+        ordinary dendrogram structure. The distances in the dendrogram are
+        based on probability of sampling node (aka cell) pairs. These methods
+        creates this dendrogram if it doesn't already exist for the graph and
         induces either a straight cut or balanced cut to obtain clusters of
         cells.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             n_clusters: Number of desired clusters (required if balanced_cut is False)
             integrated_graph:
@@ -2063,14 +2063,14 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             cluster_key: Name of the column in cell metadata table where cluster information is stored.
             use_k: Number of top k-nearest neighbours to retain in the graph over which downsampling is performed.
                    BY default all neighbours are used. (Default value: None)
             density_depth: Same as 'search_depth' parameter in `calc_neighbourhood_density`. (Default value: 2)
             density_bandwidth: This value is used to scale the penalty affected by neighbourhood density. Higher values
-                               will lead to to larger penalty. (Default value: 5.0)
+                               will lead to a larger penalty. (Default value: 5.0)
             max_sampling_rate: Maximum fraction of cells to sample from each group. The effective sampling rate is lower
                                than this value depending on the neighbourhood degree and SNN density of cells.
                                Should be greater than 0 and less than 1. (Default value: 0.1)
@@ -2089,7 +2089,7 @@ class GraphDataStore(BaseDataStore):
                                (Default value: 'sketched')
             save_density_key: base label for saving the cell neighbourhood densities into a cell metadata column
                               (Default value: 'cell_density')
-            save_mean_snn_key: base label for saving the SNN value for each cells (identified by topacedo sampler) into
+            save_mean_snn_key: base label for saving the SNN value for each cell (identified by topacedo sampler) into
                                a cell metadata column (Default value: 'snn_value')
             save_seeds_key: base label for saving the seed cells (identified by topacedo sampler) into a cell
                             metadata column (Default value: 'sketch_seeds')
@@ -2189,7 +2189,7 @@ class GraphDataStore(BaseDataStore):
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feature_name: Name of the feature to be imputed
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             t: Same as the t parameter in MAGIC. Higher values lead to larger diffusion of values. Too large values
                can slow down the algorithm and cause over-smoothening. (Default value: 2)
@@ -2287,9 +2287,9 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                         used feature for the given assay will be used.
-            n_singular_vals: Number of smallest singular values to save.
+            n_singular_vals: Number of the smallest singular values to save.
             source_sink_key: Name of a column from cell attributes table that shall be used for fetching source and
                              sink groups. Usually this will a column containing cell cluster/group identities.
             sources: A list of group/clusters ids from `source_sink_key` column to be treated as sources. Sources are
@@ -2301,7 +2301,7 @@ class GraphDataStore(BaseDataStore):
                     should have negative values for source cells and positive values for sink cells.
             min_max_norm_ptime: Whether to perform min-max normalization on the final pseudotime values so that values
                                 are in 0 to 1 range. (Default: True)
-            random_seed: A random seed for svds (Defaul: 4444)
+            random_seed: A random seed for svds (Default: 4444)
             label: label: Base label for pseudotime in the cell metadata column (Default value: 'pseudotime')
 
         Returns:
@@ -2502,15 +2502,13 @@ class GraphDataStore(BaseDataStore):
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class MappingDatastore(GraphDataStore):
     """This class extends GraphDataStore by providing methods for mapping/
-    projection of cells from one DataStore onto another.
-
-    It also contains the methods required for label transfer, mapping score generation and co-embedding.
+    projection of cells from one DataStore onto another. It also contains the methods required for label transfer, mapping score generation and co-embedding.
 
     Attributes:
         cells: List of cell barcodes.
         assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
         nthreads: Number of threads to use for this datastore instance.
-        z: The Zarr file (directory) used for for this datastore instance.
+        z: The Zarr file (directory) used for this datastore instance.
     """
 
     def __init__(self, **kwargs):
@@ -2542,13 +2540,13 @@ class MappingDatastore(GraphDataStore):
         Args:
             target_assay: Assay object of the target dataset
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
-            target_feat_key: This will used to name wherein the normalized target data will be saved in its own
+            target_feat_key: This will be used to name wherein the normalized target data will be saved in its own
                              zarr hierarchy.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
-            save_k: Number of nearest numbers to identify for each target cell (Default value: 3)
+            save_k: Number of the nearest neighbours to identify for each target cell (Default value: 3)
             batch_size: Number of cells that will be projected as a batch. This used to decide the chunk size when
                         normalized data for the target cells is saved to disk.
             ref_mu: If True (default), Then mean values of features as in the reference are used,
@@ -2852,10 +2850,10 @@ class MappingDatastore(GraphDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
             target_names: Name of target datasets to be included in the unified graph
-            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger
                    than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
                    'save_k'
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
@@ -2964,9 +2962,9 @@ class MappingDatastore(GraphDataStore):
             target_names: Names of target datasets to be included in the unified UMAP.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
-            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger
                    than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
                    'save_k'
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
@@ -2994,7 +2992,7 @@ class MappingDatastore(GraphDataStore):
             label: base label for UMAP dimensions in the cell metadata column (Default value: 'UMAP')
             parallel: Whether to run UMAP in parallel mode. Setting value to True will use `nthreads` threads.
                       The results are not reproducible in parallel mode. (Default value: False)
-            nthreads: If parallel=True then this number of threads will be used to run UMAP. By default the `nthreads`
+            nthreads: If parallel=True then this number of threads will be used to run UMAP. By default, the `nthreads`
                       attribute of the class is used. (Default value: None)
 
         Returns:
@@ -3068,9 +3066,9 @@ class MappingDatastore(GraphDataStore):
             target_names: Names of target datasets to be included in the unified tSNE.
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default the latest
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                        used feature for the given assay will be used.
-            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger than
+            use_k: Number of nearest neighbour edges of each projected cell to be included. If this value is larger
                    than `save_k` parameter while running mapping for the `target_name` target then `use_k` is reset to
                    'save_k'.
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
@@ -3080,10 +3078,10 @@ class MappingDatastore(GraphDataStore):
             alpha: Early exaggeration multiplier. (Default value: 10)
             box_h: Grid side length (accuracy control). Lower values might drastically slow down
                    the algorithm (Default value: 0.7)
-            temp_file_loc: Location of temporary file. By default these files will be created in the current working
+            temp_file_loc: Location of temporary file. By default, these files will be created in the current working
                            directory. These files are deleted before the method returns.
             verbose: If True (default) then the full log from SGtSNEpi algorithm is shown.
-            ini_embed_with: Initial embedding coordinates for the cells in cell_key. Should have same number of columns
+            ini_embed_with: Initial embedding coordinates for the cells in cell_key. Should have the same number of columns
                             as tsne_dims. If not value is provided then the initial embedding is obtained using
                             `get_ini_embed`.
             label: Base label for tSNE dimensions in the cell metadata column. (Default value: 'tSNE')
@@ -3175,10 +3173,10 @@ class MappingDatastore(GraphDataStore):
     ):
         """Plots the reference and target cells in their unified space.
 
-        This function helps plotting the reference and target cells the coordinates for which were obtained from
+        This function helps to plot the reference and target cells, the coordinates for which were obtained from
         either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
         but rather in the projections slot of the Zarr hierarchy, this function is needed to correctly fetch the values
-        for reference and target cells. Additionally this function provides a way to colour target cells by bringing in
+        for reference and target cells. Additionally, this function provides a way to colour target cells by bringing in
         external annotations for those cells.
 
         Args:
@@ -3199,8 +3197,8 @@ class MappingDatastore(GraphDataStore):
                         of a colour. (Default value: 'k')
             point_size: Size of each scatter point. This is overridden if `size_vals` is provided. Has no effect if
                         `do_shading` is True. (Default value: 10)
-            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
-            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
+            ax_label_size: Font size for the x and y-axis labels. (Default value: 12)
+            frame_offset: Extend the x and y-axis limits by this fraction (Default value: 0.05)
             spine_width: Line width of the displayed spines (Default value: 0.5)
             spine_color: Colour of the displayed spines.  (Default value: 'k')
             displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
@@ -3210,7 +3208,7 @@ class MappingDatastore(GraphDataStore):
                            (Default value: True)
             legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
             legend_size: Font size of the legend text. (Default value: 12)
-            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
+            legends_per_col: Number of legends to be used on each legend column. This value determines how many
                              legend columns will be drawn (Default value: 20)
             title: Title to be used for plot. (Default value: None)
             title_size: Size of each axis/subplots title (Default value: 12)
@@ -3223,7 +3221,7 @@ class MappingDatastore(GraphDataStore):
             savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
-            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+            ax: An instance of Matplotlib's Axes object. This can be used to plot the figure into an already
                 created axes. (Default value: None)
             force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
                                 treated as continuous variables otherwise as categories. This effects how colormaps
@@ -3543,11 +3541,11 @@ class DataStore(MappingDatastore):
 
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
-            cell_key: Cells to use for HVG selection. By default all cells with True value in 'I' will be used.
+            cell_key: Cells to use for HVG selection. By default, all cells with True value in 'I' will be used.
                       The provided value for `cell_key` should be a column in cell metadata table with boolean values.
             min_cells: Minimum number of cells where a gene should have non-zero expression values for it to be
                        considered a candidate for HVG selection. Large values for this parameter might make it difficult
-                       to identify rare populations of cells. Very small values might lead to higher signal to noise
+                       to identify rare populations of cells. Very small values might lead to a higher signal-to-noise
                        ratio in the selected features. By default, a value is set assuming smallest population has no
                        less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
                        then `min-cells` will be set to 10.
@@ -3562,7 +3560,7 @@ class DataStore(MappingDatastore):
                          variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
                          (Default: 0.1)
             blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
-                       as HVGs. By default we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
+                       as HVGs. By default, we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
                        HLA genes. (Default: '^MT- | ^RPS | ^RPL | ^MRPS | ^MRPL | ^CCN | ^HLA- | ^H2- | ^HIST' )
             show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
             hvg_key_name: Base label for HVGs in the features metadata column. The value for
@@ -3614,11 +3612,11 @@ class DataStore(MappingDatastore):
         """Feature selection method for ATACassay type assays.
 
         This method first calculates prevalence of each peak by computing sum of TF-IDF normalized values for each peak
-        and then marks `top_n` peaks with highest prevalence as prevalent peaks.
+        and then marks `top_n` peaks with the highest prevalence as prevalent peaks.
 
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
-            cell_key: Cells to use for selection of most prevalent peaks. By default all cells with True value in
+            cell_key: Cells to use for selection of most prevalent peaks. By default, all cells with True value in
                       'I' will be used. The provided value for `cell_key` should be a column in cell metadata table
                       with boolean values.
             top_n: Number of top prevalent peaks to be selected. This value is ignored if a value is provided
@@ -3808,13 +3806,13 @@ class DataStore(MappingDatastore):
                          values will slow down processing but produce more smoothened. The choice of value here depends
                          on the number of cells in the analysis. Larger value will be useful to produce smooth profiles
                          when number of cells are large. (Default value: 200)
-            chunk_size: Number of bins of cells to be create. Larger values will increase memory consumption but will
+            chunk_size: Number of bins of cells to create. Larger values will increase memory consumption but will
                         provide improved resolution (Default value: 50)
             smoothen: Whether to perform the rolling window averaging (Default value: True)
-            z_scale: Whether to perform standard scaling of each feature. Turning this off maynot be a good choice.
+            z_scale: Whether to perform standard scaling of each feature. Turning this off may not be a good choice.
                      (Default value: True)
             n_neighbours: Number of neighbours to save in the KNN graph of features(Default value: 11)
-            n_clusters: Number of feauture clusters to create. (Default value: 10)
+            n_clusters: Number of feature clusters to create. (Default value: 10)
             batch_size: Number of features to load at a time when processing the data. Larger values will increase
                         memory consumption (Default value: 100)
             ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
@@ -4108,7 +4106,7 @@ class DataStore(MappingDatastore):
             group_key: This is mandatory parameter. Name of the column in feature metadata table to be used for
                        grouping features.
             assay_label: This is mandatory parameter. A name for the new assay.
-            exclude_values: These groups/clusters will ignored and not added to new assay. By default it is set to [-1],
+            exclude_values: These groups/clusters will be ignored and not added to new assay. By default, it is set to [-1],
                             this means that all the features that have the group identity of -1 are not used.
 
         Returns: None
@@ -4184,7 +4182,7 @@ class DataStore(MappingDatastore):
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            external_bed_fn: This is mandatory parameter. This file should be a BED format file with atleast five
+            external_bed_fn: This is mandatory parameter. This file should be a BED format file with at least five
                              columns containing: chromosome, start position, end position, feature id and feature name.
                              Coordinates should be in half open format. That means that actual end position is -1
             assay_label: This is mandatory parameter. A name for the new assay.
@@ -4195,8 +4193,8 @@ class DataStore(MappingDatastore):
             renormalization: Whether to rescale the sum of feature values for each cell to `scalar_coeff`
                          (Default value: True)
             assay_type: The new assay (melded assay) is saved as this type. This can be any type of Assay class from
-                        `assay` module. Please provide string representation of class. By default the assay is assigned
-                        a generic class and has has a dummy normalization function (Default value: 'Assay')
+                        `assay` module. Please provide string representation of class. By default, the assay is assigned
+                        a generic class and has a dummy normalization function (Default value: 'Assay')
 
         Returns:
             None
@@ -4357,15 +4355,15 @@ class DataStore(MappingDatastore):
         cell_key: str = "I",
         new_col_name: Optional[str] = None,
     ) -> Union[None, List[str]]:
-        """A convenience function to relabel the values in a cell attribure
+        """A convenience function to relabel the values in a cell attribute
         column (A) based on the values in another cell attribute column (B).
-        For each unique value in A, the most frequently occuring value in B is
+        For each unique value in A, the most frequently occurring value in B is
         found. If two or more values in A have maximum overlap with the same
         value in B, then they all get the same label as B along with different
         suffixes like, 'a', 'b', etc. The suffixes are ordered based on where
         the largest fraction of the B label lies. If one label from A takes up
-        multiple labels from B then all the labels from B are included and they
-        are separated by hyphens.
+        multiple labels from B then all the labels from B are included, and they
+        are delimited by hyphens.
 
         Args:
             to_relabel: Cell attributes column to relabel
@@ -4421,7 +4419,7 @@ class DataStore(MappingDatastore):
     ) -> None:
         """Makes violin plots of the distribution of values present in cell
         metadata. This method is designed to distribution of nCounts,
-        nFeatures, percentMito and percentRibo cell attrbutes.
+        nFeatures, percentMito and percentRibo cell attributes.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4443,7 +4441,7 @@ class DataStore(MappingDatastore):
             sup_title_size: The font size of title for complete figure panel (Default value: 12.0 )
             scatter_size: Size of each point in the violin plot (Default value: 1.0)
             max_points: Maximum number of points to display over violin plot. Random uniform sampling will be performed
-                        to bring down the number of datapoints to this value. This does not effect the violin plot.
+                        to bring down the number of datapoints to this value. This does not affect the violin plot.
                         (Default value: 10000)
             show_on_single_row: Show all subplots in a single row. It might be useful to set this to False if you have
                                 too many groups within each subplot (Default value: True)
@@ -4558,7 +4556,7 @@ class DataStore(MappingDatastore):
         show_fig: bool = True,
         scatter_kwargs: dict = None,
     ):
-        """Create a scatter plot with a chosen layout. The methods fetches the
+        """Create a scatter plot with a chosen layout. The method fetches the
         coordinates based from the cell metadata columns with `layout_key`
         prefix. DataShader library is used to draw fast rasterized image is
         `do_shading` is True. This can be useful when large number of cells are
@@ -4577,10 +4575,10 @@ class DataStore(MappingDatastore):
             color_by: One (or a list) of the columns of the metadata table or a feature name (for example gene, GATA2).
                       If a list of names is provided a grid of plots will be made.
                       (Default: None)
-            subselection_key: A column from cell metadata table to be used to show only a subselection of cells. This
+            subselection_key: A column from cell metadata table to be used to show only a sub-selection of cells. This
                               key can be used to hide certain cells from a 2D layout. (Default value: None)
             size_vals: An array of values to be used to set sizes of each cell's datapoint in the layout.
-                       By default all cells are of same size determined by `point_size` parameter.
+                       By default, all cells are of same size determined by `point_size` parameter.
                        Has no effect if `do_shading` is True (Default value: None)
             clip_fraction: Same as `clip_fraction` parameter of 'get_cell_vals' method. This value is multiplied by 100
                            and the percentiles are soft-clipped from either end. (Default value: 0)
@@ -4602,20 +4600,20 @@ class DataStore(MappingDatastore):
                         `do_shading` is True. (Default value: 10)
             do_shading: Sets shading mode on/off. If shading mode is off (default) then matplotlib's scatter function is
                         is used otherwise a rasterized image is generated using datashader library. Turn this on if you
-                        have more than 100K cells to improve render time and also to avoid issues with overplotting.
+                        have more than 100K cells to improve render time and also to avoid issues with over-plotting.
                         (Default value: False)
             shade_npixels: Number of pixels to rasterize (for both height and width). This controls the resolution of
                            the figure. Adjust this according to the size of the image you want to generate.
                            (Default value: 1000)
-            shade_min_alpha: The minimum alpha value to use for non-empty pixels when doing colormapping, in [0, 255].
-                             Use a higher value to avoid undersaturation, i.e. poorly visible low-value datapoints, at
+            shade_min_alpha: The minimum alpha value to use for non-empty pixels when doing color-mapping, in [0, 255].
+                             Use a higher value to avoid under-saturation, i.e. poorly visible low-value datapoints, at
                              the expense of the overall dynamic range. (Default value: 10)
             spread_pixels: Maximum number of pixels to spread on all sides (Default value: 1)
             spread_threshold:  When spreading, determines how far to spread. Spreading starts at 1 pixel, and stops
                                when the fraction of adjacent non-empty pixels reaches this threshold. Higher values
                                give more spreading, up to the `spread_pixels` allowed. (Default value: 0.2)
-            ax_label_size: Font size for the x and y axis labels. (Default value: 12)
-            frame_offset: Extend the x and y axis limits by this fraction (Default value: 0.05)
+            ax_label_size: Font size for the x and y-axis labels. (Default value: 12)
+            frame_offset: Extend the x and y-axis limits by this fraction (Default value: 0.05)
             spine_width: Line width of the displayed spines (Default value: 0.5)
             spine_color: Colour of the displayed spines.  (Default value: 'k')
             displayed_sides: Determines which figure spines are chosen. The spines to be shown can be supplied as a
@@ -4625,10 +4623,10 @@ class DataStore(MappingDatastore):
                            (Default value: True)
             legend_onside: Whether to draw a legend table on the side of the figure. (Default value: True)
             legend_size: Font size of the legend text. (Default value: 12)
-            legends_per_col: Number of legends to be used on each legend column. This value determines how many legend
+            legends_per_col: Number of legends to be used on each legend column. This value determines how many
                              legend columns will be drawn (Default value: 20)
             title: Title to be used for plot/plots. If more than one plot are being plotted then the value should be a
-                   list of strings. By default the titles are automatically inferred from color_by parameter
+                   list of strings. By default, the titles are automatically inferred from color_by parameter
                    (Default value: None)
             title_size: Size of each axis/subplots title (Default value: 12)
             hide_title: If True, then the title of the sublots is not shown (Default value: False)
@@ -4644,14 +4642,14 @@ class DataStore(MappingDatastore):
             sort_values: Sort the values before plotting. Setting True will cause the datapoints with
                          (cells) with larger values to be plotted over the ones with lower values.
                          (Default value: False)
-            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+            ax: An instance of Matplotlib's Axes object. This can be used to plot the figure into an already
                 created axes. It is ignored if `do_shading` is set to True. (Default value: None)
             force_ints_as_cats: Force integer labels in `color_by` as categories. If False, then integer will be
-                                treated as continuous variables otherwise as categories. This effects how colourmaps
+                                treated as continuous variables otherwise as categories. This effects how colormaps
                                 are chosen and how legends are rendered. Set this to False if you are large number of
                                 unique integer entries (Default: True)
             n_columns: If plotting several plots in a grid this argument decides the layout by how many columns in the
-                       grid. Defaults to 4 but if the total amount of plots are less than 4 it will default to that
+                       grid. Defaults to 4 but if the total number of plots is less than 4 it will default to that
                        number.
             w_pad: When plotting in multiple plots in a grid this decides the width padding between the plots.
                    If None is provided the padding will be automatically added to avoid overlap.
@@ -4864,7 +4862,7 @@ class DataStore(MappingDatastore):
                       Should be same as the one that was used in one of the `run_clustering` calls for the given assay.
                       The values in the chosen column should be boolean (Default value: 'I')
             feat_key: Feature key. Should be same as the one that was used in `run_clustering` calls for the
-                      given assay. By default the latest used feature for the given assay will be used.
+                      given assay. By default, the latest used feature for the given assay will be used.
             cluster_key: Should be one of the columns from cell metadata table that contains the output of
                          `run_clustering` method. For example if chosen assay is `RNA` and default value for `label`
                          parameter was used in `run_clustering` then `cluster_key` can be 'RNA_cluster'
@@ -4884,19 +4882,18 @@ class DataStore(MappingDatastore):
             fontsize: Font size of cluster labels. Only used when `do_label` is True (Default value: 10)
             root_color: Colour for root node. Acceptable values are  Matplotlib named colours or hexcodes for colours.
                         (Default value: '#C0C0C0')
-            non_leaf_color: Colour for branchpoint nodes. Acceptable values are  Matplotlib named colours or hexcodes
+            non_leaf_color: Colour for branch-point nodes. Acceptable values are  Matplotlib named colours or hexcodes
                             for colours. (Default value: 'k')
-            cmap: A colormap to be used to colour cluster nodes. Should be one of Matplotlib colourmaps.
+            cmap: A colormap to be used to colour cluster nodes. Should be one of Matplotlib colormaps.
                   (Default value: 'tab20')
             edgecolors: Edge colour of circles representing nodes in the hierarchical tree (Default value: 'k)
             edgewidth:  Line width of the edges circles representing nodes in the hierarchical tree  (Default value: 1)
             alpha: Alpha level (Opacity) of the displayed nodes in the figure. (Default value: 0.7)
             figsize: A tuple with describing figure width and height (Default value: (5, 5))
-            ax: An instance of Matplotlib's Axes object. This can be used to to plot the figure into an already
+            ax: An instance of Matplotlib's Axes object. This can be used to plot the figure into an already
                 created axes. (Default value: None)
-            show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
-            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
-                      the extension present in the parameter value. (Default value: None)
+            show_fig: If, False then axes object is returned rather than rendering the plot (Default value: True)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on                      the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
 
         Returns:
@@ -5034,7 +5031,7 @@ class DataStore(MappingDatastore):
                            (Default value: True)
             vmin: z-scores lower than this value are ceiled to this value. (Default value: -1)
             vmax: z-scores higher than this value are floored to this value. (Default value: 2)
-            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure. (Default value: 300)
             show_fig: Whether to render the figure and display it using plt.show() (Default value: True)
@@ -5126,20 +5123,20 @@ class DataStore(MappingDatastore):
         cluster that has mean maxima in the later pseudotime appears last.
 
         CAUTION: This make take a long time to render and consume large amount of memory if your data has too many
-                 features or you created many bins across cell ordering.
+                 features or if you create too many bins for cell ordering.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
-            cell_key: Required paramter. One of the columns from cell attribute table that indicates the cells to be
+            cell_key: Required parameter. One of the columns from cell attribute table that indicates the cells to be
                       used. The values in the chosen column should be boolean. This value should be same as used for
-                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for latest graph created)
             feat_key: Required parameter. One of the columns from feature attribute table that indicates the cells to be
                       used. The values in the chosen column should be boolean. This value should be same as used for
-                      `run_pseudotime_aggregation`. (Default value: The cell key used for lastest graph created)
+                      `run_pseudotime_aggregation`. (Default value: The cell key used for latest graph created)
             feature_cluster_key: Required parameter. The name of column from feature attribute table that contains
                                  information about feature clusters.
             pseudotime_key: Required parameter. The name of the column from cell attribute table that contains the
-                            pseudotime values. This should be same as the one used from the relevent run of
+                            pseudotime values. This should be same as the one used from the relevant run of
                             `run_pseudotime_aggregation`.
             show_features: A list of feature names to be highlighted/labelled on the heatmap.
             width: Width of the heatmap (Default value: 5)
@@ -5153,13 +5150,13 @@ class DataStore(MappingDatastore):
                              (Default value: cmocean.deep)
             clusterbar_cmap: Colormap for the cluster bar showing the span of each feature cluster.
                              (Default value: tab20)
-            tick_fontsize: Fontsize for cbar ticks (Default value: 10)
+            tick_fontsize: Font size for cbar ticks (Default value: 10)
             axis_fontsize: Font size for labels along each axis(Default value: 12)
-            feature_label_fontsize: Fontsize for feature labels on the heatmap (Default value: 12)
-            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+            feature_label_fontsize: Font size for feature labels on the heatmap (Default value: 12)
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
-            show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
+            show_fig: If, False then axes object is returned rather than rendering the plot (Default value: True)
 
         Returns: None
         """
