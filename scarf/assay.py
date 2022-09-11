@@ -16,8 +16,9 @@ import zarr
 from .metadata import MetaData
 from .utils import show_dask_progress, controlled_compute, logger
 from scipy.sparse import csr_matrix, vstack
-from typing import Tuple, List, Generator, Optional
+from typing import Tuple, List, Generator, Optional, Union
 import pandas as pd
+from joblib import Parallel, delayed
 
 __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
 
@@ -490,8 +491,9 @@ class Assay:
         feat_key: Optional[str],
         batch_size: int,
         msg: Optional[str],
+        as_dataframe: bool = True,
         **norm_params,
-    ) -> Generator[pd.DataFrame, None, None]:
+    ) -> Generator[Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]], None, None]:
         """
         This generator iterates over all the features marked by `feat_key` in batches.
 
@@ -503,6 +505,7 @@ class Assay:
                       used
             batch_size: Number of genes to be loaded in the memory at a time.
             msg: Message to be displayed in the progress bar
+            as_dataframe: If true (default) then the yielded matrices are pandas dataframe
 
         Returns:
 
@@ -531,10 +534,15 @@ class Assay:
             np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
         )
         for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
-            yield pd.DataFrame(
-                controlled_compute(data[:, chunk], self.nthreads),
-                columns=feat_idx[chunk],
-            )
+            if as_dataframe:
+                yield pd.DataFrame(
+                    controlled_compute(data[:, chunk], self.nthreads),
+                    columns=feat_idx[chunk],
+                )
+            else:
+                yield controlled_compute(data[:, chunk], self.nthreads).T, feat_idx[
+                    chunk
+                ]
 
     def save_normed_for_query(
         self, feat_key: Optional[str], batch_size: int, overwrite: bool = True
@@ -557,15 +565,20 @@ class Assay:
         """
         from .writers import create_zarr_obj_array
 
+        def write_wrapper(idx: str, v: np.ndarray) -> None:
+            create_zarr_obj_array(g, idx, v, np.float64, True, False)
+            return None
+
         if "prenormed" in self.z and overwrite is False:
             return None
 
         g = self.z.create_group("prenormed", overwrite=True)
-        for df in self.iter_normed_feature_wise(
-            None, feat_key, batch_size, "Saving features"
+        for mat, inds in self.iter_normed_feature_wise(
+            None, feat_key, batch_size, "Saving features", False
         ):
-            for i in df:
-                create_zarr_obj_array(g, i, df[i].values, np.float64, True, False)
+            Parallel(n_jobs=self.nthreads)(
+                delayed(write_wrapper)(inds[i], mat[i]) for i in range(len(inds))
+            )
 
     def save_aggregated_ordering(
         self,
