@@ -1,6 +1,4 @@
-"""
-Utility functions for running the KNN algorithm.
-"""
+"""Utility functions for running the KNN algorithm."""
 import numpy as np
 from .writers import create_zarr_dataset
 from .ann import AnnStream
@@ -15,8 +13,7 @@ __all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx", "merge_graph
 
 
 def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
-    """
-    Constructs KNN graph.
+    """Constructs KNN graph.
 
     Args:
         ann_obj ():
@@ -66,8 +63,7 @@ def _is_umap_version_new():
 
 
 def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
-    """
-    Smoothens KNN distances.
+    """Smoothens KNN distances.
 
     Args:
         store ():
@@ -79,7 +75,6 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
 
     Returns:
         None
-
     """
     from umap.umap_ import smooth_knn_dist, compute_membership_strengths
 
@@ -137,8 +132,7 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
 
 
 def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
-    """
-    Exports KNN matrix in Matrix Market format.
+    """Exports KNN matrix in Matrix Market format.
 
     Args:
         mtx:
@@ -147,7 +141,6 @@ def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
 
     Returns:
         None
-
     """
     n_cells = csr_graph.shape[0]
     with open(mtx, "w") as h:
@@ -173,14 +166,12 @@ def export_knn_to_mtx(mtx: str, csr_graph, batch_size: int = 1000) -> None:
 
 @jit(nopython=True)
 def calc_snn(indices: np.ndarray) -> np.ndarray:
-    """
-    Calculates shared nearest neighbour between each node and its neighbour.
+    """Calculates shared nearest neighbour between each node and its neighbour.
 
     Args:
         indices: KNN graph indices
 
     Returns: A numpy matrix of shape (n_cells, n neighbours)
-
     """
     ncells, nk = indices.shape
     snn = np.zeros((ncells, nk))
@@ -194,8 +185,8 @@ def calc_snn(indices: np.ndarray) -> np.ndarray:
 def weight_sort_indices(
     i: np.ndarray, w: np.ndarray, wn: np.ndarray, n: int
 ) -> (np.ndarray, np.ndarray):
-    """
-    Sort the array i and w based on values of wn. Only keep the top n values.
+    """Sort the array i and w based on values of wn. Only keep the top n
+    values.
 
     Args:
         i: A 1D array of indices
@@ -205,7 +196,6 @@ def weight_sort_indices(
 
     Returns: A tuple of two 1D arrays representing sorted and filtered
              indices and their corresponding weights
-
     """
 
     idx = np.argsort(wn)[::-1]
@@ -218,16 +208,15 @@ def weight_sort_indices(
 
 
 def merge_graphs(csr_mats: List[csr_matrix]) -> coo_matrix:
-    """
-    Merge multiple graphs of same size and shape such that the merged graph have the same size and shape.
-    Edge values are sorted based on their weight and the shared neighbours.
+    """Merge multiple graphs of same size and shape such that the merged graph
+    have the same size and shape. Edge values are sorted based on their weight
+    and the shared neighbours.
 
     Args:
         csr_mats: A list of two or more CSR matrices representing the graphs to be merged.
 
     Returns: A merged graph in CSR matrix form.
              The merged graph has same number of edges as each graph
-
     """
     try:
         assert len(set([x.shape for x in csr_mats])) == 1

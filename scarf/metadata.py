@@ -1,6 +1,5 @@
-"""
-Contains the MetaData class, which is used for storing metadata about cells and features.
-"""
+"""Contains the MetaData class, which is used for storing metadata about cells
+and features."""
 from zarr import hierarchy as zarr_hierarchy
 from zarr import array as zarr_array
 import numpy as np
@@ -29,8 +28,7 @@ def _all_true(bools: np.ndarray) -> np.ndarray:
 
 
 class MetaData:
-    """
-    MetaData class for cells and features.
+    """MetaData class for cells and features.
 
     This class provides an interface to perform CRUD operations on metadata, saved in the Zarr hierarchy.
     All the changes at the metadata are synchronized on disk.
@@ -137,8 +135,7 @@ class MetaData:
         return self.locations[loc][col]
 
     def get_dtype(self, column: str) -> type:
-        """
-        Returns the dtype for the given column.
+        """Returns the dtype for the given column.
 
         Args:
             column: Column name of the table.
@@ -146,14 +143,12 @@ class MetaData:
         return self._get_array(column).dtype
 
     def _verify_bool(self, key: str) -> bool:
-        """
-        Validates if a give table column (parameter 'key') is bool type
+        """Validates if a give table column (parameter 'key') is bool type.
 
         Args:
             key: Name of the column to query
 
         Returns: None
-
         """
 
         if self.get_dtype(key) != bool:
@@ -245,15 +240,13 @@ class MetaData:
             )
 
     def fetch(self, column: str, key: str = "I") -> np.ndarray:
-        """
-        Get column values for only valid rows
+        """Get column values for only valid rows.
 
         Args:
             column:
             key:
 
         Returns:
-
         """
 
         return self.fetch_all(column)[self.active_index(key)]
@@ -284,10 +277,10 @@ class MetaData:
         return None
 
     def _fill_to_index(self, values: np.array, fill_value, key: str) -> np.ndarray:
-        """
-        Makes sure that the array being added to the table is of the same shape.
-        If the array has same shape as the table then the input array is added straightaway.
-        It is assumed that the input array is in same order as table rows.
+        """Makes sure that the array being added to the table is of the same
+        shape. If the array has same shape as the table then the input array is
+        added straightaway. It is assumed that the input array is in same order
+        as table rows.
 
         Args:
             values:
@@ -295,7 +288,6 @@ class MetaData:
             key:
 
         Returns:
-
         """
 
         if len(values) == self.N:
@@ -380,8 +372,7 @@ class MetaData:
         location: str = "primary",
         force: bool = False,
     ) -> None:
-        """
-        Insert a column into the table.
+        """Insert a column into the table.
 
         Args:
             column_name (str): Name of column to modify.
@@ -415,8 +406,7 @@ class MetaData:
         return None
 
     def update_key(self, values: np.array, key) -> None:
-        """
-        Modify a column in the metadata table, specified with `key`.
+        """Modify a column in the metadata table, specified with `key`.
 
         Args:
             values: The values to update the column with.
@@ -508,9 +498,8 @@ class MetaData:
         return df
 
     def to_pandas_dataframe(self, columns: List[str], key: str = None) -> pd.DataFrame:
-        """
-        Returns the requested columns as a Pandas dataframe, sorted on key.
-        """
+        """Returns the requested columns as a Pandas dataframe, sorted on
+        key."""
         valid_cols = self.columns
         df = pd.DataFrame({x: self.fetch_all(x) for x in columns if x in valid_cols})
         if key is not None:

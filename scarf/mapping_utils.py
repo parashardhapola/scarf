@@ -1,6 +1,4 @@
-"""
-Utility functions for the mapping.
-"""
+"""Utility functions for the mapping."""
 import dask.array as daskarr
 import numpy as np
 from typing import Tuple
@@ -38,8 +36,7 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
 
 
 def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
-    """
-    Applies CORAL error correction to the input data.
+    """Applies CORAL error correction to the input data.
 
     Args:
         source_data ():
@@ -153,8 +150,7 @@ def align_features(
     exclude_missing: bool,
     nthreads: int,
 ) -> np.ndarray:
-    """
-    Aligns target features to source features.
+    """Aligns target features to source features.
 
     Args:
         source_assay ():
@@ -167,7 +163,6 @@ def align_features(
         nthreads ():
 
     Returns:
-
     """
     from .writers import create_zarr_dataset
 

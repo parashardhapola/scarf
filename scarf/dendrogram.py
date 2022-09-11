@@ -7,9 +7,7 @@ __all__ = ["BalancedCut", "CoalesceTree", "make_digraph"]
 
 
 def make_digraph(d: np.ndarray, clust_info=None) -> nx.DiGraph:
-    """
-    Convert dendrogram into directed graph
-    """
+    """Convert dendrogram into directed graph."""
 
     g = nx.DiGraph()
     n = d.shape[0] + 1  # Dendrogram contains one less sample
@@ -120,9 +118,7 @@ class BalancedCut:
         self.branchpoints = self._get_branchpoints()
 
     def _successors(self, start: int, min_leaves: int) -> List[int]:
-        """
-        Get tree downstream of a node.
-        """
+        """Get tree downstream of a node."""
         q = [start]
         d = []
         while len(q) > 0:
@@ -133,9 +129,7 @@ class BalancedCut:
         return d[1:]
 
     def _get_mean_dist(self, start_node: int) -> float:
-        """
-        Get mean distances in downstream tree of a node
-        """
+        """Get mean distances in downstream tree of a node."""
         s_nodes = self._successors(start_node, -1)
         return np.array([self.graph.nodes[x]["dist"] for x in s_nodes]).mean()
 
@@ -156,9 +150,7 @@ class BalancedCut:
         return True
 
     def _get_branchpoints(self) -> Dict[int, List[int]]:
-        """
-        Aggregate leaves bottom up until target size is reached.
-        """
+        """Aggregate leaves bottom up until target size is reached."""
         n_leaves = int((self.graph.number_of_nodes() + 1) / 2)
         leaves = {x: None for x in range(n_leaves)}
         bps = {}
@@ -221,9 +213,7 @@ class BalancedCut:
         return None
 
     def get_clusters(self) -> np.ndarray:
-        """
-        Make cluster label array from `get_branchpoints` output
-        """
+        """Make cluster label array from `get_branchpoints` output."""
         self._valid_names_in_branchpoints()
         c = np.zeros(self.nCells).astype(int)
         for n, i in enumerate(self.branchpoints, start=1):

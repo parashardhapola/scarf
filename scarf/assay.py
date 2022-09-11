@@ -24,77 +24,67 @@ __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
 
 
 def norm_dummy(_, counts: daskarr) -> daskarr:
-    """
-    A dummy normalizer. Doesn't perform any normalization.
-    This is useful when the 'raw data' is already normalized
+    """A dummy normalizer. Doesn't perform any normalization. This is useful
+    when the 'raw data' is already normalized.
 
     Args:
         _:
         counts: A dask array with 'raw' counts data
 
     Returns: Dask array
-
     """
     return counts
 
 
 def norm_lib_size(assay, counts: daskarr) -> daskarr:
-    """
-    Performs library size normalization on the data.
-    This is the default method for RNA assays
+    """Performs library size normalization on the data. This is the default
+    method for RNA assays.
 
     Args:
         assay: An instance of the assay object
         counts: A dask array with raw counts data
 
     Returns:  A dask array (delayed matrix) containing normalized data.
-
     """
     return assay.sf * counts / assay.scalar.reshape(-1, 1)
 
 
 def norm_lib_size_log(assay, counts: daskarr) -> daskarr:
-    """
-    Performs library size normalization and then transforms the
-    values into log scale.
+    """Performs library size normalization and then transforms the values into
+    log scale.
 
     Args:
         assay: An instance of the assay object
         counts: A dask array with raw counts data
 
     Returns: A dask array (delayed matrix) containing normalized data.
-
     """
     return np.log1p(assay.sf * counts / assay.scalar.reshape(-1, 1))
 
 
 def norm_clr(_, counts: daskarr) -> daskarr:
-    """
-    Performs centered log-ratio normalization (ADT).
-    This is the default method for ADT assays
+    """Performs centered log-ratio normalization (ADT). This is the default
+    method for ADT assays.
 
     Args:
         _:
         counts: A dask array with raw counts data
 
     Returns: A dask array (delayed matrix) containing normalized data.
-
     """
     f = np.exp(np.log1p(counts).sum(axis=0) / len(counts))
     return np.log1p(counts / f)
 
 
 def norm_tf_idf(assay, counts: daskarr) -> daskarr:
-    """
-    Performs TF-IDF normalization
-    This is the default method for ATAC assays
+    """Performs TF-IDF normalization This is the default method for ATAC
+    assays.
 
     Args:
         assay: An instance of the assay object
         counts: A dask array with raw counts data
 
     Returns: A dask array (delayed matrix) containing normalized data.
-
     """
     tf = counts / assay.n_term_per_doc.reshape(-1, 1)
     # TODO: Split TF and IDF functionality to make it similar to norml_lib and zscaling
@@ -103,9 +93,9 @@ def norm_tf_idf(assay, counts: daskarr) -> daskarr:
 
 
 class Assay:
-    """
-    A generic Assay class that contains methods to calculate feature level statistics.
-    It also provides a method for saving normalized subset of data for later KNN graph construction.
+    """A generic Assay class that contains methods to calculate feature level
+    statistics. It also provides a method for saving normalized subset of data
+    for later KNN graph construction.
 
     Args:
         z (zarr.Group): Zarr hierarchy where raw data is located
@@ -150,9 +140,8 @@ class Assay:
     def normed(
         self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs
     ) -> daskarr:
-        """
-        This function normalizes the raw and returns a delayed dask array of the normalized
-        data.
+        """This function normalizes the raw and returns a delayed dask array of
+        the normalized data.
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -164,7 +153,6 @@ class Assay:
             **kwargs:
 
         Returns: A dask array (delayed matrix) containing normalized data.
-
         """
         if cell_idx is None:
             cell_idx = self.cells.active_index("I")
@@ -271,16 +259,14 @@ class Assay:
         )
 
     def _verify_keys(self, cell_key: str, feat_key: str) -> None:
-        """
-        Checks if provided key names are present in cells and feature attribute tables
-        and that they are of boolean types.
+        """Checks if provided key names are present in cells and feature
+        attribute tables and that they are of boolean types.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table
             feat_key: Name of the key (column) from feature attribute table
 
         Returns: None
-
         """
         if cell_key not in self.cells.columns or self.cells.get_dtype(cell_key) != bool:
             raise ValueError(
@@ -294,9 +280,8 @@ class Assay:
     def _get_cell_feat_idx(
         self, cell_key: str, feat_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Verifies the provided key by calling _verify_keys and fetches the indices of
-        rows that have True value in respective column.
+        """Verifies the provided key by calling _verify_keys and fetches the
+        indices of rows that have True value in respective column.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table
@@ -304,7 +289,6 @@ class Assay:
 
         Returns: A tuple of two numpy arrays corresponding to cell and feature indices
                  respectively.
-
         """
 
         self._verify_keys(cell_key, feat_key)
@@ -314,26 +298,24 @@ class Assay:
 
     @staticmethod
     def _create_subset_hash(cell_idx: np.ndarray, feat_idx: np.ndarray) -> int:
-        """
-        Takes two index list and hashes them individually and then computes hash of
-        the resulting tuple of two hashes.
-        The objective of this function is to generate a unique state identifier for
-        the cell and feature indices.
+        """Takes two index list and hashes them individually and then computes
+        hash of the resulting tuple of two hashes. The objective of this
+        function is to generate a unique state identifier for the cell and
+        feature indices.
 
         Args:
             cell_idx: Cell row indices
             feat_idx: Feature row indices
 
         Returns: Returns the final hash
-
         """
         return hash(tuple([hash(tuple(cell_idx)), hash(tuple(feat_idx))]))
 
     @staticmethod
     def _get_summary_stats_loc(cell_key: str) -> Tuple[str, str]:
-        """
-        A convenience method that returns the location of feature-wise summary statistics
-        Currently summaries are stored under pattern: summary_stats_{cell_key}
+        """A convenience method that returns the location of feature-wise
+        summary statistics Currently summaries are stored under pattern:
+        summary_stats_{cell_key}
 
         Args:
             cell_key: Name of the key (column) from cell attribute table
@@ -342,7 +324,6 @@ class Assay:
                  names when summary statistics are loaded onto the feature attributes table. The
                  second is the location of the summary statistics group in the zarr hierarchy of
                  the assay.
-
         """
         return f"stats_{cell_key}", f"summary_stats_{cell_key}"
 
@@ -353,19 +334,17 @@ class Assay:
         feat_idx: np.ndarray,
         delete_on_fail: bool = True,
     ) -> bool:
-        """
-        Check whether the feature-wise summary statistics was previously calculated on the same
-        set of features and cells as preset in the cell_idx and feat_idx parameters.
+        """Check whether the feature-wise summary statistics was previously
+        calculated on the same set of features and cells as preset in the
+        cell_idx and feat_idx parameters.
 
         Args:
             stats_loc: Location where the feature summary statistics are saved
             cell_idx: The indices of the cell attribute table
             feat_idx: The indices of the feature attribute table
-            delete_on_fail: Whether to delete the summary statistics group if the validity check
-                            fails (Default: True).
+            delete_on_fail: Whether to delete the summary statistics group if the validity check fails (Default: True).
 
         Returns: True is the validity test passes otherwise False
-
         """
         subset_hash = self._create_subset_hash(cell_idx, feat_idx)
         if stats_loc in self.z:
@@ -381,15 +360,13 @@ class Assay:
             return False
 
     def _load_stats_loc(self, cell_key: str) -> str:
-        """
-        Loads the feature-wise summary statistics calculated on the cells that are True in the
-        'cell_key' column.
+        """Loads the feature-wise summary statistics calculated on the cells
+        that are True in the 'cell_key' column.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table
 
         Returns: Location of the group group that contains feature-wise summary statistics
-
         """
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, "I")
         identifier, stats_loc = self._get_summary_stats_loc(cell_key)
@@ -413,9 +390,8 @@ class Assay:
         renormalize_subset: bool,
         update_keys: bool,
     ) -> daskarr:
-        """
-        Create a new zarr group and saves the normalized data in the group for the selected features
-        only.
+        """Create a new zarr group and saves the normalized data in the group
+        for the selected features only.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table. The data will be saved
@@ -437,7 +413,6 @@ class Assay:
                          dataset and aligning features to that dataset.
 
         Returns: Dask array containing the normalized data
-
         """
 
         from .writers import dask_to_zarr
@@ -494,8 +469,8 @@ class Assay:
         as_dataframe: bool = True,
         **norm_params,
     ) -> Generator[Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]], None, None]:
-        """
-        This generator iterates over all the features marked by `feat_key` in batches.
+        """This generator iterates over all the features marked by `feat_key`
+        in batches.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table. The data will be fetched
@@ -508,7 +483,6 @@ class Assay:
             as_dataframe: If true (default) then the yielded matrices are pandas dataframe
 
         Returns:
-
         """
         from .utils import tqdmbar
 
@@ -547,9 +521,9 @@ class Assay:
     def save_normed_for_query(
         self, feat_key: Optional[str], batch_size: int, overwrite: bool = True
     ) -> None:
-        """
-        This methods dumps normalized values for features (as marked by `feat_key`) onto disk  in the 'prenormed'
-        slot under the assay's own slot.
+        """This methods dumps normalized values for features (as marked by
+        `feat_key`) onto disk  in the 'prenormed' slot under the assay's own
+        slot.
 
         Args:
             feat_key: Name of the key (column) from feature attribute table. The data will be fetched
@@ -561,7 +535,6 @@ class Assay:
 
         Returns:
             None
-
         """
         from .writers import create_zarr_obj_array
 
@@ -690,9 +663,9 @@ class Assay:
         n_bins: int,
         rand_seed: int,
     ) -> np.ndarray:
-        """
-        Calculates the scores (mean values) of selection of features over a randomly sampled
-        selected feature set in given cells (as marked by cell_key)
+        """Calculates the scores (mean values) of selection of features over a
+        randomly sampled selected feature set in given cells (as marked by
+        cell_key)
 
         Args:
             feature_names: Names (as in 'names' column of the feature attribute table) of features to
@@ -703,7 +676,6 @@ class Assay:
             rand_seed: The seed to use for the random number generation.
 
         Returns: Numpy array of the calculated scores
-
         """
 
         from .feat_utils import binned_sampling
@@ -739,8 +711,8 @@ class Assay:
 
 
 class RNAassay(Assay):
-    """
-    This subclass of Assay is designed for feature selection and normalization of scRNA-Seq data.
+    """This subclass of Assay is designed for feature selection and
+    normalization of scRNA-Seq data.
 
     Args:
         z (zarr.Group): Zarr hierarchy where raw data is located
@@ -753,7 +725,6 @@ class RNAassay(Assay):
         sf: scaling factor for doing library-size normalization
         scalar: This is used to cache the library size of the cells.
                 It is set to None until normed method is called.
-
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
@@ -774,11 +745,11 @@ class RNAassay(Assay):
         log_transform: bool = False,
         **kwargs,
     ) -> daskarr:
-        """
-        This function normalizes the raw and returns a delayed dask array of the normalized
-        data. Unlike the `normed` method in the generic Assay class this method is optimized for
-        scRNA-Seq data and takes additional parameters that will be used by `norm_lib_size`
-         (default normalization method for this class).
+        """This function normalizes the raw and returns a delayed dask array of
+        the normalized data. Unlike the `normed` method in the generic Assay
+        class this method is optimized for scRNA-Seq data and takes additional
+        parameters that will be used by `norm_lib_size` (default normalization
+        method for this class).
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -795,7 +766,6 @@ class RNAassay(Assay):
 
         Returns:
             A dask array (delayed matrix) containing normalized data.
-
         """
         if cell_idx is None:
             cell_idx = self.cells.active_index("I")
@@ -818,9 +788,8 @@ class RNAassay(Assay):
         return val
 
     def set_feature_stats(self, cell_key: str, min_cells: int) -> None:
-        """
-        Calculates summary statistics for the features of the assay using only cells that are marked True by the
-        'cell_key' parameter.
+        """Calculates summary statistics for the features of the assay using
+        only cells that are marked True by the 'cell_key' parameter.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table.
@@ -830,7 +799,6 @@ class RNAassay(Assay):
                        features in the feature attribute table will be set to False
 
         Returns: None
-
         """
         feat_key = "I"  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
@@ -903,8 +871,7 @@ class RNAassay(Assay):
         show_plot: bool,
         **plot_kwargs,
     ) -> None:
-        """
-        Identifies highly variable genes in the dataset.
+        """Identifies highly variable genes in the dataset.
 
         The parameters govern the min/max variance (corrected) and mean expression threshold for calling genes highly
         variable. The variance is corrected by first dividing genes into bins based on their mean expression values.
@@ -1021,13 +988,12 @@ class RNAassay(Assay):
 
 
 class ATACassay(Assay):
-    """
-    This subclass of Assay is designed for feature selection and normalization of scATAC-Seq data.
-    """
+    """This subclass of Assay is designed for feature selection and
+    normalization of scATAC-Seq data."""
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
-        """
-        This Assay subclass is designed for feature selection and normalization of scATAC-Seq data
+        """This Assay subclass is designed for feature selection and
+        normalization of scATAC-Seq data.
 
         Args:
             z (zarr.Group): Zarr hierarchy where raw data is located
@@ -1040,7 +1006,6 @@ class ATACassay(Assay):
             n_term_per_doc: Number of features per cell. Used for TF-IDF normalization
             n_docs: Number of cells. Used for TF-IDF normalization
             n_docs_per_term: Number of cells per feature. Used for TF-IDF normalization
-
         """
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_tf_idf
@@ -1051,12 +1016,13 @@ class ATACassay(Assay):
     def normed(
         self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs
     ) -> daskarr:
-        """
-        This function normalizes the raw and returns a delayed dask array of the normalized
-        data. Unlike the `normed` method in the generic Assay class this method is optimized for scATAC-Seq data.
-        This method uses the the normalization indicated by attribute self.normMethod which by default is set to
-        `norm_tf_idf`. The TF-IDF normalization is performed using only the cells and features indicated by the
-        'cell_idx' and 'feat_idx' parameters.
+        """This function normalizes the raw and returns a delayed dask array of
+        the normalized data. Unlike the `normed` method in the generic Assay
+        class this method is optimized for scATAC-Seq data. This method uses
+        the the normalization indicated by attribute self.normMethod which by
+        default is set to `norm_tf_idf`. The TF-IDF normalization is performed
+        using only the cells and features indicated by the 'cell_idx' and
+        'feat_idx' parameters.
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -1068,7 +1034,6 @@ class ATACassay(Assay):
             **kwargs:
 
         Returns: A dask array (delayed matrix) containing normalized data.
-
         """
         if cell_idx is None:
             cell_idx = self.cells.active_index("I")
@@ -1081,15 +1046,14 @@ class ATACassay(Assay):
         return self.normMethod(self, counts)
 
     def set_feature_stats(self, cell_key: str) -> None:
-        """
-        Calculates prevalence of each valid feature of the assay using only cells that are marked True by the
-        'cell_key' parameter. Prevalence of a feature is the sum of all its TF-IDF normalized values across cells.
+        """Calculates prevalence of each valid feature of the assay using only
+        cells that are marked True by the 'cell_key' parameter. Prevalence of a
+        feature is the sum of all its TF-IDF normalized values across cells.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table.
 
         Returns: None
-
         """
         feat_key = "I"  # Here we choose to calculate stats for all the features
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
@@ -1116,8 +1080,7 @@ class ATACassay(Assay):
     def mark_prevalent_peaks(
         self, cell_key: str, top_n: int, prevalence_key_name: str
     ) -> None:
-        """
-        Marks `top_n` peaks with highest prevalence as prevalent peaks.
+        """Marks `top_n` peaks with highest prevalence as prevalent peaks.
 
         Args:
            cell_key: Cells to use for selection of most prevalent peaks. The provided value for `cell_key` should be a
@@ -1128,7 +1091,6 @@ class ATACassay(Assay):
                                 'cell_key' parameter is prepended to this value.
 
         Returns: None
-
         """
         if top_n >= self.feats.N:
             raise ValueError(
@@ -1154,9 +1116,8 @@ class ATACassay(Assay):
 
 
 class ADTassay(Assay):
-    """
-    This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
-    CITE-Seq experiments.
+    """This subclass of Assay is designed for normalization of ADT/HTO
+    (feature-barcodes library) data from CITE-Seq experiments.
 
     Args:
         z (zarr.Group): Zarr hierarchy where raw data is located
@@ -1166,25 +1127,22 @@ class ADTassay(Assay):
 
     Attributes:
         normMethod: Pointer to the function to be used for normalization of the raw data
-
     """
 
     def __init__(self, z: zarr.hierarchy, name: str, cell_data: MetaData, **kwargs):
-        """
-        This subclass of Assay is designed for normalization of ADT/HTO (feature-barcodes library) data from
-        CITE-Seq experiments.
-        """
+        """This subclass of Assay is designed for normalization of ADT/HTO
+        (feature-barcodes library) data from CITE-Seq experiments."""
         super().__init__(z, name, cell_data, **kwargs)
         self.normMethod = norm_clr
 
     def normed(
         self, cell_idx: np.ndarray = None, feat_idx: np.ndarray = None, **kwargs
     ) -> daskarr:
-        """
-        This function normalizes the raw and returns a delayed dask array of the normalized
-        data. This method uses the the normalization indicated by attribute self.normMethod which by default is set to
-        `norm_clr`. The centered log-ratio normalization is performed using only the cells and features indicated by the
-        'cell_idx' and 'feat_idx' parameters.
+        """This function normalizes the raw and returns a delayed dask array of
+        the normalized data. This method uses the the normalization indicated
+        by attribute self.normMethod which by default is set to `norm_clr`. The
+        centered log-ratio normalization is performed using only the cells and
+        features indicated by the 'cell_idx' and 'feat_idx' parameters.
 
         Args:
             cell_idx: Indices of cells to be included in the normalized matrix
@@ -1196,7 +1154,6 @@ class ADTassay(Assay):
             **kwargs:
 
         Returns: A dask array (delayed matrix) containing normalized data.
-
         """
         if cell_idx is None:
             cell_idx = self.cells.active_index("I")

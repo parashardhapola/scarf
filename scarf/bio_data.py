@@ -1,5 +1,6 @@
-"""
-Contains definitions of biological information (e. g. cell cycle genes).
+"""Contains definitions of biological information (e.
+
+g. cell cycle genes).
 """
 from typing import List
 

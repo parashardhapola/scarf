@@ -1,6 +1,4 @@
-"""
-Contains the code for plotting in Scarf.
-"""
+"""Contains the code for plotting in Scarf."""
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
@@ -187,9 +185,7 @@ custom_palettes = {
 
 
 def clean_axis(ax, ts=11, ga=0.4):
-    """
-    Cleans a given matplotlib axis.
-    """
+    """Cleans a given matplotlib axis."""
     ax.xaxis.set_tick_params(labelsize=ts)
     ax.yaxis.set_tick_params(labelsize=ts)
     for i in ["top", "bottom", "left", "right"]:
@@ -350,9 +346,7 @@ def plot_mean_var(
     ss: Tuple[float, float] = (3, 30),
     cmaps: Tuple[str, str] = ("winter", "magma_r"),
 ):
-    """
-    Shows a mean-variance plot.
-    """
+    """Shows a mean-variance plot."""
     _, ax = plt.subplots(1, 1, figsize=fig_size)
     nzm = np.log2(nzm)
     fv = np.log2(fv)
@@ -405,9 +399,7 @@ def plot_heatmap(
     show_fig: bool = True,
     **heatmap_kwargs,
 ):
-    """
-    Shows a heatmap plot.
-    """
+    """Shows a heatmap plot."""
     if figsize is None:
         figsize = (
             cdf.shape[1] * fontsize * width_factor,
@@ -746,8 +738,10 @@ def plot_scatter(
     show_fig: bool = True,
     scatter_kwargs: dict = None,
 ):
-    """
-    Shows scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid.
+    """Shows scatter plots.
+
+    If more then one dataframe is provided it will place the
+    scatterplots in a grid.
     """
     from matplotlib.colors import to_hex
 
@@ -864,8 +858,10 @@ def shade_scatter(
     h_pad: float = None,
     show_fig: bool = True,
 ):
-    """
-    Shows shaded scatter plots. If more then one dataframe is provided it will place the scatterplots in a grid.
+    """Shows shaded scatter plots.
+
+    If more then one dataframe is provided it will place the
+    scatterplots in a grid.
     """
     import datashader as dsh
     from datashader.mpl_ext import dsshow
@@ -956,9 +952,9 @@ def _draw_pie(ax, dist, colors, xpos, ypos, size):
 def hierarchy_pos(
     g, root=None, width=1.0, vert_gap=0.2, vert_loc=0, leaf_vs_root_factor=0.5
 ):
-    """
-    This function was lifted from here:
-    https://github.com/springer-math/Mathematics-of-Epidemics-on-Networks/blob/80c8accbe0c6b7710c0a189df17529696ac31bf9/EoN/auxiliary.py
+    """This function was lifted from here: https://github.com/springer-
+    math/Mathematics-of-Epidemics-on-
+    Networks/blob/80c8accbe0c6b7710c0a189df17529696ac31bf9/EoN/auxiliary.py.
 
     If the graph is a tree this will return the positions to plot this in a
     hierarchical layout.
@@ -1134,8 +1130,7 @@ def plot_cluster_hierarchy(
     savename: str = None,
     save_dpi=300,
 ):
-    """
-    Shows a plot showing cluster hierarchy.
+    """Shows a plot showing cluster hierarchy.
 
     Returns:
         If requested (with parameter `show_fig`) a matplotlib Axes object containing the plot

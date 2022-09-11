@@ -1,5 +1,4 @@
-"""
-Utility methods.
+"""Utility methods.
 
 - Methods:
     - clean_array: returns input array with nan and infinite values removed
@@ -83,9 +82,9 @@ def tqdmbar(*args, **kwargs):
 
 
 def set_verbosity(level: str = None, filepath: str = None):
-    """
-    Set verbosity level of Scarf's output. Setting value of level='CRITICAL' should silence all
-    logs. Progress bars are automatically disabled for levels above 'INFO'.
+    """Set verbosity level of Scarf's output. Setting value of level='CRITICAL'
+    should silence all logs. Progress bars are automatically disabled for
+    levels above 'INFO'.
 
     Args:
         level: A valid level name. Run without any parameter to see available options
@@ -93,7 +92,6 @@ def set_verbosity(level: str = None, filepath: str = None):
                   is provided then all the logs are printed on standard output.
 
     Returns:
-
     """
     # noinspection PyUnresolvedReferences
     available_levels = logger._core.levels.keys()
@@ -114,8 +112,7 @@ def set_verbosity(level: str = None, filepath: str = None):
 
 
 def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
-    """
-    Performs edge trimming on values of the input vector.
+    """Performs edge trimming on values of the input vector.
 
     Performs edge trimming on values of the input vector and constraints them between within frac and 1-frac density of
     normal distribution created with the sample mean and std. dev. of a.
@@ -138,8 +135,7 @@ def rescale_array(a: np.ndarray, frac: float = 0.9) -> np.ndarray:
 
 
 def clean_array(x, fill_val: int = 0):
-    """
-    Returns input array with nan and infinite values removed.
+    """Returns input array with nan and infinite values removed.
 
     Args:
         x (np.ndarray): input array
@@ -152,8 +148,7 @@ def clean_array(x, fill_val: int = 0):
 
 
 def controlled_compute(arr, nthreads):
-    """
-    Performs computation with Dask.
+    """Performs computation with Dask.
 
     Args:
         arr:
@@ -171,8 +166,7 @@ def controlled_compute(arr, nthreads):
 
 
 def show_dask_progress(arr: Array, msg: str = None, nthreads: int = 1):
-    """
-    Performs computation with Dask and shows progress bar.
+    """Performs computation with Dask and shows progress bar.
 
     Args:
         arr: A Dask array

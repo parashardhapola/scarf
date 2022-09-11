@@ -1,5 +1,4 @@
-"""
-A collection of classes for reading in different data formats.
+"""A collection of classes for reading in different data formats.
 
 - Classes:
     - CrH5Reader: A class to read in CellRanger (Cr) data, in the form of an H5 file.
@@ -32,8 +31,7 @@ __all__ = [
 
 
 def get_file_handle(fn: str) -> IO:
-    """
-    Returns a file object for the given file name.
+    """Returns a file object for the given file name.
 
     Args:
         fn: The path to the file (file name).
@@ -50,8 +48,7 @@ def get_file_handle(fn: str) -> IO:
 
 
 def read_file(fn: str):
-    """
-    Yields the lines from the file the given file name points to.
+    """Yields the lines from the file the given file name points to.
 
     Args:
         fn: The path to the file (file name).
@@ -62,8 +59,7 @@ def read_file(fn: str):
 
 
 class CrReader(ABC):
-    """
-    A class to read in CellRanger (Cr) data.
+    """A class to read in CellRanger (Cr) data.
 
     Args:
         grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
@@ -99,9 +95,7 @@ class CrReader(ABC):
 
     @abstractmethod
     def consume(self, batch_size: int, lines_in_mem: int):
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         pass
 
     def _subset_by_assay(self, v, assay) -> List:
@@ -149,8 +143,7 @@ class CrReader(ABC):
         self.assayFeats.columns = new_names
 
     def rename_assays(self, name_map: Dict[str, str]) -> None:
-        """
-        Renames specified assays in the Reader.
+        """Renames specified assays in the Reader.
 
         Args:
             name_map: A Dictionary containing current name as key and new name as value.
@@ -158,8 +151,7 @@ class CrReader(ABC):
         self.assayFeats.rename(columns=name_map, inplace=True)
 
     def feature_ids(self, assay: str = None) -> List[str]:
-        """
-        Returns a list of feature IDs in a specified assay.
+        """Returns a list of feature IDs in a specified assay.
 
         Args:
             assay: Select which assay to retrieve feature IDs from.
@@ -167,8 +159,7 @@ class CrReader(ABC):
         return self._subset_by_assay(self._read_dataset("feature_ids"), assay)
 
     def feature_names(self, assay: str = None) -> List[str]:
-        """
-        Returns a list of features in the dataset.
+        """Returns a list of features in the dataset.
 
         Args:
             assay: Select which assay to retrieve features from.
@@ -180,9 +171,7 @@ class CrReader(ABC):
         return self._subset_by_assay(vals, assay)
 
     def feature_types(self) -> List[str]:
-        """
-        Returns a list of feature types in the dataset.
-        """
+        """Returns a list of feature types in the dataset."""
         if self.grpNames["feature_types"] is not None:
             ret_val = self._read_dataset("feature_types")
             if ret_val is not None:
@@ -191,16 +180,13 @@ class CrReader(ABC):
         return [default_name for _ in range(self.nFeatures)]
 
     def cell_names(self) -> List[str]:
-        """
-        Returns a list of names of the cells in the dataset.
-        """
+        """Returns a list of names of the cells in the dataset."""
         return self._read_dataset("cell_names")
 
 
 class CrH5Reader(CrReader):
     # noinspection PyUnresolvedReferences
-    """
-    A class to read in CellRanger (Cr) data, in the form of an H5 file.
+    """A class to read in CellRanger (Cr) data, in the form of an H5 file.
 
     Subclass of CrReader.
 
@@ -264,15 +250,12 @@ class CrH5Reader(CrReader):
             s = e
 
     def close(self) -> None:
-        """
-        Closes file connection.
-        """
+        """Closes file connection."""
         self.h5obj.close()
 
 
 class CrDirReader(CrReader):
-    """
-    A class to read in CellRanger (Cr) data, in the form of a directory.
+    """A class to read in CellRanger (Cr) data, in the form of a directory.
 
     Subclass of CrReader.
 
@@ -363,8 +346,7 @@ class CrDirReader(CrReader):
         return vals
 
     def to_sparse(self, a: np.ndarray) -> coo_matrix:
-        """
-        Returns the input data as a sparse (COO) matrix.
+        """Returns the input data as a sparse (COO) matrix.
 
         Args:
             a: Sparse matrix, contains a chunk of data from the MTX file.
@@ -401,8 +383,8 @@ class CrDirReader(CrReader):
 
 
 class H5adReader:
-    """
-    A class to read in data from a H5ad file (h5 file with AnnData information).
+    """A class to read in data from a H5ad file (h5 file with AnnData
+    information).
 
     Args:
         h5ad_fn: Path to H5AD file
@@ -557,9 +539,7 @@ class H5adReader:
             )
 
     def cell_ids(self) -> np.ndarray:
-        """
-        Returns a list of cell IDs.
-        """
+        """Returns a list of cell IDs."""
         if self._check_exists(self.cellAttrsKey, self.cellIdsKey):
             if self.groupCodes[self.cellAttrsKey] == 1:
                 return self.h5[self.cellAttrsKey][self.cellIdsKey]
@@ -570,9 +550,7 @@ class H5adReader:
 
     # noinspection DuplicatedCode
     def feat_ids(self) -> np.ndarray:
-        """
-        Returns a list of feature IDs.
-        """
+        """Returns a list of feature IDs."""
         if self._check_exists(self.featureAttrsKey, self.featIdsKey):
             if self.groupCodes[self.featureAttrsKey] == 1:
                 return self.h5[self.featureAttrsKey][self.featIdsKey]
@@ -585,9 +563,7 @@ class H5adReader:
 
     # noinspection DuplicatedCode
     def feat_names(self) -> np.ndarray:
-        """
-        Returns a list of feature names.
-        """
+        """Returns a list of feature names."""
         if self._check_exists(self.featureAttrsKey, self.featNamesKey):
             if self.groupCodes[self.featureAttrsKey] == 1:
                 values = self.h5[self.featureAttrsKey][self.featNamesKey]
@@ -666,18 +642,14 @@ class H5adReader:
             )
 
     def get_cell_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        """
-        Creates a Generator that yields the cell columns.
-        """
+        """Creates a Generator that yields the cell columns."""
         for i, j in self._get_col_data(self.cellAttrsKey, [self.cellIdsKey]):
             yield i, j
         for i, j in self._get_obsm_data(self.obsmAttrsKey):
             yield i, j
 
     def get_feat_columns(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        """
-        Creates a Generator that yields the feature columns.
-        """
+        """Creates a Generator that yields the feature columns."""
         for i, j in self._get_col_data(
             self.featureAttrsKey, [self.featIdsKey, self.featNamesKey]
         ):
@@ -687,9 +659,7 @@ class H5adReader:
     def consume_dataset(
         self, batch_size: int = 1000
     ) -> Generator[coo_matrix, None, None]:
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         dset = self.h5[self.matrixKey]
         s = 0
         for e in range(batch_size, dset.shape[0] + batch_size, batch_size):
@@ -699,9 +669,7 @@ class H5adReader:
             s = e
 
     def consume_group(self, batch_size: int) -> Generator[coo_matrix, None, None]:
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         grp = self.h5[self.matrixKey]
         s = 0
         for ind_n in range(0, self.nCells, batch_size):
@@ -718,9 +686,7 @@ class H5adReader:
             s = e
 
     def consume(self, batch_size: int):
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         if self.groupCodes[self.matrixKey] == 1:
             return self.consume_dataset(batch_size)
         elif self.groupCodes[self.matrixKey] == 2:
@@ -728,8 +694,7 @@ class H5adReader:
 
 
 class NaboH5Reader:
-    """
-    A class to read in data in the form of a Nabo H5 file.
+    """A class to read in data in the form of a Nabo H5 file.
 
     Args:
         h5_fn: Path to H5 file.
@@ -753,29 +718,21 @@ class NaboH5Reader:
         return True
 
     def cell_ids(self) -> List[str]:
-        """
-        Returns a list of cell IDs.
-        """
+        """Returns a list of cell IDs."""
         return [x.decode("UTF-8") for x in self.h5["names"]["cells"][:]]
 
     def feat_ids(self) -> np.ndarray:
-        """
-        Returns a list of feature IDs.
-        """
+        """Returns a list of feature IDs."""
         return np.array([f"feature_{x}" for x in range(self.nFeatures)])
 
     def feat_names(self) -> List[str]:
-        """
-        Returns a list of feature names.
-        """
+        """Returns a list of feature names."""
         return [
             x.decode("UTF-8").rsplit("_", 1)[0] for x in self.h5["names"]["genes"][:]
         ]
 
     def consume(self, batch_size: int = 100) -> Generator[np.ndarray, None, None]:
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         batch = []
         for i in self.h5["cell_data"]:
             a = np.zeros(self.nFeatures).astype(int)
@@ -791,8 +748,7 @@ class NaboH5Reader:
 
 
 class LoomReader:
-    """
-    A class to read in data in the form of a Loom file.
+    """A class to read in data in the form of a Loom file.
 
     Args:
         loom_fn: Path to loom format file.
@@ -860,9 +816,7 @@ class LoomReader:
         return True
 
     def cell_names(self) -> List[str]:
-        """
-        Returns a list of names of the cells in the dataset.
-        """
+        """Returns a list of names of the cells in the dataset."""
         if self.cellAttrsKey not in self.h5:
             pass
         elif self.cellNamesKey not in self.h5[self.cellAttrsKey]:
@@ -874,9 +828,7 @@ class LoomReader:
         return [f"cell_{x}" for x in range(self.nCells)]
 
     def cell_ids(self) -> List[str]:
-        """
-        Returns a list of cell IDs.
-        """
+        """Returns a list of cell IDs."""
         return self.cell_names()
 
     def _stream_attrs(
@@ -895,15 +847,11 @@ class LoomReader:
                         yield i + "_" + str(j), vals[j]
 
     def get_cell_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        """
-        Returns a Generator that yields the cells' attributes.
-        """
+        """Returns a Generator that yields the cells' attributes."""
         return self._stream_attrs(self.cellAttrsKey, [self.cellNamesKey])
 
     def feature_names(self) -> List[str]:
-        """
-        Returns a list of feature names.
-        """
+        """Returns a list of feature names."""
         if self.featureAttrsKey not in self.h5:
             pass
         elif self.featureNamesKey not in self.h5[self.featureAttrsKey]:
@@ -915,9 +863,7 @@ class LoomReader:
         return [f"feature_{x}" for x in range(self.nFeatures)]
 
     def feature_ids(self) -> List[str]:
-        """
-        Returns a list of feature IDs.
-        """
+        """Returns a list of feature IDs."""
         if self.featureAttrsKey not in self.h5:
             pass
         elif self.featureIdsKey is None:
@@ -931,17 +877,13 @@ class LoomReader:
         return [f"feature_{x}" for x in range(self.nFeatures)]
 
     def get_feature_attrs(self) -> Generator[Tuple[str, np.ndarray], None, None]:
-        """
-        Returns a Generator that yields the features' attributes.
-        """
+        """Returns a Generator that yields the features' attributes."""
         return self._stream_attrs(
             self.featureAttrsKey, [self.featureIdsKey, self.featureNamesKey]
         )
 
     def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         last_n = 0
         for i in range(batch_size, self.nCells, batch_size):
             yield self.h5[self.matrixKey][:, last_n:i].astype(self.matrixDtype).T
@@ -951,8 +893,7 @@ class LoomReader:
 
 
 class CSVReader:
-    """
-    A class to read in data from a CSV file
+    """A class to read in data from a CSV file.
 
     Args:
         csv_fn: Path to the CSV file
@@ -1100,27 +1041,21 @@ class CSVReader:
         return np.array([f"feature_{x}" for x in range(self.nFeatures)])
 
     def cell_ids(self) -> np.ndarray:
-        """
-        Returns a list of cell IDs.
-        """
+        """Returns a list of cell IDs."""
         if self.cellIds is None:
             return np.array([f"cell_{x}" for x in range(self.nCells)])
         else:
             return self.cellIds
 
     def feature_ids(self) -> np.ndarray:
-        """
-        Returns a list of feature IDs.
-        """
+        """Returns a list of feature IDs."""
         if self.featureIds is None:
             return np.array([f"feature_{x}" for x in range(self.nFeatures)])
         else:
             return self.featureIds
 
     def consume(self) -> Generator[Tuple[np.ndarray, Optional[np.ndarray]], None, None]:
-        """
-        Returns a generator that yield chunks of data.
-        """
+        """Returns a generator that yield chunks of data."""
         stream = self._get_streamer()
         if self.keepCols is None:
             for df in stream:

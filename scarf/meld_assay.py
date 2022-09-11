@@ -26,9 +26,7 @@ __all__ = ["GffReader", "coordinate_melding"]
 
 
 class GffReader:
-    """
-    Reader for a GFF3 format file
-    """
+    """Reader for a GFF3 format file."""
 
     def __init__(
         self,
@@ -55,11 +53,9 @@ class GffReader:
         self.chunksize = chunk_size
 
     def fetch_header_lines(self) -> List[str]:
-        """
-        Fetch header lines (starting with '#') from GFF file
+        """Fetch header lines (starting with '#') from GFF file.
 
         Returns: A list of all the header lines
-
         """
         temp = []
         if self.gffFn.endswith("gz"):
@@ -75,12 +71,10 @@ class GffReader:
         return temp
 
     def stream(self) -> pd.DataFrame:
-        """
-        Stream the GFF file in chunks as Pandas DataFrame
+        """Stream the GFF file in chunks as Pandas DataFrame.
 
         Returns:
             Pandas DataFrame of the GFF file using \t as separator
-
         """
         stream = pd.read_csv(
             self.gffFn,
@@ -93,15 +87,14 @@ class GffReader:
             yield df
 
     def get_promoter(self, v: pd.Series) -> Tuple[int, int]:
-        """
-        Create strand-aware promoter coordinates using gene start and end coordinates
+        """Create strand-aware promoter coordinates using gene start and end
+        coordinates.
 
         Args:
             v: A row from the GFF file in Pandas Series format
 
         Returns:
             A Tuple of start and end coordinates for the promoter
-
         """
         if v[6] == "+":
             return max(0, v[3] - self.up), v[3] + self.down
@@ -111,15 +104,14 @@ class GffReader:
             raise ValueError(f"ERROR: Unknown symbol for strand: {v[6]}")
 
     def get_body(self, v: pd.Series) -> Tuple[int, int]:
-        """
-        Create strand-aware gene body + promoter coordinates using gene start and end coordinates
+        """Create strand-aware gene body + promoter coordinates using gene
+        start and end coordinates.
 
         Args:
             v: A row from the GFF file in Pandas Series format
 
         Returns:
             A Tuple of start and end coordinates
-
         """
         if v[6] == "+":
             return max(v[3] - self.up, 0), v[4]
@@ -130,15 +122,14 @@ class GffReader:
 
     @staticmethod
     def get_ids_names(v: pd.Series) -> Tuple[str, str]:
-        """
-        Extracts gene_id and gene_name values from last (9th) column of GFF file record
+        """Extracts gene_id and gene_name values from last (9th) column of GFF
+        file record.
 
         Args:
             v: A Pandas Series representing a row from GFF file
 
         Returns:
             Tuple of gene ID and gene name
-
         """
         gid, name = None, None
         for i in v[8].split(";"):
@@ -151,8 +142,7 @@ class GffReader:
 
     @staticmethod
     def d_apply(d: pd.DataFrame, func) -> np.ndarray:
-        """
-        A convenience method to apply arbitrary functions over a dataframe
+        """A convenience method to apply arbitrary functions over a dataframe.
 
         Args:
             d: A pandas dataframe over which function is to applied over axis 1
@@ -160,7 +150,6 @@ class GffReader:
 
         Returns:
             Numpy array of values returned by func
-
         """
         v = d.apply(func, axis=1)
         return np.array(list(v.values))
@@ -170,9 +159,9 @@ class GffReader:
         out_bed_fn: str,
         flavour: str = "body",
     ) -> None:
-        """
-        Converts the 'gene' annotations from the GFF file to a 6-column BED file.
-        The columns '3' and '4' contain te gene names and gene IDs respectively.
+        """Converts the 'gene' annotations from the GFF file to a 6-column BED
+        file. The columns '3' and '4' contain te gene names and gene IDs
+        respectively.
 
         Args:
             out_bed_fn: Path of output BED file.
@@ -180,7 +169,6 @@ class GffReader:
 
         Returns:
             None
-
         """
         bed = []
         if flavour not in ["body", "promoter"]:
@@ -213,15 +201,14 @@ class GffReader:
 
 
 def create_bed_from_coord_ids(ids: list) -> pd.DataFrame:
-    """
-    Creates a 3 column BED file from list of strings in format: <chr:start-end>
+    """Creates a 3 column BED file from list of strings in format: <chr:start-
+    end>
 
     Args:
         ids: List of strings in format: <chr:start-end>
 
     Returns:
         A 3 column Pandas dataframe sorted by chromosome and start position
-
     """
 
     out = []
@@ -234,9 +221,8 @@ def create_bed_from_coord_ids(ids: list) -> pd.DataFrame:
 
 @jit(nopython=True)
 def binary_search(ranges: np.ndarray, queries: np.ndarray) -> np.ndarray:
-    """
-    Identify the position of intervals in `queries` in the `ranges` interval list using binary
-    search algorithm.
+    """Identify the position of intervals in `queries` in the `ranges` interval
+    list using binary search algorithm.
 
     Args:
         ranges: A sorted numpy array of shape (n, 2)
@@ -245,7 +231,6 @@ def binary_search(ranges: np.ndarray, queries: np.ndarray) -> np.ndarray:
     Returns:
         A numpy array of shape (m, 2). The values are indices of ranges which overlapped the query
         intervals.
-
     """
 
     max_len = (ranges[:, 1] - ranges[:, 0]).max()
@@ -296,8 +281,8 @@ def binary_search(ranges: np.ndarray, queries: np.ndarray) -> np.ndarray:
 
 
 def get_ranges(df: pd.DataFrame, idx: np.ndarray) -> np.ndarray:
-    """
-    Convenience function to extract column 1 and 2 of the dataframe df and return int type values
+    """Convenience function to extract column 1 and 2 of the dataframe df and
+    return int type values.
 
     Args:
         df: A pandas dataframe with minimum three columns.
@@ -305,7 +290,6 @@ def get_ranges(df: pd.DataFrame, idx: np.ndarray) -> np.ndarray:
 
     Returns:
         A numpy array with start and end positions
-
     """
 
     return df[[1, 2]][idx].values.astype(int)
@@ -314,8 +298,8 @@ def get_ranges(df: pd.DataFrame, idx: np.ndarray) -> np.ndarray:
 def get_feature_mappings(
     peaks_bed_df: pd.DataFrame, features_bed_df: pd.DataFrame
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Identify which intervals from `features_bed_df` overlap with those from `peaks_bed_df`.
+    """Identify which intervals from `features_bed_df` overlap with those from
+    `peaks_bed_df`.
 
     Args:
         peaks_bed_df: DataFrame containing reference intervals. Must have atleast 3 columns:
@@ -330,7 +314,6 @@ def get_feature_mappings(
         as the indices in the third array. The third array has shape (features_bed_df.shape[0], 2).
         The values are indices of the overlapping intervals from peaks_bed_df. If no overlap is found
         then that row has value [-1, -1].
-
     """
 
     cross_indices = []
@@ -405,8 +388,7 @@ def create_counts_mat(
     scalar_coeff: float,
     renormalization: bool,
 ) -> None:
-    """
-    Populate the count matrix in the Zarr store.
+    """Populate the count matrix in the Zarr store.
 
     Args:
         assay: Scarf Assay object which contains the rawData attribute representing Dask array of count matrix
@@ -417,7 +399,6 @@ def create_counts_mat(
 
     Returns:
         None
-
     """
 
     idx = np.where(cross_map)[0]
@@ -461,13 +442,15 @@ def coordinate_melding(
     scalar_coeff: float = 1e5,
     renormalization: bool = True,
 ) -> None:
-    """
-    This function the coordinates of the features of the given assay and overlaps (genomics intersection)
-    them with a user provided set of external features. Based on the overlap the original feature values are
-    transferred to the new features and the new feature set is saved as a new assay. If the new feature overlaps
-    with multiple original features than we sum the values from original feature. Similarly, a single original
-    feature may overlap with multiple new features and hence its value will used for multiple new features.
-    The values are TF-IDF normalized before they are saved into the new assay
+    """This function the coordinates of the features of the given assay and
+    overlaps (genomics intersection) them with a user provided set of external
+    features. Based on the overlap the original feature values are transferred
+    to the new features and the new feature set is saved as a new assay. If the
+    new feature overlaps with multiple original features than we sum the values
+    from original feature. Similarly, a single original feature may overlap
+    with multiple new features and hence its value will used for multiple new
+    features. The values are TF-IDF normalized before they are saved into the
+    new assay.
 
     Args:
         assay: Scarf Assay object which contains the rawData attribute representing Dask array of count matrix.
@@ -483,7 +466,6 @@ def coordinate_melding(
 
     Returns:
         None
-
     """
 
     peaks_bed = create_bed_from_coord_ids(assay.feats.fetch_all(peaks_col))

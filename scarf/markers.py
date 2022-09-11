@@ -1,6 +1,4 @@
-"""
-Module to find biomarkers.
-"""
+"""Module to find biomarkers."""
 from scarf.assay import Assay
 from scarf.utils import logger, tqdmbar
 from numba import jit
@@ -33,8 +31,7 @@ def find_markers_by_rank(
     n_threads: int,
     **norm_params,
 ) -> dict:
-    """
-    Identify marker genes for given groups
+    """Identify marker genes for given groups.
 
     Args:
         assay:
@@ -46,14 +43,11 @@ def find_markers_by_rank(
         n_threads:
 
     Returns:
-
     """
 
     @jit(nopython=True)
     def calc_rank_mean(v):
-        """
-        Calculates the mean rank of the data.
-        """
+        """Calculates the mean rank of the data."""
         r = np.ones(n_groups)
         for x in range(n_groups):
             r[x] = v[int_indices == x].mean()
@@ -61,9 +55,7 @@ def find_markers_by_rank(
 
     @jit(nopython=True)
     def calc_frac_fc(v):
-        """
-        Calculates the mean rank of the data.
-        """
+        """Calculates the mean rank of the data."""
         m = np.zeros(n_groups)
         m_o = np.zeros(n_groups)
         e = np.zeros(n_groups)

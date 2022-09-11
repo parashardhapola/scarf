@@ -1,6 +1,4 @@
-"""
-Utility functions for features.
-"""
+"""Utility functions for features."""
 import pandas as pd
 import numpy as np
 from typing import List, Sequence
@@ -9,8 +7,7 @@ __all__ = ["fit_lowess", "binned_sampling"]
 
 
 def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
-    """
-    Fits a LOWESS (Locally Weighted Scatterplot Smoothing) curve.
+    """Fits a LOWESS (Locally Weighted Scatterplot Smoothing) curve.
 
     Args:
         a:
@@ -19,7 +16,6 @@ def fit_lowess(a, b, n_bins: int, lowess_frac: float) -> np.ndarray:
         lowess_frac:
 
     Returns:
-
     """
     from statsmodels.nonparametric.smoothers_lowess import lowess
 
@@ -54,11 +50,10 @@ def binned_sampling(
     n_bins: int,
     rand_seed: int,
 ) -> List[str]:
-    """
-    Score a set of genes [Satija15]_.
-    The score is the average expression of a set of genes subtracted with the
-    average expression of a reference set of genes. The reference set is
-    randomly sampled from the `gene_pool` for each binned expression value.
+    """Score a set of genes [Satija15]_. The score is the average expression of
+    a set of genes subtracted with the average expression of a reference set of
+    genes. The reference set is randomly sampled from the `gene_pool` for each
+    binned expression value.
 
     This reproduces the approach in Seurat [Satija15]_ and has been implemented
     for Scanpy by Davide Cittaro.

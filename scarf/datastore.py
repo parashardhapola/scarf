@@ -1,5 +1,5 @@
-"""
-Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
+"""Contains the primary interface to interact with data (i. e. DataStore) and
+its superclasses.
 
 - Classes:
     - DataStore: DataStore objects provide the primary interface to interact with the data.
@@ -28,8 +28,7 @@ __all__ = ["DataStore"]
 
 
 def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
-    """
-    Test if an assay node in zarr object was created properly.
+    """Test if an assay node in zarr object was created properly.
 
     Args:
         z: Zarr hierarchy object
@@ -37,7 +36,6 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 
     Returns:
         True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
-
     """
     if assay_name in z:
         if "counts" not in z[assay_name]:
@@ -50,9 +48,9 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
 
 
 class BaseDataStore:
-    """
-    This is the base datastore class that deals with loading of assays from Zarr files and generating basic cell
-    statistics like nCounts and nFeatures. Superclass of the other DataStores.
+    """This is the base datastore class that deals with loading of assays from
+    Zarr files and generating basic cell statistics like nCounts and nFeatures.
+    Superclass of the other DataStores.
 
     Args:
         zarr_loc: Path to Zarr file created using one of writer functions of Scarf
@@ -111,12 +109,11 @@ class BaseDataStore:
         # TODO: Implement _defaults to hold default parameters for methods
 
     def _load_cells(self) -> MetaData:
-        """
-        This convenience function loads cellData level from the Zarr hierarchy.
+        """This convenience function loads cellData level from the Zarr
+        hierarchy.
 
         Returns:
             Metadata object
-
         """
         if "cellData" not in self.z:
             raise KeyError("ERROR: cellData not found in zarr file")
@@ -124,13 +121,12 @@ class BaseDataStore:
 
     @property
     def assay_names(self) -> List[str]:
-        """
-        Load all assay names present in the Zarr file. Zarr writers create an 'is_assay' attribute in the assay level
-        and this function looks for presence of those attributes to load assay names.
+        """Load all assay names present in the Zarr file. Zarr writers create
+        an 'is_assay' attribute in the assay level and this function looks for
+        presence of those attributes to load assay names.
 
         Returns:
             Names of assays present in a Zarr file
-
         """
         assays = []
         for i in self.z.group_keys():
@@ -140,16 +136,16 @@ class BaseDataStore:
         return assays
 
     def _load_default_assay(self, assay_name: str = None) -> str:
-        """
-        This function sets a given assay name as defaultAssay attribute. If `assay_name` value is None then the
-        top-level directory attributes in the Zarr file are looked up for presence of previously used default assay.
+        """This function sets a given assay name as defaultAssay attribute. If
+        `assay_name` value is None then the top-level directory attributes in
+        the Zarr file are looked up for presence of previously used default
+        assay.
 
         Args:
             assay_name: Name of the assay to be considered for setting as default.
 
         Returns:
             Name of the assay to be set as default assay
-
         """
         if assay_name is None:
             if "defaultAssay" in self.z.attrs:
@@ -181,9 +177,10 @@ class BaseDataStore:
         return assay_name
 
     def _load_assays(self, min_cells: int, custom_assay_types: dict = None) -> None:
-        """
-        This function loads all the assay names present in attribute `assayNames` as Assay objects. An attempt is made
-        to automatically determine the most appropriate Assay class for each assay based on following mapping:
+        """This function loads all the assay names present in attribute
+        `assayNames` as Assay objects. An attempt is made to automatically
+        determine the most appropriate Assay class for each assay based on
+        following mapping:
 
         literal_blocks::
             {'RNA': RNAassay, 'ATAC': ATACassay, 'ADT': ADTassay, 'GeneActivity': RNAassay, 'URNA': RNAassay}
@@ -277,43 +274,40 @@ class BaseDataStore:
     def _get_assay(
         self, from_assay: str
     ) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
-        """
-        This is a convenience function used internally to quickly obtain the assay object that is linked to a assay name.
+        """This is a convenience function used internally to quickly obtain the
+        assay object that is linked to a assay name.
 
         Args:
             from_assay: Name of the assay whose object is to be returned.
 
         Returns:
-
         """
         if from_assay is None or from_assay == "":
             from_assay = self._defaultAssay
         return self.__getattribute__(from_assay)
 
     def _get_latest_feat_key(self, from_assay: str) -> str:
-        """
-        Looks up the the value in assay level attributes for key 'latest_feat_key'.
+        """Looks up the the value in assay level attributes for key
+        'latest_feat_key'.
 
         Args:
             from_assay: Assay whose latest feature is to be returned.
 
         Returns:
             Name of the latest feature that was used to run `save_normalized_data`
-
         """
         assay = self._get_assay(from_assay)
         return assay.attrs["latest_feat_key"]
 
     def _get_latest_cell_key(self, from_assay: str) -> str:
-        """
-        Looks up the the value in assay level attributes for key 'latest_cell_key'.
+        """Looks up the the value in assay level attributes for key
+        'latest_cell_key'.
 
         Args:
             from_assay: Assay whose latest feature is to be returned.
 
         Returns:
             Name of the latest feature that was used to run `save_normalized_data`
-
         """
         assay = self._get_assay(from_assay)
         return assay.attrs["latest_cell_key"]
@@ -324,9 +318,10 @@ class BaseDataStore:
         mito_pattern: Optional[str],
         ribo_pattern: Optional[str],
     ) -> None:
-        """
-        This function is called on class initialization. For each assay, it calculates per-cell statistics i.e. nCounts,
-        nFeatures, percentMito and percentRibo. These statistics are then populated into the cell metadata table.
+        """This function is called on class initialization. For each assay, it
+        calculates per-cell statistics i.e. nCounts, nFeatures, percentMito and
+        percentRibo. These statistics are then populated into the cell metadata
+        table.
 
         Args:
             min_features: Minimum features that a cell must have non-zero value before being filtered out.
@@ -334,7 +329,6 @@ class BaseDataStore:
             ribo_pattern: Regex pattern for identification of ribosomal genes.
 
         Returns:
-
         """
         for from_assay in self.assay_names:
             assay = self._get_assay(from_assay)
@@ -399,8 +393,8 @@ class BaseDataStore:
 
     @staticmethod
     def _col_renamer(from_assay: str, cell_key: str, suffix: str) -> str:
-        """
-        A convenience function for internal usage that creates naming rule for the metadata columns.
+        """A convenience function for internal usage that creates naming rule
+        for the metadata columns.
 
         Args:
             from_assay: Name of the assay.
@@ -409,7 +403,6 @@ class BaseDataStore:
 
         Returns:
             column name updated as per the naming rule
-
         """
         if cell_key == "I":
             ret_val = "_".join(list(map(str, [from_assay, suffix])))
@@ -418,8 +411,7 @@ class BaseDataStore:
         return ret_val
 
     def set_default_assay(self, *, assay_name: str) -> None:
-        """
-        Override assigning of default assay.
+        """Override assigning of default assay.
 
         Args:
             assay_name: Name of the assay that should be set as default.
@@ -428,7 +420,6 @@ class BaseDataStore:
 
         Raises:
             ValueError: if `assay_name` is not found in attribute `assayNames`
-
         """
         if assay_name in self.assay_names:
             self._defaultAssay = assay_name
@@ -445,8 +436,7 @@ class BaseDataStore:
         clip_fraction: float = 0,
         use_precached: bool = True,
     ):
-        """
-        Fetches data from the Zarr file.
+        """Fetches data from the Zarr file.
 
         This convenience function allows fetching values for cells from either cell metadata table or values of a
         given feature from normalized matrix.
@@ -589,8 +579,8 @@ class BaseDataStore:
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class GraphDataStore(BaseDataStore):
-    """
-    This class extends BaseDataStore by providing methods required to generate a cell-cell neighbourhood graph.
+    """This class extends BaseDataStore by providing methods required to
+    generate a cell-cell neighbourhood graph.
 
     It also contains all the methods that use the KNN graphs as primary input like UMAP/tSNE embedding calculation,
     clustering, down-sampling etc.
@@ -607,9 +597,9 @@ class GraphDataStore(BaseDataStore):
 
     @staticmethod
     def _choose_reduction_method(assay: Assay, reduction_method: str) -> str:
-        """
-        This is a convenience function to determine the linear dimension reduction method to be used for a given assay.
-        It is uses a predetermine rule to make this determination.
+        """This is a convenience function to determine the linear dimension
+        reduction method to be used for a given assay. It is uses a
+        predetermine rule to make this determination.
 
         Args:
             assay: Assay object.
@@ -620,7 +610,6 @@ class GraphDataStore(BaseDataStore):
 
         Raises:
             ValueError: If `reduction_method` is not one of either 'pca', 'lsi', 'auto'
-
         """
         reduction_method = reduction_method.lower()
         if reduction_method not in ["pca", "lsi", "auto", "custom"]:
@@ -657,11 +646,12 @@ class GraphDataStore(BaseDataStore):
         local_connectivity=None,
         bandwidth=None,
     ) -> tuple:
-        """
-        This function allows determination of values for the parameters of `make_graph` function. This function harbours
-        the default values for each parameter.  If parameter value is None, then before choosing the default, it tries
-        to use the values from latest iteration of the step within the same hierarchy tree.
-        Find details for parameters in the `make_graph` method
+        """This function allows determination of values for the parameters of
+        `make_graph` function. This function harbours the default values for
+        each parameter.  If parameter value is None, then before choosing the
+        default, it tries to use the values from latest iteration of the step
+        within the same hierarchy tree. Find details for parameters in the
+        `make_graph` method.
 
         Args:
             from_assay: Same as from_assay in make_graph
@@ -684,12 +674,11 @@ class GraphDataStore(BaseDataStore):
 
         Returns:
             Finalized values for the all the optional parameters in the same order
-
         """
 
         def log_message(category, name, value, custom_msg=None):
-            """
-            Convenience function to log variable usage messages for make_graph
+            """Convenience function to log variable usage messages for
+            make_graph.
 
             Args:
                 category:
@@ -698,7 +687,6 @@ class GraphDataStore(BaseDataStore):
                 custom_msg:
 
             Returns:
-
             """
             msg = f"No value provided for parameter `{name}`. "
             if category == "default":
@@ -945,8 +933,8 @@ class GraphDataStore(BaseDataStore):
     def _get_latest_graph_loc(
         self, from_assay: str, cell_key: str, feat_key: str
     ) -> str:
-        """
-        Convenience function to identify location of latest graph in the Zarr hierarchy.
+        """Convenience function to identify location of latest graph in the
+        Zarr hierarchy.
 
         Args:
             from_assay: Name of the assay.
@@ -955,7 +943,6 @@ class GraphDataStore(BaseDataStore):
 
         Returns:
             Path of graph in the Zarr hierarchy
-
         """
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         reduction_loc = self.z[normed_loc].attrs["latest_reduction"]
@@ -966,10 +953,10 @@ class GraphDataStore(BaseDataStore):
     def _get_ini_embed(
         self, from_assay: str, cell_key: str, feat_key: str, n_comps: int
     ) -> np.ndarray:
-        """
-        Runs PCA on kmeans cluster centers and ascribes the PC values to individual cells based on their cluster
-        labels. This is used in `run_umap` and `run_tsne` for initial embedding of cells. Uses `rescale_array` to
-        to reduce the magnitude of extreme values.
+        """Runs PCA on kmeans cluster centers and ascribes the PC values to
+        individual cells based on their cluster labels. This is used in
+        `run_umap` and `run_tsne` for initial embedding of cells. Uses
+        `rescale_array` to to reduce the magnitude of extreme values.
 
         Args:
             from_assay: Name fo the assay for which Kmeans was fit.
@@ -979,7 +966,6 @@ class GraphDataStore(BaseDataStore):
 
         Returns:
             Matrix with n_comps dimensions representing initial embedding of cells.
-
         """
         from sklearn.decomposition import PCA
         from .utils import rescale_array
@@ -1079,8 +1065,8 @@ class GraphDataStore(BaseDataStore):
         show_elbow_plot: bool = False,
         ann_index_save_path: str = None,
     ):
-        """
-        Creates a cell neighbourhood graph. Performs following steps in the process:
+        """Creates a cell neighbourhood graph. Performs following steps in the
+        process:
 
         - Normalizes the data calling the `save_normalized_data` for the assay
         - instantiates ANNStream class which perform dimension reduction, feature scaling (optional) and fits ANN index
@@ -1487,8 +1473,7 @@ class GraphDataStore(BaseDataStore):
         use_k: Optional[int] = None,
         graph_loc: Optional[str] = None,
     ) -> csr_matrix:
-        """
-        Load the cell neighbourhood as a scipy sparse matrix
+        """Load the cell neighbourhood as a scipy sparse matrix.
 
         Args:
             from_assay: Name of the assay. If None then the default assay is used.
@@ -1506,7 +1491,6 @@ class GraphDataStore(BaseDataStore):
 
         Returns:
             A scipy sparse matrix representing cell neighbourhood graph.
-
         """
 
         def symmetrize(g):
@@ -1566,12 +1550,13 @@ class GraphDataStore(BaseDataStore):
         parallel: bool = False,
         nthreads: int = None,
     ) -> None:
-        """
-        Run SGtSNE-pi (Read more here: https://github.com/fcdimitr/sgtsnepi/tree/v1.0.1). This is an implementation of
-        tSNE that runs directly on graph structures. We use the graphs generated by `make_graph` method to create a
-        layout of cells using tSNE algorithm. This function makes a system call to sgtSNE binary.
-        To get a better understanding of how the parameters affect the embedding, check this out:
-        http://t-sne-pi.cs.duke.edu/
+        """Run SGtSNE-pi (Read more here:
+        https://github.com/fcdimitr/sgtsnepi/tree/v1.0.1). This is an
+        implementation of tSNE that runs directly on graph structures. We use
+        the graphs generated by `make_graph` method to create a layout of cells
+        using tSNE algorithm. This function makes a system call to sgtSNE
+        binary. To get a better understanding of how the parameters affect the
+        embedding, check this out: http://t-sne-pi.cs.duke.edu/
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -1599,7 +1584,6 @@ class GraphDataStore(BaseDataStore):
                       attribute of the class is used. (Default value: None)
 
         Returns:
-
         """
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
@@ -1701,9 +1685,8 @@ class GraphDataStore(BaseDataStore):
         parallel: bool = False,
         nthreads: Optional[int] = None,
     ) -> None:
-        """
-        Runs UMAP algorithm using the precomputed cell-neighbourhood graph. The calculated UMAP coordinates are saved
-        in the cell metadata table.
+        """Runs UMAP algorithm using the precomputed cell-neighbourhood graph.
+        The calculated UMAP coordinates are saved in the cell metadata table.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -1747,7 +1730,6 @@ class GraphDataStore(BaseDataStore):
                       attribute of the class is used. (Default value: None)
 
         Returns:
-
         """
         from .umap import fit_transform
         from .utils import get_log_level
@@ -1851,9 +1833,8 @@ class GraphDataStore(BaseDataStore):
         label: str = "leiden_cluster",
         random_seed: int = 4444,
     ) -> None:
-        """
-        Executes Leiden graph clustering algorithm on the cell-neighbourhood graph and saves cluster identities in the
-        cell metadata column.
+        """Executes Leiden graph clustering algorithm on the cell-neighbourhood
+        graph and saves cluster identities in the cell metadata column.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -1868,7 +1849,6 @@ class GraphDataStore(BaseDataStore):
             random_seed: (Default value: 4444)
 
         Returns:
-
         """
         try:
             # noinspection PyPackageRequirements
@@ -1940,12 +1920,14 @@ class GraphDataStore(BaseDataStore):
         force_recalc: bool = False,
         label: str = "cluster",
     ) -> None:
-        """
-        Executes Paris clustering algorithm (https://arxiv.org/pdf/1806.01664.pdf) on the cell-neighbourhood graph.
-        The algorithm captures the multiscale structure of the graph in to an ordinary dendrogram structure. The
-        distances in the dendrogram are are based on probability of sampling node (aka cell) pairs. This methods creates
-        this dendrogram if it doesn't already exits for the graph and induces either a straight cut or balanced cut
-        to obtain clusters of cells.
+        """Executes Paris clustering algorithm
+        (https://arxiv.org/pdf/1806.01664.pdf) on the cell-neighbourhood graph.
+        The algorithm captures the multiscale structure of the graph in to an
+        ordinary dendrogram structure. The distances in the dendrogram are are
+        based on probability of sampling node (aka cell) pairs. This methods
+        creates this dendrogram if it doesn't already exits for the graph and
+        induces either a straight cut or balanced cut to obtain clusters of
+        cells.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2072,10 +2054,11 @@ class GraphDataStore(BaseDataStore):
         rand_state: int = 4466,
         return_edges: bool = False,
     ) -> Union[None, List]:
-        """
-        Perform sub-sampling (aka sketching) of cells using TopACeDo algorithm. Sub-sampling required
-        that cells are partitioned in cluster already. Since, sub-sampling is dependent on cluster information, having,
-        large number of homogeneous and even sized cluster improves sub-sampling results.
+        """Perform sub-sampling (aka sketching) of cells using TopACeDo
+        algorithm. Sub-sampling required that cells are partitioned in cluster
+        already. Since, sub-sampling is dependent on cluster information,
+        having, large number of homogeneous and even sized cluster improves
+        sub-sampling results.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2114,7 +2097,6 @@ class GraphDataStore(BaseDataStore):
             return_edges: If True, then steiner nodes and edges are returned. (Default value: False)
 
         Returns:
-
         """
 
         try:
@@ -2462,11 +2444,11 @@ class GraphDataStore(BaseDataStore):
         label: str,
         chunk_size: int = 10000,
     ) -> None:
-        """
-        Merges KNN graphs of two or more assays from within the same DataStore.
-        The input KNN graphs should have been constructed on the same set of cells and
-        should each have been constructed with equal number of neighbours (parameter: k)
-        The merged KNN graph has the same size and shape as the input graphs.
+        """Merges KNN graphs of two or more assays from within the same
+        DataStore. The input KNN graphs should have been constructed on the
+        same set of cells and should each have been constructed with equal
+        number of neighbours (parameter: k) The merged KNN graph has the same
+        size and shape as the input graphs.
 
         Args:
             assays: Name of the input assays. The latest constructed graph from each assay is used.
@@ -2474,7 +2456,6 @@ class GraphDataStore(BaseDataStore):
             chunk_size: number of cells to be loaded at a time while reading and writing the graph
 
         Returns: None
-
         """
         from .knn_utils import merge_graphs
 
@@ -2520,9 +2501,8 @@ class GraphDataStore(BaseDataStore):
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class MappingDatastore(GraphDataStore):
-    """
-    This class extends GraphDataStore by providing methods for mapping/ projection of cells from one DataStore
-    onto another.
+    """This class extends GraphDataStore by providing methods for mapping/
+    projection of cells from one DataStore onto another.
 
     It also contains the methods required for label transfer, mapping score generation and co-embedding.
 
@@ -2554,10 +2534,10 @@ class MappingDatastore(GraphDataStore):
         filter_null: bool = False,
         feat_scaling: bool = True,
     ) -> None:
-        """
-        Projects cells from external assays into the cell-neighbourhood graph using existing PCA loadings and ANN index.
-        For each external cell (target) nearest neighbours are identified and save within the Zarr hierarchy group
-        `projections`.
+        """Projects cells from external assays into the cell-neighbourhood
+        graph using existing PCA loadings and ANN index. For each external cell
+        (target) nearest neighbours are identified and save within the Zarr
+        hierarchy group `projections`.
 
         Args:
             target_assay: Assay object of the target dataset
@@ -2592,7 +2572,6 @@ class MappingDatastore(GraphDataStore):
 
         Returns:
             None
-
         """
         from .mapping_utils import align_features, coral
 
@@ -2713,8 +2692,7 @@ class MappingDatastore(GraphDataStore):
         weighted: bool = True,
         fixed_weight: float = 0.1,
     ) -> Generator[Tuple[str, np.ndarray], None, None]:
-        """
-        Yields the mapping scores that were a result of a mapping.
+        """Yields the mapping scores that were a result of a mapping.
 
         Mapping scores are an indication of degree of similarity of reference cells in the graph to the target cells.
         The more often a reference cell is found in the nearest neighbour list of the target cells, the higher
@@ -2736,7 +2714,6 @@ class MappingDatastore(GraphDataStore):
 
         Yields:
             A tuple of group name and mapping score of reference cells for that target group.
-
         """
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2791,8 +2768,7 @@ class MappingDatastore(GraphDataStore):
         target_subset: List[int] = None,
         na_val="NA",
     ) -> pd.Series:
-        """
-        Perform classification of target cells using a reference group.
+        """Perform classification of target cells using a reference group.
 
         Args:
             target_name: Name of target data. This value should be the same as that used for `run_mapping` earlier.
@@ -2809,7 +2785,6 @@ class MappingDatastore(GraphDataStore):
                     (Default value: 'NA')
 
         Returns: A pandas Series containing predicted class for each cell in the projected sample (`target_name`).
-
         """
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -2871,8 +2846,8 @@ class MappingDatastore(GraphDataStore):
         use_k: int,
         target_weight: float,
     ) -> Tuple[List[int], csr_matrix]:
-        """
-        This is similar to ``load_graph`` but includes projected cells and their edges.
+        """This is similar to ``load_graph`` but includes projected cells and
+        their edges.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -2886,7 +2861,6 @@ class MappingDatastore(GraphDataStore):
             target_weight: A constant uniform weight to be ascribed to each target-reference edge.
 
         Returns:
-
         """
         # TODO:  allow loading multiple targets
 
@@ -2981,8 +2955,8 @@ class MappingDatastore(GraphDataStore):
         parallel: bool = False,
         nthreads: int = None,
     ) -> None:
-        """
-        Calculates the UMAP embedding for graph obtained using ``load_unified_graph``.
+        """Calculates the UMAP embedding for graph obtained using
+        ``load_unified_graph``.
 
         The loaded graph is processed the same way as the graph as in ``run_umap``.
 
@@ -3086,9 +3060,9 @@ class MappingDatastore(GraphDataStore):
         ini_embed_with: str = "kmeans",
         label: str = "unified_tSNE",
     ) -> None:
-        """
-        Calculates the tSNE embedding for graph obtained using ``load_unified_graph``. The loaded graph is processed
-        the same way as the graph as in ``run_tsne``.
+        """Calculates the tSNE embedding for graph obtained using
+        ``load_unified_graph``. The loaded graph is processed the same way as
+        the graph as in ``run_tsne``.
 
         Args:
             target_names: Names of target datasets to be included in the unified tSNE.
@@ -3115,7 +3089,6 @@ class MappingDatastore(GraphDataStore):
             label: Base label for tSNE dimensions in the cell metadata column. (Default value: 'tSNE')
 
         Returns:
-
         """
         from uuid import uuid4
         from .knn_utils import export_knn_to_mtx
@@ -3200,8 +3173,7 @@ class MappingDatastore(GraphDataStore):
         shuffle_zorder: bool = True,
         show_fig: bool = True,
     ):
-        """
-        Plots the reference and target cells in their unified space.
+        """Plots the reference and target cells in their unified space.
 
         This function helps plotting the reference and target cells the coordinates for which were obtained from
         either `run_unified_tsne` or `run_unified_umap`. Since the coordinates are not saved in the cell metadata
@@ -3381,8 +3353,8 @@ class MappingDatastore(GraphDataStore):
 # Note for the docstring: Attributes are copied from BaseDataStore docstring since the constructor is inherited.
 # Meaning, for any attribute change in BaseDataStore a manual update to docstring here is needed as well. - RO
 class DataStore(MappingDatastore):
-    """
-    This class extends MappingDatastore and consequently inherits methods of all the other DataStore classes.
+    """This class extends MappingDatastore and consequently inherits methods of
+    all the other DataStore classes.
 
     This class is the main user facing class as it provides most of the plotting functions.
     It also contains methods for cell filtering, feature selection, marker features identification,
@@ -3448,12 +3420,14 @@ class DataStore(MappingDatastore):
         highs: Iterable[int],
         reset_previous: bool = False,
     ) -> None:
-        """
-        Filter cells based on the cell metadata column values. Filtering triggers `update` method on  'I' column of
-        cell metadata which uses 'and' operation. This means that cells that are not within the filtering thresholds
-        will have value set as False in 'I' column of cell metadata table. When performing filtering repeatedly, the
-        cells that were previously filtered out remain filtered out and 'I' column is updated only for those cells that
-        are filtered out due to the latest filtering attempt.
+        """Filter cells based on the cell metadata column values. Filtering
+        triggers `update` method on  'I' column of cell metadata which uses
+        'and' operation. This means that cells that are not within the
+        filtering thresholds will have value set as False in 'I' column of cell
+        metadata table. When performing filtering repeatedly, the cells that
+        were previously filtered out remain filtered out and 'I' column is
+        updated only for those cells that are filtered out due to the latest
+        filtering attempt.
 
         Args:
             attrs: Names of columns to be used for filtering
@@ -3463,7 +3437,6 @@ class DataStore(MappingDatastore):
                             (Default value: False)
 
         Returns:
-
         """
         new_bool = np.ones(self.cells.N).astype(bool)
         for i, j, k in zip(attrs, lows, highs):
@@ -3494,8 +3467,8 @@ class DataStore(MappingDatastore):
         max_p: float = 0.99,
         show_qc_plots: bool = True,
     ) -> None:
-        """
-        Automatically filter cells based on columns of the cell metadata table.
+        """Automatically filter cells based on columns of the cell metadata
+        table.
 
         This is a wrapper function for `filer_cells` and determines the threshold values to be used for each column.
         For each cell metadata column, the function models a normal distribution using the median value and standard
@@ -3564,9 +3537,9 @@ class DataStore(MappingDatastore):
         hvg_key_name: str = "hvgs",
         **plot_kwargs,
     ) -> None:
-        """
-        Identify and mark genes as highly variable genes (HVGs). This is a critical and required feature selection step
-        and is only applicable to RNAassay type of assays.
+        """Identify and mark genes as highly variable genes (HVGs). This is a
+        critical and required feature selection step and is only applicable to
+        RNAassay type of assays.
 
         Args:
             from_assay: Assay to use for graph creation. If no value is provided then `defaultAssay` will be used
@@ -3638,8 +3611,7 @@ class DataStore(MappingDatastore):
         top_n: int = 10000,
         prevalence_key_name: str = "prevalent_peaks",
     ) -> None:
-        """
-        Feature selection method for ATACassay type assays.
+        """Feature selection method for ATACassay type assays.
 
         This method first calculates prevalence of each peak by computing sum of TF-IDF normalized values for each peak
         and then marks `top_n` peaks with highest prevalence as prevalent peaks.
@@ -3680,8 +3652,7 @@ class DataStore(MappingDatastore):
         n_threads: int = None,
         **norm_params,
     ) -> None:
-        """
-        Identifies group specific features for a given assay.
+        """Identifies group specific features for a given assay.
 
         Please check out the ``find_markers_by_rank`` function for further details of how marker features for groups
         are identified. The results are saved into the Zarr hierarchy under `markers` group.
@@ -3751,11 +3722,11 @@ class DataStore(MappingDatastore):
         gene_batch_size: int = 50,
         **norm_params,
     ) -> None:
-        """
-        Identify genes that a correlated with a given pseudotime ordering of cells.
-        The results are saved in feature attribute tables. For example, the r value can be found under,
-        'I__RNA_pseudotime__r' and the corresponding p values can be found under 'I__RNA_pseudotime__p'
-        The values are saved with patten {cell_key}__{regressor_key}__r/p
+        """Identify genes that a correlated with a given pseudotime ordering of
+        cells. The results are saved in feature attribute tables. For example,
+        the r value can be found under, 'I__RNA_pseudotime__r' and the
+        corresponding p values can be found under 'I__RNA_pseudotime__p' The
+        values are saved with patten {cell_key}__{regressor_key}__r/p.
 
         Args:
             from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
@@ -3768,7 +3739,6 @@ class DataStore(MappingDatastore):
             gene_batch_size: Number of genes to be loaded in memory at a time. (Default value: 50).
 
         Returns: None
-
         """
 
         from .markers import find_markers_by_regression
@@ -3815,10 +3785,11 @@ class DataStore(MappingDatastore):
         batch_size: int = 100,
         ann_params: dict = None,
     ) -> None:
-        """
-        This method performs clustering of features based on pseudotime ordered cells. The values from the pseudotime
-        ordered cells are smoothened, scaled and binned. The resulting binned matrix is used to perform a KNN-Paris
-        clustering of the features. This function can be used an alternative to `run_marker_search` and
+        """This method performs clustering of features based on pseudotime
+        ordered cells. The values from the pseudotime ordered cells are
+        smoothened, scaled and binned. The resulting binned matrix is used to
+        perform a KNN-Paris clustering of the features. This function can be
+        used an alternative to `run_marker_search` and
         `run_pseudotime_marker_search`
 
         Args:
@@ -3849,7 +3820,6 @@ class DataStore(MappingDatastore):
             ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
 
         Returns: None
-
         """
         from .markers import knn_clustering
 
@@ -3905,8 +3875,8 @@ class DataStore(MappingDatastore):
         min_score: float = 0.25,
         min_frac_exp: float = 0.2,
     ) -> pd.DataFrame:
-        """
-        Returns a table of markers features obtained through `run_marker_search` for a given group.
+        """Returns a table of markers features obtained through
+        `run_marker_search` for a given group.
 
         The table contains names of marker features and feature ids are used as table index.
 
@@ -3991,10 +3961,10 @@ class DataStore(MappingDatastore):
         min_score: float = 0.25,
         min_frac_exp: float = 0.2,
     ) -> None:
-        """
-        Export markers of each cluster/group to a CSV file where each column contains the marker names sorted by
-        score (descending order, highest first). This function does not export the scores of markers as they can be
-        obtained using `get_markers` function.
+        """Export markers of each cluster/group to a CSV file where each column
+        contains the marker names sorted by score (descending order, highest
+        first). This function does not export the scores of markers as they can
+        be obtained using `get_markers` function.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4011,7 +3981,6 @@ class DataStore(MappingDatastore):
                           considered a marker for that group.
 
         Returns:
-
         """
         # Not testing the values of from_assay and cell_key because they will be tested in `get_markers`
         if group_key is None:
@@ -4054,9 +4023,10 @@ class DataStore(MappingDatastore):
         g2m_score_label: str = "G2M_score",
         phase_label: str = "cell_cycle_phase",
     ) -> None:
-        """
-        Computes S and G2M phase scores by taking into account the average expression of S and G2M phase genes
-        respectively. Following steps are taken for each phase:
+        """Computes S and G2M phase scores by taking into account the average
+        expression of S and G2M phase genes respectively. Following steps are
+        taken for each phase:
+
         - Average expression of all the genes in across `cell_key` cells is calculated
         - The log average expression is divided in `n_bins` bins
         - A control set of genes is identified by sampling genes from same expression bins where phase's genes are
@@ -4085,7 +4055,6 @@ class DataStore(MappingDatastore):
                            (Default value: 'cell_cycle_phase')
 
         Returns: None
-
         """
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -4128,11 +4097,11 @@ class DataStore(MappingDatastore):
         assay_label: str = None,
         exclude_values: list = None,
     ) -> None:
-        """
-        Add a new assay to the DataStore by grouping together multiple features and taking their means.
-        This method requires that the features are already assigned a group/cluster identity. The new assay will have
-        all the cells but only features that marked by 'feat_key' and contain a group identity not present in
-        `exclude_values`.
+        """Add a new assay to the DataStore by grouping together multiple
+        features and taking their means. This method requires that the features
+        are already assigned a group/cluster identity. The new assay will have
+        all the cells but only features that marked by 'feat_key' and contain a
+        group identity not present in `exclude_values`.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4143,7 +4112,6 @@ class DataStore(MappingDatastore):
                             this means that all the features that have the group identity of -1 are not used.
 
         Returns: None
-
         """
 
         from .writers import create_zarr_count_assay
@@ -4204,12 +4172,12 @@ class DataStore(MappingDatastore):
         renormalization: bool = True,
         assay_type: str = "Assay",
     ) -> None:
-        """
-        This method performs "assay melding" and can be only be used for assay's wherein features
-        have genomic coordinates. In the process of melding the input genomic coordinates from
-        `external_bed_fn` are intersected with the assay's features. Based on this intersection
-        a mapping is created wherein each coordinate interval maps to one or more feature coordinates
-        from the assay.
+        """This method performs "assay melding" and can be only be used for
+        assay's wherein features have genomic coordinates. In the process of
+        melding the input genomic coordinates from `external_bed_fn` are
+        intersected with the assay's features. Based on this intersection a
+        mapping is created wherein each coordinate interval maps to one or more
+        feature coordinates from the assay.
 
         This method has been designed for snATAC-Seq data and can be used to quantify accessibility of specific
         genomic loci such as gene bodies, promoters, enhancers, motifs, etc.
@@ -4232,7 +4200,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
 
         from .meld_assay import coordinate_melding
@@ -4285,8 +4252,7 @@ class DataStore(MappingDatastore):
         null_vals: list = None,
         random_seed: int = 4466,
     ) -> pd.DataFrame:
-        """
-        Merge data from cells to create a bulk profile.
+        """Merge data from cells to create a bulk profile.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4297,7 +4263,6 @@ class DataStore(MappingDatastore):
             random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
 
         Returns:
-
         """
 
         def make_reps(v, n_reps: int, seed: int):
@@ -4336,8 +4301,7 @@ class DataStore(MappingDatastore):
     def to_anndata(
         self, *, from_assay: str = None, cell_key: str = None, layers: dict = None
     ):
-        """
-        Writes an assay of the Zarr hierarchy to AnnData file format.
+        """Writes an assay of the Zarr hierarchy to AnnData file format.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4346,7 +4310,6 @@ class DataStore(MappingDatastore):
                     from the assays will be stored as sparse arrays in the corresponding layer in anndata.
 
         Returns: anndata object
-
         """
         try:
 
@@ -4375,8 +4338,7 @@ class DataStore(MappingDatastore):
         return adata
 
     def show_zarr_tree(self, *, start: str = "/", depth: int = 2) -> None:
-        """
-        Prints the Zarr hierarchy of the DataStore.
+        """Prints the Zarr hierarchy of the DataStore.
 
         Args:
             start: Location in Zarr hierarchy to be used as the root for display
@@ -4384,7 +4346,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
         print(self.z[start].tree(expand=True, level=depth))
 
@@ -4396,13 +4357,15 @@ class DataStore(MappingDatastore):
         cell_key: str = "I",
         new_col_name: Optional[str] = None,
     ) -> Union[None, List[str]]:
-        """
-        A convenience function to relabel the values in a cell attribure column (A) based on the values
-        in another cell attribute column (B). For each unique value in A, the most frequently occuring
-        value in B is found. If two or more values in A have maximum overlap with the same value in B, then
-        they all get the same label as B along with different suffixes like, 'a', 'b', etc. The suffixes are
-        ordered based on where the largest fraction of the B label lies. If one label from A takes up multiple
-        labels from B then all the labels from B are included and they are separated by hyphens.
+        """A convenience function to relabel the values in a cell attribure
+        column (A) based on the values in another cell attribute column (B).
+        For each unique value in A, the most frequently occuring value in B is
+        found. If two or more values in A have maximum overlap with the same
+        value in B, then they all get the same label as B along with different
+        suffixes like, 'a', 'b', etc. The suffixes are ordered based on where
+        the largest fraction of the B label lies. If one label from A takes up
+        multiple labels from B then all the labels from B are included and they
+        are separated by hyphens.
 
         Args:
             to_relabel: Cell attributes column to relabel
@@ -4412,7 +4375,6 @@ class DataStore(MappingDatastore):
                           are returned and not saved in cell attributes table
 
         Returns: None or a list of relabelled values
-
         """
         df = pd.crosstab(
             self.cells.fetch(base_label, key=cell_key),
@@ -4457,9 +4419,9 @@ class DataStore(MappingDatastore):
         show_on_single_row: bool = True,
         show_fig: bool = True,
     ) -> None:
-        """
-        Makes violin plots of the distribution of values present in cell metadata. This method is designed to
-        distribution of nCounts, nFeatures, percentMito and percentRibo cell attrbutes.
+        """Makes violin plots of the distribution of values present in cell
+        metadata. This method is designed to distribution of nCounts,
+        nFeatures, percentMito and percentRibo cell attrbutes.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4489,7 +4451,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
 
         from .plots import plot_qc
@@ -4597,13 +4558,14 @@ class DataStore(MappingDatastore):
         show_fig: bool = True,
         scatter_kwargs: dict = None,
     ):
-        """
-        Create a scatter plot with a chosen layout. The methods fetches the coordinates based from
-        the cell metadata columns with `layout_key` prefix. DataShader library is used to draw fast
-        rasterized image is `do_shading` is True. This can be useful when large number of cells are
-        present to quickly render the plot and avoid over-plotting.
-        The description of shading parameters has mostly been copied from the Datashader API that can be found here:
-        https://holoviews.org/_modules/holoviews/operation/datashader.html
+        """Create a scatter plot with a chosen layout. The methods fetches the
+        coordinates based from the cell metadata columns with `layout_key`
+        prefix. DataShader library is used to draw fast rasterized image is
+        `do_shading` is True. This can be useful when large number of cells are
+        present to quickly render the plot and avoid over-plotting. The
+        description of shading parameters has mostly been copied from the
+        Datashader API that can be found here:
+        https://holoviews.org/_modules/holoviews/operation/datashader.html.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -4702,7 +4664,6 @@ class DataStore(MappingDatastore):
 
         Returns:
             None
-
         """
 
         # TODO: add support for providing a list of subselections, from_assay and cell_keys
@@ -4876,13 +4837,16 @@ class DataStore(MappingDatastore):
         savename: str = None,
         save_dpi: int = 300,
     ):
-        """
-        Plots a hierarchical layout of the clusters detected using `run_clustering` in a binary tree form. This helps
-        evaluate the relationships between the clusters. This figure can complement embeddings likes tSNE where
-        global distances are not preserved. The plot shows clusters as coloured nodes and the nodes are sized
-        proportionally to the number of cells within the clusters. Root and branching nodes are shown to visually
-        track the branching pattern of the tree. This figure is not scaled, i.e. the distances between the nodes are
-        meaningless and only the branching pattern of the nodes must be evaluated.
+        """Plots a hierarchical layout of the clusters detected using
+        `run_clustering` in a binary tree form. This helps evaluate the
+        relationships between the clusters. This figure can complement
+        embeddings likes tSNE where global distances are not preserved. The
+        plot shows clusters as coloured nodes and the nodes are sized
+        proportionally to the number of cells within the clusters. Root and
+        branching nodes are shown to visually track the branching pattern of
+        the tree. This figure is not scaled, i.e. the distances between the
+        nodes are meaningless and only the branching pattern of the nodes must
+        be evaluated.
 
         https://epidemicsonnetworks.readthedocs.io/en/latest/functions/EoN.hierarchy_pos.html
 
@@ -5051,8 +5015,8 @@ class DataStore(MappingDatastore):
         show_fig: bool = True,
         **heatmap_kwargs,
     ):
-        """
-        Displays a heatmap of top marker gene expression for the chosen groups (usually cell clusters).
+        """Displays a heatmap of top marker gene expression for the chosen
+        groups (usually cell clusters).
 
         Z-scores are calculated for each marker gene before plotting them. The groups are subjected to hierarchical
         clustering to bring groups with similar expression pattern in proximity.
@@ -5154,10 +5118,11 @@ class DataStore(MappingDatastore):
         save_dpi: int = 300,
         show_fig: bool = True,
     ) -> None:
-        """
-        Plot heatmap for the matrix calculated by running `run_pseudotime_aggregation`. The heatmap shows the cell bins
-        ordered as per pseudotime values and features ordered by clusters. The clusters themselves are ordered in a
-        fashion such that features that have mean maximum expression in early pseudotime appear first and the feature
+        """Plot heatmap for the matrix calculated by running
+        `run_pseudotime_aggregation`. The heatmap shows the cell bins ordered
+        as per pseudotime values and features ordered by clusters. The clusters
+        themselves are ordered in a fashion such that features that have mean
+        maximum expression in early pseudotime appear first and the feature
         cluster that has mean maxima in the later pseudotime appears last.
 
         CAUTION: This make take a long time to render and consume large amount of memory if your data has too many
@@ -5197,7 +5162,6 @@ class DataStore(MappingDatastore):
             show_fig: If, False then axes object is returned rather then rendering the plot (Default value: True)
 
         Returns: None
-
         """
 
         from .plots import plot_annotated_heatmap
