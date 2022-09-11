@@ -44,9 +44,6 @@ if __name__ == "__main__":
         + [x.strip() for x in open("requirements.txt")]
         + ["dask[array]", "dask[dataframe]"]
     )
-    dependency_links = [
-        "https://github.com/fraenkel-lab/pcst_fast/tarball/master#egg=pcst_fast-1.0.7"
-    ]
     setup(
         name="scarf",
         description="Scarf",
