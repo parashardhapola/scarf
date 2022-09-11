@@ -132,7 +132,7 @@ def find_markers_by_rank(
                 temp.append(
                     (i, np.vstack([temp1[i].values, np.vstack(temp2[i].values)]))
                 )
-    for i in tqdmbar(temp, desc="Aggregating results"):
+    for i in temp:
         for j, k in zip(group_set, i[1].T):
             results[j].append([i[0]] + list(k))
     for i in results:
