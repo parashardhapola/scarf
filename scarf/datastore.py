@@ -1691,8 +1691,8 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
-            feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
-                       used feature for the given assay will be used.
+            feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
+                      used feature for the given assay will be used.
             symmetric_graph: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             graph_upper_only: This parameter is forwarded to `load_graph` and is same as there. (Default value: False)
             ini_embed: Initial embedding coordinates for the cells in cell_key. Should have the same number of columns as
@@ -1925,7 +1925,7 @@ class GraphDataStore(BaseDataStore):
         The algorithm captures the multiscale structure of the graph in to an
         ordinary dendrogram structure. The distances in the dendrogram are
         based on probability of sampling node (aka cell) pairs. These methods
-        creates this dendrogram if it doesn't already exist for the graph and
+        create this dendrogram if it doesn't already exist for the graph and
         induces either a straight cut or balanced cut to obtain clusters of
         cells.
 
@@ -2538,7 +2538,7 @@ class MappingDatastore(GraphDataStore):
         hierarchy group `projections`.
 
         Args:
-            target_assay: Assay object of the target dataset
+            target_assay: Assay object of the target dataset.
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
             target_feat_key: This will be used to name wherein the normalized target data will be saved in its own
                              zarr hierarchy.
