@@ -3961,27 +3961,25 @@ class DataStore(MappingDatastore):
         for gid in gids:
             if gid in g:
                 cols = [g[gid][x][:] for x in out_cols]
-                df = (
-                    pd.DataFrame(
-                        cols,
-                        index=out_cols,
-                    )
-                    .T
-                )
+                df = pd.DataFrame(
+                    cols,
+                    index=out_cols,
+                ).T
                 df["group_id"] = gid
-                df["feature_name"] = assay.feats.fetch_all("names")[df.feature_index.astype("int")]
+                df["feature_name"] = assay.feats.fetch_all("names")[
+                    df.feature_index.astype("int")
+                ]
             else:
                 logger.debug(f"No markers found for {gid} returning empty dataframe")
-                df = (
-                    pd.DataFrame([[] for x in out_cols], index=out_cols)
-                    .T
-                )
+                df = pd.DataFrame([[] for x in out_cols], index=out_cols).T
                 df["group_id"] = []
                 df["feature_name"] = []
             df = df[["group_id", "feature_name"] + out_cols]
             dfs.append(df)
         dfs = pd.concat(dfs)
-        return dfs[(dfs.score >= min_score) & (dfs.frac_exp >= min_frac_exp)].reset_index(drop=True)
+        return dfs[
+            (dfs.score >= min_score) & (dfs.frac_exp >= min_frac_exp)
+        ].reset_index(drop=True)
 
     def export_markers_to_csv(
         self,
@@ -4034,7 +4032,7 @@ class DataStore(MappingDatastore):
                 group_key=group_key,
                 group_id=group_id,
                 min_score=min_score,
-                min_frac_exp=min_frac_exp
+                min_frac_exp=min_frac_exp,
             )
             if len(m) > 0:
                 markers_table[group_id] = m["feature_name"].reset_index(drop=True)
@@ -5117,7 +5115,7 @@ class DataStore(MappingDatastore):
         groups = daskarr.from_array(
             assay.cells.fetch(group_key, cell_key), chunks=nc
         ).to_dask_dataframe()
-        df = controlled_compute(normed_data.groupby(groups).mean(), 4)
+        df = controlled_compute(normed_data.groupby(groups).mean(), self.nthreads)
         df = df.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
         df.columns = assay.feats.fetch_all("names")[feat_idx]
         df = df.T
