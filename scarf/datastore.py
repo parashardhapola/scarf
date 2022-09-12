@@ -5062,7 +5062,7 @@ class DataStore(MappingDatastore):
                 feat_idx.extend(g[i]["feature_index"][:][:topn])
         if len(feat_idx) == 0:
             raise ValueError("ERROR: Marker list is empty for all the groups")
-        feat_idx = np.array(sorted(set(feat_idx)))
+        feat_idx = np.array(sorted(set(feat_idx))).astype(int)
         cell_idx = np.array(assay.cells.active_index(cell_key))
         normed_data = assay.normed(
             cell_idx=cell_idx,
