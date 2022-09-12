@@ -44,6 +44,7 @@ if __name__ == "__main__":
         + [x.strip() for x in open("requirements.txt")]
         + ["dask[array]", "dask[dataframe]"]
     )
+    dependency_links = []
     setup(
         name="scarf",
         description="Scarf",
