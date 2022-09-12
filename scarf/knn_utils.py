@@ -82,10 +82,10 @@ def smoothen_dists(store, z_idx, z_dist, lc: float, bw: float, chunk_size: int):
 
     n_cells, n_neighbors = z_idx.shape
     zge = create_zarr_dataset(
-        store, f"edges", (chunk_size,), ("u8", "u8"), (n_cells * n_neighbors, 2)
+        store, f"edges", (chunk_size * n_neighbors,), ("u8", "u8"), (n_cells * n_neighbors, 2)
     )
     zgw = create_zarr_dataset(
-        store, f"weights", (chunk_size,), "f8", (n_cells * n_neighbors,)
+        store, f"weights", (chunk_size * n_neighbors,), "f8", (n_cells * n_neighbors,)
     )
     last_row = 0
     val_counts = 0
