@@ -1280,24 +1280,11 @@ class GraphDataStore(BaseDataStore):
         fit_kmeans = True
         mu, sigma = np.ndarray([]), np.ndarray([])
         use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
-        if reduction_loc in self.z:
-            # TODO: In future move 'mu' and 'sigma' to normed_loc rather than reduction_loc. This may however introduce
-            # breaking changes.
-            if "mu" in self.z[reduction_loc]:
-                mu = self.z[reduction_loc]["mu"][:]
-            if "sigma" in self.z[reduction_loc]:
-                sigma = self.z[reduction_loc]["sigma"][:]
-            if "reduction" in self.z[reduction_loc]:
-                loadings = self.z[reduction_loc]["reduction"][:]
-                if data.shape[1] != loadings.shape[0]:
-                    logger.warning(
-                        "Consistency breached in loading pre-cached loadings. Will perform fresh reduction."
-                    )
-                    loadings = None
 
-                    del self.z[reduction_loc]
-        else:
-            if reduction_method in ["pca", "manual"]:
+        if reduction_method in ["pca", "manual"]:
+            if "mu" in self.z[normed_loc]:
+                mu = self.z[normed_loc]["mu"][:]
+            else:
                 mu = clean_array(
                     show_dask_progress(
                         data.mean(axis=0),
@@ -1305,6 +1292,13 @@ class GraphDataStore(BaseDataStore):
                         self.nthreads,
                     )
                 )
+                g = create_zarr_dataset(
+                    self.z[normed_loc], "mu", (100000,), "f8", mu.shape
+                )
+                g[:] = mu
+            if "sigma" in self.z[normed_loc]:
+                sigma = self.z[normed_loc]["sigma"][:]
+            else:
                 sigma = clean_array(
                     show_dask_progress(
                         data.std(axis=0),
@@ -1313,7 +1307,19 @@ class GraphDataStore(BaseDataStore):
                     ),
                     1,
                 )
-
+                g = create_zarr_dataset(
+                    self.z[normed_loc], "sigma", (100000,), "f8", sigma.shape
+                )
+                g[:] = sigma
+        if reduction_loc in self.z:
+            if "reduction" in self.z[reduction_loc]:
+                loadings = self.z[reduction_loc]["reduction"][:]
+                if data.shape[1] != loadings.shape[0]:
+                    logger.warning(
+                        "Consistency breached in loading pre-cached loadings. Will perform fresh reduction."
+                    )
+                    loadings = None
+                    del self.z[reduction_loc]
         if custom_loadings is None:
             if loadings is None:
                 pass  # Will compute fresh loadings
@@ -1384,16 +1390,6 @@ class GraphDataStore(BaseDataStore):
                     ann_obj.loadings.shape,
                 )
                 g[:, :] = ann_obj.loadings
-            # TODO: This belongs better in normed_loc
-            if reduction_method in ["pca", "manual"]:
-                g = create_zarr_dataset(
-                    self.z[reduction_loc], "mu", (100000,), "f8", mu.shape
-                )
-                g[:] = mu
-                g = create_zarr_dataset(
-                    self.z[reduction_loc], "sigma", (100000,), "f8", sigma.shape
-                )
-                g[:] = sigma
         if ann_loc not in self.z:
             logger.debug(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
