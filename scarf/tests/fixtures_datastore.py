@@ -102,7 +102,7 @@ def umap(make_graph, datastore):
 
 @pytest.fixture(scope="class")
 def marker_search(datastore):
-    # Testing this with Paris clusters rather then Leiden clusters because of reproducibility.
+    # Testing this with Paris clusters rather than Leiden clusters because of reproducibility.
     datastore.run_marker_search(group_key="RNA_cluster")
 
 

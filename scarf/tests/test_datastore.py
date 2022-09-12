@@ -122,7 +122,7 @@ class TestDataStore:
     def test_get_markers(self, marker_search, paris_clustering, datastore):
         precalc_markers = pd.read_csv(full_path("markers_cluster1.csv"), index_col=0)
         markers = datastore.get_markers(group_key="RNA_cluster", group_id=1)
-        assert markers.names.equals(precalc_markers.names)
+        assert markers.feature_name.equals(precalc_markers.feature_name)
         diff = (markers.score - precalc_markers.score).values
         assert np.all(diff < 1e-3)
 
