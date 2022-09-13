@@ -114,6 +114,10 @@ ds.plot_layout(
 ---
 ### 5) Exporting downsampled data
 
++++
+
+TopACeDo only marks the cells the representative that for downsampling. To create a new subsampled datasets, `SubsetZarr` writer class must be used. This will create a new Zarr file containing only the subset of cells.
+
 ```{code-cell} ipython3
 writer = scarf.SubsetZarr(
     in_zarr='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
@@ -124,6 +128,8 @@ writer = scarf.SubsetZarr(
 writer.dump()
 ```
 
+The downsampled dataset can be loaded as a new DataStore
+
 ```{code-cell} ipython3
 ds2 = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr')
 ```
@@ -131,6 +137,8 @@ ds2 = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr')
 ```{code-cell} ipython3
 ds2
 ```
+
+It is expected the downsampled dataset will be small enough to fit in memory. Here the data is exported to  anndata format from where it could easily used to perform any downstream analysis from the [scverse](https://scverse.org/) ecosystem.
 
 ```{code-cell} ipython3
 adata = ds2.to_anndata()
