@@ -410,7 +410,7 @@ class BaseDataStore:
             ret_val = "_".join(list(map(str, [from_assay, cell_key, suffix])))
         return ret_val
 
-    def set_default_assay(self, *, assay_name: str) -> None:
+    def set_default_assay(self, assay_name: str) -> None:
         """Override assigning of default assay.
 
         Args:
@@ -429,7 +429,6 @@ class BaseDataStore:
 
     def get_cell_vals(
         self,
-        *,
         from_assay: str,
         cell_key: str,
         k: str,
@@ -1037,7 +1036,6 @@ class GraphDataStore(BaseDataStore):
 
     def make_graph(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -1460,7 +1458,6 @@ class GraphDataStore(BaseDataStore):
 
     def load_graph(
         self,
-        *,
         from_assay: Optional[str] = None,
         cell_key: Optional[str] = None,
         feat_key: Optional[str] = None,
@@ -1527,7 +1524,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_tsne(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -1657,7 +1653,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_umap(
         self,
-        *,
         from_assay: Optional[str] = None,
         cell_key: Optional[str] = None,
         feat_key: Optional[str] = None,
@@ -1818,7 +1813,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_leiden_clustering(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -1901,7 +1895,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_clustering(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -2027,7 +2020,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_topacedo_sampler(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -2171,7 +2163,6 @@ class GraphDataStore(BaseDataStore):
 
     def get_imputed(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feature_name: str = None,
@@ -2261,7 +2252,6 @@ class GraphDataStore(BaseDataStore):
 
     def run_pseudotime_scoring(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -2435,7 +2425,6 @@ class GraphDataStore(BaseDataStore):
 
     def integrate_assays(
         self,
-        *,
         assays: List[str],
         label: str,
         chunk_size: int = 10000,
@@ -2512,7 +2501,6 @@ class MappingDatastore(GraphDataStore):
 
     def run_mapping(
         self,
-        *,
         target_assay: Assay,
         target_name: str,
         target_feat_key: str,
@@ -2676,7 +2664,6 @@ class MappingDatastore(GraphDataStore):
 
     def get_mapping_score(
         self,
-        *,
         target_name: str,
         target_groups: np.ndarray = None,
         from_assay: str = None,
@@ -2753,7 +2740,6 @@ class MappingDatastore(GraphDataStore):
 
     def get_target_classes(
         self,
-        *,
         target_name: str,
         from_assay: str = None,
         cell_key: str = "I",
@@ -2832,7 +2818,6 @@ class MappingDatastore(GraphDataStore):
 
     def load_unified_graph(
         self,
-        *,
         from_assay: str,
         cell_key: str,
         feat_key: str,
@@ -2930,7 +2915,6 @@ class MappingDatastore(GraphDataStore):
 
     def run_unified_umap(
         self,
-        *,
         target_names: List[str],
         from_assay: str = None,
         cell_key: str = "I",
@@ -3037,7 +3021,6 @@ class MappingDatastore(GraphDataStore):
 
     def run_unified_tsne(
         self,
-        *,
         target_names: List[str],
         from_assay: str = None,
         cell_key: str = "I",
@@ -3128,7 +3111,6 @@ class MappingDatastore(GraphDataStore):
 
     def plot_unified_layout(
         self,
-        *,
         from_assay: str = None,
         layout_key: str = None,
         show_target_only: bool = False,
@@ -3408,7 +3390,6 @@ class DataStore(MappingDatastore):
 
     def filter_cells(
         self,
-        *,
         attrs: Iterable[str],
         lows: Iterable[int],
         highs: Iterable[int],
@@ -3455,7 +3436,6 @@ class DataStore(MappingDatastore):
 
     def auto_filter_cells(
         self,
-        *,
         attrs: Iterable[str] = None,
         min_p: float = 0.01,
         max_p: float = 0.99,
@@ -3515,7 +3495,6 @@ class DataStore(MappingDatastore):
 
     def mark_hvgs(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         min_cells: int = None,
@@ -3599,7 +3578,6 @@ class DataStore(MappingDatastore):
 
     def mark_prevalent_peaks(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         top_n: int = 10000,
@@ -3635,7 +3613,6 @@ class DataStore(MappingDatastore):
 
     def run_marker_search(
         self,
-        *,
         from_assay: str = None,
         group_key: str = None,
         cell_key: str = None,
@@ -3704,7 +3681,6 @@ class DataStore(MappingDatastore):
 
     def run_pseudotime_marker_search(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         pseudotime_key: str = None,
@@ -3759,7 +3735,6 @@ class DataStore(MappingDatastore):
 
     def run_pseudotime_aggregation(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -3857,7 +3832,6 @@ class DataStore(MappingDatastore):
 
     def get_markers(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         group_key: str = None,
@@ -3943,7 +3917,6 @@ class DataStore(MappingDatastore):
 
     def export_markers_to_csv(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         group_key: str = None,
@@ -4002,7 +3975,6 @@ class DataStore(MappingDatastore):
 
     def run_cell_cycle_scoring(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         s_genes: List[str] = None,
@@ -4081,7 +4053,6 @@ class DataStore(MappingDatastore):
 
     def add_grouped_assay(
         self,
-        *,
         from_assay: str = None,
         group_key: str = None,
         assay_label: str = None,
@@ -4153,7 +4124,6 @@ class DataStore(MappingDatastore):
 
     def add_melded_assay(
         self,
-        *,
         from_assay: str = None,
         external_bed_fn: str = None,
         assay_label: str = None,
@@ -4235,7 +4205,6 @@ class DataStore(MappingDatastore):
 
     def make_bulk(
         self,
-        *,
         from_assay: str = None,
         group_key: str = None,
         pseudo_reps: int = 3,
@@ -4289,7 +4258,7 @@ class DataStore(MappingDatastore):
         return vals
 
     def to_anndata(
-        self, *, from_assay: str = None, cell_key: str = None, layers: dict = None
+        self, from_assay: str = None, cell_key: str = None, layers: dict = None
     ):
         """Writes an assay of the Zarr hierarchy to AnnData file format.
 
@@ -4327,7 +4296,7 @@ class DataStore(MappingDatastore):
                 )
         return adata
 
-    def show_zarr_tree(self, *, start: str = "/", depth: int = 2) -> None:
+    def show_zarr_tree(self, start: str = "/", depth: int = 2) -> None:
         """Prints the Zarr hierarchy of the DataStore.
 
         Args:
@@ -4341,7 +4310,6 @@ class DataStore(MappingDatastore):
 
     def smart_label(
         self,
-        *,
         to_relabel: str,
         base_label: str,
         cell_key: str = "I",
@@ -4392,7 +4360,6 @@ class DataStore(MappingDatastore):
 
     def plot_cells_dists(
         self,
-        *,
         from_assay: str = None,
         cols: List[str] = None,
         cell_key: str = None,
@@ -4498,7 +4465,6 @@ class DataStore(MappingDatastore):
 
     def plot_layout(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         layout_key: str = None,
@@ -4797,7 +4763,6 @@ class DataStore(MappingDatastore):
 
     def plot_cluster_tree(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
@@ -4991,7 +4956,6 @@ class DataStore(MappingDatastore):
 
     def plot_marker_heatmap(
         self,
-        *,
         from_assay: str = None,
         group_key: str = None,
         cell_key: str = None,
@@ -5086,7 +5050,6 @@ class DataStore(MappingDatastore):
 
     def plot_pseudotime_heatmap(
         self,
-        *,
         from_assay: str = None,
         cell_key: str = None,
         feat_key: str = None,
