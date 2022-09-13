@@ -16,7 +16,7 @@ Exports:
 --------
 
 - Modules
-    - datastore: Contains the primary interface to interact with data (i. e. DataStore) and its superclasses.
+    - datastore: Contains the primary interface to interact with data (i.e. DataStore) and its superclasses.
     - readers: A collection of classes for reading in different data formats.
     - writers: Methods and classes for writing data to disk.
     - meld_assay:
@@ -44,7 +44,7 @@ try:
 except ImportError:
     print("Scarf is not installed", flush=True)
 
-from .datastore import *
+from .datastore.datastore import DataStore
 from .readers import *
 from .writers import *
 from .meld_assay import *

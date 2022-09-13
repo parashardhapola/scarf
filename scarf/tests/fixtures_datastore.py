@@ -18,7 +18,7 @@ def toy_crdir_writer(toy_crdir_reader):
 
 @pytest.fixture(scope="session")
 def toy_crdir_ds(toy_crdir_writer):
-    from ..datastore import DataStore
+    from ..datastore.datastore import DataStore
 
     yield DataStore(toy_crdir_writer, default_assay="RNA")
 
@@ -27,7 +27,7 @@ def toy_crdir_ds(toy_crdir_writer):
 def datastore():
     import tarfile
 
-    from ..datastore import DataStore
+    from ..datastore.datastore import DataStore
 
     fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
     out_fn = fn.replace(".tar.gz", "")
@@ -42,7 +42,7 @@ def datastore():
 def datastore_ephemeral():
     import tarfile
 
-    from ..datastore import DataStore
+    from ..datastore.datastore import DataStore
 
     fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
     out_fn = fn.replace(".tar.gz", "")
@@ -186,7 +186,7 @@ def cell_attrs():
 
 @pytest.fixture(scope="session")
 def atac_datastore():
-    from ..datastore import DataStore
+    from ..datastore.datastore import DataStore
     import tarfile
 
     fn = full_path("500_pbmc_atac.zarr.tar.gz")

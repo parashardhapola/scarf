@@ -28,7 +28,7 @@ class TestDataStore:
         import pytest
         import tarfile
 
-        from ..datastore import DataStore
+        from ..datastore.datastore import DataStore
 
         fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
         out_fn = fn.replace(".tar.gz", "")
