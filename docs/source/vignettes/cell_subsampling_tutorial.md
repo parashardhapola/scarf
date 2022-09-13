@@ -4,7 +4,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.11.4
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
@@ -28,7 +28,6 @@ scarf.__version__
 We need to install the TopACeDo algorithm to perform subsampling:
 
 ```{code-cell} ipython3
-!pip install git+https://github.com/fraenkel-lab/pcst_fast.git@deb3236cc26ee9fee77d5af40fac3f12bb753850
 !pip install -U topacedo
 ```
 
@@ -110,6 +109,35 @@ ds.plot_layout(
     layout_key='RNA_UMAP',
     color_by='RNA_snn_value'
 )
+```
+
+---
+### 5) Exporting downsampled data
+
+```{code-cell} ipython3
+writer = scarf.SubsetZarr(
+    in_zarr='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
+    out_zarr='scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr',
+    cell_key='RNA_sketched',
+    reset_cell_filter=False,
+)
+writer.dump()
+```
+
+```{code-cell} ipython3
+ds2 = scarf.DataStore('scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr')
+```
+
+```{code-cell} ipython3
+ds2
+```
+
+```{code-cell} ipython3
+adata = ds2.to_anndata()
+```
+
+```{code-cell} ipython3
+adata
 ```
 
 ---

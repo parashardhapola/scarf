@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.11.4
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
@@ -97,6 +97,14 @@ ds.filter_cells(
 )
 ```
 
+<div class="alert alert-block alert-info">
+NOTE: One of the design philosophies in  Scarf is never to entirely delete any data. Hence, when cells are filtered out they are simply marked as inactive in the `I` column of cell metadata as False. 
+    
+All functions in the DataStore class, take a parameter called `cell_key`. The default value of this parameter is always `I` which means that the `I` column is always automatically looked up when deciding which cells to use. The added benefit of this approach is that a user can always switch the context of which cells by creating a new boolean column and providing the name of that column to `cell_key`. Read more about this in the 'Data organization' vignette.
+</div>
+
++++
+
 Now we visualize the attributes again after filtering the values. 
 
 *Note: the 'I' value given as the `cell_key` attribute signifies the column of the table that is set to `False` for cells that were filtered out or `True` for cells that are kept.*
@@ -116,6 +124,12 @@ NOTE: We strongly discourage directly adding or removing the data from this tabl
 </div>
 
 +++
+
+One can now print the DataStore instance to get an overview of the data. The number of cells and genes post filtering are also indicated. The numbers in brackets indicate the total number of cells (5025 in this case) and total number of features in the RNA assay (33538 in this case).
+
+```{code-cell} ipython3
+ds
+```
 
 ---
 ### 3) Feature selection
@@ -320,7 +334,7 @@ This method does not perform any statistical test of significance and uses 'spec
 ```{code-cell} ipython3
 ds.run_marker_search(
     group_key='RNA_cluster',
-    threshold=0.25
+    gene_batch_size=100
 )
 ```
 
@@ -337,10 +351,13 @@ ds.plot_marker_heatmap(
 The markers list for specific clusters can be obtained using `get_markers`. The numbers on the left index (in bold) are the gene/feature index as present in the feature attribute table (`ds.RNA.feats`). The table below is sorted (descending) by scores and this means that more specific markers are placed higher on the list.
 
 ```{code-cell} ipython3
-ds.get_markers(
+df = ds.get_markers(
     group_key='RNA_cluster',
-    group_id='1'
+    group_id='1',
+    min_score=-1,
+    min_frac_exp=-1
 )
+df
 ```
 
 We can directly visualize the expression values for a gene of interest. It is usually a good idea to visually confirm the gene expression pattern across the cells at least this way.

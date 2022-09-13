@@ -1,10 +1,11 @@
 ---
 jupytext:
+  formats: ipynb,md:myst
   text_representation:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.11.4
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
@@ -42,6 +43,10 @@ ds = scarf.DataStore(
     nthreads=4, 
     default_assay='RNA'
 )
+```
+
+```{code-cell} ipython3
+ds
 ```
 
 ```{code-cell} ipython3
@@ -279,7 +284,7 @@ Now we extract all the marker genes for cell cluster 8, this cluster predominant
 cell_cluster_markers = ds.get_markers(
     group_key='RNA_cluster',
     group_id='8'
-)['names']
+).feature_name
 
 cell_cluster_markers.head()
 ```
@@ -315,13 +320,13 @@ Let's now do this the other way and visualize the cumulative expression of genes
 ```{code-cell} ipython3
 temp = list(set(ptime_based_markers.index).difference(cell_cluster_markers.index))
 ds.cells.insert(
-    column_name='Cell cluster based markers',
+    column_name='Pseudotime based markers',
     values=ds.RNA.normed(feat_idx=sorted(temp)).mean(axis=1).compute(),
     overwrite=True)
 
 ds.plot_layout(
     layout_key='RNA_UMAP',
-    color_by='Cell cluster based markers',
+    color_by='Pseudotime based markers',
     width=4, height=4, point_size=5, n_columns=5, cmap='coolwarm',
 )
 ```
