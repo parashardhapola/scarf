@@ -3639,7 +3639,6 @@ class DataStore(MappingDatastore):
         from_assay: str = None,
         group_key: str = None,
         cell_key: str = None,
-        threshold: float = 0.25,
         gene_batch_size: int = 50,
         use_prenormed: bool = False,
         prenormed_store: Optional[str] = None,
@@ -3657,9 +3656,6 @@ class DataStore(MappingDatastore):
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
             cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table. (Default value: 'I')
-            threshold: [Deprecated] This value dictates how specific the feature value has to be in a group before it is
-                       considered a marker for that group. The value has to be greater than 0 but less than or equal to
-                       1 (Default value: 0.25)
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
             use_prenormed: If True then prenormalized cache generated using Assay.save_normed_for_query is used.
