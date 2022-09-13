@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, Optional, Union, List
+from typing import Tuple, Optional, Union, List, Callable
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -494,7 +494,8 @@ class GraphDataStore(BaseDataStore):
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
         show_elbow_plot: bool = False,
-        ann_index_save_path: str = None,
+        ann_index_fetcher: Callable = None,
+        ann_index_saver: Callable = None,
     ):
         """Creates a cell neighbourhood graph. Performs following steps in the
         process:
@@ -597,7 +598,8 @@ class GraphDataStore(BaseDataStore):
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
-            ann_index_save_path: Used to save ANN index binary file when the DataStore is not a Zarr Directory Store.
+            ann_index_fetcher:
+            ann_index_saver:
 
         Returns:
             Either None or `AnnStream` object
@@ -680,19 +682,6 @@ class GraphDataStore(BaseDataStore):
         kmeans_loc = f"{reduction_loc}/kmeans__{n_centroids}__{rand_state}"
         graph_loc = f"{knn_loc}/graph__{local_connectivity}__{bandwidth}"
 
-        if hasattr(self.z.chunk_store, "path"):
-            ann_idx_loc = os.path.join(self.z.chunk_store.path, ann_loc)
-        else:
-            if ann_index_save_path is None:
-                logger.warning(
-                    "Zarr hierarchy is not a DirectoryStore so Ann index will not be saved. Please provide"
-                    "a path manually using `ann_index_save_path` parameter"
-                )
-                ann_idx_loc = None
-            else:
-                ann_idx_loc = os.path.join(ann_index_save_path, ann_loc)
-                Path(ann_idx_loc).mkdir(parents=True, exist_ok=True)
-
         data = assay.save_normalized_data(
             cell_key,
             feat_key,
@@ -770,19 +759,41 @@ class GraphDataStore(BaseDataStore):
                 if reduction_loc in self.z:
                     del self.z[reduction_loc]
 
-        if ann_loc in self.z and ann_idx_loc is not None:
-            import hnswlib
+        ann_idx = None
+        if ann_loc in self.z:
+            if ann_index_fetcher is None:
+                if hasattr(self.z.chunk_store, "path"):
+                    ann_index_fn = os.path.join(
+                        self.z.chunk_store.path, ann_loc, "ann_idx"
+                    )
+                else:
+                    ann_index_fn = None
+                    logger.warning(
+                        f"No custom `ann_index_fetcher` provided and zarr path is not local"
+                    )
+            else:
+                # noinspection PyBroadException
+                try:
+                    ann_index_fn = ann_index_fetcher(ann_loc)
+                except:
+                    ann_index_fn = None
+                    logger.warning(f"Custom `ann_index_fetcher` failed")
+            if ann_index_fn is None or os.path.exists(ann_index_fn) is False:
+                logger.warning(f"Ann index file expected but could not be found")
+            else:
+                import hnswlib
 
-            temp = dims if dims > 0 else data.shape[1]
-            ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
-            ann_idx.load_index(os.path.join(ann_idx_loc, "ann_idx"))
-            logger.info(f"Using existing ANN index")
-        else:
-            ann_idx = None
+                temp = dims if dims > 0 else data.shape[1]
+                ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
+                ann_idx.load_index(ann_index_fn)
+                # TODO: check if ANN is index is trained with expected number of cells.
+                logger.info(f"Using existing ANN index")
+
         if kmeans_loc in self.z:
             fit_kmeans = False
             logger.info(f"using existing kmeans cluster centers")
         disable_scaling = True if feat_scaling is False else False
+
         # TODO: expose LSImodel parameters
         ann_obj = AnnStream(
             data=data,
@@ -824,8 +835,22 @@ class GraphDataStore(BaseDataStore):
         if ann_loc not in self.z:
             logger.debug(f"Saving ANN index to {ann_loc}")
             self.z.create_group(ann_loc, overwrite=True)
-            if ann_idx_loc is not None:
-                ann_obj.annIdx.save_index(os.path.join(ann_idx_loc, "ann_idx"))
+        if ann_idx is None:
+            if ann_index_saver is None:
+                if hasattr(self.z.chunk_store, "path"):
+                    ann_obj.annIdx.save_index(
+                        os.path.join(self.z.chunk_store.path, ann_loc, "ann_idx")
+                    )
+                else:
+                    logger.warning(
+                        "No custom `ann_index_saver` provided and local path is unknown"
+                    )
+            if ann_index_saver is not None:
+                try:
+                    ann_index_saver(ann_obj.annIdx, ann_loc)
+                except:
+                    logger.warning("Custom `ann_index_saver` failed")
+
         if fit_kmeans:
             logger.debug(f"Saving kmeans clusters to {kmeans_loc}")
             self.z.create_group(kmeans_loc, overwrite=True)
