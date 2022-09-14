@@ -4,7 +4,7 @@
           <p align="center">
                <div align="center">
                     <a href="https://github.com/parashardhapola/scarf">
-                         <img src="https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png" alt="Scarf logo" width="100%" />
+                         <img src="https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png" alt="Scarf logo" width="600px" />
                     </a>
                     <h3>A framework for memory-efficent analysis of single-cell genomics data</h3>
                </div>
