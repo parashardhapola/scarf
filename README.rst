@@ -1,30 +1,49 @@
-|PyPI| |Docs| |Tests| |Coverage| |Downloads| |Black| |Slack|
+.. raw:: html
 
-`Installation`_ | `Documentation`_ | `Tutorials`_ | `Research-Article`_
+     <embed>
+          <p align="center">
+               <div align="center">
+                    <a href="https://github.com/parashardhapola/scarf">
+                         <img src="https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png" alt="Scarf logo" width="100%" />
+                    </a>
+                    <h3>A framework for memory-efficent analysis of single-cell genomics data</h3>
+               </div>
+          </p>
 
-|IMG1|
+          <br />
 
-.. |PyPI| image:: https://img.shields.io/pypi/v/scarf.svg
-         :target: https://pypi.org/project/scarf
-.. |Docs| image:: https://readthedocs.org/projects/scarf/badge/?version=latest
-         :target: https://scarf.readthedocs.io
-.. |Tests| image:: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml/badge.svg
-          :target: https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml
-.. |Coverage| image:: https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd
-             :target: https://codecov.io/gh/parashardhapola/scarf
-.. |Downloads| image:: https://pepy.tech/badge/scarf
-              :target: https://pepy.tech/project/scarf
-.. |Black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
-          :target: https://github.com/psf/black
-.. |Slack| image:: https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white
-          :target: https://scarf-group.slack.com/archives/C0418C7RXU4
+          <p align="center">
+               <a href="https://pypi.org/project/scarf">
+                    <img src="https://img.shields.io/pypi/v/scarf.svg" alt="PyPiVersion" />
+               </a>
+               <a href="https://scarf.readthedocs.io">
+                    <img src="https://readthedocs.org/projects/scarf/badge/?version=latest" alt="ReadTheDocs" />
+               </a>
+               <a href="https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml">
+                    <img src="https://github.com/parashardhapola/scarf/actions/workflows/pytest.yml/badge.svg" alt="TestStatus" />
+               </a>
+               <a href="https://codecov.io/gh/parashardhapola/scarf">
+                    <img src="https://codecov.io/gh/parashardhapola/scarf/branch/master/graph/badge.svg?token=ZvJXuYq3pd" alt="TestCoverage" />
+               </a>
+               <a href="https://pepy.tech/project/scarf">
+                    <img src="https://pepy.tech/badge/scarf" alt="PyPiDownloads" />
+               </a>
+               <a href="https://github.com/psf/black">
+                    <img src="https://img.shields.io/badge/code%20style-black-000000.svg" alt="GitHub tweet" />
+               </a>
+          </p>
+          
+          <h4 align="center">
+               <a href="https://scarf.readthedocs.io/en/latest/install.html"> 🔌 Installation</a> |
+               <a href="http://scarf.rtfd.io"> 📖 Documentation</a> |
+               <a href="https://scarf.readthedocs.io/en/latest/vignettes/basic_tutorial_scRNAseq.html"> 🚀 Getting started</a> |
+               <a href="https://www.nature.com/articles/s41467-022-32097-3">📝 Article in Nature Comm</a>
+          </h4>
 
-.. |IMG1| image:: https://raw.githubusercontent.com/parashardhapola/scarf/master/docs/source/logo_wide.png
-         :target: https://github.com/parashardhapola/scarf
-
-Analyze large-scale (aka atlas-scale) single-cell genomics datasets with very low memory requirement.
-
-.. _Installation: https://scarf.readthedocs.io/en/latest/install.html
-.. _Documentation: http://scarf.rtfd.io
-.. _Tutorials: https://scarf.readthedocs.io/en/latest/vignettes/basic_tutorial_scRNAseq.html
-.. _Research-Article: https://www.nature.com/articles/s41467-022-32097-3
+          <br />
+         
+          <p align="center">
+               <strong>Need support?</strong> Create an issue <a href="https://github.com/parashardhapola/scarf/issues">on Github</a> and connect with maintainers on this <a href="https://scarf-group.slack.com/archives/C0418C7RXU4">Slack channel</a>.
+          </p>
+         
+     </embed>
