@@ -243,7 +243,7 @@ class MappingDatastore(GraphDataStore):
         dists = store["distances"][:]
         # TODO: add more robust options for distance calculation here
         dists = 1 / (np.log1p(dists) + 1)
-        n_cells = indices.shape[0]
+        n_cells, n_k = indices.shape
 
         if target_groups is not None:
             if len(target_groups) != n_cells:
@@ -266,7 +266,7 @@ class MappingDatastore(GraphDataStore):
                             ms[x] += y
                         else:
                             ms[x] += fixed_weight
-            ms = multiplier * ms / len(coi)
+            ms = multiplier * ms / (len(coi) * n_k)
             if log_transform:
                 ms = np.log1p(ms)
             yield group, ms
@@ -277,7 +277,7 @@ class MappingDatastore(GraphDataStore):
         from_assay: str = None,
         cell_key: str = "I",
         reference_class_group: str = None,
-        threshold_fraction: int = 0.5,
+        threshold_fraction: float = 0.5,
         target_subset: List[int] = None,
         na_val="NA",
     ) -> pd.Series:
