@@ -972,6 +972,7 @@ class RNAassay(Assay):
             [col_renamer(x) for x in ["normed_n", "nz_mean", c_var_col]],
             [min_cells, min_mean, min_var],
             [np.Inf, max_mean, max_var],
+            keep_bounds=keep_bounds,
         )
         hvgs = hvgs & self.feats.fetch_all("I") & bl
         hvg_key_name = cell_key + "__" + hvg_key_name
