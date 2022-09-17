@@ -953,7 +953,7 @@ class RNAassay(Assay):
                 [col_renamer("normed_n"), col_renamer("nz_mean")],
                 [min_cells, min_mean],
                 [np.Inf, max_mean],
-                keep_bounds=keep_bounds
+                keep_bounds=keep_bounds,
             )
             idx = idx & self.feats.fetch_all("I") & bl
             n_valid_feats = idx.sum()

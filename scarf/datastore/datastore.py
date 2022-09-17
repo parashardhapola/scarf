@@ -78,7 +78,7 @@ class DataStore(MappingDatastore):
         lows: Iterable[int],
         highs: Iterable[int],
         reset_previous: bool = False,
-        keep_bounds: bool = False
+        keep_bounds: bool = False,
     ) -> None:
         """Filter cells based on the cell metadata column values. Filtering
         triggers `update` method on  'I' column of cell metadata which uses

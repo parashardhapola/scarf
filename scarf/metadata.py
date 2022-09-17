@@ -452,7 +452,11 @@ class MetaData:
         return None
 
     def sift(
-        self, column: str, min_v: float = -np.Inf, max_v: float = np.Inf, keep_bounds: bool = False
+        self,
+        column: str,
+        min_v: float = -np.Inf,
+        max_v: float = np.Inf,
+        keep_bounds: bool = False,
     ) -> np.ndarray:
         """
 
@@ -472,7 +476,11 @@ class MetaData:
             return (values > min_v) & (values < max_v)
 
     def multi_sift(
-        self, columns: List[str], lows: Iterable, highs: Iterable, keep_bounds: bool = False
+        self,
+        columns: List[str],
+        lows: Iterable,
+        highs: Iterable,
+        keep_bounds: bool = False,
     ) -> np.ndarray:
         """
 
@@ -486,7 +494,12 @@ class MetaData:
 
         """
         ret_val = _all_true(
-            np.array([self.sift(i, j, k, keep_bounds=keep_bounds) for i, j, k in zip(columns, lows, highs)])
+            np.array(
+                [
+                    self.sift(i, j, k, keep_bounds=keep_bounds)
+                    for i, j, k in zip(columns, lows, highs)
+                ]
+            )
         )
         return ret_val
 
