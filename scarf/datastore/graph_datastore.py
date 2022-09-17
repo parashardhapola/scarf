@@ -605,7 +605,6 @@ class GraphDataStore(BaseDataStore):
             Either None or `AnnStream` object
         """
         from ..ann import AnnStream
-        from pathlib import Path
 
         if from_assay is None:
             from_assay = self._defaultAssay
