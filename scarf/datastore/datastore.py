@@ -78,6 +78,7 @@ class DataStore(MappingDatastore):
         lows: Iterable[int],
         highs: Iterable[int],
         reset_previous: bool = False,
+        keep_bounds: bool = False
     ) -> None:
         """Filter cells based on the cell metadata column values. Filtering
         triggers `update` method on  'I' column of cell metadata which uses
@@ -94,6 +95,7 @@ class DataStore(MappingDatastore):
             highs: Upper bounds of thresholds for filtering. Should be in same order as the names in `attrs` parameter
             reset_previous: If True, then results of previous filtering will be undone completely.
                             (Default value: False)
+            keep_bounds: If True, then the boundary values are retained and not filtered out (Default value: False)
 
         Returns:
         """
@@ -109,7 +111,7 @@ class DataStore(MappingDatastore):
                 j = -np.Inf
             if k is None:
                 k = np.Inf
-            x = self.cells.sift(i, j, k)
+            x = self.cells.sift(i, j, k, keep_bounds=keep_bounds)
             logger.info(
                 f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}"
             )

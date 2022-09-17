@@ -452,7 +452,7 @@ class MetaData:
         return None
 
     def sift(
-        self, column: str, min_v: float = -np.Inf, max_v: float = np.Inf
+        self, column: str, min_v: float = -np.Inf, max_v: float = np.Inf, keep_bounds: bool = False
     ) -> np.ndarray:
         """
 
@@ -460,12 +460,16 @@ class MetaData:
             column:
             min_v:
             max_v:
+            keep_bounds:
 
         Returns:
 
         """
         values = self.fetch_all(column)
-        return (values > min_v) & (values < max_v)
+        if keep_bounds:
+            return (values >= min_v) & (values <= max_v)
+        else:
+            return (values > min_v) & (values < max_v)
 
     def multi_sift(
         self, columns: List[str], lows: Iterable, highs: Iterable
