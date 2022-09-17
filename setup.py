@@ -48,7 +48,7 @@ if __name__ == "__main__":
     setup(
         name="scarf",
         description="Scarf",
-        long_description=read("README.rst"),
+        long_description=read("./docs/pypi_README.rst"),
         author="Parashar Dhapola",
         author_email="parashar.dhapola@gmail.com",
         url="https://github.com/parashardhapola/scarf",
