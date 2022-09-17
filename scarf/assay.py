@@ -868,6 +868,7 @@ class RNAassay(Assay):
         lowess_frac: float,
         blacklist: str,
         hvg_key_name: str,
+        keep_bounds: bool,
         show_plot: bool,
         **plot_kwargs,
     ) -> None:
@@ -904,6 +905,7 @@ class RNAassay(Assay):
                        the final highly variable genes list
             hvg_key_name: The label for highly variable genes. This label will be used to mark the HVGs in the
                           feature attribute table. The value for 'cell_key' parameter is prepended to this value.
+            keep_bounds: If True, then the boundary values are retained and not filtered out.
             show_plot: If True, a plot is produced, that for each gene shows the corrected variance on the y-axis and
                        the non-zero mean (means from cells where the gene had a non-zero value) on the x-axis. The
                        genes are colored in two gradients which indicate the number of cells where the gene was
@@ -951,6 +953,7 @@ class RNAassay(Assay):
                 [col_renamer("normed_n"), col_renamer("nz_mean")],
                 [min_cells, min_mean],
                 [np.Inf, max_mean],
+                keep_bounds=keep_bounds
             )
             idx = idx & self.feats.fetch_all("I") & bl
             n_valid_feats = idx.sum()

@@ -192,6 +192,7 @@ class DataStore(MappingDatastore):
         n_bins: int = 200,
         lowess_frac: float = 0.1,
         blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",
+        keep_bounds: bool = False,
         show_plot: bool = True,
         hvg_key_name: str = "hvgs",
         **plot_kwargs,
@@ -223,6 +224,7 @@ class DataStore(MappingDatastore):
             blacklist: This is a regular expression (regex) string that can be used to exclude genes from being marked
                        as HVGs. By default, we exclude mitochondrial, ribosomal, some cell-cycle related, histone and
                        HLA genes. (Default: '^MT- | ^RPS | ^RPL | ^MRPS | ^MRPL | ^CCN | ^HLA- | ^H2- | ^HIST' )
+            keep_bounds: If True, then the boundary values are retained and not filtered out (Default value: False)
             show_plot: If True then a diagnostic scatter plot is shown with HVGs highlighted. (Default: True)
             hvg_key_name: Base label for HVGs in the features metadata column. The value for
                           'cell_key' parameter is prepended to this value. (Default value: 'hvgs')
@@ -258,6 +260,7 @@ class DataStore(MappingDatastore):
             lowess_frac,
             blacklist,
             hvg_key_name,
+            keep_bounds,
             show_plot,
             **plot_kwargs,
         )
