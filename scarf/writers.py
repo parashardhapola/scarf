@@ -530,7 +530,10 @@ class LoomToZarr:
         create_zarr_obj_array(g, "names", self.loom.cell_ids())
         create_zarr_obj_array(g, "I", [True for _ in range(self.loom.nCells)], "bool")
         for i, j in self.loom.get_cell_attrs():
-            create_zarr_obj_array(g, i, j, j.dtype)
+            try:
+                create_zarr_obj_array(g, i, j, j.dtype)
+            except UnicodeDecodeError:
+                logger.warning(f"Could not import {i} cell(column) attribute")
 
     def dump(self, batch_size: int = 1000) -> None:
         # TODO: add informed description to docstring
@@ -549,7 +552,7 @@ class LoomToZarr:
         n_chunks = self.loom.nCells // batch_size + 1
         for a in tqdmbar(self.loom.consume(batch_size), total=n_chunks):
             e += a.shape[0]
-            store[s:e] = a
+            store.set_coordinate_selection((a.row + s, a.col), a.data)
             s = e
         if e != self.loom.nCells:
             raise AssertionError(

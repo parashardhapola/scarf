@@ -884,12 +884,13 @@ class LoomReader:
 
     def consume(self, batch_size: int = 1000) -> Generator[np.ndarray, None, None]:
         """Returns a generator that yield chunks of data."""
-        last_n = 0
-        for i in range(batch_size, self.nCells, batch_size):
-            yield self.h5[self.matrixKey][:, last_n:i].astype(self.matrixDtype).T
-            last_n = i
-        if last_n < self.nCells:
-            yield self.h5[self.matrixKey][:, last_n:].astype(self.matrixDtype).T
+        dset = self.h5[self.matrixKey]
+        s = 0
+        for e in range(batch_size, dset.shape[1] + batch_size, batch_size):
+            if e > dset.shape[1]:
+                e = dset.shape[1]
+            yield coo_matrix(dset[:, s:e]).T.astype(self.matrixDtype)
+            s = e
 
 
 class CSVReader:
