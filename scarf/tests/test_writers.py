@@ -98,9 +98,9 @@ def test_zarr_subset(datastore):
 
     from ..writers import SubsetZarr
 
-    in_fn = full_path("1K_pbmc_citeseq.zarr")
-    out_fn = full_path("subset.zarr")
-
-    writer = SubsetZarr(in_zarr=in_fn, out_zarr=out_fn, cell_idx=[1, 10, 100, 500])
+    zarr_path = full_path("subset.zarr")
+    writer = SubsetZarr(
+        zarr_path=zarr_path, assays=[datastore.RNA], cell_idx=[1, 10, 100, 500]
+    )
     writer.dump()
-    remove(out_fn)
+    remove(zarr_path)
