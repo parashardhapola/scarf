@@ -843,11 +843,11 @@ class SubsetZarr:
     """Split Zarr file using a subset of cells.
 
     Args:
-        in_zarr: Path of input Zarr file to be subsetted.
-        out_zarr: Path of output Zarr files containing only a subset of cells.
+        zarr_path: Path for of the output (subsetted) Zarr file
+        assays: Source assays to be subsetted. These assays must be from the same dataset
         cell_key: Name of a boolean column in cell metadata. The cells with value True are included in the
-                  subset.
-        cell_idx: Indices of the cells to be included in the subsetted. Only used when cell_key is None.
+                  subset. Only used when cell_idx is None.
+        cell_idx: Indices of the cells to be included in the subsetted.
         reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
                            are set as True as in the 'I' column. To keep the filtering information set the value for
                            this parameter to False. (Default value: True)
@@ -857,110 +857,133 @@ class SubsetZarr:
 
     def __init__(
         self,
-        in_zarr: str,
-        out_zarr: str,
+        zarr_path: str,
+        assays: list,
         cell_key: str = None,
         cell_idx: np.ndarray = None,
         reset_cell_filter: bool = True,
         overwrite_existing_file: bool = False,
         overwrite_cell_data: bool = False,
     ) -> None:
-        if cell_key is None and cell_idx is None:
-            raise ValueError("Both 'cell_key' and 'cell_idx' parameters cannot be None")
-        self.iZname = in_zarr
-        self.oZname = out_zarr
-        self.cellKey = cell_key
-        self.cellIdx = cell_idx
-
+        self.outZarrFn = zarr_path
         self.resetCells = reset_cell_filter
         self.overFn = overwrite_existing_file
-        self.overcells = overwrite_cell_data
+        self.overCells = overwrite_cell_data
 
-        self._check_files()
-        self.iz = zarr.open(self.iZname)
-        self._check_idx()
-        self.oz = zarr.open(self.oZname, mode="w")
-        self._prep_cell_data()
-        self.assays = self._get_assays()
-        self._prep_counts()
+        self.assays = self._check_assays(assays)
+        self.cellIdx = self._check_idx(cell_key, cell_idx)
+        self.outZarr = self._check_files()
+
+    @staticmethod
+    def _check_assays(assays):
+        if type(assays) != list:
+            raise TypeError(
+                "Value for parameter `assays` should be a list. For example, `[ds.RNA]`"
+            )
+        n = []
+        for assay in assays:
+            try:
+                n.append(assay.cells.N)
+            except AttributeError:
+                raise ValueError(
+                    "Please make sure you are passing actual assay objects and not assay names. "
+                    "For example, `[ds.RNA]`"
+                )
+        if len(set(n)) != 1:
+            raise ValueError(
+                f"ERROR: Provided assays do not have the same numer of cells. Please make "
+                f"sure that the assays are from the same DataStore."
+            )
+        return assays
+
+    def _check_idx(self, cell_key, cell_idx):
+        if cell_key is None and cell_idx is None:
+            raise ValueError("Both `cell_key` and `cell_idx` parameters cannot be None")
+        if cell_idx is None:
+            for assay in self.assays:
+                try:
+                    idx = assay.cells.fetch_all(cell_key)
+                except KeyError:
+                    raise ValueError(
+                        f"ERROR: Provided cell_key {cell_key} was not found in the assay: {assay.name}"
+                    )
+                if idx.dtype != bool:
+                    raise ValueError(
+                        f"ERROR: {cell_key} is not of boolean type. Cannot perform subsetting"
+                    )
+                if cell_idx is None:
+                    cell_idx = idx
+                else:
+                    if np.all(cell_idx == idx) is False:
+                        raise ValueError(
+                            f"ERROR: Provided cell_key  {cell_key} is not consistent across the assays. Please make "
+                            f"sure that the assays are from the same DataStore."
+                        )
+            cell_idx = np.where(cell_idx)[0]
+        else:
+            cell_idx = np.array(cell_idx)
+            if np.issubdtype(cell_idx.dtype, np.integer) is False:
+                raise ValueError(
+                    f"ERROR: `cell_idx` must be of integer type. Provided array has a dtype: {cell_idx.dtype}"
+                )
+            if max(cell_idx) >= self.assays[0].N:
+                raise ValueError(
+                    f"ERROR: `cell_idx` max value is larger than the number of cells in the data."
+                )
+        return cell_idx
 
     def _check_files(self):
-        if self.iZname == self.oZname:
-            raise ValueError(
-                "You are trying to overwrite the current Zarr file itself with the subset. "
-                "This is not allowed. Please change the name/path of output file, by supplying a "
-                "different value to `out_zarr` parameter. No subsetting was performed"
-            )
-
-        if os.path.isdir(self.oZname) and self.overFn is False:
-            logger.error(
-                f"Zarr file with name: {self.oZname} already exists.\nIf you want to overwrite it then please "
-                f"set overwrite_existing_file to True. No subsetting was performed."
-            )
-            return None
-
-    def _check_idx(self):
-        if self.cellIdx is None:
-            idx = self.iz["cellData"][self.cellKey][:]
-            if idx.dtype != bool:
+        if os.path.isdir(self.outZarrFn):
+            if self.overFn is False:
                 raise ValueError(
-                    f"ERROR: {self.cellKey} is not of boolean type. Cannot perform subsetting"
+                    f"Zarr file with name: {self.outZarrFn} already exists.\nIf you want to overwrite it then please "
+                    f"set overwrite_existing_file to True. No subsetting was performed."
                 )
-            self.cellIdx = np.where(idx)[0]
+        return zarr.open(self.outZarrFn, mode="w")
 
     def _prep_cell_data(self):
         n_cells = len(self.cellIdx)
-        if "cellData" in self.oz:
-            g = self.oz["cellData"]
+        if "cellData" in self.outZarr:
+            g = self.outZarr["cellData"]
         else:
-            g = self.oz.create_group("cellData")
+            g = self.outZarr.create_group("cellData")
 
-        for i in self.iz["cellData"].keys():
-            if i in g and self.overcells is False:
+        cell_data = self.assays[0].z["/"].cellData
+        for i in cell_data.keys():
+            if i in g and self.overCells is False:
                 continue
             if i in ["I"] and self.resetCells:
                 create_zarr_obj_array(g, "I", [True for _ in range(n_cells)], "bool")
                 continue
-            v = self.iz["cellData"][i][:][self.cellIdx]
+            v = cell_data[i][:][self.cellIdx]
             create_zarr_obj_array(g, i, v, dtype=v.dtype)
-
-    def _get_assays(self):
-        assays = []
-        for i in self.iz.group_keys():
-            if "is_assay" in self.iz[i].attrs.keys():
-                assays.append(i)
-        return assays
-
-    def _get_raw_data(self, assay_name):
-        import dask.array as daskarr
-
-        return daskarr.from_zarr(self.iz[assay_name]["counts"], inline_array=True)
 
     def _prep_counts(self):
         n_cells = len(self.cellIdx)
-        for assay_name in self.assays:
-            raw_data = self._get_raw_data(assay_name)
+        for assay in self.assays:
             create_zarr_count_assay(
-                self.oz,
-                assay_name,
-                raw_data.chunksize,
+                self.outZarr,
+                assay.name,
+                assay.rawData.chunksize,
                 n_cells,
-                self.iz[assay_name]["featureData"]["ids"][:],
-                self.iz[assay_name]["featureData"]["names"][:],
-                raw_data.dtype,
+                assay.feats.fetch_all("ids"),
+                assay.feats.fetch_all("names"),
+                assay.rawData.dtype,
             )
 
     def dump(self):
-        for assay_name in self.assays:
-            raw_data = self._get_raw_data(assay_name)
-            store = self.oz[f"{assay_name}/counts"]
+        self._prep_cell_data()
+        self._prep_counts()
+        for assay in self.assays:
+            raw_data = assay.rawData[self.cellIdx]
+            store = self.outZarr[f"{assay.name}/counts"]
             s, e, = (
                 0,
                 0,
             )
             for a in tqdmbar(
-                raw_data[self.cellIdx].blocks,
-                desc=f"Subsetting assay: {assay_name}",
+                raw_data.blocks,
+                desc=f"Subsetting assay: {assay.name}",
                 total=raw_data.numblocks[0],
             ):
                 if a.shape[0] > 0:
@@ -1311,7 +1334,6 @@ def to_h5ad(
         h5["var"].attrs[i] = j
 
     if len(emb_cols) > 0:
-        attrs = {"encoding-type": "array", "encoding-version": "0.1.0"}
         emb_cols = np.array(emb_cols)
         c = pd.Series([x[:-1] for x in emb_cols])
         for i in c.unique():
