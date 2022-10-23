@@ -926,7 +926,7 @@ class SubsetZarr:
                 raise ValueError(
                     f"ERROR: `cell_idx` must be of integer type. Provided array has a dtype: {cell_idx.dtype}"
                 )
-            if max(cell_idx) >= self.assays[0].N:
+            if max(cell_idx) >= self.assays[0].cells.N:
                 raise ValueError(
                     f"ERROR: `cell_idx` max value is larger than the number of cells in the data."
                 )
