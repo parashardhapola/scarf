@@ -120,10 +120,10 @@ TopACeDo only marks the cells the representative that for downsampling. To creat
 
 ```{code-cell} ipython3
 writer = scarf.SubsetZarr(
-    in_zarr='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
-    out_zarr='scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr',
+    zarr_path='scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr',
+    assays=[ds.RNA],
     cell_key='RNA_sketched',
-    reset_cell_filter=False,
+    reset_cell_filter=False
 )
 writer.dump()
 ```
@@ -139,6 +139,10 @@ ds2
 ```
 
 It is expected the downsampled dataset will be small enough to fit in memory. Here the data is exported to  anndata format from where it could easily used to perform any downstream analysis from the [scverse](https://scverse.org/) ecosystem.
+
+```{code-cell} ipython3
+!pip install anndata
+```
 
 ```{code-cell} ipython3
 adata = ds2.to_anndata()
