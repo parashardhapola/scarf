@@ -24,7 +24,7 @@ import numpy as np
 from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 import os
 import pandas as pd
-from .utils import controlled_compute, logger, tqdmbar
+from .utils import controlled_compute, logger, tqdmbar, show_dask_progress
 from scipy.sparse import csr_matrix
 
 __all__ = [
@@ -1225,36 +1225,54 @@ class ZarrMerge:
 
 
 def to_h5ad(
-    assay, h5ad_filename: str, embeddings_cols: Optional[List[str]] = None
+    assay, h5ad_filename: str,
+    embeddings_cols: Optional[List[str]] = None,
+    skip_recalc_nfeats: bool = True,
+    n_threads: int = 4,
 ) -> None:
-    """Save an assay as an h5ad file.
+    """Save an assay as H5ad file.
 
     Args:
-        assay: Assay to save.
-        h5ad_filename: Name for the h5ad file to be created.
+        assay: Assay to save in H5ad format
+        h5ad_filename: Name for the H5ad file to be created.
         embeddings_cols: Columns in cell metadata to be treated as embeddings e. UMAP, tSNE
                          (Default value: ['UMAP', 'tSNE'])
+        skip_recalc_nfeats: Skip recalculating nFeatures per cell. (Default value: True)
+        n_threads: Number of processing threads to use (Default value: 4)
 
     Returns:
         None
     """
     import h5py
+    from dask import array as da
 
     def save_attr(group, col, scarf_col, md):
         d = md.fetch_all(scarf_col)
-        dtype = d.dtype
-        if np.issubdtype(dtype, np.number) or np.issubdtype(dtype, np.bool):
+        d_type = d.dtype
+        if np.issubdtype(d_type, np.number) or np.issubdtype(d_type, np.bool):
             pass
         else:
-            dtype = h5py.special_dtype(vlen=str)
+            d_type = h5py.special_dtype(vlen=str)
         try:
-            h5[group].create_dataset(col, data=d.astype(dtype))
+            h5[group].create_dataset(col, data=d.astype(d_type))
         except TypeError:
-            print("Yo", dtype, d.dtype, col)
+            logger.warning(f"Dtype issue in {col}, {d.type} ({d_type})")
 
     h5 = h5py.File(h5ad_filename, "w")
     for i in ["X", "obs", "var", "obsm"]:
         h5.create_group(i)
+
+    # Recalculating nFeature here just to avoid potential issues with stale data.
+    if skip_recalc_nfeats is False:
+        assay.cells.insert(
+            f"{assay.name}_nFeatures",
+            show_dask_progress(
+                da.count_nonzero(assay.rawData, axis=1),
+                msg="Preflight: recalculating nFeatures",
+                nthreads=n_threads
+            ),
+            overwrite=True
+        )
 
     n_feats_per_cell = assay.cells.fetch_all(f"{assay.name}_nFeatures").astype(int)
     tot_counts = int(n_feats_per_cell.sum())
@@ -1262,15 +1280,21 @@ def to_h5ad(
     for i, s in zip(
         ["indptr", "indices", "data"], [assay.cells.N + 1, tot_counts, tot_counts]
     ):
-        h5["X"].create_dataset(i, (s,), chunks=True, compression="gzip", dtype=int)
+        if i == "data":
+            mat_dtype = assay.rawData.dtype
+        else:
+            mat_dtype = int
+        h5["X"].create_dataset(i, (s,), chunks=True, compression="gzip", dtype=mat_dtype)
+
     h5["X/indptr"][:] = np.array([0] + list(n_feats_per_cell.cumsum())).astype(int)
+
     s, e = 0, 0
     for i in tqdmbar(
         assay.rawData.blocks,
         total=assay.rawData.numblocks[0],
         desc="Writing raw counts",
     ):
-        i = csr_matrix(i.compute()).astype(int)
+        i = csr_matrix(i.compute())
         e += i.data.shape[0]
         h5["X/data"][s:e] = i.data
         h5["X/indices"][s:e] = i.indices
