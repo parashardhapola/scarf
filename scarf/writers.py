@@ -1225,7 +1225,8 @@ class ZarrMerge:
 
 
 def to_h5ad(
-    assay, h5ad_filename: str,
+    assay,
+    h5ad_filename: str,
     embeddings_cols: Optional[List[str]] = None,
     skip_recalc_nfeats: bool = True,
     n_threads: int = 4,
@@ -1269,9 +1270,9 @@ def to_h5ad(
             show_dask_progress(
                 da.count_nonzero(assay.rawData, axis=1),
                 msg="Preflight: recalculating nFeatures",
-                nthreads=n_threads
+                nthreads=n_threads,
             ),
-            overwrite=True
+            overwrite=True,
         )
 
     n_feats_per_cell = assay.cells.fetch_all(f"{assay.name}_nFeatures").astype(int)
@@ -1284,7 +1285,9 @@ def to_h5ad(
             mat_dtype = assay.rawData.dtype
         else:
             mat_dtype = int
-        h5["X"].create_dataset(i, (s,), chunks=True, compression="gzip", dtype=mat_dtype)
+        h5["X"].create_dataset(
+            i, (s,), chunks=True, compression="gzip", dtype=mat_dtype
+        )
 
     h5["X/indptr"][:] = np.array([0] + list(n_feats_per_cell.cumsum())).astype(int)
 
