@@ -9,7 +9,13 @@ from typing import List
 from numba import jit
 
 
-__all__ = ["self_query_knn", "smoothen_dists", "export_knn_to_mtx", "merge_graphs"]
+__all__ = [
+    "self_query_knn",
+    "smoothen_dists",
+    "export_knn_to_mtx",
+    "merge_graphs",
+    "wnn_integration",
+]
 
 
 def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
@@ -220,7 +226,7 @@ def merge_graphs(csr_mats: List[csr_matrix]) -> coo_matrix:
         csr_mats: A list of two or more CSR matrices representing the graphs to be merged.
 
     Returns: A merged graph in CSR matrix form.
-             The merged graph has same number of edges as each graph
+             The merged graph has the same number of edges as each input graph
     """
     try:
         assert len(set([x.shape for x in csr_mats])) == 1
@@ -237,14 +243,94 @@ def merge_graphs(csr_mats: List[csr_matrix]) -> coo_matrix:
         snns.append(
             calc_snn(mat.indices.reshape((mat.shape[0], mat[0].indices.shape[0])))
         )
-    row, data = [], []
+    col, data = [], []
     for i in tqdmbar(range(csr_mats[0].shape[0]), desc="Merging graph edges"):
         mi = np.hstack([mat[i].indices for mat in csr_mats])
         mwn = np.hstack([mat[i].data + snns[n][i] for n, mat in enumerate(csr_mats)])
         mw = np.hstack([mat[i].data for mat in csr_mats])
         mi, mw = weight_sort_indices(mi, mw, mwn, nk)
-        row.extend(mi)
+        col.extend(mi)
         data.extend(mw)
     s = csr_mats[0].shape
-    col = np.repeat(range(s[0]), nk)
+    row = np.repeat(range(s[0]), nk)
     return coo_matrix((data, (row, col)), shape=s)
+
+
+def wnn_integration(
+    name1: str, g1: csr_matrix, ld1, name2: str, g2: csr_matrix, ld2, n_threads: int
+):
+    """
+
+    Args:
+        name1:
+        g1:
+        ld1:
+        name2:
+        g2:
+        ld2:
+        n_threads:
+
+    Returns:
+
+    """
+
+    def make_estimates(g, ld, msg=""):
+        return np.array(
+            [
+                ld[g[i].indices].mean(axis=0)
+                for i in tqdmbar(range(g.shape[0]), desc=msg)
+            ]
+        )
+
+    def get_kth_l(g, ld, k):
+        return ld[[g[x].indices[k] for x in range(g.shape[0])]]
+
+    def calc_theta(ld, le, b, c):
+        a = np.sqrt(((ld - le) ** 2).sum(axis=1))
+        d = a - b
+        d[d < 0] = 0
+        return np.exp(((-1 * d) / (c - d)).astype(np.float128))
+
+    def calc_affinity_ratios(
+        g_self, g_other, ld, sigma: int = -2, epsilon: float = 10e-4, name=""
+    ):
+        l_self = make_estimates(
+            g_self, ld, msg=f"({name}) Predicting within modality profile"
+        )
+        l_cross = make_estimates(
+            g_other, ld, msg=f"({name}) Predicting cross modality profile"
+        )
+
+        b = np.sqrt(((ld - get_kth_l(g_self, ld, 0)) ** 2).sum(axis=1))
+        c = np.sqrt(((ld - get_kth_l(g_self, ld, sigma)) ** 2).sum(axis=1))
+
+        theta_self = calc_theta(ld, l_self, b, c)
+        theta_cross = calc_theta(ld, l_cross, b, c)
+
+        return (theta_self / (theta_cross + epsilon)).astype(np.float128)
+
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=n_threads):
+        sr = calc_affinity_ratios(g1, g2, ld1, name=name1)
+        sp = calc_affinity_ratios(g2, g1, ld2, name=name2)
+
+        wr = np.exp(sr) / (np.exp(sr) + np.exp(sp))
+        wp = np.exp(sp) / (np.exp(sr) + np.exp(sp))
+
+    nk = g1[0].indices.shape[0]
+    col, data = [], []
+    for n in tqdmbar(range(g1.shape[0]), desc="Building WNN graph"):
+        mixed_k = np.array(sorted(set(g1[n].indices).union(g2[n].indices)))
+        dr = np.sqrt(((ld1[n] - ld1[mixed_k]) ** 2).sum(axis=1)) * wr[n]
+        dp = np.sqrt(((ld2[n] - ld2[mixed_k]) ** 2).sum(axis=1)) * wp[n]
+        w_d = dr + dp
+        idx = np.argsort(w_d)[:nk]
+        col.append(mixed_k[idx])
+        v = w_d[idx]
+        data.append(np.exp(-((v - v[0]) / (v - v[0]).mean())))
+
+    data = np.hstack(data)
+    row = np.repeat(range(g1.shape[0]), nk)
+    col = np.hstack(col)
+    return coo_matrix((data, (row, col)), shape=g1.shape)

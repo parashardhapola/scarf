@@ -1886,6 +1886,7 @@ class GraphDataStore(BaseDataStore):
         self,
         assays: List[str],
         label: str,
+        method: str = "snn",
         chunk_size: int = 10000,
     ) -> None:
         """Merges KNN graphs of two or more assays from within the same
@@ -1896,27 +1897,67 @@ class GraphDataStore(BaseDataStore):
 
         Args:
             assays: Name of the input assays. The latest constructed graph from each assay is used.
-            label: label: Label for integrated graph
+            label: Label for integrated graph
+            method: Choose a method for modality integration. Available options: 'snn': Shared nearest neighbour
+                    approach and 'wnn': Weighted nearest neighbor approach based on Hao et. alm Cell 2022.
             chunk_size: number of cells to be loaded at a time while reading and writing the graph
 
         Returns: None
         """
-        from ..knn_utils import merge_graphs
+        from ..knn_utils import merge_graphs, wnn_integration
 
-        merged_graph = []
-        for assay in assays:
-            if assay not in self.assay_names:
-                raise ValueError(f"ERROR: Assay {assay} was not found.")
-            merged_graph.append(
-                self.load_graph(
-                    from_assay=assay,
-                    cell_key=None,
-                    feat_key=None,
-                    symmetric=False,
-                    upper_only=False,
-                ).tocsr()
+        def load_pca_knn(assay_name):
+            g = self.load_graph(
+                from_assay=assay_name,
+                cell_key=None,
+                feat_key=None,
+                symmetric=False,
+                upper_only=False,
+            ).tocsr()
+            ao = self.make_graph(
+                from_assay=assay_name,
+                feat_key=self._get_latest_feat_key(assay_name),
+                return_ann_object=True,
+                update_keys=False,
             )
-        merged_graph = merge_graphs(merged_graph)
+            if ao.loadings is None:
+                logger.warning(
+                    f"No dimension reduction was user for {assay_name} data. "
+                    f"Memory consumption will be high."
+                )
+                return g, ao.data.compute()
+            else:
+                return g, ao.data.dot(ao.loadings).compute()
+
+        if method == "snn":
+            merged_graph = []
+            for assay in assays:
+                if assay not in self.assay_names:
+                    raise ValueError(f"ERROR: Assay {assay} was not found.")
+                merged_graph.append(
+                    self.load_graph(
+                        from_assay=assay,
+                        cell_key=None,
+                        feat_key=None,
+                        symmetric=False,
+                        upper_only=False,
+                    ).tocsr()
+                )
+            merged_graph = merge_graphs(merged_graph)
+        elif method == "wnn":
+            if len(assays) != 2:
+                raise ValueError(
+                    "WNN integration in Scarf can currently be performed using only two assays"
+                )
+            g1, ld1 = load_pca_knn(assays[0])
+            g2, ld2 = load_pca_knn(assays[1])
+            merged_graph = wnn_integration(
+                assays[0], g1, ld1, assays[1], g2, ld2, self.nthreads
+            )
+        else:
+            raise ValueError(
+                f"Method {method} not supported, choose one of these: 'snn', 'wnn'"
+            )
 
         n_cells = merged_graph.shape[0]
         n_neighbors = int(merged_graph.size / n_cells)
@@ -1931,10 +1972,10 @@ class GraphDataStore(BaseDataStore):
         store.attrs["n_neighbors"] = n_neighbors
 
         zge = create_zarr_dataset(
-            store, f"edges", (chunk_size,), ("u8", "u8"), (n_cells * n_neighbors, 2)
+            store, f"edges", (chunk_size,), (np.uint32, np.uint32), (n_cells * n_neighbors, 2)
         )
         zgw = create_zarr_dataset(
-            store, f"weights", (chunk_size,), "f8", (n_cells * n_neighbors)
+            store, f"weights", (chunk_size,), np.float_, (n_cells * n_neighbors)
         )
 
         zge[:, 0] = merged_graph.row
