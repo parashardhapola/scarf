@@ -4,25 +4,25 @@
 
 ### BaseDataStore
 :::{eval-rst}
-.. autoclass:: scarf.datastore.BaseDataStore
+.. autoclass:: scarf.datastore.base_datastore.BaseDataStore
     :members:
 :::
 
 ### GraphDataStore
 :::{eval-rst}
-.. autoclass:: scarf.datastore.GraphDataStore
+.. autoclass:: scarf.datastore.graph_datastore.GraphDataStore
     :members:
 :::
 
 ### MappingDatastore
 :::{eval-rst}
-.. autoclass:: scarf.datastore.MappingDatastore
+.. autoclass:: scarf.datastore.mapping_datastore.MappingDatastore
     :members:
 :::
 
 ### DataStore
 :::{eval-rst}
-.. autoclass:: scarf.datastore.DataStore
+.. autoclass:: scarf.datastore.datastore.DataStore
     :members:
 :::
 
