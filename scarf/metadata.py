@@ -302,7 +302,7 @@ class MetaData:
             elif np.issubdtype(values.dtype, np.integer):
                 try:
                     if np.isnan(fill_value):
-                        if values.min() > - 1:
+                        if min(values) > - 1:
                             fill_value = 0
                         else:
                             raise ValueError(
@@ -424,7 +424,7 @@ class MetaData:
                 "may not be assigned to the column"
             )
         v = self._fill_to_index(values, fill_value, key)
-        self._save(column_name, v.astype(values.dtype), location=location)
+        self._save(column_name, v, location=location)
         return None
 
     def update_key(self, values: np.ndarray, key: str) -> None:
