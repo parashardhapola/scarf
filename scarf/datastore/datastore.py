@@ -43,12 +43,12 @@ class DataStore(MappingDatastore):
     def __init__(
         self,
         zarr_loc: str,
-        assay_types: dict = None,
-        default_assay: str = None,
+        assay_types: Optional[dict] = None,
+        default_assay: Optional[str] = None,
         min_features_per_cell: int = 10,
         min_cells_per_feature: int = 20,
-        mito_pattern: str = None,
-        ribo_pattern: str = None,
+        mito_pattern: Optional[str] = None,
+        ribo_pattern: Optional[str] = None,
         nthreads: int = 2,
         zarr_mode: str = "r+",
         synchronizer=None,
@@ -122,7 +122,7 @@ class DataStore(MappingDatastore):
 
     def auto_filter_cells(
         self,
-        attrs: Iterable[str] = None,
+        attrs: Optional[Iterable[str]] = None,
         min_p: float = 0.01,
         max_p: float = 0.99,
         show_qc_plots: bool = True,
@@ -181,9 +181,9 @@ class DataStore(MappingDatastore):
 
     def mark_hvgs(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        min_cells: int = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        min_cells: Optional[int] = None,
         top_n: int = 500,
         min_var: float = -np.Inf,
         max_var: float = np.Inf,
@@ -267,8 +267,8 @@ class DataStore(MappingDatastore):
 
     def mark_prevalent_peaks(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
         top_n: int = 10000,
         prevalence_key_name: str = "prevalent_peaks",
     ) -> None:
@@ -302,13 +302,13 @@ class DataStore(MappingDatastore):
 
     def run_marker_search(
         self,
-        from_assay: str = None,
-        group_key: str = None,
-        cell_key: str = None,
+        from_assay: Optional[str] = None,
+        group_key: Optional[str] = None,
+        cell_key: Optional[str] = None,
         gene_batch_size: int = 50,
         use_prenormed: bool = False,
         prenormed_store: Optional[str] = None,
-        n_threads: int = None,
+        n_threads: Optional[int] = None,
         **norm_params,
     ) -> None:
         """Identifies group specific features for a given assay.
@@ -370,9 +370,9 @@ class DataStore(MappingDatastore):
 
     def run_pseudotime_marker_search(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        pseudotime_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        pseudotime_key: Optional[str] = None,
         min_cells: int = 10,
         gene_batch_size: int = 50,
         **norm_params,
@@ -424,11 +424,11 @@ class DataStore(MappingDatastore):
 
     def run_pseudotime_aggregation(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        pseudotime_key: str = None,
-        cluster_label: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        pseudotime_key: Optional[str] = None,
+        cluster_label: Optional[str] = None,
         min_exp: float = 10,
         window_size: int = 200,
         chunk_size: int = 50,
@@ -437,7 +437,7 @@ class DataStore(MappingDatastore):
         n_neighbours: int = 11,
         n_clusters: int = 10,
         batch_size: int = 100,
-        ann_params: dict = None,
+        ann_params: Optional[dict] = None,
     ) -> None:
         """This method performs clustering of features based on pseudotime
         ordered cells. The values from the pseudotime ordered cells are
@@ -516,15 +516,15 @@ class DataStore(MappingDatastore):
         )
         temp = np.ones(assay.feats.N) * -1
         temp[feat_ids] = clusts
-        assay.feats.insert(cluster_label, temp.astype(int), overwrite=True)
+        assay.feats.insert(cluster_label, temp.astype(int), fill_value = -1, overwrite=True)
         return None
 
     def get_markers(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        group_key: str = None,
-        group_id: Union[str, int] = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        group_key: Optional[str] = None,
+        group_id: Optional[Union[str, int]] = None,
         min_score: float = 0.25,
         min_frac_exp: float = 0.2,
     ) -> pd.DataFrame:
@@ -606,10 +606,10 @@ class DataStore(MappingDatastore):
 
     def export_markers_to_csv(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        group_key: str = None,
-        csv_filename: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        group_key: Optional[str] = None,
+        csv_filename: Optional[str] = None,
         min_score: float = 0.25,
         min_frac_exp: float = 0.2,
     ) -> None:
@@ -664,10 +664,10 @@ class DataStore(MappingDatastore):
 
     def run_cell_cycle_scoring(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        s_genes: List[str] = None,
-        g2m_genes: List[str] = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        s_genes: Optional[List[str]] = None,
+        g2m_genes: Optional[List[str]] = None,
         n_bins: int = 50,
         rand_seed: int = 4466,
         s_score_label: str = "S_score",
@@ -742,10 +742,10 @@ class DataStore(MappingDatastore):
 
     def add_grouped_assay(
         self,
-        from_assay: str = None,
-        group_key: str = None,
-        assay_label: str = None,
-        exclude_values: list = None,
+        from_assay: Optional[str] = None,
+        group_key: Optional[str] = None,
+        assay_label: Optional[str] = None,
+        exclude_values: Optional[list] = None,
     ) -> None:
         """Add a new assay to the DataStore by grouping together multiple
         features and taking their means. This method requires that the features
@@ -813,9 +813,9 @@ class DataStore(MappingDatastore):
 
     def add_melded_assay(
         self,
-        from_assay: str = None,
-        external_bed_fn: str = None,
-        assay_label: str = None,
+        from_assay: Optional[str] = None,
+        external_bed_fn: Optional[str] = None,
+        assay_label: Optional[str] = None,
         peaks_col: str = "ids",
         scalar_coeff: float = 1e5,
         renormalization: bool = True,
@@ -894,10 +894,10 @@ class DataStore(MappingDatastore):
 
     def make_bulk(
         self,
-        from_assay: str = None,
-        group_key: str = None,
+        from_assay: Optional[str] = None,
+        group_key: Optional[str] = None,
         pseudo_reps: int = 3,
-        null_vals: list = None,
+        null_vals: Optional[list] = None,
         random_seed: int = 4466,
     ) -> pd.DataFrame:
         """Merge data from cells to create a bulk profile.
@@ -1049,16 +1049,16 @@ class DataStore(MappingDatastore):
 
     def plot_cells_dists(
         self,
-        from_assay: str = None,
-        cols: List[str] = None,
-        cell_key: str = None,
-        group_key: str = None,
+        from_assay: Optional[str] = None,
+        cols: Optional[List[str]] = None,
+        cell_key: Optional[str] = None,
+        group_key: Optional[str] = None,
         color: str = "steelblue",
         cmap: str = "tab20",
-        fig_size: tuple = None,
+        fig_size: Optional[tuple] = None,
         label_size: float = 10.0,
         title_size: float = 10.0,
-        sup_title: str = None,
+        sup_title: Optional[str] = None,
         sup_title_size: float = 12.0,
         scatter_size: float = 1.0,
         max_points: int = 10000,
@@ -1154,17 +1154,17 @@ class DataStore(MappingDatastore):
 
     def plot_layout(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        layout_key: str = None,
-        color_by: str = None,
-        subselection_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        layout_key: Optional[str] = None,
+        color_by: Optional[str] = None,
+        subselection_key: Optional[str] = None,
         size_vals: Union[np.ndarray, List[float]] = None,
         clip_fraction: float = 0.01,
         width: float = 6,
         height: float = 6,
         default_color: str = "steelblue",
-        cmap: str = None,
+        cmap: Optional[str] = None,
         color_key: dict = None,
         mask_values: list = None,
         mask_name: str = "NA",
@@ -1452,11 +1452,11 @@ class DataStore(MappingDatastore):
 
     def plot_cluster_tree(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        cluster_key: str = None,
-        fill_by_value: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        cluster_key: Optional[str] = None,
+        fill_by_value: Optional[str] = None,
         force_ints_as_cats: bool = True,
         width: float = 1,
         lvr_factor: float = 0.5,
@@ -1471,14 +1471,14 @@ class DataStore(MappingDatastore):
         root_color: str = "#C0C0C0",
         non_leaf_color: str = "k",
         cmap="tab20",
-        color_key: dict = None,
+        color_key: Optional[dict] = None,
         edgecolors: str = "k",
         edgewidth: float = 1,
         alpha: float = 0.7,
         figsize=(5, 5),
         ax=None,
         show_fig: bool = True,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
     ):
         """Plots a hierarchical layout of the clusters detected using
@@ -1646,14 +1646,14 @@ class DataStore(MappingDatastore):
 
     def plot_marker_heatmap(
         self,
-        from_assay: str = None,
-        group_key: str = None,
-        cell_key: str = None,
+        from_assay: Optional[str] = None,
+        group_key: Optional[str] = None,
+        cell_key: Optional[str] = None,
         topn: int = 5,
         log_transform: bool = True,
         vmin: float = -1,
         vmax: float = 2,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
         show_fig: bool = True,
         **heatmap_kwargs,
@@ -1740,23 +1740,23 @@ class DataStore(MappingDatastore):
 
     def plot_pseudotime_heatmap(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        feature_cluster_key: str = None,
-        pseudotime_key: str = None,
-        show_features: list = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        feature_cluster_key: Optional[str] = None,
+        pseudotime_key: Optional[str] = None,
+        show_features: Optional[list] = None,
         width: int = 5,
         height: int = 10,
         vmin: float = -2.0,
         vmax: float = 2.0,
-        heatmap_cmap: str = None,
-        pseudotime_cmap: str = None,
-        clusterbar_cmap: str = None,
+        heatmap_cmap: Optional[str] = None,
+        pseudotime_cmap: Optional[str] = None,
+        clusterbar_cmap: Optional[str] = None,
         tick_fontsize: int = 10,
         axis_fontsize: int = 12,
         feature_label_fontsize: int = 12,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
         show_fig: bool = True,
     ) -> None:

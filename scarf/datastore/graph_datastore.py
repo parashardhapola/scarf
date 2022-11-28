@@ -352,7 +352,7 @@ class GraphDataStore(BaseDataStore):
         )
 
     def _get_latest_keys(
-        self, from_assay: str, cell_key: str, feat_key: str
+        self, from_assay: Optional[str], cell_key: Optional[str], feat_key: Optional[str]
     ) -> Tuple[str, str, str]:
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -429,7 +429,7 @@ class GraphDataStore(BaseDataStore):
         return knn_loc["indices"].shape
 
     def _store_to_sparse(
-        self, graph_loc: str, sparse_format: str = "csr", use_k: int = None
+        self, graph_loc: str, sparse_format: str = "csr", use_k: Optional[int] = None
     ) -> tuple:
         """
 
@@ -469,33 +469,33 @@ class GraphDataStore(BaseDataStore):
 
     def make_graph(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        pca_cell_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        pca_cell_key: Optional[str] = None,
         reduction_method: str = "auto",
-        dims: int = None,
-        k: int = None,
-        ann_metric: str = None,
-        ann_efc: int = None,
-        ann_ef: int = None,
-        ann_m: int = None,
+        dims: Optional[int] = None,
+        k: Optional[int] = None,
+        ann_metric: Optional[str] = None,
+        ann_efc: Optional[int] = None,
+        ann_ef: Optional[int] = None,
+        ann_m: Optional[int] = None,
         ann_parallel: bool = False,
-        rand_state: int = None,
-        n_centroids: int = None,
-        batch_size: int = None,
-        log_transform: bool = None,
-        renormalize_subset: bool = None,
-        local_connectivity: float = None,
-        bandwidth: float = None,
+        rand_state: Optional[int] = None,
+        n_centroids: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        log_transform: Optional[bool] = None,
+        renormalize_subset: Optional[bool] = None,
+        local_connectivity: Optional[float] = None,
+        bandwidth: Optional[float] = None,
         update_keys: bool = True,
         return_ann_object: bool = False,
-        custom_loadings: np.array = None,
+        custom_loadings: Optional[np.ndarray] = None,
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
         show_elbow_plot: bool = False,
-        ann_index_fetcher: Callable = None,
-        ann_index_saver: Callable = None,
+        ann_index_fetcher: Optional[Callable] = None,
+        ann_index_saver: Optional[Callable] = None,
     ):
         """Creates a cell neighbourhood graph. Performs following steps in the
         process:
@@ -1116,7 +1116,7 @@ class GraphDataStore(BaseDataStore):
         feat_key: Optional[str] = None,
         symmetric_graph: Optional[bool] = False,
         graph_upper_only: Optional[bool] = False,
-        ini_embed: np.ndarray = None,
+        ini_embed: Optional[np.ndarray] = None,
         umap_dims: int = 2,
         spread: float = 2.0,
         min_dist: float = 1,
@@ -1272,9 +1272,9 @@ class GraphDataStore(BaseDataStore):
 
     def run_leiden_clustering(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
         resolution: float = 1.0,
         integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
@@ -1354,16 +1354,16 @@ class GraphDataStore(BaseDataStore):
 
     def run_clustering(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        n_clusters: int = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        n_clusters: Optional[int] = None,
         integrated_graph: Optional[str] = None,
         symmetric_graph: bool = False,
         graph_upper_only: bool = False,
         balanced_cut: bool = False,
-        max_size: int = None,
-        min_size: int = None,
+        max_size: Optional[int] = None,
+        min_size: Optional[int] = None,
         max_distance_fc: float = 2,
         force_recalc: bool = False,
         label: str = "cluster",
@@ -1479,11 +1479,11 @@ class GraphDataStore(BaseDataStore):
 
     def run_topacedo_sampler(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
-        cluster_key: str = None,
-        use_k: int = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        cluster_key: Optional[str] = None,
+        use_k: Optional[int] = None,
         density_depth: int = 2,
         density_bandwidth: float = 5.0,
         max_sampling_rate: float = 0.05,
@@ -1622,10 +1622,10 @@ class GraphDataStore(BaseDataStore):
 
     def get_imputed(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feature_name: str = None,
-        feat_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feature_name: Optional[str] = None,
+        feat_key: Optional[str] = None,
         t: int = 2,
         cache_operator: bool = True,
     ) -> np.ndarray:
@@ -1711,14 +1711,14 @@ class GraphDataStore(BaseDataStore):
 
     def run_pseudotime_scoring(
         self,
-        from_assay: str = None,
-        cell_key: str = None,
-        feat_key: str = None,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
         n_singular_vals: int = 30,
-        source_sink_key: str = None,
-        sources: List = None,
-        sinks: List = None,
-        ss_vec: np.ndarray = None,
+        source_sink_key: Optional[str] = None,
+        sources: Optional[List] = None,
+        sinks: Optional[List] = None,
+        ss_vec: Optional[np.ndarray] = None,
         min_max_norm_ptime: bool = True,
         random_seed: int = 4444,
         label: str = "pseudotime",
@@ -1972,7 +1972,11 @@ class GraphDataStore(BaseDataStore):
         store.attrs["n_neighbors"] = n_neighbors
 
         zge = create_zarr_dataset(
-            store, f"edges", (chunk_size,), (np.uint32, np.uint32), (n_cells * n_neighbors, 2)
+            store,
+            f"edges",
+            (chunk_size,),
+            (np.uint32, np.uint32),
+            (n_cells * n_neighbors, 2),
         )
         zgw = create_zarr_dataset(
             store, f"weights", (chunk_size,), np.float_, (n_cells * n_neighbors)

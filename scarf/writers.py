@@ -1250,7 +1250,7 @@ def to_h5ad(
     def save_attr(group, col, scarf_col, md):
         d = md.fetch_all(scarf_col)
         d_type = d.dtype
-        if np.issubdtype(d_type, np.number) or np.issubdtype(d_type, np.bool):
+        if np.issubdtype(d_type, np.number) or np.issubdtype(d_type, bool):
             pass
         else:
             d_type = h5py.special_dtype(vlen=str)
@@ -1406,7 +1406,7 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
     for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
         i = coo_matrix((i.compute()))
         df = pd.DataFrame({"col": i.col + 1, "row": i.row + s + 1, "d": i.data})
-        df.to_csv(h, sep=" ", header=False, index=False, mode="a", line_terminator="\n")
+        df.to_csv(h, sep=" ", header=False, index=False, mode="a", lineterminator="\n")
         s += i.shape[0]
     h.close()
     assay.cells.to_pandas_dataframe(["ids"]).to_csv(

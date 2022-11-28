@@ -1,14 +1,15 @@
 """Contains the MetaData class, which is used for storing metadata about cells
 and features."""
-from zarr import hierarchy as zarr_hierarchy
-from zarr import array as zarr_array
-import numpy as np
 import re
+from typing import List, Iterable, Any, Dict, Tuple, Optional
+import numpy as np
+from zarr import hierarchy as z_hierarchy
 import pandas as pd
-from typing import List, Iterable, Any, Dict, Tuple
 from .feat_utils import fit_lowess
 from .writers import create_zarr_obj_array
 from .utils import logger
+
+zarrGroup = z_hierarchy.Group
 
 __all__ = ["MetaData"]
 
@@ -39,16 +40,16 @@ class MetaData:
         index: A numpy array with the indices of the cells/features.
     """
 
-    def __init__(self, zgrp: zarr_hierarchy):
+    def __init__(self, zgrp: zarrGroup):
         """
         Args:
             zgrp: Zarr hierarchy object wherein metadata arrays are saved.
         """
-        self.locations: Dict[str, zarr_hierarchy] = {"primary": zgrp}
+        self.locations: Dict[str, zarrGroup] = {"primary": zgrp}
         self.N = self._get_size(self.locations["primary"], strict_mode=True)
         self.index = np.array(range(self.N))
 
-    def _get_size(self, zgrp: zarr_hierarchy, strict_mode: bool = False) -> int:
+    def _get_size(self, zgrp: zarrGroup, strict_mode: bool = False) -> int:
         """
 
         Args:
@@ -122,7 +123,7 @@ class MetaData:
         loc, col = col_map[column]
         return loc, col
 
-    def _get_array(self, column: str) -> zarr_array:
+    def _get_array(self, column: str) -> z_hierarchy.Array:
         """
 
         Args:
@@ -132,7 +133,7 @@ class MetaData:
 
         """
         loc, col = self._get_loc(column)
-        return self.locations[loc][col]
+        return self.locations[loc][col]  # type: ignore
 
     def get_dtype(self, column: str) -> type:
         """Returns the dtype for the given column.
@@ -157,7 +158,7 @@ class MetaData:
             )
         return True
 
-    def mount_location(self, zgrp: zarr_hierarchy, identifier: str) -> None:
+    def mount_location(self, zgrp: zarrGroup, identifier: str) -> None:
         """
 
         Args:
@@ -276,7 +277,9 @@ class MetaData:
         )
         return None
 
-    def _fill_to_index(self, values: np.array, fill_value, key: str) -> np.ndarray:
+    def _fill_to_index(
+        self, values: np.ndarray, fill_value, key: str, auto_fill_disable: bool = False
+    ) -> np.ndarray:
         """Makes sure that the array being added to the table is of the same
         shape. If the array has same shape as the table then the input array is
         added straightaway. It is assumed that the input array is in same order
@@ -286,28 +289,48 @@ class MetaData:
             values:
             fill_value:
             key:
+            auto_fill_disable (bool = False): `fill_value` autocorrection based on dytype is disabled.
 
         Returns:
         """
 
-        if len(values) == self.N:
+        if isinstance(values, np.ndarray) is False:
+            values = np.array(values)
+        if auto_fill_disable is False:
+            if values.dtype == bool:
+                fill_value = False
+            elif np.issubdtype(values.dtype, np.integer):
+                try:
+                    if np.isnan(fill_value):
+                        if values.min() > - 1:
+                            fill_value = 0
+                        else:
+                            raise ValueError(
+                                "`fill_value should be an integer value. "
+                            )
+                except TypeError:
+                    raise ValueError("`fill_value should be an interger value. ")
+
+        n = values.shape[0]
+        if n == self.N:
             return values
         else:
             self._verify_bool(key)
             k = self.fetch_all(key)
-            if len(values) != k.sum():
+            v_n = k.sum()
+            if len(values) != v_n:
                 raise ValueError(
-                    f"ERROR: `values`  are of incorrect length ({len(values)}). "
-                    f" Chosen key ({key}) has {len(k)} active rows"
+                    f"ERROR: `values`  are of incorrect length ({n}). "
+                    f" Chosen key ({key}) has {v_n} active rows"
                 )
             else:
-                a = np.empty(self.N).astype(type(values[0]))
+                a = np.empty(self.N).astype(values.dtype)
                 a[k] = values
                 a[~k] = fill_value
                 return a
 
     def get_index_by(
-        self, value_targets: List[Any], column: str, key: str = None
+        self, value_targets: List[Any], column: str, key: Optional[str] = None
     ) -> np.ndarray:
         """
 
@@ -365,7 +388,7 @@ class MetaData:
     def insert(
         self,
         column_name: str,
-        values: np.array,
+        values: np.ndarray,
         fill_value: Any = np.NaN,
         key: str = "I",
         overwrite: bool = False,
@@ -395,17 +418,16 @@ class MetaData:
             raise ValueError(
                 f"ERROR: {col} already exists. Please set `overwrite` to True to overwrite."
             )
-        if type(values) == list:
-            logger.warning(
+        if isinstance(values, list):
+            logger.debug(
                 "'values' parameter is of `list` type and not `np.ndarray` as expected. The correct dtype "
                 "may not be assigned to the column"
             )
-            values = np.array(values)
         v = self._fill_to_index(values, fill_value, key)
         self._save(column_name, v.astype(values.dtype), location=location)
         return None
 
-    def update_key(self, values: np.array, key) -> None:
+    def update_key(self, values: np.ndarray, key: str) -> None:
         """Modify a column in the metadata table, specified with `key`.
 
         Args:
@@ -515,7 +537,7 @@ class MetaData:
         df = pd.DataFrame({x: self.fetch_all(x)[:n] for x in self.columns})
         return df
 
-    def to_pandas_dataframe(self, columns: List[str], key: str = None) -> pd.DataFrame:
+    def to_pandas_dataframe(self, columns: List[str], key: Optional[str] = None) -> pd.DataFrame:
         """Returns the requested columns as a Pandas dataframe, sorted on
         key."""
         valid_cols = self.columns
