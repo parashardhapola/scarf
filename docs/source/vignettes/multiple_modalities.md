@@ -56,7 +56,7 @@ Now the data is converted into Zarr format. Like single assay datasets, all the 
 ```{code-cell} ipython3
 writer = scarf.CrToZarr(
     reader,
-    zarr_fn='scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
+    zarr_loc='scarf_datasets/tenx_8K_pbmc_citeseq/data.zarr',
     chunk_size=(2000, 1000),
 )
 writer.dump(batch_size=1000)

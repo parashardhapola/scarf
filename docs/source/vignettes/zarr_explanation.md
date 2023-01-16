@@ -276,7 +276,9 @@ Marker list for any group (e.x. cell cluster) can be fetched like below
 ```{code-cell} ipython3
 ds.get_markers(
     group_key='RNA_cluster',
-    group_id=7
+    group_id=7,
+    min_score=0.1,
+    min_frac_exp=0.1
 )
 ```
 
@@ -285,7 +287,9 @@ One can also export the names of markers for all the groups to a CSV file like b
 ```{code-cell} ipython3
 ds.export_markers_to_csv(
     group_key='RNA_cluster',
-    csv_filename='test.csv'
+    csv_filename='test.csv',
+    min_score=0.2,
+    min_frac_exp=0.1
 )
 ```
 

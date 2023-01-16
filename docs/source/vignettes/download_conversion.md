@@ -78,10 +78,10 @@ reader = scarf.CrH5Reader(
     'scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.h5'
 )
 
-# change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_loc` to your choice of filename and path
 writer = scarf.CrToZarr(
     reader,
-    zarr_fn='scarf_datasets/pbmc_atac.zarr'  
+    zarr_loc='scarf_datasets/pbmc_atac.zarr'  
 )  
 writer.dump()
 ```
@@ -96,10 +96,10 @@ reader = scarf.CrDirReader(
     'scarf_datasets/xin_1K_pancreas_rnaseq'
 )
 
-# change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_loc` to your choice of filename and path
 writer = scarf.CrToZarr(
     reader, 
-    zarr_fn='scarf_datasets/xin_1K.zarr'
+    zarr_loc='scarf_datasets/xin_1K.zarr'
 )
 writer.dump()
 ```
@@ -115,10 +115,10 @@ reader = scarf.H5adReader(
     feature_name_key = 'gene_short_name'  # Where gene names are saved under 'var' slot
 )  
 
-# change value of `zarr_fn` to your choice of filename and path
+# change value of `zarr_loc` to your choice of filename and path
 writer = scarf.H5adToZarr(
     reader,
-    zarr_fn='scarf_datasets/differentiating_pancreatic_cells.zarr'
+    zarr_loc='scarf_datasets/differentiating_pancreatic_cells.zarr'
 )
 writer.dump()
 ```

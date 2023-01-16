@@ -62,7 +62,7 @@ NOTE: When we say zarr file, we actually mean zarr directory  because, unlike HD
 ```{code-cell} ipython3
 writer = scarf.CrToZarr(
     reader,
-    zarr_fn='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
+    zarr_loc='scarf_datasets/tenx_5K_pbmc_rnaseq/data.zarr',
     chunk_size=(2000, 1000)
 )
 writer.dump(batch_size=1000)

@@ -49,7 +49,7 @@ reader.assayFeats
 ```{code-cell} ipython3
 writer = scarf.CrToZarr(
     reader,
-    zarr_fn=f'scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.zarr',
+    zarr_loc=f'scarf_datasets/tenx_10K_pbmc-v1_atacseq/data.zarr',
     chunk_size=(1000, 2000)
 )
 writer.dump(batch_size=1000)
