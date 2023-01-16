@@ -4,8 +4,8 @@ import sys
 sys.path.insert(0, os.path.abspath("../.."))
 
 project = "Scarf"
-copyright = "2021, Parashar Dhapola, Göran Karlsson"
-author = ""
+copyright = "2023, Parashar Dhapola"
+author = "Parashar Dhapola"
 
 extensions = [
     "IPython.sphinxext.ipython_console_highlighting",
