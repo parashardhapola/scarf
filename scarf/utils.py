@@ -155,9 +155,7 @@ def load_zarr(zarr_loc: str, mode: str, synchronizer=None) -> zarr.hierarchy:
     if type(zarr_loc) != str:
         return zarr.group(zarr_loc, synchronizer=synchronizer)
     else:
-        return zarr.open(
-            zarr_loc, mode=mode, synchronizer=synchronizer
-        )
+        return zarr.open(zarr_loc, mode=mode, synchronizer=synchronizer)
 
 
 def controlled_compute(arr, nthreads):

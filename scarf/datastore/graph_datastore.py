@@ -352,7 +352,10 @@ class GraphDataStore(BaseDataStore):
         )
 
     def _get_latest_keys(
-        self, from_assay: Optional[str], cell_key: Optional[str], feat_key: Optional[str]
+        self,
+        from_assay: Optional[str],
+        cell_key: Optional[str],
+        feat_key: Optional[str],
     ) -> Tuple[str, str, str]:
         if from_assay is None:
             from_assay = self._defaultAssay

@@ -514,7 +514,9 @@ class DataStore(MappingDatastore):
         )
         temp = np.ones(assay.feats.N) * -1
         temp[feat_ids] = clusts
-        assay.feats.insert(cluster_label, temp.astype(int), fill_value = -1, overwrite=True)
+        assay.feats.insert(
+            cluster_label, temp.astype(int), fill_value=-1, overwrite=True
+        )
         return None
 
     def get_markers(

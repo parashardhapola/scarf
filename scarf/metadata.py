@@ -302,12 +302,10 @@ class MetaData:
             elif np.issubdtype(values.dtype, np.integer):
                 try:
                     if np.isnan(fill_value):
-                        if min(values) > - 1:
+                        if min(values) > -1:
                             fill_value = 0
                         else:
-                            raise ValueError(
-                                "`fill_value should be an integer value. "
-                            )
+                            raise ValueError("`fill_value should be an integer value. ")
                 except TypeError:
                     raise ValueError("`fill_value should be an interger value. ")
 
@@ -537,7 +535,9 @@ class MetaData:
         df = pd.DataFrame({x: self.fetch_all(x)[:n] for x in self.columns})
         return df
 
-    def to_pandas_dataframe(self, columns: List[str], key: Optional[str] = None) -> pd.DataFrame:
+    def to_pandas_dataframe(
+        self, columns: List[str], key: Optional[str] = None
+    ) -> pd.DataFrame:
         """Returns the requested columns as a Pandas dataframe, sorted on
         key."""
         valid_cols = self.columns

@@ -205,7 +205,11 @@ class CrToZarr:
     """
 
     def __init__(
-        self, cr: CrReader, zarr_loc: str, chunk_size=(1000, 1000), dtype: str = "uint32"
+        self,
+        cr: CrReader,
+        zarr_loc: str,
+        chunk_size=(1000, 1000),
+        dtype: str = "uint32",
     ):
         self.cr = cr
         self.chunkSizes = chunk_size
@@ -1404,9 +1408,13 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
         df = pd.DataFrame({"col": i.col + 1, "row": i.row + s + 1, "d": i.data})
         try:
             # Support for older versions of pandas
-            df.to_csv(h, sep=" ", header=False, index=False, mode="a", lineterminator="\n")
+            df.to_csv(
+                h, sep=" ", header=False, index=False, mode="a", lineterminator="\n"
+            )
         except TypeError:
-            df.to_csv(h, sep=" ", header=False, index=False, mode="a", line_terminator="\n")
+            df.to_csv(
+                h, sep=" ", header=False, index=False, mode="a", line_terminator="\n"
+            )
         s += i.shape[0]
     h.close()
     assay.cells.to_pandas_dataframe(["ids"]).to_csv(
