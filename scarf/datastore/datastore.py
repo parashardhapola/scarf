@@ -1,13 +1,12 @@
 from typing import Iterable, Optional, Union, List
 import numpy as np
 import pandas as pd
-import zarr
 from dask import array as daskarr
 from loguru import logger
+from .mapping_datastore import MappingDatastore
 from ..writers import create_zarr_obj_array, create_zarr_dataset
 from ..utils import tqdmbar, controlled_compute
 from ..assay import RNAassay, ATACassay
-from .mapping_datastore import MappingDatastore
 
 __all__ = ["DataStore"]
 

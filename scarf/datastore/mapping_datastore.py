@@ -1,10 +1,13 @@
-import os
 from typing import Generator, Tuple, List, Union
+import os
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
 from scipy.sparse import csr_matrix
+from .graph_datastore import GraphDataStore
+from ..assay import Assay, RNAassay
+from ..writers import create_zarr_dataset
 from ..utils import (
     show_dask_progress,
     clean_array,
@@ -12,21 +15,12 @@ from ..utils import (
     controlled_compute,
     system_call,
 )
-from ..assay import Assay, RNAassay
-from ..writers import create_zarr_dataset
-from .graph_datastore import GraphDataStore
 
 
 class MappingDatastore(GraphDataStore):
     """This class extends GraphDataStore by providing methods for mapping/
-    projection of cells from one DataStore onto another. It also contains the methods required for label transfer,
-    mapping score generation and co-embedding.
-
-    Attributes:
-        cells: List of cell barcodes.
-        assayNames: List of assay names in Zarr file, e. g. 'RNA' or 'ATAC'.
-        nthreads: Number of threads to use for this datastore instance.
-        z: The Zarr file (directory) used for this datastore instance.
+    projection of cells from one DataStore onto another. It also contains the methods
+    required for label transfer, mapping score generation and co-embedding.
     """
 
     def __init__(self, **kwargs):
