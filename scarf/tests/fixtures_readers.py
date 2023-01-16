@@ -22,7 +22,7 @@ def toy_crdir_reader():
 def crh5_reader():
     from ..readers import CrH5Reader
 
-    return CrH5Reader(full_path("1K_pbmc_citeseq.h5"), "rna")
+    return CrH5Reader(full_path("1K_pbmc_citeseq.h5"))
 
 
 @pytest.fixture(scope="session")
@@ -39,7 +39,7 @@ def mtx_dir(datastore):
 def crdir_reader(datastore, mtx_dir):
     from ..readers import CrDirReader
 
-    reader = CrDirReader(mtx_dir, "rna")
+    reader = CrDirReader(mtx_dir)
     yield reader
 
 

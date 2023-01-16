@@ -8,7 +8,7 @@ __all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
 
 
 def instantiate_knn_index(
-    space, dim, max_elements, ef_construction, m, random_seed, ef, num_threads
+    space, dim, max_elements, ef_construction, M, random_seed, ef, num_threads
 ):
     import hnswlib
 
@@ -16,7 +16,7 @@ def instantiate_knn_index(
     ann_idx.init_index(
         max_elements=max_elements,
         ef_construction=ef_construction,
-        M=m,
+        M=M,
         random_seed=random_seed,
     )
     ann_idx.set_ef(ef)
