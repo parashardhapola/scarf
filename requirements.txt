@@ -27,3 +27,5 @@ importlib_metadata
 requests
 kneed
 joblib
+ipython-autotime
+ipywidgets

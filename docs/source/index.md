@@ -18,9 +18,8 @@ cool new features Scarf has on offer.
 :align: center
 :::
 
-:::{note}
-The manuscript describing Scarf is under peer-review. Preprint is available 
-[here](https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1)
+:::{admonition} Scarf is published!
+The article describing Scarf is published in Nature Communications and is available [here](https://www.biorxiv.org/content/10.1101/2021.05.02.441899v1)
 :::
 
 ## What does Scarf offer
