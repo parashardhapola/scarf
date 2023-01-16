@@ -57,8 +57,6 @@ class DataStore(MappingDatastore):
             raise ValueError(
                 "ERROR: Zarr file can only be accessed using either 'r' or 'r+' mode"
             )
-        if synchronizer is None:
-            synchronizer = zarr.ThreadSynchronizer()
         super().__init__(
             zarr_loc=zarr_loc,
             assay_types=assay_types,

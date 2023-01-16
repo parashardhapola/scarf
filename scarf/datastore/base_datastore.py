@@ -2,7 +2,7 @@ from typing import List, Union, Optional
 import numpy as np
 import zarr
 from loguru import logger
-from ..utils import show_dask_progress, controlled_compute
+from ..utils import show_dask_progress, controlled_compute, load_zarr
 from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
 
@@ -69,12 +69,7 @@ class BaseDataStore:
         zarr_mode: str,
         synchronizer,
     ):
-        if type(zarr_loc) != str:
-            self.z: zarr.hierarchy = zarr.group(zarr_loc, synchronizer=synchronizer)
-        else:
-            self.z: zarr.hierarchy = zarr.open(
-                zarr_loc, mode=zarr_mode, synchronizer=synchronizer
-            )
+        self.z = load_zarr(zarr_loc=zarr_loc, mode=zarr_mode, synchronizer=synchronizer)
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()

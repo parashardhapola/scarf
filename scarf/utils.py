@@ -15,6 +15,7 @@ import numpy as np
 from tqdm.dask import TqdmCallback
 from dask.array.core import Array
 from numba import jit
+import zarr
 
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "system_call",
     "rescale_array",
     "clean_array",
+    "load_zarr",
     "show_dask_progress",
     "controlled_compute",
     "rolling_window",
@@ -145,6 +147,17 @@ def clean_array(x, fill_val: int = 0):
     x[(x == np.Inf) | (x == -np.Inf)] = 0
     x[x == 0] = fill_val
     return x
+
+
+def load_zarr(zarr_loc: str, mode: str, synchronizer=None) -> zarr.hierarchy:
+    if synchronizer is None:
+        synchronizer = zarr.ThreadSynchronizer()
+    if type(zarr_loc) != str:
+        return zarr.group(zarr_loc, synchronizer=synchronizer)
+    else:
+        return zarr.open(
+            zarr_loc, mode=mode, synchronizer=synchronizer
+        )
 
 
 def controlled_compute(arr, nthreads):

@@ -24,7 +24,7 @@ import numpy as np
 from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 import os
 import pandas as pd
-from .utils import controlled_compute, logger, tqdmbar, show_dask_progress
+from .utils import controlled_compute, logger, tqdmbar, show_dask_progress, load_zarr
 from scipy.sparse import csr_matrix
 
 __all__ = [
@@ -194,24 +194,22 @@ class CrToZarr:
 
     Args:
         cr: A CrReader object, containing the Cellranger data.
-        zarr_fn: The file name for the Zarr hierarchy.
+        zarr_loc: The file name for the Zarr hierarchy or a store
         chunk_size: The requested size of chunks to load into memory and process.
         dtype: the dtype of the data.
 
     Attributes:
         cr: A CrReader object, containing the Cellranger data.
-        fn: The file name for the Zarr hierarchy.
         chunkSizes: The requested size of chunks to load into memory and process.
         z: The Zarr hierarchy (array or group).
     """
 
     def __init__(
-        self, cr: CrReader, zarr_fn: str, chunk_size=(1000, 1000), dtype: str = "uint32"
+        self, cr: CrReader, zarr_loc: str, chunk_size=(1000, 1000), dtype: str = "uint32"
     ):
         self.cr = cr
-        self.fn = zarr_fn
         self.chunkSizes = chunk_size
-        self.z = zarr.open(self.fn, mode="w")
+        self.z = load_zarr(zarr_loc=zarr_loc, mode="w")
         self._ini_cell_data()
         for assay_name in self.cr.assayFeats.columns:
             create_zarr_count_assay(
@@ -311,13 +309,12 @@ class H5adToZarr:
 
     Args:
         h5ad: A H5adReader object, containing the Cellranger data.
-        zarr_fn: The file name for the Zarr hierarchy.
+        zarr_loc: The file name for the Zarr hierarchy or a store
         assay_name: the name of the assay (e. g. 'RNA')
         chunk_size: The requested size of chunks to load into memory and process.
 
     Attributes:
         h5ad: A h5ad object (h5 file with added AnnData structure).
-        fn: The file name for the Zarr hierarchy.
         chunkSizes: The requested size of chunks to load into memory and process.
         assayName: The Zarr hierarchy (array or group).
         z: The Zarr hierarchy (array or group).
@@ -326,13 +323,12 @@ class H5adToZarr:
     def __init__(
         self,
         h5ad: H5adReader,
-        zarr_fn: str,
+        zarr_loc: str,
         assay_name: str = None,
         chunk_size=(1000, 1000),
     ):
         # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
         self.h5ad = h5ad
-        self.fn = zarr_fn
         self.chunkSizes = chunk_size
         if assay_name is None:
             logger.info(
@@ -341,7 +337,7 @@ class H5adToZarr:
             self.assayName = "RNA"
         else:
             self.assayName = assay_name
-        self.z = zarr.open(self.fn, mode="w")
+        self.z = load_zarr(zarr_loc=zarr_loc, mode="w")
         self._ini_cell_data()
         create_zarr_count_assay(
             self.z,
@@ -1406,7 +1402,11 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
     for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
         i = coo_matrix((i.compute()))
         df = pd.DataFrame({"col": i.col + 1, "row": i.row + s + 1, "d": i.data})
-        df.to_csv(h, sep=" ", header=False, index=False, mode="a", lineterminator="\n")
+        try:
+            # Support for older versions of pandas
+            df.to_csv(h, sep=" ", header=False, index=False, mode="a", lineterminator="\n")
+        except TypeError:
+            df.to_csv(h, sep=" ", header=False, index=False, mode="a", line_terminator="\n")
         s += i.shape[0]
     h.close()
     assay.cells.to_pandas_dataframe(["ids"]).to_csv(

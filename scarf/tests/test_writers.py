@@ -5,7 +5,7 @@ def test_crtozarr(crh5_reader):
     from ..writers import CrToZarr
 
     fn = full_path("dummy_1K_pbmc_citeseq.zarr")
-    writer = CrToZarr(crh5_reader, zarr_fn=fn)
+    writer = CrToZarr(crh5_reader, zarr_loc=fn)
     writer.dump()
     remove(fn)
 
@@ -14,7 +14,7 @@ def test_crtozarr_fromdir(crdir_reader):
     from ..writers import CrToZarr
 
     fn = full_path("1K_pbmc_citeseq_dir.zarr")
-    writer = CrToZarr(crdir_reader, zarr_fn=fn)
+    writer = CrToZarr(crdir_reader, zarr_loc=fn)
     writer.dump()
     remove(fn)
 
@@ -23,7 +23,7 @@ def test_h5adtozarr(h5ad_reader):
     from ..writers import H5adToZarr
 
     fn = full_path("bastidas.zarr")
-    writer = H5adToZarr(h5ad_reader, zarr_fn=fn)
+    writer = H5adToZarr(h5ad_reader, zarr_loc=fn)
     writer.dump()
     remove(fn)
 
