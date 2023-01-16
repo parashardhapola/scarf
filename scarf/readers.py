@@ -63,7 +63,6 @@ class CrReader(ABC):
 
     Args:
         grp_names (Dict): A dictionary that specifies where to find the matrix, features and barcodes.
-        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
 
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
@@ -73,7 +72,7 @@ class CrReader(ABC):
         assayFeats: A DataFrame with information about the features in the assay.
     """
 
-    def __init__(self, grp_names, file_type: str = None):
+    def __init__(self, grp_names):
         self.autoNames = {
             "Gene Expression": "RNA",
             "Peaks": "ATAC",
@@ -192,7 +191,6 @@ class CrH5Reader(CrReader):
 
     Args:
         h5_fn: File name for the h5 file.
-        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
 
     Attributes:
         autoNames: Specifies if the data is from RNA or ATAC sequencing.
@@ -204,10 +202,10 @@ class CrH5Reader(CrReader):
         grp: Current active group in the hierarchy.
     """
 
-    def __init__(self, h5_fn, file_type: str = None):
+    def __init__(self, h5_fn):
         self.h5obj = h5py.File(h5_fn, mode="r")
         self.grp = None
-        super().__init__(self._handle_version(), file_type)
+        super().__init__(self._handle_version())
 
     def _handle_version(self):
         root_key = list(self.h5obj.keys())[0]
@@ -261,21 +259,19 @@ class CrDirReader(CrReader):
 
     Args:
         loc (str): Path for the directory containing the cellranger output.
-        file_type (str): [DEPRECATED] Type of sequencing data ('rna' | 'atac')
         mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
         index_offset (int): This value is added to each feature index (Default value: -1)
 
     Attributes:
         loc: Path for the directory containing the cellranger output.
         matFn: The file name for the matrix file.
-        mtx_separator (str): Column delimiter in the MTX file (Default value: ' ')
-        index_offset (int): This value is added to each feature index (Default value: -1)
+        sep (str): Column delimiter in the MTX file (Default value: ' ')
+        indexOffset (int): This value is added to each feature index (Default value: -1)
     """
 
     def __init__(
         self,
         loc,
-        file_type: str = None,
         mtx_separator: str = " ",
         index_offset: int = -1,
     ):
@@ -401,7 +397,7 @@ class H5adReader:
 
     Attributes:
         h5: A File object from the h5py package.
-        matrix_key: Group where in the sparse matrix resides (default: 'X')
+        matrixKey: Group where in the sparse matrix resides (default: 'X')
         cellAttrsKey: Group wherein the cell attributes are present
         featureAttrsKey: Group wherein the feature attributes are present
         groupCodes: Used to ensure compatibility with different AnnData versions.

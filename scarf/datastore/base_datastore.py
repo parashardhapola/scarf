@@ -361,9 +361,9 @@ class BaseDataStore:
                         from_assay + "_nFeatures", min_features, np.Inf
                     )
                     # Making sure that the write operation is only done if the filtering results have changed
-                    cur_I = self.cells.fetch_all("I")
-                    nbv = bv & cur_I
-                    if all(nbv == cur_I) is False:
+                    cur_index = self.cells.fetch_all("I")
+                    nbv = bv & cur_index
+                    if all(nbv == cur_index) is False:
                         self.cells.update_key(bv, key="I")
 
     @staticmethod
@@ -477,42 +477,40 @@ class BaseDataStore:
         return vals
 
     def __repr__(self):
+        def formatter(label, iter_vals):
+            if label is None:
+                line = ""
+            else:
+                line = f"\n{stabs}{label}:"
+            line += (
+                "\n"
+                + dtabs
+                + "".join(
+                    [
+                        f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}"
+                        for n, x in enumerate(iter_vals, start=1)
+                    ]
+                )
+            )
+            return line.rstrip("\n\t")[:-2]
+
+        htabs = " " * 3
+        stabs = htabs * 2
+        dtabs = stabs * 2
+
         res = (
             f"DataStore has {self.cells.active_index('I').shape[0]} ({self.cells.N}) cells with"
             f" {len(self.assay_names)} assays: {' '.join(self.assay_names)}"
         )
-        htabs = " " * 3
-        stabs = htabs * 2
-        dtabs = stabs * 2
         res = res + f"\n{htabs}Cell metadata:"
-        res += (
-            "\n"
-            + dtabs
-            + "".join(
-                [
-                    f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}"
-                    for n, x in enumerate(self.cells.columns, start=1)
-                ]
-            )
-        )
-        res = res.rstrip("\n\t")[:-2]
+        res += formatter(None, self.cells.columns)
         for i in self.assay_names:
             assay = self._get_assay(i)
             res += (
                 f"\n{htabs}{i} assay has {assay.feats.fetch_all('I').sum()} ({assay.feats.N}) "
                 f"features and following metadata:"
             )
-            res += (
-                "\n"
-                + dtabs
-                + "".join(
-                    [
-                        f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}"
-                        for n, x in enumerate(assay.feats.columns, start=1)
-                    ]
-                )
-            )
-            res = res.rstrip("\n\t")[:-2]
+            res += formatter(None, assay.feats.columns)
             if "projections" in self.z[i]:
                 targets = []
                 layouts = []
@@ -522,29 +520,7 @@ class BaseDataStore:
                     else:
                         layouts.append(j)
                 if len(targets) > 0:
-                    res += f"\n{stabs}Projected samples:"
-                    res += (
-                        "\n"
-                        + dtabs
-                        + "".join(
-                            [
-                                f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}"
-                                for n, x in enumerate(targets, start=1)
-                            ]
-                        )
-                    )
-                    res = res.rstrip("\n\t")[:-2]
+                    res += formatter("Projected samples", targets)
                 if len(layouts) > 0:
-                    res += f"\n{stabs}Co-embeddings:"
-                    res += (
-                        "\n"
-                        + dtabs
-                        + "".join(
-                            [
-                                f"'{x}', " if n % 5 != 0 else f"'{x}', \n{dtabs}"
-                                for n, x in enumerate(layouts, start=1)
-                            ]
-                        )
-                    )
-                    res = res.rstrip("\n\t")[:-2]
+                    res += formatter("Co-embeddings", layouts)
         return res

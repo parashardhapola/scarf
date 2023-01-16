@@ -188,6 +188,21 @@ def create_zarr_count_assay(
     )
 
 
+def sparse_writer(
+    store: zarr.hierarchy, data_stream, n_cells: int, batch_size: int
+) -> int:
+    s, e, = (
+        0,
+        0,
+    )
+    n_chunks = n_cells // batch_size + 1
+    for a in tqdmbar(data_stream, total=n_chunks):
+        e += a.shape[0]
+        store.set_coordinate_selection((a.row + s, a.col), a.data)
+        s = e
+    return e
+
+
 class CrToZarr:
     """A class for converting data in the Cellranger format to a Zarr
     hierarchy.
@@ -376,17 +391,13 @@ class H5adToZarr:
         Returns:
             None
         """
-        store = self.z["%s/counts" % self.assayName]
-        s, e, = (
-            0,
-            0,
+        total_cells_written = sparse_writer(
+            store=self.z[f"{self.assayName}/counts"],
+            data_stream=self.h5ad.consume(batch_size),
+            n_cells=self.h5ad.nCells,
+            batch_size=batch_size,
         )
-        n_chunks = self.h5ad.nCells // batch_size + 1
-        for a in tqdmbar(self.h5ad.consume(batch_size), total=n_chunks):
-            e += a.shape[0]
-            store.set_coordinate_selection((a.row + s, a.col), a.data)
-            s = e
-        if e != self.h5ad.nCells:
+        if total_cells_written != self.h5ad.nCells:
             raise AssertionError(
                 "ERROR: This is a bug in H5adToZarr. All cells might not have been successfully "
                 "written into the zarr file. Please report this issue"
@@ -544,17 +555,13 @@ class LoomToZarr:
         Returns:
             None
         """
-        store = self.z["%s/counts" % self.assayName]
-        s, e, = (
-            0,
-            0,
+        total_cells_written = sparse_writer(
+            store=self.z[f"{self.assayName}/counts"],
+            data_stream=self.loom.consume(batch_size),
+            n_cells=self.loom.nCells,
+            batch_size=batch_size,
         )
-        n_chunks = self.loom.nCells // batch_size + 1
-        for a in tqdmbar(self.loom.consume(batch_size), total=n_chunks):
-            e += a.shape[0]
-            store.set_coordinate_selection((a.row + s, a.col), a.data)
-            s = e
-        if e != self.loom.nCells:
+        if total_cells_written != self.loom.nCells:
             raise AssertionError(
                 "ERROR: This is a bug in LoomToZarr. All cells might not have been successfully "
                 "written into the zarr file. Please report this issue"
@@ -577,7 +584,7 @@ class SparseToZarr:
         AssertionError: Catches eventual bugs in the class, if number of cells does not match after transformation.
 
     Attributes:
-        csr_mat: Input CSR matrix
+        mat: Input CSR matrix
         fn: The file name for the Zarr hierarchy.
         chunkSizes: The requested size of chunks to load into memory and process.
         assayName: The Zarr hierarchy (array or group).
@@ -1465,6 +1472,12 @@ def bed_to_sparse_array(
     """
     import gc
 
+    def feat_mapper(x):
+        return feat_idx.get(x, n_feats)
+
+    def default_chrom_modifier(x):
+        return x + "_"
+
     feat_idx = {}
     for i in tqdmbar(chrom_sizes, disable=disable_tqdm, desc="Calculating bin indices"):
         for j in range((chrom_sizes[i] // bin_size) + 1):
@@ -1472,9 +1485,8 @@ def bed_to_sparse_array(
     cell_idx = {}
     mat = []
     n_feats = len(feat_idx)
-    feat_mapper = lambda x: feat_idx.get(x, n_feats)
     if chrom_modifier is None:
-        chrom_modifier = lambda x: x + "_"
+        chrom_modifier = default_chrom_modifier
 
     stream = pd.read_csv(
         bed_fn,
