@@ -35,7 +35,7 @@ scarf.fetch_dataset('lecun_60K_mnist_images', save_path='scarf_datasets')
 ```
 
 ```{code-cell} ipython3
-reader = scarf.CrDirReader('scarf_datasets/lecun_60K_mnist_images', 'rna')
+reader = scarf.CrDirReader('scarf_datasets/lecun_60K_mnist_images')
 writer = scarf.CrToZarr(
     reader,
     zarr_loc='scarf_datasets/lecun_60K_mnist_images/data.zarr',
