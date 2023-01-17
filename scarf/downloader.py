@@ -87,14 +87,19 @@ class OSFdownloader:
         return datasets, source_fn
 
     def _populate_sources(self):
-        source_fn = self._get_files_for_node("osfstorage", self.sourceFile)[
-            "sources.csv"
-        ]
-        return (
-            pd.read_csv(io.StringIO(requests.get(source_fn).text))
-            .set_index("id")
-            .to_dict()
-        )
+        n_attempts = 0
+        while n_attempts < 3:
+            try:
+                source_fn = self._get_files_for_node("osfstorage", self.sourceFile)[
+                    "sources.csv"
+                ]
+                return (
+                    pd.read_csv(io.StringIO(requests.get(source_fn).text))
+                    .set_index("id")
+                    .to_dict()
+                )
+            except KeyError:
+                n_attempts += 1
 
     def show_datasets(self):
         print("\n".join(sorted(self.datasets.keys())))
