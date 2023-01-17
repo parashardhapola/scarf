@@ -120,7 +120,7 @@ TopACeDo only marks the cells the representative that for downsampling. To creat
 
 ```{code-cell} ipython3
 writer = scarf.SubsetZarr(
-    zarr_path='scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr',
+    zarr_loc='scarf_datasets/tenx_5K_pbmc_rnaseq/subset.zarr',
     assays=[ds.RNA],
     cell_key='RNA_sketched',
     reset_cell_filter=False
