@@ -38,7 +38,7 @@ scarf.fetch_dataset('lecun_60K_mnist_images', save_path='scarf_datasets')
 reader = scarf.CrDirReader('scarf_datasets/lecun_60K_mnist_images', 'rna')
 writer = scarf.CrToZarr(
     reader,
-    zarr_fn='scarf_datasets/lecun_60K_mnist_images/data.zarr',
+    zarr_loc='scarf_datasets/lecun_60K_mnist_images/data.zarr',
     chunk_size=(2000, 1000),
 )
 writer.dump(batch_size=1000)
