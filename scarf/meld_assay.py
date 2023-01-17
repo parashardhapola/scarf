@@ -436,6 +436,7 @@ def create_counts_mat(
 
 def coordinate_melding(
     assay,
+    workspace: str,
     feature_bed: pd.DataFrame,
     new_assay_name: str,
     peaks_col: str = "ids",
@@ -454,6 +455,7 @@ def coordinate_melding(
 
     Args:
         assay: Scarf Assay object which contains the rawData attribute representing Dask array of count matrix.
+        workspace:
         feature_bed: DataFrame containing reference intervals. Must have at least 5 columns representing
                     'chrom', 'start', 'end', 'ids', 'names'. But the column names should 0,1,2,3,4
         new_assay_name: Name of the new melded assay
@@ -474,6 +476,7 @@ def coordinate_melding(
     g = create_zarr_count_assay(
         z=assay.z["/"],
         assay_name=new_assay_name,
+        workspace=workspace,
         chunk_size=assay.rawData.chunksize,
         n_cells=assay.rawData.shape[0],
         feat_ids=feat_ids,

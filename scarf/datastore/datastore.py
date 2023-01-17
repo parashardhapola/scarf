@@ -885,6 +885,7 @@ class DataStore(MappingDatastore):
 
         coordinate_melding(
             assay,
+            workspace=self.workspace,
             feature_bed=feature_bed,
             new_assay_name=assay_label,
             peaks_col=peaks_col,

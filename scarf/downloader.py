@@ -13,9 +13,11 @@ Classes:
 import requests
 import os
 import tarfile
-from .utils import logger, tqdmbar
 import pandas as pd
 import io
+import time
+from json import JSONDecodeError
+from .utils import logger, tqdmbar
 
 __all__ = ["show_available_datasets", "fetch_dataset"]
 
@@ -57,8 +59,13 @@ class OSFdownloader:
         data = []
         url = None
         n_attempts = 0
-        while True:
-            r = self.get_json(storage, endpoint, url)
+        while n_attempts < 5:
+            try:
+                r = self.get_json(storage, endpoint, url)
+            except JSONDecodeError:
+                time.sleep(1)
+                n_attempts += 1
+                continue
             if "data" in r:
                 data.extend(r["data"])
                 url = r["links"]["next"]
@@ -66,8 +73,7 @@ class OSFdownloader:
                     break
             else:
                 n_attempts += 1
-                if n_attempts > 3:
-                    break
+                time.sleep(1)
         return data
 
     @staticmethod
@@ -88,7 +94,7 @@ class OSFdownloader:
 
     def _populate_sources(self):
         n_attempts = 0
-        while n_attempts < 3:
+        while n_attempts < 5:
             try:
                 source_fn = self._get_files_for_node("osfstorage", self.sourceFile)[
                     "sources.csv"
@@ -99,6 +105,7 @@ class OSFdownloader:
                     .to_dict()
                 )
             except KeyError:
+                time.sleep(1)
                 n_attempts += 1
 
     def show_datasets(self):
