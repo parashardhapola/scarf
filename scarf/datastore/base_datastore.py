@@ -7,7 +7,7 @@ from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
 
 
-def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
+def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str, workspace: str) -> bool:
     """Test if an assay node in zarr object was created properly.
 
     Args:
@@ -17,13 +17,25 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str) -> bool:
     Returns:
         True if assay_name is present in z and contains `counts` and `featureData` child nodes else raises error
     """
-    if assay_name in z:
-        if "counts" not in z[assay_name]:
-            raise KeyError(f"ERROR: 'counts' not found in {assay_name}")
-        if "featureData" not in z[assay_name]:
+    if workspace is None:
+        zw = z
+    else:
+        zw = z[workspace]
+    if assay_name in zw:
+        if "featureData" not in zw[assay_name]:
             raise KeyError(f"ERROR: 'featureData' not found in {assay_name}")
     else:
         raise KeyError(f"ERROR: {assay_name} not found in zarr file")
+    if workspace is None:
+        if "counts" not in z[assay_name]:
+            raise KeyError(f"ERROR: 'counts' not found in {assay_name}")
+    else:
+        if "matrices" not in z:
+            raise KeyError(f"ERROR: Workspace defined but no 'matrices' slot found")
+        if assay_name not in z["matrices"]:
+            raise KeyError(f"ERROR: {assay_name} not found in workspace matrices slot")
+        if 'counts' not in z["matrices"][assay_name]:
+            raise KeyError(f"ERROR: 'counts' not found in {assay_name} in workspace matrices slot")
     return True
 
 
@@ -67,9 +79,11 @@ class BaseDataStore:
         ribo_pattern: str,
         nthreads: int,
         zarr_mode: str,
+        workspace: Union[str, None],
         synchronizer,
     ):
         self.z = load_zarr(zarr_loc=zarr_loc, mode=zarr_mode, synchronizer=synchronizer)
+        self.workspace = workspace
         self.nthreads = nthreads
         # The order is critical here:
         self.cells = self._load_cells()
@@ -83,6 +97,13 @@ class BaseDataStore:
         # TODO: Implement _caches to hold are cached data
         # TODO: Implement _defaults to hold default parameters for methods
 
+    @property
+    def zw(self):
+        if self.workspace is None:
+            return self.z
+        else:
+            return self.z[self.workspace]
+
     def _load_cells(self) -> MetaData:
         """This convenience function loads cellData level from the Zarr
         hierarchy.
@@ -90,9 +111,11 @@ class BaseDataStore:
         Returns:
             Metadata object
         """
-        if "cellData" not in self.z:
+        try:
+            cell_data = self.zw["cellData"]
+        except KeyError:
             raise KeyError("ERROR: cellData not found in zarr file")
-        return MetaData(self.z["cellData"])
+        return MetaData(cell_data)
 
     @property
     def assay_names(self) -> List[str]:
@@ -104,9 +127,9 @@ class BaseDataStore:
             Names of assays present in a Zarr file
         """
         assays = []
-        for i in self.z.group_keys():
-            if "is_assay" in self.z[i].attrs.keys():
-                sanitize_hierarchy(self.z, i)
+        for i in self.zw.group_keys():
+            if "is_assay" in self.zw[i].attrs.keys():
+                sanitize_hierarchy(self.z, i, self.workspace)
                 assays.append(i)
         return assays
 
@@ -123,12 +146,12 @@ class BaseDataStore:
             Name of the assay to be set as default assay
         """
         if assay_name is None:
-            if "defaultAssay" in self.z.attrs:
-                assay_name = self.z.attrs["defaultAssay"]
+            if "defaultAssay" in self.zw.attrs:
+                assay_name = self.zw.attrs["defaultAssay"]
             else:
                 if len(self.assay_names) == 1:
                     assay_name = self.assay_names[0]
-                    self.z.attrs["defaultAssay"] = assay_name
+                    self.zw.attrs["defaultAssay"] = assay_name
                 else:
                     raise ValueError(
                         "ERROR: You have more than one assay data. "
@@ -137,12 +160,12 @@ class BaseDataStore:
                     )
         else:
             if assay_name in self.assay_names:
-                if "defaultAssay" in self.z.attrs:
-                    if assay_name != self.z.attrs["defaultAssay"]:
+                if "defaultAssay" in self.zw.attrs:
+                    if assay_name != self.zw.attrs["defaultAssay"]:
                         logger.info(
-                            f"Default assay changed from {self.z.attrs['defaultAssay']} to {assay_name}"
+                            f"Default assay changed from {self.zw.attrs['defaultAssay']} to {assay_name}"
                         )
-                self.z.attrs["defaultAssay"] = assay_name
+                self.zw.attrs["defaultAssay"] = assay_name
             else:
                 raise ValueError(
                     f"ERROR: The provided default assay name: {assay_name} was not found. "
@@ -192,9 +215,9 @@ class BaseDataStore:
             "assay_types={'assay1': 'RNA', 'assay2': 'ADT'} "
             "Just replace with actual assay names instead of assay1 and assay2"
         )
-        if "assayTypes" not in self.z.attrs:
-            self.z.attrs["assayTypes"] = {}
-        z_attrs = dict(self.z.attrs["assayTypes"])
+        if "assayTypes" not in self.zw.attrs:
+            self.zw.attrs["assayTypes"] = {}
+        z_attrs = dict(self.zw.attrs["assayTypes"])
         if custom_assay_types is None:
             custom_assay_types = {}
         for i in self.assay_names:
@@ -235,15 +258,16 @@ class BaseDataStore:
                 self,
                 i,
                 assay(
-                    self.z,
-                    i,
-                    self.cells,
+                    z=self.z,
+                    workspace=self.workspace,
+                    name=i,
+                    cell_data=self.cells,
                     min_cells_per_feature=min_cells,
                     nthreads=self.nthreads,
                 ),
             )
-        if self.z.attrs["assayTypes"] != z_attrs:
-            self.z.attrs["assayTypes"] = z_attrs
+        if self.zw.attrs["assayTypes"] != z_attrs:
+            self.zw.attrs["assayTypes"] = z_attrs
         return None
 
     def _get_assay(
@@ -398,7 +422,7 @@ class BaseDataStore:
         """
         if assay_name in self.assay_names:
             self._defaultAssay = assay_name
-            self.z.attrs["defaultAssay"] = assay_name
+            self.zw.attrs["defaultAssay"] = assay_name
         else:
             raise ValueError(f"ERROR: {assay_name} assay was not found.")
 
@@ -408,7 +432,8 @@ class BaseDataStore:
         cell_key: str,
         k: str,
         clip_fraction: float = 0,
-        use_precached: bool = True,
+        use_precached: bool = True,  # FIXE change to use_cached
+        cache_key: str = "prenormed",
     ):
         """Fetches data from the Zarr file.
 
@@ -440,7 +465,6 @@ class BaseDataStore:
                         f"Plotting mean of {len(feat_idx)} features because {k} is not unique."
                     )
             vals = None
-            cache_key = "prenormed"
             if use_precached and cache_key in assay.z:
                 g = assay.z[cache_key]
                 vals = np.zeros(assay.cells.N)
@@ -511,11 +535,11 @@ class BaseDataStore:
                 f"features and following metadata:"
             )
             res += formatter(None, assay.feats.columns)
-            if "projections" in self.z[i]:
+            if "projections" in self.zw[i]:
                 targets = []
                 layouts = []
-                for j in self.z[i]["projections"]:
-                    if type(self.z[i]["projections"][j]) == zarr.Group:
+                for j in self.zw[i]["projections"]:
+                    if type(self.zw[i]["projections"][j]) == zarr.Group:
                         targets.append(j)
                     else:
                         layouts.append(j)

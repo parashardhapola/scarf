@@ -34,6 +34,7 @@ class DataStore(MappingDatastore):
         ribo_pattern: Regex pattern to capture ribosomal genes. (default: 'RPS|RPL|MRPS|MRPL')
         nthreads: Number of maximum threads to use in all multi-threaded functions
         zarr_mode: For read-write mode use r+' or for read-only use 'r'. (Default value: 'r+')
+        workspace: Workspace for the data
         synchronizer: Used as `synchronizer` parameter when opening the Zarr file. Please refer to this page for
                       more details: https://zarr.readthedocs.io/en/stable/api/sync.html. By default
                       ThreadSynchronizer will be used.
@@ -50,6 +51,7 @@ class DataStore(MappingDatastore):
         ribo_pattern: Optional[str] = None,
         nthreads: int = 2,
         zarr_mode: str = "r+",
+        workspace: Union[str, None] = None,
         synchronizer=None,
     ):
         if zarr_mode not in ["r", "r+"]:
@@ -66,6 +68,7 @@ class DataStore(MappingDatastore):
             ribo_pattern=ribo_pattern,
             nthreads=nthreads,
             zarr_mode=zarr_mode,
+            workspace=workspace,
             synchronizer=synchronizer,
         )
 
@@ -352,7 +355,7 @@ class DataStore(MappingDatastore):
             n_threads,
             **norm_params,
         )
-        z = self.z[assay.name]
+        z = self.zw[assay.name]
         slot_name = f"{cell_key}__{group_key}"
         if "markers" not in z:
             z.create_group("markers")
@@ -787,6 +790,7 @@ class DataStore(MappingDatastore):
         g = create_zarr_count_assay(
             z=assay.z["/"],
             assay_name=assay_label,
+            workspace=self.workspace,
             chunk_size=assay.rawData.chunksize,
             n_cells=assay.cells.N,
             feat_ids=module_ids,
@@ -994,7 +998,7 @@ class DataStore(MappingDatastore):
         Returns:
             None
         """
-        print(self.z[start].tree(expand=True, level=depth))
+        print(self.zw[start].tree(expand=True, level=depth))
 
     def smart_label(
         self,
@@ -1560,25 +1564,25 @@ class DataStore(MappingDatastore):
             )
         clusts = self.cells.fetch(cluster_key, key=cell_key)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        dendrogram_loc = self.z[graph_loc].attrs["latest_dendrogram"]
+        dendrogram_loc = self.zw[graph_loc].attrs["latest_dendrogram"]
         n_clusts = len(set(clusts))
         coalesced_loc = dendrogram_loc + f"_coalesced_{n_clusts}"
-        if coalesced_loc in self.z:
+        if coalesced_loc in self.zw:
             subgraph = DiGraph()
-            subgraph.add_edges_from(self.z[coalesced_loc + "/edgelist"][:])
+            subgraph.add_edges_from(self.zw[coalesced_loc + "/edgelist"][:])
             for i, j in zip(
-                self.z[coalesced_loc + "/nodelist"][:],
-                self.z[coalesced_loc + "/partition_id"][:],
+                self.zw[coalesced_loc + "/nodelist"][:],
+                self.zw[coalesced_loc + "/partition_id"][:],
             ):
                 node = int(i[0])
                 subgraph.nodes[node]["nleaves"] = int(i[1])
                 if j != "-1":
                     subgraph.nodes[node]["partition_id"] = j
         else:
-            subgraph = CoalesceTree(make_digraph(self.z[dendrogram_loc][:]), clusts)
+            subgraph = CoalesceTree(make_digraph(self.zw[dendrogram_loc][:]), clusts)
             edge_list = to_pandas_edgelist(subgraph).values
             store = create_zarr_dataset(
-                self.z, coalesced_loc + "/edgelist", (100000,), "u8", edge_list.shape
+                self.zw, coalesced_loc + "/edgelist", (100000,), "u8", edge_list.shape
             )
             store[:] = edge_list
             node_list = []
@@ -1591,7 +1595,7 @@ class DataStore(MappingDatastore):
 
             node_list = np.array(node_list)
             store = create_zarr_dataset(
-                self.z,
+                self.zw,
                 coalesced_loc + "/nodelist",
                 (100000,),
                 node_list.dtype,
@@ -1600,7 +1604,7 @@ class DataStore(MappingDatastore):
             store[:] = node_list
 
             store = create_zarr_dataset(
-                self.z,
+                self.zw,
                 coalesced_loc + "/partition_id",
                 (100000,),
                 str,
@@ -1692,15 +1696,15 @@ class DataStore(MappingDatastore):
             raise ValueError("ERROR: Please provide a value for `group_key`")
         if cell_key is None:
             cell_key = "I"
-        if "markers" not in self.z[assay.name]:
+        if "markers" not in self.zw[assay.name]:
             raise KeyError("ERROR: Please run `run_marker_search` first")
         slot_name = f"{cell_key}__{group_key}"
-        if slot_name not in self.z[assay.name]["markers"]:
+        if slot_name not in self.zw[assay.name]["markers"]:
             raise KeyError(
                 f"ERROR: Please run `run_marker_search` first with {group_key} as `group_key` and "
                 f"{cell_key} as `cell_key`"
             )
-        g = self.z[assay.name]["markers"][slot_name]
+        g = self.zw[assay.name]["markers"][slot_name]
         feat_idx = []
         for i in g.keys():
             if "feature_index" in g[i]:

@@ -226,12 +226,12 @@ class MappingDatastore(GraphDataStore):
         if from_assay is None:
             from_assay = self._defaultAssay
         store_loc = f"{from_assay}/projections/{target_name}"
-        if store_loc not in self.z:
+        if store_loc not in self.zw:
             raise KeyError(
                 f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
                 f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters"
             )
-        store = self.z[store_loc]
+        store = self.zw[store_loc]
 
         indices = store["indices"][:]
         dists = store["distances"][:]
@@ -296,7 +296,7 @@ class MappingDatastore(GraphDataStore):
         if from_assay is None:
             from_assay = self._defaultAssay
         store_loc = f"{from_assay}/projections/{target_name}"
-        if store_loc not in self.z:
+        if store_loc not in self.zw:
             raise KeyError(
                 f"ERROR: Projections have not been computed for {target_name} in th latest graph. Please"
                 f" run `run_mapping` or update latest_graph by running `make_graph` with desired parameters"
@@ -317,7 +317,7 @@ class MappingDatastore(GraphDataStore):
                 raise TypeError("ERROR:  `target_subset` should be <list> type")
             target_subset = {x: None for x in target_subset}
 
-        store = self.z[store_loc]
+        store = self.zw[store_loc]
         indices = store["indices"][:]
         dists = store["distances"][:]
         preds = []
@@ -375,10 +375,10 @@ class MappingDatastore(GraphDataStore):
         if feat_key is None:
             feat_key = self._get_latest_feat_key(from_assay)
         graph_loc = self._get_latest_graph_loc(from_assay, cell_key, feat_key)
-        edges = self.z[graph_loc].edges[:]
-        weights = self.z[graph_loc].weights[:]
+        edges = self.zw[graph_loc].edges[:]
+        weights = self.zw[graph_loc].weights[:]
         ref_n_cells = self.cells.fetch_all(cell_key).sum()
-        store = self.z[from_assay].projections
+        store = self.zw[from_assay].projections
         pidx = np.vstack([store[x].indices[:, :use_k] for x in target_names])
         n_cells = [ref_n_cells] + [store[x].indices.shape[0] for x in target_names]
         ne = []
@@ -424,7 +424,7 @@ class MappingDatastore(GraphDataStore):
         target_names: List[str],
     ) -> None:
         g = create_zarr_dataset(
-            self.z[from_assay].projections, label, (1000, 2), "float64", embedding.shape
+            self.zw[from_assay].projections, label, (1000, 2), "float64", embedding.shape
         )
         g[:] = embedding
         g.attrs["n_cells"] = [
@@ -723,7 +723,7 @@ class MappingDatastore(GraphDataStore):
                           (Default value: 70)
             lspacing: The vertical space between the legend entries. Measured in font-size units. (Default value: 0.1)
             cspacing: The spacing between columns. Measured in font-size units. (Default value: 1)
-            savename: Path where the rendered figure is to be saved. The format of the saved image depends on the
+            savename: Path where the rendered figure is to be saved. The format of the saved image depends on
                       the extension present in the parameter value. (Default value: None)
             save_dpi: DPI when saving figure (Default value: 300)
             ax: An instance of Matplotlib's Axes object. This can be used to plot the figure into an already
@@ -757,8 +757,8 @@ class MappingDatastore(GraphDataStore):
                 "that for either `run_unified_umap` or `run_unified_tsne`. Please see the default values "
                 "for `label` parameter in those functions if unsure."
             )
-        t = self.z[from_assay].projections[layout_key][:]
-        attrs = dict(self.z[from_assay].projections[layout_key].attrs)
+        t = self.zw[from_assay].projections[layout_key][:]
+        attrs = dict(self.zw[from_assay].projections[layout_key].attrs)
         t_names = attrs["target_names"]
         ref_n_cells = attrs["n_cells"][0]
         t_n_cells = attrs["n_cells"][1:]

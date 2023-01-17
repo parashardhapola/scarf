@@ -1,5 +1,5 @@
 from . import full_path, remove
-
+import numpy as np
 
 def test_crtozarr(crh5_reader):
     from ..writers import CrToZarr
@@ -100,7 +100,7 @@ def test_zarr_subset(datastore):
 
     zarr_path = full_path("subset.zarr")
     writer = SubsetZarr(
-        zarr_path=zarr_path, assays=[datastore.RNA], cell_idx=[1, 10, 100, 500]
+        zarr_loc=zarr_path, assays=[datastore.RNA], cell_idx=np.array([1, 10, 100, 500])
     )
     writer.dump()
     remove(zarr_path)

@@ -122,17 +122,23 @@ class Assay:
     def __init__(
         self,
         z: zarrGroup,
-        name: str,
+        workspace: str,
+        name: str,  # FIXME change to assay_name
         cell_data: MetaData,
         nthreads: int,
         min_cells_per_feature: int = 10,
     ):
         self.name = name
-        self.z = z[self.name]
         self.cells = cell_data
         self.nthreads = nthreads
-        self.rawData = from_zarr(self.z["counts"], inline_array=True)
-        self.feats = MetaData(self.z["featureData"])
+        if workspace is None:
+            self.rawData = from_zarr(z[f"{name}/counts"], inline_array=True)
+            self.feats = MetaData(z[f"{name}/featureData"])
+            self.z = z[self.name]
+        else:
+            self.rawData = from_zarr(z[f"matrices/{name}/counts"], inline_array=True)
+            self.feats = MetaData(z[f"{workspace}/{name}/featureData"])
+            self.z = z[f"{workspace}/{name}"]
         self.attrs = self.z.attrs
         if "percentFeatures" not in self.attrs:
             self.attrs["percentFeatures"] = {}
@@ -735,7 +741,7 @@ class RNAassay(Assay):
     """
 
     def __init__(self, z: zarrGroup, name: str, cell_data: MetaData, **kwargs):
-        super().__init__(z, name, cell_data, **kwargs)
+        super().__init__(z=z, name=name, cell_data=cell_data, **kwargs)
         self.normMethod = norm_lib_size
         if "size_factor" in self.attrs:
             self.sf = int(self.attrs["size_factor"])
@@ -1018,7 +1024,7 @@ class ATACassay(Assay):
             n_docs: Number of cells. Used for TF-IDF normalization
             n_docs_per_term: Number of cells per feature. Used for TF-IDF normalization
         """
-        super().__init__(z, name, cell_data, **kwargs)
+        super().__init__(z=z, name=name, cell_data=cell_data, **kwargs)
         self.normMethod = norm_tf_idf
         self.n_term_per_doc = None
         self.n_docs = None
@@ -1146,7 +1152,7 @@ class ADTassay(Assay):
     def __init__(self, z: zarrGroup, name: str, cell_data: MetaData, **kwargs):
         """This subclass of Assay is designed for normalization of ADT/HTO
         (feature-barcodes library) data from CITE-Seq experiments."""
-        super().__init__(z, name, cell_data, **kwargs)
+        super().__init__(z=z, name=name, cell_data=cell_data, **kwargs)
         self.normMethod = norm_clr
 
     def normed(

@@ -155,6 +155,7 @@ def create_zarr_obj_array(
 def create_zarr_count_assay(
     z: zarr.Group,
     assay_name: str,
+    workspace: Union[str, None],
     chunk_size: Tuple[int, int],
     n_cells: int,
     feat_ids: Union[np.ndarray, List[str]],
@@ -166,6 +167,7 @@ def create_zarr_count_assay(
     Args:
         z (zarr.Group):
         assay_name (str):
+        workspace (Union[str, None]):
         chunk_size (Tuple[int, int]):
         n_cells (int):
         feat_ids (Union[np.ndarray, List[str]]):
@@ -175,7 +177,10 @@ def create_zarr_count_assay(
     Returns:
         A Zarr array.
     """
-    g = z.create_group(assay_name, overwrite=True)
+    if workspace is None:
+        g = z.create_group(assay_name, overwrite=True)
+    else:
+        g = z.create_group(f"{workspace}/{assay_name}", overwrite=True)
     g.attrs["is_assay"] = True
     g.attrs["misc"] = {}
     create_zarr_obj_array(g, "featureData/ids", feat_ids)
@@ -183,9 +188,23 @@ def create_zarr_count_assay(
     create_zarr_obj_array(
         g, "featureData/I", [True for _ in range(len(feat_ids))], "bool"
     )
+    if workspace is not None:
+        g = z.create_group(f"matrices/{assay_name}", overwrite=True)
     return create_zarr_dataset(
         g, "counts", chunk_size, dtype, (n_cells, len(feat_ids)), overwrite=True
     )
+
+
+def create_cell_data(z, workspace, ids, names):
+    if workspace is None:
+        g = z.create_group("cellData")
+    else:
+        g = z.create_group(f"{workspace}/cellData")
+    create_zarr_obj_array(g, "ids", ids, ids.dtype)
+    create_zarr_obj_array(g, "names", names, names.dtype)
+    create_zarr_obj_array(g, "I", [True for _ in range(len(ids))], "bool")
+    return g
+
 
 
 def sparse_writer(
@@ -225,27 +244,29 @@ class CrToZarr:
         zarr_loc: str,
         chunk_size=(1000, 1000),
         dtype: str = "uint32",
+        workspace: str = None
     ):
         self.cr = cr
         self.chunkSizes = chunk_size
+        self.workspace = workspace
         self.z = load_zarr(zarr_loc=zarr_loc, mode="w")
-        self._ini_cell_data()
+        create_cell_data(
+            z=self.z,
+            workspace=self.workspace,
+            ids=np.array(self.cr.cell_names()),
+            names=np.array(self.cr.cell_names())
+        )
         for assay_name in self.cr.assayFeats.columns:
             create_zarr_count_assay(
-                self.z,
-                assay_name,
-                chunk_size,
-                self.cr.nCells,
-                self.cr.feature_ids(assay_name),
-                self.cr.feature_names(assay_name),
-                dtype,
+                z=self.z,
+                assay_name=assay_name,
+                workspace=workspace,
+                chunk_size=chunk_size,
+                n_cells=self.cr.nCells,
+                feat_ids=self.cr.feature_ids(assay_name),
+                feat_names=self.cr.feature_names(assay_name),
+                dtype=dtype,
             )
-
-    def _ini_cell_data(self):
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.cr.cell_names())
-        create_zarr_obj_array(g, "names", self.cr.cell_names())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.cr.nCells)], "bool")
 
     @staticmethod
     def _prep_assay_input_ranges(af: pd.DataFrame) -> Dict[str, List[List[int]]]:
@@ -292,7 +313,10 @@ class CrToZarr:
             None
         """
         input_ranges = self._prep_assay_input_ranges(self.cr.assayFeats)
-        stores = {x: self.z[f"{x}/counts"] for x in input_ranges}
+        if self.workspace is None:
+            stores = {x: self.z[f"{x}/counts"] for x in input_ranges}
+        else:
+            stores = {x: self.z[f"matrices/{x}/counts"] for x in input_ranges}
         feat_offset = self._prep_feat_index_offset(input_ranges)
         s = 0
         n_chunks = self.cr.nCells // batch_size + 1
@@ -330,6 +354,7 @@ class H5adToZarr:
         h5ad: A H5adReader object, containing the Cellranger data.
         zarr_loc: The file name for the Zarr hierarchy or a store
         assay_name: the name of the assay (e. g. 'RNA')
+        workspace: An optional workspace id.
         chunk_size: The requested size of chunks to load into memory and process.
 
     Attributes:
@@ -344,11 +369,13 @@ class H5adToZarr:
         h5ad: H5adReader,
         zarr_loc: str,
         assay_name: str = None,
+        workspace: Union[str, None] = None,
         chunk_size=(1000, 1000),
     ):
         # TODO: support for multiple assay. One of the `var` datasets can be used to group features in separate assays
         self.h5ad = h5ad
         self.chunkSizes = chunk_size
+        self.workspace = workspace
         if assay_name is None:
             logger.info(
                 f"No value provided for assay names. Will use default value: 'RNA'"
@@ -359,28 +386,38 @@ class H5adToZarr:
         self.z = load_zarr(zarr_loc=zarr_loc, mode="w")
         self._ini_cell_data()
         create_zarr_count_assay(
-            self.z,
-            self.assayName,
-            chunk_size,
-            self.h5ad.nCells,
-            self.h5ad.feat_ids(),
-            self.h5ad.feat_names(),
-            self.h5ad.matrixDtype,
+            z=self.z,
+            assay_name=self.assayName,
+            workspace=workspace,
+            chunk_size=chunk_size,
+            n_cells=self.h5ad.nCells,
+            feat_ids=self.h5ad.feat_ids(),
+            feat_names=self.h5ad.feat_names(),
+            dtype=self.h5ad.matrixDtype,
         )
-        for i, j in self.h5ad.get_feat_columns():
-            if i not in self.z[self.assayName]["featureData"]:
-                create_zarr_obj_array(
-                    self.z[self.assayName]["featureData"], i, j, j.dtype
-                )
+        self._ini_feature_data()
 
     def _ini_cell_data(self):
-        g = self.z.create_group("cellData")
         ids = self.h5ad.cell_ids()
-        create_zarr_obj_array(g, "ids", ids, ids.dtype)
-        create_zarr_obj_array(g, "names", ids, ids.dtype)
-        create_zarr_obj_array(g, "I", [True for _ in range(self.h5ad.nCells)], "bool")
+        g = create_cell_data(
+            z=self.z,
+            workspace=self.workspace,
+            ids=ids,
+            names=ids,
+        )
         for i, j in self.h5ad.get_cell_columns():
             create_zarr_obj_array(g, i, j, j.dtype)
+
+    def _ini_feature_data(self):
+        if self.workspace is None:
+            g = self.z[f"{self.assayName}/featureData"]
+        else:
+            g = self.z[f"{self.workspace}/{self.assayName}/featureData"]
+        for i, j in self.h5ad.get_feat_columns():
+            if i not in g:
+                create_zarr_obj_array(
+                    g, i, j, j.dtype
+                )
 
     def dump(self, batch_size: int = 1000) -> None:
         # TODO: add informed description to docstring
@@ -391,8 +428,13 @@ class H5adToZarr:
         Returns:
             None
         """
+        if self.workspace is None:
+            store = self.z[f"{self.assayName}/counts"]
+        else:
+            store = self.z[f"matrices/{self.assayName}/counts"]
+
         total_cells_written = sparse_writer(
-            store=self.z[f"{self.assayName}/counts"],
+            store=store,
             data_stream=self.h5ad.consume(batch_size),
             n_cells=self.h5ad.nCells,
             batch_size=batch_size,
@@ -428,12 +470,14 @@ class NaboH5ToZarr:
         h5: NaboH5Reader,
         zarr_fn: str,
         assay_name: str = None,
+        workspace: Union[str, None] = None,
         chunk_size=(1000, 1000),
         dtype: str = "uint32",
     ):
         self.h5 = h5
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
+        self.workspace = workspace
         if assay_name is None:
             logger.info(
                 f"No value provided for assay names. Will use default value: 'RNA'"
@@ -444,20 +488,24 @@ class NaboH5ToZarr:
         self.z = zarr.open(self.fn, mode="w")
         self._ini_cell_data()
         create_zarr_count_assay(
-            self.z,
-            self.assayName,
-            chunk_size,
-            self.h5.nCells,
-            self.h5.feat_ids(),
-            self.h5.feat_names(),
-            dtype,
+            z=self.z,
+            assay_name=self.assayName,
+            workspace=workspace,
+            chunk_size=chunk_size,
+            n_cells=self.h5.nCells,
+            feat_ids=self.h5.feat_ids(),
+            feat_names=self.h5.feat_names(),
+            dtype=dtype,
         )
 
     def _ini_cell_data(self):
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.h5.cell_ids())
-        create_zarr_obj_array(g, "names", self.h5.cell_ids())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.h5.nCells)], "bool")
+        ids = self.h5.cell_ids()
+        _ = create_cell_data(
+            z=self.z,
+            workspace=self.workspace,
+            ids=np.array(ids),
+            names=np.array(ids),
+        )
 
     def dump(self, batch_size: int = 500) -> None:
         # TODO: add informed description to docstring
@@ -468,7 +516,10 @@ class NaboH5ToZarr:
         Returns:
             None
         """
-        store = self.z["%s/counts" % self.assayName]
+        if self.workspace is None:
+            store = self.z[f"{self.assayName}/counts"]
+        else:
+            store = self.z[f"matrices/{self.assayName}/counts"]
         s, e, = (
             0,
             0,
@@ -508,12 +559,14 @@ class LoomToZarr:
         loom: LoomReader,
         zarr_fn: str,
         assay_name: str = None,
+        workspace: Union[str, None] = None,
         chunk_size=(1000, 1000),
     ):
         # TODO: support for multiple assay. Data from within individual layers can be treated as separate assays
         self.loom = loom
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
+        self.workspace = workspace
         if assay_name is None:
             logger.info(
                 f"No value provided for assay names. Will use default value: 'RNA'"
@@ -524,27 +577,38 @@ class LoomToZarr:
         self.z = zarr.open(self.fn, mode="w")
         self._ini_cell_data()
         create_zarr_count_assay(
-            self.z,
-            self.assayName,
-            chunk_size,
-            self.loom.nCells,
-            self.loom.feature_ids(),
-            self.loom.feature_names(),
-            self.loom.matrixDtype,
+            z=self.z,
+            assay_name=self.assayName,
+            workspace=workspace,
+            chunk_size=chunk_size,
+            n_cells=self.loom.nCells,
+            feat_ids=self.loom.feature_ids(),
+            feat_names=self.loom.feature_names(),
+            dtype=self.loom.matrixDtype,
         )
-        for i, j in self.loom.get_feature_attrs():
-            create_zarr_obj_array(self.z[self.assayName]["featureData"], i, j, j.dtype)
+        self._ini_feature_data()
 
     def _ini_cell_data(self):
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.loom.cell_ids())
-        create_zarr_obj_array(g, "names", self.loom.cell_ids())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.loom.nCells)], "bool")
+        ids = np.array(self.loom.cell_ids())
+        g = create_cell_data(
+            z=self.z,
+            workspace=self.workspace,
+            ids=ids,
+            names=ids,
+        )
         for i, j in self.loom.get_cell_attrs():
             try:
                 create_zarr_obj_array(g, i, j, j.dtype)
             except UnicodeDecodeError:
                 logger.warning(f"Could not import {i} cell(column) attribute")
+
+    def _ini_feature_data(self):
+        if self.workspace is None:
+            g = self.z[f"{self.assayName}/featureData"]
+        else:
+            g = self.z[f"{self.workspace}/{self.assayName}/featureData"]
+        for i, j in self.loom.get_feature_attrs():
+            create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
         # TODO: add informed description to docstring
@@ -555,8 +619,12 @@ class LoomToZarr:
         Returns:
             None
         """
+        if self.workspace is None:
+            store = self.z[f"{self.assayName}/counts"]
+        else:
+            store = self.z[f"matrices/{self.assayName}/counts"]
         total_cells_written = sparse_writer(
-            store=self.z[f"{self.assayName}/counts"],
+            store=store,
             data_stream=self.loom.consume(batch_size),
             n_cells=self.loom.nCells,
             batch_size=batch_size,
@@ -595,15 +663,19 @@ class SparseToZarr:
         self,
         csr_mat: csr_matrix,
         zarr_fn: str,
-        cell_ids: List[str],
-        feature_ids: List[str],
+        cell_ids: Union[np.ndarray, List[str]],
+        feature_ids: Union[np.ndarray, List[str]],
         assay_name: str = None,
+        workspace: Union[str, None] = None,
+        feature_names: Union[np.ndarray, List[str], None] = None,
         chunk_size=(1000, 1000),
         matrix_dtype: Optional[np.dtype] = None,
     ):
         self.mat = csr_mat
         self.fn = zarr_fn
         self.chunkSizes = chunk_size
+        self.workspace = workspace
+        cell_ids = np.array(cell_ids)
         if matrix_dtype is None:
             self.matrixDtype = self.mat.dtype
         else:
@@ -626,22 +698,24 @@ class SparseToZarr:
             )
 
         self.z = zarr.open(self.fn, mode="w")
-        self._ini_cell_data(cell_ids)
-        create_zarr_count_assay(
-            self.z,
-            self.assayName,
-            chunk_size,
-            self.nCells,
-            feature_ids,
-            feature_ids,
-            self.matrixDtype,
+        _ = create_cell_data(
+            z=self.z,
+            workspace=self.workspace,
+            ids=cell_ids,
+            names=cell_ids,
         )
-
-    def _ini_cell_data(self, cell_ids):
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", cell_ids)
-        create_zarr_obj_array(g, "names", cell_ids)
-        create_zarr_obj_array(g, "I", [True for _ in range(self.nCells)], "bool")
+        if feature_names is None:
+            feature_names = feature_ids
+        create_zarr_count_assay(
+            z=self.z,
+            assay_name=self.assayName,
+            workspace=workspace,
+            chunk_size=chunk_size,
+            n_cells=self.nCells,
+            feat_ids=feature_ids,
+            feat_names=feature_names,
+            dtype=self.matrixDtype,
+        )
 
     def dump(self, batch_size: Optional[int] = None) -> None:
         """Write out the data matrix into the Zarr hierarchy.
@@ -657,7 +731,12 @@ class SparseToZarr:
         Returns:
             None
         """
-        store = self.z["%s/counts" % self.assayName]
+
+        if self.workspace is None:
+            store = self.z[f"{self.assayName}/counts"]
+        else:
+            store = self.z[f"matrices/{self.assayName}/counts"]
+
         if batch_size is None:
             batch_size = store.chunks[0]
         s, e, = (
@@ -712,33 +791,36 @@ class CSVtoZarr:
         zarr_fn: str,
         assay_name: str,
         chunk_size=(1000, 1000),
+        workspace: Union[str, None] = None,
         dtype: Optional[np.dtype] = None,
     ):
         self.csvr = cr
         self.fn = zarr_fn
         self.assayName = assay_name
         self.chunkSizes = chunk_size
+        self.workspace = workspace
         self.z = zarr.open(self.fn, mode="w")
         if dtype is not None:
             self.dtype = dtype
         else:
             self.dtype = next(self.csvr.consume())[0].dtype
-        self._ini_cell_data()
-        create_zarr_count_assay(
-            self.z,
-            assay_name,
-            chunk_size,
-            self.csvr.nCells,
-            self.csvr.feature_ids(),
-            self.csvr.feature_ids(),
-            self.dtype,
+        cell_ids = self.csvr.cell_ids()
+        _ = create_cell_data(
+            z=self.z,
+            workspace=workspace,
+            ids=cell_ids,
+            names=cell_ids,
         )
-
-    def _ini_cell_data(self) -> None:
-        g = self.z.create_group("cellData")
-        create_zarr_obj_array(g, "ids", self.csvr.cell_ids())
-        create_zarr_obj_array(g, "names", self.csvr.cell_ids())
-        create_zarr_obj_array(g, "I", [True for _ in range(self.csvr.nCells)], "bool")
+        create_zarr_count_assay(
+            z=self.z,
+            assay_name=self.assayName,
+            workspace=workspace,
+            chunk_size=chunk_size,
+            n_cells=self.csvr.nCells,
+            feat_ids=self.csvr.feature_ids(),
+            feat_names=self.csvr.feature_ids(),
+            dtype=self.dtype,
+        )
 
     def dump(self) -> None:
         """Writes the count values into the Zarr matrix.
@@ -752,7 +834,10 @@ class CSVtoZarr:
             None
         """
 
-        store = self.z["%s/counts" % self.assayName]
+        if self.workspace is None:
+            store = self.z[f"{self.assayName}/counts"]
+        else:
+            store = self.z[f"matrices/{self.assayName}/counts"]
         cell_data = [
             create_zarr_obj_array(
                 self.z["cellData"], name=x, data=None, dtype=y, shape=self.csvr.nCells
@@ -850,7 +935,7 @@ class SubsetZarr:
     """Split Zarr file using a subset of cells.
 
     Args:
-        zarr_path: Path for of the output (subsetted) Zarr file
+        zarr_loc: Path for the output (subsetted) Zarr file
         assays: Source assays to be subsetted. These assays must be from the same dataset
         cell_key: Name of a boolean column in cell metadata. The cells with value True are included in the
                   subset. Only used when cell_idx is None.
@@ -864,22 +949,33 @@ class SubsetZarr:
 
     def __init__(
         self,
-        zarr_path: str,
+        zarr_loc: str,
         assays: list,
+        in_workspace: Union[str, None] = None,
+        out_workspace: Union[str, None] = None,
         cell_key: str = None,
         cell_idx: np.ndarray = None,
         reset_cell_filter: bool = True,
         overwrite_existing_file: bool = False,
         overwrite_cell_data: bool = False,
     ) -> None:
-        self.outZarrFn = zarr_path
         self.resetCells = reset_cell_filter
         self.overFn = overwrite_existing_file
         self.overCells = overwrite_cell_data
-
+        self.inWorkspace = in_workspace
+        self.outWorkspace = out_workspace
+        self.z = self._check_files(zarr_loc)
         self.assays = self._check_assays(assays)
         self.cellIdx = self._check_idx(cell_key, cell_idx)
-        self.outZarr = self._check_files()
+
+    def _check_files(self, zarr_loc: str):
+        if isinstance(zarr_loc, str) and os.path.isdir(zarr_loc) and self.overFn is False:
+            raise ValueError(
+                f"Zarr file with name: {zarr_loc} already exists.\n"
+                f"If you want to overwrite it then please set  overwrite_existing_file to True. "
+                f"No subsetting was performed."
+            )
+        return load_zarr(zarr_loc=zarr_loc, mode="w")
 
     @staticmethod
     def _check_assays(assays):
@@ -923,8 +1019,8 @@ class SubsetZarr:
                 else:
                     if np.all(cell_idx == idx) is False:
                         raise ValueError(
-                            f"ERROR: Provided cell_key  {cell_key} is not consistent across the assays. Please make "
-                            f"sure that the assays are from the same DataStore."
+                            f"ERROR: Provided cell_key {cell_key} is not consistent across the assays. "
+                            f"Please make sure that the assays are from the same DataStore."
                         )
             cell_idx = np.where(cell_idx)[0]
         else:
@@ -939,23 +1035,22 @@ class SubsetZarr:
                 )
         return cell_idx
 
-    def _check_files(self):
-        if os.path.isdir(self.outZarrFn):
-            if self.overFn is False:
-                raise ValueError(
-                    f"Zarr file with name: {self.outZarrFn} already exists.\nIf you want to overwrite it then please "
-                    f"set overwrite_existing_file to True. No subsetting was performed."
-                )
-        return zarr.open(self.outZarrFn, mode="w")
-
     def _prep_cell_data(self):
-        n_cells = len(self.cellIdx)
-        if "cellData" in self.outZarr:
-            g = self.outZarr["cellData"]
+        if self.outWorkspace is None:
+            cell_slot = "cellData"
         else:
-            g = self.outZarr.create_group("cellData")
+            cell_slot = f"{self.outWorkspace}/cellData"
+        if cell_slot in self.z:
+            g = self.z[cell_slot]
+        else:
+            g = self.z.create_group(cell_slot)
 
-        cell_data = self.assays[0].z["/"].cellData
+        if self.outWorkspace is None:
+            cell_data = self.assays[0].z["/cellData"]
+        else:
+            cell_data = self.assays[0].z[f"/{self.outWorkspace}/cellData"]
+
+        n_cells = len(self.cellIdx)
         for i in cell_data.keys():
             if i in g and self.overCells is False:
                 continue
@@ -969,13 +1064,14 @@ class SubsetZarr:
         n_cells = len(self.cellIdx)
         for assay in self.assays:
             create_zarr_count_assay(
-                self.outZarr,
-                assay.name,
-                assay.rawData.chunksize,
-                n_cells,
-                assay.feats.fetch_all("ids"),
-                assay.feats.fetch_all("names"),
-                assay.rawData.dtype,
+                z=self.z,
+                assay_name=assay.name,
+                workspace=self.outWorkspace,
+                chunk_size=assay.rawData.chunksize,
+                n_cells=n_cells,
+                feat_ids=assay.feats.fetch_all("ids"),
+                feat_names=assay.feats.fetch_all("names"),
+                dtype=assay.rawData.dtype,
             )
 
     def dump(self):
@@ -983,7 +1079,10 @@ class SubsetZarr:
         self._prep_counts()
         for assay in self.assays:
             raw_data = assay.rawData[self.cellIdx]
-            store = self.outZarr[f"{assay.name}/counts"]
+            if self.outWorkspace is None:
+                store = self.z[f"{assay.name}/counts"]
+            else:
+                store = self.z[f"matrices/{assay.name}/counts"]
             s, e, = (
                 0,
                 0,
@@ -1020,7 +1119,7 @@ class ZarrMerge:
 
     Attributes:
         assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
-        names: Names of the each assay objects in the `assays` parameter.
+        names: Names of each assay objects in the `assays` parameter.
         mergedCells:
         nCells: Number of cells in dataset.
         featCollection:
@@ -1037,6 +1136,8 @@ class ZarrMerge:
         assays: list,
         names: List[str],
         merge_assay_name: str,
+        in_workspaces: Union[str, None] = None,
+        out_workspace: Union[str, None] = None,
         chunk_size=(1000, 1000),
         dtype: str = None,
         overwrite: bool = False,
@@ -1045,6 +1146,8 @@ class ZarrMerge:
     ):
         self.assays = assays
         self.names = names
+        self.inWorkspaces = in_workspaces
+        self.outWorkspace = out_workspace
         self.mergedCells: pd.DataFrame = self._merge_cell_table(
             reset_cell_filter, prepend_text
         )
@@ -1060,14 +1163,16 @@ class ZarrMerge:
                 dtype = str(self.assays[0].rawData.dtype)
             else:
                 dtype = "float"
+
         self.assayGroup = create_zarr_count_assay(
-            self.z["/"],
-            merge_assay_name,
-            chunk_size,
-            self.nCells,
-            list(self.mergedFeats.index),
-            list(self.mergedFeats.names.values),
-            dtype,
+            z=self.z,
+            assay_name=merge_assay_name,
+            workspace=self.outWorkspace,
+            chunk_size=chunk_size,
+            n_cells=self.nCells,
+            feat_ids=self.mergedFeats.index.values,
+            feat_names=self.mergedFeats.names.values,
+            dtype=dtype,
         )
 
     def _merge_cell_table(self, reset: bool, prepend_text: str) -> pd.DataFrame:
@@ -1159,41 +1264,49 @@ class ZarrMerge:
             ret_val.append(self.mergedFeats["idx"].reindex(list(ids.keys())).values)
         return ret_val
 
-    def _use_existing_zarr(self, zarr_path, merge_assay_name, overwrite):
+    def _use_existing_zarr(self, zarr_loc, merge_assay_name, overwrite):
+        if self.outWorkspace is None:
+            cell_slot = "cellData"
+            assay_slot = merge_assay_name
+        else:
+            cell_slot = f"{self.outWorkspace}/cellData"
+            assay_slot = f"{self.outWorkspace}/merge_assay_name"
+
         try:
-            z = zarr.open(zarr_path, mode="r")
-            if "cellData" not in z:
+            z = load_zarr(zarr_loc, mode="r")
+            if cell_slot not in z:
                 raise ValueError(
-                    f"ERROR: Zarr file with name {zarr_path} exists but seems corrupted. Either delete the "
+                    f"ERROR: Zarr file exists but seems corrupted. Either delete the "
                     "existing file or choose another path"
                 )
-            if merge_assay_name in z:
+            if assay_slot in z:
                 if overwrite is False:
                     raise ValueError(
-                        f"ERROR: Zarr file `{zarr_path}` already contains {merge_assay_name} assay. Choose "
+                        f"ERROR: Zarr file already contains {merge_assay_name} assay. Choose "
                         "a different zarr path or a different assay name. Otherwise set overwrite to True"
                     )
             try:
                 if not all(
-                    z["cellData"]["ids"][:] == np.array(self.mergedCells["ids"].values)
+                    z[cell_slot]["ids"][:] == np.array(self.mergedCells["ids"].values)
                 ):
                     raise ValueError(
-                        f"ERROR: order of cells does not match the one in existing file: {zarr_path}"
+                        f"ERROR: order of cells does not match the one in existing file"
                     )
             except KeyError:
                 raise ValueError(
-                    f"ERROR: 'cell data' in Zarr file {zarr_path} seems corrupted. Either delete the "
+                    f"ERROR: 'cell data seems corrupted. Either delete the "
                     "existing file or choose another path"
                 )
-            return zarr.open(zarr_path, mode="r+")
+            return load_zarr(zarr_loc, mode="r+")
         except ValueError:
             # So no zarr file with same name exists. Check if a non zarr folder with the same name exists
-            if os.path.exists(zarr_path):
+            if isinstance(zarr_loc, str) and os.path.exists(zarr_loc):
                 raise ValueError(
-                    f"ERROR: Directory/file with name `{zarr_path}`exists. Either delete it or use another name"
+                    f"ERROR: Directory/file with name `{zarr_loc}`exists. "
+                    f"Either delete it or use another name"
                 )
             # creating a new zarr file
-            return zarr.open(zarr_path, mode="w")
+            return load_zarr(zarr_loc, mode="w")
 
     def _ini_cell_data(self, overwrite) -> None:
         """Save cell attributes to Zarr.
@@ -1201,8 +1314,13 @@ class ZarrMerge:
         Returns:
             None
         """
-        if ("cellData" in self.z and overwrite is True) or "cellData" not in self.z:
-            g = self.z.create_group("cellData", overwrite=True)
+        if self.outWorkspace is None:
+            cell_slot = "cellData"
+        else:
+            cell_slot = f"{self.outWorkspace}/cellData"
+
+        if (cell_slot in self.z and overwrite is True) or cell_slot not in self.z:
+            g = self.z.create_group(cell_slot, overwrite=True)
             for i in self.mergedCells:
                 vals = self.mergedCells[i].values
                 create_zarr_obj_array(g, i, vals, vals.dtype, overwrite=True)
@@ -1227,6 +1345,7 @@ class ZarrMerge:
                 pos_end += i.shape[0]
                 a = np.zeros((i.shape[0], self.nFeats))
                 a[:, feat_order] = controlled_compute(i, nthreads)
+                # FIXME: make this operation sparse
                 self.assayGroup[pos_start:pos_end, :] = a
                 pos_start = pos_end
 
