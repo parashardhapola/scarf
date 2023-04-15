@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, List, Union
+from typing import Generator, Tuple, List, Union, Callable, Optional
 import os
 import numpy as np
 import pandas as pd
@@ -42,6 +42,8 @@ class MappingDatastore(GraphDataStore):
         exclude_missing: bool = False,
         filter_null: bool = False,
         feat_scaling: bool = True,
+        ann_index_fetcher: Optional[Callable] = None,
+        ann_index_saver: Optional[Callable] = None,
     ) -> None:
         """Projects cells from external assays into the cell-neighbourhood
         graph using existing PCA loadings and ANN index. For each external cell
@@ -78,6 +80,8 @@ class MappingDatastore(GraphDataStore):
                          This has an affect only when `exclude_missing` is True. (Default value: False)
             feat_scaling: If False then features from target cells are not scaled. This is automatically set to False
                           if `run_coral` is True (Default value: True). Setting this to False is not recommended.
+            ann_index_fetcher:
+            ann_index_saver:
 
         Returns:
             None
@@ -138,6 +142,8 @@ class MappingDatastore(GraphDataStore):
             return_ann_object=True,
             update_keys=False,
             feat_scaling=feat_scaling,
+            ann_index_fetcher=ann_index_fetcher,
+            ann_index_saver=ann_index_saver,
         )
         if save_k > ann_obj.k:
             logger.warning(f"`save_k` was decreased to {ann_obj.k}")
@@ -424,7 +430,11 @@ class MappingDatastore(GraphDataStore):
         target_names: List[str],
     ) -> None:
         g = create_zarr_dataset(
-            self.zw[from_assay].projections, label, (1000, 2), "float64", embedding.shape
+            self.zw[from_assay].projections,
+            label,
+            (1000, 2),
+            "float64",
+            embedding.shape,
         )
         g[:] = embedding
         g.attrs["n_cells"] = [

@@ -34,8 +34,10 @@ def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str, workspace: str) -> bo
             raise KeyError(f"ERROR: Workspace defined but no 'matrices' slot found")
         if assay_name not in z["matrices"]:
             raise KeyError(f"ERROR: {assay_name} not found in workspace matrices slot")
-        if 'counts' not in z["matrices"][assay_name]:
-            raise KeyError(f"ERROR: 'counts' not found in {assay_name} in workspace matrices slot")
+        if "counts" not in z["matrices"][assay_name]:
+            raise KeyError(
+                f"ERROR: 'counts' not found in {assay_name} in workspace matrices slot"
+            )
     return True
 
 

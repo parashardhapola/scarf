@@ -206,7 +206,6 @@ def create_cell_data(z, workspace, ids, names):
     return g
 
 
-
 def sparse_writer(
     store: zarr.hierarchy, data_stream, n_cells: int, batch_size: int
 ) -> int:
@@ -244,7 +243,7 @@ class CrToZarr:
         zarr_loc: str,
         chunk_size=(1000, 1000),
         dtype: str = "uint32",
-        workspace: str = None
+        workspace: str = None,
     ):
         self.cr = cr
         self.chunkSizes = chunk_size
@@ -254,7 +253,7 @@ class CrToZarr:
             z=self.z,
             workspace=self.workspace,
             ids=np.array(self.cr.cell_names()),
-            names=np.array(self.cr.cell_names())
+            names=np.array(self.cr.cell_names()),
         )
         for assay_name in self.cr.assayFeats.columns:
             create_zarr_count_assay(
@@ -415,9 +414,7 @@ class H5adToZarr:
             g = self.z[f"{self.workspace}/{self.assayName}/featureData"]
         for i, j in self.h5ad.get_feat_columns():
             if i not in g:
-                create_zarr_obj_array(
-                    g, i, j, j.dtype
-                )
+                create_zarr_obj_array(g, i, j, j.dtype)
 
     def dump(self, batch_size: int = 1000) -> None:
         # TODO: add informed description to docstring
@@ -969,7 +966,11 @@ class SubsetZarr:
         self.cellIdx = self._check_idx(cell_key, cell_idx)
 
     def _check_files(self, zarr_loc: str):
-        if isinstance(zarr_loc, str) and os.path.isdir(zarr_loc) and self.overFn is False:
+        if (
+            isinstance(zarr_loc, str)
+            and os.path.isdir(zarr_loc)
+            and self.overFn is False
+        ):
             raise ValueError(
                 f"Zarr file with name: {zarr_loc} already exists.\n"
                 f"If you want to overwrite it then please set  overwrite_existing_file to True. "
