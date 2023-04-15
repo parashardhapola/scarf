@@ -84,7 +84,7 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     dask_to_zarr(
         data,
         assay.z["/"],
-        f"{assay.name}/normed__I__{feat_key}/data_coral",
+        f"{assay.z.name}/normed__I__{feat_key}/data_coral",
         1000,
         nthreads,
         msg="Writing out coral corrected data",
@@ -186,7 +186,7 @@ def align_features(
     normed_data = target_assay.normed(
         target_assay.cells.active_index("I"), sorted_t_idx, **norm_params
     )
-    loc = f"{target_assay.name}/normed__I__{target_feat_key}/data"
+    loc = f"{target_assay.z.name}/normed__I__{target_feat_key}/data"
 
     og = create_zarr_dataset(
         target_assay.z["/"], loc, (1000,), "float64", (normed_data.shape[0], len(t_idx))
