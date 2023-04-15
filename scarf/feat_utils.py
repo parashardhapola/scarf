@@ -77,7 +77,7 @@ def binned_sampling(
     obs_cut: pd.Series = values.fillna(0).rank(method="min").divide(n_items).astype(int)
 
     control_genes = set()
-    for cut in np.unique(obs_cut[feature_list]):
+    for cut in np.unique(obs_cut[list(feature_list)]):
         # Replaced np.random.shuffle with pandas' sample method
         r_genes = (
             obs_cut[obs_cut == cut].sample(n=ctrl_size, random_state=rand_seed).index
