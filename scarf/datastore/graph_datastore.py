@@ -174,7 +174,10 @@ class GraphDataStore(BaseDataStore):
         renormalize_subset = bool(renormalize_subset)
 
         if dims is None or pca_cell_key is None:
-            if normed_loc in self.zw and "latest_reduction" in self.zw[normed_loc].attrs:
+            if (
+                normed_loc in self.zw
+                and "latest_reduction" in self.zw[normed_loc].attrs
+            ):
                 reduction_loc = self.zw[normed_loc].attrs["latest_reduction"]
                 c_dims, c_pca_cell_key = reduction_loc.rsplit("__", 2)[1:]
             else:
@@ -217,7 +220,10 @@ class GraphDataStore(BaseDataStore):
             or ann_m is None
             or rand_state is None
         ):
-            if reduction_loc in self.zw and "latest_ann" in self.zw[reduction_loc].attrs:
+            if (
+                reduction_loc in self.zw
+                and "latest_ann" in self.zw[reduction_loc].attrs
+            ):
                 ann_loc = self.zw[reduction_loc].attrs["latest_ann"]
                 (
                     c_ann_metric,
@@ -274,7 +280,10 @@ class GraphDataStore(BaseDataStore):
         rand_state = int(rand_state)
 
         if k is None:
-            if reduction_loc in self.zw and "latest_ann" in self.zw[reduction_loc].attrs:
+            if (
+                reduction_loc in self.zw
+                and "latest_ann" in self.zw[reduction_loc].attrs
+            ):
                 ann_loc = self.zw[reduction_loc].attrs["latest_ann"]
                 knn_loc = self.zw[ann_loc].attrs["latest_knn"]
                 k = int(knn_loc.rsplit("__", 1)[1])
