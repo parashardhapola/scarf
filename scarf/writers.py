@@ -1049,7 +1049,7 @@ class SubsetZarr:
         if self.outWorkspace is None:
             cell_data = self.assays[0].z["/cellData"]
         else:
-            cell_data = self.assays[0].z[f"/{self.outWorkspace}/cellData"]
+            cell_data = self.assays[0].z[f"/{self.inWorkspace}/cellData"]
 
         n_cells = len(self.cellIdx)
         for i in cell_data.keys():
