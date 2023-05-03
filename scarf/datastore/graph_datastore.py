@@ -495,6 +495,7 @@ class GraphDataStore(BaseDataStore):
         custom_loadings: Optional[np.ndarray] = None,
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
+        harmonize: bool = False,
         show_elbow_plot: bool = False,
         ann_index_fetcher: Optional[Callable] = None,
         ann_index_saver: Optional[Callable] = None,
@@ -818,6 +819,7 @@ class GraphDataStore(BaseDataStore):
             ann_idx=ann_idx,
             lsi_skip_first=lsi_skip_first,
             lsi_params={},
+            harmonize=harmonize
         )
 
         if reduction_loc not in self.zw:
@@ -881,6 +883,7 @@ class GraphDataStore(BaseDataStore):
                 recall = self_query_knn(
                     ann_obj,
                     self.zw.create_group(knn_loc, overwrite=True),
+                    harmonize=harmonize,
                     batch_size,
                     self.nthreads,
                 )

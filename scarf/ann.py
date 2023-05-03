@@ -2,6 +2,7 @@ import numpy as np
 from numpy.linalg import LinAlgError
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
+from .harmony import run_harmony
 
 
 __all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
@@ -72,6 +73,7 @@ class AnnStream:
         ann_idx,
         lsi_skip_first: bool,
         lsi_params: dict,
+        harmonize: bool
     ):
         self.data = data
         self.k = k
@@ -153,6 +155,8 @@ class AnnStream:
             else:
                 raise ValueError(f"ERROR: Unknown reduction method: {self.method}")
             if ann_idx is None:
+                if harmonize:
+
                 self.annIdx = self._fit_ann()
             else:
                 self.annIdx = ann_idx
@@ -291,8 +295,11 @@ class AnnStream:
             self.annEf,
             self.annThreads,
         )
-        for i in self.iter_blocks(msg="Fitting ANN"):
-            ann_idx.add_items(self.reducer(i))
+        if self.harmonize:
+
+        else:
+            for i in self.iter_blocks(msg="Fitting ANN"):
+                ann_idx.add_items(self.reducer(i))
         return ann_idx
 
     def _fit_kmeans(self, do_ann_fit):
