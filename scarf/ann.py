@@ -156,8 +156,9 @@ class AnnStream:
                 raise ValueError(f"ERROR: Unknown reduction method: {self.method}")
             if ann_idx is None:
                 if harmonize:
-
-                self.annIdx = self._fit_ann()
+                    pass
+                else:
+                    self.annIdx = self._fit_ann()
             else:
                 self.annIdx = ann_idx
                 self.annIdx.set_ef(self.annEf)
@@ -296,7 +297,7 @@ class AnnStream:
             self.annThreads,
         )
         if self.harmonize:
-
+            pass
         else:
             for i in self.iter_blocks(msg="Fitting ANN"):
                 ann_idx.add_items(self.reducer(i))

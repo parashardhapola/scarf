@@ -881,11 +881,11 @@ class GraphDataStore(BaseDataStore):
             recall = None
             if knn_loc not in self.zw:
                 recall = self_query_knn(
-                    ann_obj,
-                    self.zw.create_group(knn_loc, overwrite=True),
+                    ann_obj=ann_obj,
+                    store=self.zw.create_group(knn_loc, overwrite=True),
+                    chunk_size=batch_size,
+                    n_thra=self.nthreads,
                     harmonize=harmonize,
-                    batch_size,
-                    self.nthreads,
                 )
                 recall = "%.2f" % recall
 
