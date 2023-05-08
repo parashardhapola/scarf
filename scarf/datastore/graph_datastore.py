@@ -496,6 +496,7 @@ class GraphDataStore(BaseDataStore):
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
         harmonize: bool = False,
+        batches: Optional[List[str]] = None,
         show_elbow_plot: bool = False,
         ann_index_fetcher: Optional[Callable] = None,
         ann_index_saver: Optional[Callable] = None,
@@ -783,18 +784,32 @@ class GraphDataStore(BaseDataStore):
             if ann_index_fn is None or os.path.exists(ann_index_fn) is False:
                 logger.warning(f"Ann index file expected but could not be found")
             else:
-                import hnswlib
+                load_index = True
+                if harmonize:
+                    if "isHarmonized" in self.zw[ann_loc].attrs:
+                        if self.zw[ann_loc].attrs["isHarmonized"] != harmonize:
+                            load_index = False
+                if load_index:
+                    import hnswlib
 
-                temp = dims if dims > 0 else data.shape[1]
-                ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
-                ann_idx.load_index(ann_index_fn)
-                # TODO: check if ANN is index is trained with expected number of cells.
-                logger.info(f"Using existing ANN index")
+                    temp = dims if dims > 0 else data.shape[1]
+                    ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
+                    ann_idx.load_index(ann_index_fn)
+                    # TODO: check if ANN is index is trained with expected number of cells.
+                    logger.info(f"Using existing ANN index")
 
         if kmeans_loc in self.zw:
             fit_kmeans = False
             logger.info(f"using existing kmeans cluster centers")
         disable_scaling = True if feat_scaling is False else False
+
+        if harmonize:
+            if batches is None:
+                raise ValueError(f"Harmonization requested but no batches provided")
+            else:
+                if isinstance(batches, list) is False:
+                    raise ValueError(f"batches must be a list of columns in cell metadata that represent batches")
+                batches = pd.DataFrame([self.cells.fetch(x, key=cell_key).astype(object) for x in batches])
 
         # TODO: expose LSImodel parameters
         ann_obj = AnnStream(
@@ -819,7 +834,9 @@ class GraphDataStore(BaseDataStore):
             ann_idx=ann_idx,
             lsi_skip_first=lsi_skip_first,
             lsi_params={},
-            harmonize=harmonize
+            harmonize=harmonize,
+            harmonized_data=harmonized_data,
+            batches=batches
         )
 
         if reduction_loc not in self.zw:
@@ -884,7 +901,7 @@ class GraphDataStore(BaseDataStore):
                     ann_obj=ann_obj,
                     store=self.zw.create_group(knn_loc, overwrite=True),
                     chunk_size=batch_size,
-                    n_thra=self.nthreads,
+                    nthreads=self.nthreads,
                     harmonize=harmonize,
                 )
                 recall = "%.2f" % recall

@@ -2,12 +2,12 @@ from functools import partial
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
+from .utils import tqdmbar, logger
 
 
 def run_harmony(
     data_mat: np.ndarray,
     meta_data: pd.DataFrame,
-    vars_use,
     theta = None,
     lamb = None,
     sigma = 0.1, 
@@ -24,24 +24,15 @@ def run_harmony(
     """Run Harmony.
     """
 
-    N = meta_data.shape[0]
-    if data_mat.shape[1] != N:
-        data_mat = data_mat.T
-
-    assert data_mat.shape[1] == N, \
-       "data_mat and meta_data do not have the same number of cells"
-
+    N = data_mat.shape[1]
     if nclust is None:
         nclust = np.min([np.round(N / 30.0), 100]).astype(int)
 
     if type(sigma) is float and nclust > 1:
         sigma = np.repeat(sigma, nclust)
 
-    if isinstance(vars_use, str):
-        vars_use = [vars_use]
-
-    phi = pd.get_dummies(meta_data[vars_use]).to_numpy().T
-    phi_n = meta_data[vars_use].describe().loc['unique'].to_numpy().astype(int)
+    phi = pd.get_dummies(meta_data).to_numpy().T
+    phi_n = meta_data.describe().loc['unique'].to_numpy().astype(int)
 
     if theta is None:
         theta = np.repeat([1] * len(phi_n), phi_n)
@@ -145,11 +136,10 @@ class Harmony(object):
     @staticmethod
     def _cluster_kmeans(data, K, random_state):
         # Start with cluster centroids
-        model = KMeans(n_clusters=K, init='k-means++',
-                       n_init=10, max_iter=25, random_state=random_state)
-        model.fit(data)
-        km_centroids, km_labels = model.cluster_centers_, model.labels_
-        return km_centroids
+        return KMeans(
+            n_clusters=K, 
+            init='k-means++',
+            n_init=10, max_iter=25, random_state=random_state).fit(data).cluster_centers_
 
     def init_cluster(self, cluster_fn):
         self.Y = cluster_fn(self.Z_cos.T, self.K).T
@@ -187,7 +177,7 @@ class Harmony(object):
 
     def harmonize(self, iter_harmony=10):
         converged = False
-        for i in range(1, iter_harmony + 1):
+        for i in tqdmbar(range(1, iter_harmony + 1), desc='Harmonizing principal components'):
             # STEP 1: Clustering
             self.cluster()
             # STEP 2: Regress out covariates
@@ -198,14 +188,9 @@ class Harmony(object):
             # STEP 3: Check for convergence
             converged = self.check_convergence(1)
             if converged:
-                # logger.info(
-                #     "Converged after {} iteration{}"
-                #     .format(i, 's' if i > 1 else '')
-                # )
                 break
         if not converged:
-            pass
-            # logger.info("Stopped before convergence")
+            logger.warning("Stopped before convergence")
         return 0
 
     def cluster(self):

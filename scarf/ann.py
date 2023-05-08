@@ -1,4 +1,7 @@
+from typing import Optional
 import numpy as np
+import pandas as pd
+import dask.array as da
 from numpy.linalg import LinAlgError
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
@@ -49,6 +52,7 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
     return fixed_ind, fixed_dist, n_mis
 
 
+
 class AnnStream:
     def __init__(
         self,
@@ -73,7 +77,9 @@ class AnnStream:
         ann_idx,
         lsi_skip_first: bool,
         lsi_params: dict,
-        harmonize: bool
+        harmonize: bool,
+        harmonized_data: Optional[da.Array] = None,
+        batches: Optional[pd.DataFrame] = None,
     ):
         self.data = data
         self.k = k
@@ -100,6 +106,9 @@ class AnnStream:
         self.method = reduction_method
         self.nCells, self.nFeats = self.data.shape
         self.clusterLabels: np.ndarray = np.repeat(-1, self.nCells)
+        self.harmonize = harmonize
+        self.harmonizedData = harmonized_data
+        self.batches = batches
         disable_reduction = False
         if self.dims < 1:
             disable_reduction = True
@@ -155,10 +164,7 @@ class AnnStream:
             else:
                 raise ValueError(f"ERROR: Unknown reduction method: {self.method}")
             if ann_idx is None:
-                if harmonize:
-                    pass
-                else:
-                    self.annIdx = self._fit_ann()
+                self.annIdx = self._fit_ann()
             else:
                 self.annIdx = ann_idx
                 self.annIdx.set_ef(self.annEf)
@@ -282,6 +288,12 @@ class AnnStream:
             self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
+        def _get_pca_values():
+            pca_array = []
+            for i in self.iter_blocks(msg="Calculating uncorrected PCA values"):
+                pca_array.append(self.reducer(i))
+            return np.vstack(pca_array).T
+
         dims = self.dims
         if dims < 1:
             dims = self.data.shape[1]
@@ -297,7 +309,10 @@ class AnnStream:
             self.annThreads,
         )
         if self.harmonize:
-            pass
+            if self.harmonizedData is None:
+                self.harmonizedData = da.from_array(run_harmony(_get_pca_values(), self.batches).T, chunks=self.data.chunksize)
+            for i in tqdmbar(self.harmonizedData.blocks, desc="Fitting ANN", total=self.harmonizedData.numblocks[0]):
+                yield controlled_compute(i, self.nthreads)
         else:
             for i in self.iter_blocks(msg="Fitting ANN"):
                 ann_idx.add_items(self.reducer(i))

@@ -1,12 +1,12 @@
 """Utility functions for running the KNN algorithm."""
+from typing import List, Tuple
 import numpy as np
+import pandas as pd
+from scipy.sparse import csr_matrix, coo_matrix
+from numba import jit
 from .writers import create_zarr_dataset
 from .ann import AnnStream
 from .utils import tqdmbar
-import pandas as pd
-from scipy.sparse import csr_matrix, coo_matrix
-from typing import List
-from numba import jit
 
 
 __all__ = [
@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
+def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int, harmonize: bool) -> float:
     """Constructs KNN graph.
 
     Args:
@@ -194,7 +194,7 @@ def calc_snn(indices: np.ndarray) -> np.ndarray:
 
 def weight_sort_indices(
     i: np.ndarray, w: np.ndarray, wn: np.ndarray, n: int
-) -> (np.ndarray, np.ndarray):
+) -> Tuple[np.ndarray, np.ndarray]:
     """Sort the array i and w based on values of wn. Only keep the top n
     values.
 
