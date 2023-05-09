@@ -611,7 +611,7 @@ class GraphDataStore(BaseDataStore):
                           Read more about this in `run_mapping` method.
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
             harmonize: Run Harmony to perform batch integration
-            batches: Optional[List[str]] = None,
+            batch_columns: Columns in cell metadata table to use for batch integration
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
             ann_index_fetcher:
