@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from scipy.sparse import csr_matrix, coo_matrix
+from dask.array import from_zarr
 from .base_datastore import BaseDataStore
 from ..utils import clean_array, show_dask_progress, system_call, tqdmbar
 from ..assay import Assay
@@ -504,6 +505,8 @@ class GraphDataStore(BaseDataStore):
         custom_loadings: Optional[np.ndarray] = None,
         feat_scaling: bool = True,
         lsi_skip_first: bool = True,
+        harmonize: bool = False,
+        batch_columns: Optional[List[str]] = None,
         show_elbow_plot: bool = False,
         ann_index_fetcher: Optional[Callable] = None,
         ann_index_saver: Optional[Callable] = None,
@@ -607,6 +610,8 @@ class GraphDataStore(BaseDataStore):
                           turned off when during cross sample mapping using CORAL normalized values are being used.
                           Read more about this in `run_mapping` method.
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
+            harmonize: Run Harmony to perform batch integration
+            batch_columns: Columns in cell metadata table to use for batch integration
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
             ann_index_fetcher:
@@ -683,6 +688,22 @@ class GraphDataStore(BaseDataStore):
             local_connectivity,
             bandwidth,
         )
+        batches = None
+        if harmonize:
+            if batch_columns is None:
+                raise ValueError(f"Harmonization requested but no batches provided")
+            else:
+                if isinstance(batch_columns, list) is False:
+                    raise ValueError(
+                        f"batches must be a list of columns in cell metadata that represent batches"
+                    )
+                batches = pd.DataFrame(
+                    {
+                        x: self.cells.fetch(x, key=cell_key).astype(object)
+                        for x in batch_columns
+                    }
+                )
+
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
         reduction_loc = (
             f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
@@ -710,6 +731,7 @@ class GraphDataStore(BaseDataStore):
         fit_kmeans = True
         mu, sigma = np.ndarray([]), np.ndarray([])
         use_for_pca = self.cells.fetch(pca_cell_key, key=cell_key)
+        harmonized_data = None
 
         if reduction_method in ["pca", "manual"]:
             if "mu" in self.zw[normed_loc]:
@@ -750,10 +772,18 @@ class GraphDataStore(BaseDataStore):
                     )
                     loadings = None
                     del self.zw[reduction_loc]
+            if harmonize and "harmonizedData" in self.zw[reduction_loc]:
+                if "batches" in self.zw[reduction_loc]["harmonizedData"].attrs:
+                    if (
+                        self.zw[reduction_loc]["harmonizedData"].attrs["batches"]
+                        == batch_columns
+                    ):
+                        harmonized_data = from_zarr(
+                            self.zw[reduction_loc]["harmonizedData"], inline_array=True
+                        )
+
         if custom_loadings is None:
-            if loadings is None:
-                pass  # Will compute fresh loadings
-            else:
+            if loadings is not None:
                 logger.info(
                     f"Using existing loadings for {reduction_method} with {dims} dims"
                 )
@@ -768,36 +798,56 @@ class GraphDataStore(BaseDataStore):
                 )
                 if reduction_loc in self.zw:
                     del self.zw[reduction_loc]
+        if harmonized_data is not None:
+            # Moved this statement here to print after the status of dim loadings
+            logger.info(f"Using existing harmonized data with {dims} dims")
 
         ann_idx = None
         if ann_loc in self.zw:
-            if ann_index_fetcher is None:
-                if hasattr(self.zw.chunk_store, "path"):
-                    ann_index_fn = os.path.join(
-                        self.zw.chunk_store.path, ann_loc, "ann_idx"
-                    )
+            reset_ann = False
+            if "isHarmonized" in self.zw[ann_loc].attrs:
+                if self.zw[ann_loc].attrs["isHarmonized"]:
+                    if harmonize is False:
+                        reset_ann = True
+                    if harmonized_data is None:
+                        reset_ann = True
                 else:
-                    ann_index_fn = None
-                    logger.warning(
-                        f"No custom `ann_index_fetcher` provided and zarr path is not local"
-                    )
+                    if harmonize:
+                        reset_ann = True
             else:
-                # noinspection PyBroadException
-                try:
-                    ann_index_fn = ann_index_fetcher(ann_loc)
-                except:
-                    ann_index_fn = None
-                    logger.warning(f"Custom `ann_index_fetcher` failed")
-            if ann_index_fn is None or os.path.exists(ann_index_fn) is False:
-                logger.warning(f"Ann index file expected but could not be found")
-            else:
-                import hnswlib
+                if harmonize:  # Mostly for backward compatibility
+                    reset_ann = True
 
-                temp = dims if dims > 0 else data.shape[1]
-                ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
-                ann_idx.load_index(ann_index_fn)
-                # TODO: check if ANN is index is trained with expected number of cells.
-                logger.info(f"Using existing ANN index")
+            if reset_ann:
+                del self.zw[ann_loc]
+            else:
+                if ann_index_fetcher is None:
+                    if hasattr(self.zw.chunk_store, "path"):
+                        ann_index_fn = os.path.join(
+                            self.zw.chunk_store.path, ann_loc, "ann_idx"
+                        )
+                    else:
+                        ann_index_fn = None
+                        logger.warning(
+                            f"No custom `ann_index_fetcher` provided and zarr path is not local"
+                        )
+                else:
+                    # noinspection PyBroadException
+                    try:
+                        ann_index_fn = ann_index_fetcher(ann_loc)
+                    except:
+                        ann_index_fn = None
+                        logger.warning(f"Custom `ann_index_fetcher` failed")
+                if ann_index_fn is None or os.path.exists(ann_index_fn) is False:
+                    logger.warning(f"Ann index file expected but could not be found")
+                else:
+                    import hnswlib
+
+                    temp = dims if dims > 0 else data.shape[1]
+                    ann_idx = hnswlib.Index(space=ann_metric, dim=temp)
+                    ann_idx.load_index(ann_index_fn)
+                    # TODO: check if ANN is index is trained with expected number of cells.
+                    logger.info(f"Using existing ANN index")
 
         if kmeans_loc in self.zw:
             fit_kmeans = False
@@ -827,6 +877,9 @@ class GraphDataStore(BaseDataStore):
             ann_idx=ann_idx,
             lsi_skip_first=lsi_skip_first,
             lsi_params={},
+            harmonize=harmonize,
+            harmonized_data=harmonized_data,
+            batches=batches,
         )
 
         if reduction_loc not in self.zw:
@@ -837,11 +890,21 @@ class GraphDataStore(BaseDataStore):
                 g = create_zarr_dataset(
                     self.zw[reduction_loc],
                     "reduction",
-                    (1000, 1000),
+                    data.chunksize,
                     "f8",
                     ann_obj.loadings.shape,
                 )
                 g[:, :] = ann_obj.loadings
+        if harmonize and harmonized_data is None and ann_obj.harmonizedData is not None:
+            g = create_zarr_dataset(
+                self.zw[reduction_loc],
+                "harmonizedData",
+                data.chunksize,
+                "f8",
+                ann_obj.harmonizedData.shape,
+            )
+            g[:] = ann_obj.harmonizedData
+            g.attrs["batches"] = batch_columns
         if ann_loc not in self.zw:
             logger.debug(f"Saving ANN index to {ann_loc}")
             self.zw.create_group(ann_loc, overwrite=True)
@@ -888,10 +951,10 @@ class GraphDataStore(BaseDataStore):
             recall = None
             if knn_loc not in self.zw:
                 recall = self_query_knn(
-                    ann_obj,
-                    self.zw.create_group(knn_loc, overwrite=True),
-                    batch_size,
-                    self.nthreads,
+                    ann_obj=ann_obj,
+                    store=self.zw.create_group(knn_loc, overwrite=True),
+                    chunk_size=batch_size,
+                    nthreads=self.nthreads,
                 )
                 recall = "%.2f" % recall
 
@@ -909,6 +972,7 @@ class GraphDataStore(BaseDataStore):
         self.zw[normed_loc].attrs["latest_reduction"] = reduction_loc
         self.zw[reduction_loc].attrs["latest_ann"] = ann_loc
         self.zw[reduction_loc].attrs["latest_kmeans"] = kmeans_loc
+        self.zw[ann_loc].attrs["isHarmonized"] = harmonize
         self.zw[ann_loc].attrs["latest_knn"] = knn_loc
         self.zw[knn_loc].attrs["latest_graph"] = graph_loc
         if return_ann_object:

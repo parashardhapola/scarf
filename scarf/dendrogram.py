@@ -89,7 +89,6 @@ def CoalesceTree(graph: nx.DiGraph, clusters: np.ndarray) -> nx.DiGraph:
         return p
 
     def make_subgraph(g: nx.DiGraph, vs):
-
         sn = list(vs.keys())
         for i in vs:
             sn.extend(aggregate_predecessors(g, i))

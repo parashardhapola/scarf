@@ -964,7 +964,6 @@ class DataStore(MappingDatastore):
         Returns: anndata object
         """
         try:
-
             # noinspection PyPackageRequirements
             from anndata import AnnData
         except ImportError:

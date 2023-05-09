@@ -209,7 +209,10 @@ def create_cell_data(z, workspace, ids, names):
 def sparse_writer(
     store: zarr.hierarchy, data_stream, n_cells: int, batch_size: int
 ) -> int:
-    s, e, = (
+    (
+        s,
+        e,
+    ) = (
         0,
         0,
     )
@@ -517,7 +520,10 @@ class NaboH5ToZarr:
             store = self.z[f"{self.assayName}/counts"]
         else:
             store = self.z[f"matrices/{self.assayName}/counts"]
-        s, e, = (
+        (
+            s,
+            e,
+        ) = (
             0,
             0,
         )
@@ -736,7 +742,10 @@ class SparseToZarr:
 
         if batch_size is None:
             batch_size = store.chunks[0]
-        s, e, = (
+        (
+            s,
+            e,
+        ) = (
             0,
             0,
         )
@@ -842,7 +851,10 @@ class CSVtoZarr:
             for x, y in zip(self.csvr.cellDataCols, self.csvr.cellDataDtypes)
         ]
         batch_size = self.csvr.pandas_kwargs["chunksize"]
-        s, e, = (
+        (
+            s,
+            e,
+        ) = (
             0,
             0,
         )
@@ -1084,7 +1096,10 @@ class SubsetZarr:
                 store = self.z[f"{assay.name}/counts"]
             else:
                 store = self.z[f"matrices/{assay.name}/counts"]
-            s, e, = (
+            (
+                s,
+                e,
+            ) = (
                 0,
                 0,
             )
