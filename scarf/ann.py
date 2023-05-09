@@ -327,6 +327,7 @@ class AnnStream:
             n_clusters=self.nClusters,
             random_state=self.randState,
             batch_size=self.batchSize,
+            n_init=3,
         )
         temp = []
         with threadpool_limits(limits=self.nthreads):
