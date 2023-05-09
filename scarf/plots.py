@@ -1258,7 +1258,6 @@ def plot_annotated_heatmap(
     save_dpi: int = 300,
     show_fig: bool = True,
 ):
-
     import matplotlib.gridspec as gridspec
     import matplotlib.ticker as mticker
 

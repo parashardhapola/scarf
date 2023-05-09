@@ -6,7 +6,7 @@ from scipy.sparse import csr_matrix, coo_matrix
 from numba import jit
 from .writers import create_zarr_dataset
 from .ann import AnnStream
-from .utils import tqdmbar
+from .utils import tqdmbar, controlled_compute
 
 
 __all__ = [
@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int, harmonize: bool) -> float:
+def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int) -> float:
     """Constructs KNN graph.
 
     Args:
@@ -30,6 +30,22 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int, ha
     Returns:
         None
     """
+
+    def get_transformed_data():
+        msg = "Identifying neighbors"
+        if ann_obj.harmonizedData is None:
+            for _i in tqdmbar(
+                ann_obj.data.blocks, desc=msg, total=ann_obj.data.numblocks[0]
+            ):
+                yield ann_obj.reducer(controlled_compute(_i, nthreads))
+        else:
+            for _i in tqdmbar(
+                ann_obj.harmonizedData.blocks,
+                desc=msg,
+                total=ann_obj.harmonizedData.numblocks[0],
+            ):
+                yield controlled_compute(_i, nthreads)
+
     from threadpoolctl import threadpool_limits
 
     n_cells, n_neighbors = ann_obj.nCells, ann_obj.k
@@ -42,10 +58,10 @@ def self_query_knn(ann_obj: AnnStream, store, chunk_size: int, nthreads: int, ha
     nsample_start = 0
     tnm = 0  # Number of missed recall
     with threadpool_limits(limits=nthreads):
-        for i in ann_obj.iter_blocks(msg="Saving KNN graph"):
+        for i in get_transformed_data():
             nsample_end = nsample_start + i.shape[0]
             ki, kv, nm = ann_obj.transform_ann(
-                ann_obj.reducer(i),
+                i,
                 k=n_neighbors,
                 self_indices=np.arange(nsample_start, nsample_end),
             )

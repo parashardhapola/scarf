@@ -52,7 +52,6 @@ def fix_knn_query(indices: np.ndarray, distances: np.ndarray, ref_idx: np.ndarra
     return fixed_ind, fixed_dist, n_mis
 
 
-
 class AnnStream:
     def __init__(
         self,
@@ -288,10 +287,10 @@ class AnnStream:
             self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
-        def _get_pca_values():
+        def _transform_values():
             pca_array = []
-            for i in self.iter_blocks(msg="Calculating uncorrected PCA values"):
-                pca_array.append(self.reducer(i))
+            for _i in self.iter_blocks(msg="Calculating uncorrected latent dimensions"):
+                pca_array.append(self.reducer(_i))
             return np.vstack(pca_array).T
 
         dims = self.dims
@@ -310,9 +309,16 @@ class AnnStream:
         )
         if self.harmonize:
             if self.harmonizedData is None:
-                self.harmonizedData = da.from_array(run_harmony(_get_pca_values(), self.batches).T, chunks=self.data.chunksize)
-            for i in tqdmbar(self.harmonizedData.blocks, desc="Fitting ANN", total=self.harmonizedData.numblocks[0]):
-                yield controlled_compute(i, self.nthreads)
+                self.harmonizedData = da.from_array(
+                    run_harmony(_transform_values(), self.batches).T,
+                    chunks=self.data.chunksize,
+                )
+            for i in tqdmbar(
+                self.harmonizedData.blocks,
+                desc="Fitting ANN",
+                total=self.harmonizedData.numblocks[0],
+            ):
+                ann_idx.add_items(controlled_compute(i, self.nthreads))
         else:
             for i in self.iter_blocks(msg="Fitting ANN"):
                 ann_idx.add_items(self.reducer(i))

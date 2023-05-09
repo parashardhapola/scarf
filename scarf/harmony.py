@@ -8,21 +8,20 @@ from .utils import tqdmbar, logger
 def run_harmony(
     data_mat: np.ndarray,
     meta_data: pd.DataFrame,
-    theta = None,
-    lamb = None,
-    sigma = 0.1, 
-    nclust = None,
-    tau = 0,
-    block_size = 0.05, 
-    max_iter_harmony = 10,
-    max_iter_kmeans = 20,
-    epsilon_cluster = 1e-5,
-    epsilon_harmony = 1e-4,
-    random_state = 0,
-    cluster_fn = 'kmeans'
+    theta=None,
+    lamb=None,
+    sigma=0.1,
+    nclust=None,
+    tau=0,
+    block_size=0.05,
+    max_iter_harmony=10,
+    max_iter_kmeans=20,
+    epsilon_cluster=1e-5,
+    epsilon_harmony=1e-4,
+    random_state=0,
+    cluster_fn="kmeans",
 ):
-    """Run Harmony.
-    """
+    """Run Harmony."""
 
     N = data_mat.shape[1]
     if nclust is None:
@@ -32,7 +31,7 @@ def run_harmony(
         sigma = np.repeat(sigma, nclust)
 
     phi = pd.get_dummies(meta_data).to_numpy().T
-    phi_n = meta_data.describe().loc['unique'].to_numpy().astype(int)
+    phi_n = meta_data.describe().loc["unique"].to_numpy().astype(int)
 
     if theta is None:
         theta = np.repeat([1] * len(phi_n), phi_n)
@@ -41,8 +40,7 @@ def run_harmony(
     elif len(theta) == len(phi_n):
         theta = np.repeat([theta], phi_n)
 
-    assert len(theta) == np.sum(phi_n), \
-        "each batch variable must have a theta"
+    assert len(theta) == np.sum(phi_n), "each batch variable must have a theta"
 
     if lamb is None:
         lamb = np.repeat([1] * len(phi_n), phi_n)
@@ -51,16 +49,15 @@ def run_harmony(
     elif len(lamb) == len(phi_n):
         lamb = np.repeat([lamb], phi_n)
 
-    assert len(lamb) == np.sum(phi_n), \
-        "each batch variable must have a lambda"
+    assert len(lamb) == np.sum(phi_n), "each batch variable must have a lambda"
 
     # Number of items in each category.
-    N_b = phi.sum(axis = 1)
+    N_b = phi.sum(axis=1)
     # Proportion of items in each category.
     Pr_b = N_b / N
 
     if tau > 0:
-        theta = theta * (1 - np.exp(-(N_b / (nclust * tau)) ** 2))
+        theta = theta * (1 - np.exp(-((N_b / (nclust * tau)) ** 2)))
 
     lamb_mat = np.diag(np.insert(lamb, 0, 0))
 
@@ -69,9 +66,21 @@ def run_harmony(
     np.random.seed(random_state)
 
     ho = Harmony(
-        data_mat, phi, phi_moe, Pr_b, sigma, theta, max_iter_harmony, max_iter_kmeans,
-        epsilon_cluster, epsilon_harmony, nclust, block_size, lamb_mat,
-        random_state, cluster_fn
+        data_mat,
+        phi,
+        phi_moe,
+        Pr_b,
+        sigma,
+        theta,
+        max_iter_harmony,
+        max_iter_kmeans,
+        epsilon_cluster,
+        epsilon_harmony,
+        nclust,
+        block_size,
+        lamb_mat,
+        random_state,
+        cluster_fn,
     )
 
     return ho.result()
@@ -79,10 +88,22 @@ def run_harmony(
 
 class Harmony(object):
     def __init__(
-            self, Z, Phi, Phi_moe, Pr_b, sigma,
-            theta, max_iter_harmony, max_iter_kmeans, 
-            epsilon_kmeans, epsilon_harmony, K, block_size,
-            lamb, random_state=None, cluster_fn='kmeans'
+        self,
+        Z,
+        Phi,
+        Phi_moe,
+        Pr_b,
+        sigma,
+        theta,
+        max_iter_harmony,
+        max_iter_kmeans,
+        epsilon_kmeans,
+        epsilon_harmony,
+        K,
+        block_size,
+        lamb,
+        random_state=None,
+        cluster_fn="kmeans",
     ):
         self.Z_corr = np.array(Z)
         self.Z_orig = np.array(Z)
@@ -90,34 +111,34 @@ class Harmony(object):
         self.Z_cos = self.Z_orig / self.Z_orig.max(axis=0)
         self.Z_cos = self.Z_cos / np.linalg.norm(self.Z_cos, ord=2, axis=0)
 
-        self.Phi             = Phi
-        self.Phi_moe         = Phi_moe
-        self.N               = self.Z_corr.shape[1]
-        self.Pr_b            = Pr_b
-        self.B               = self.Phi.shape[0] # number of batch variables
-        self.d               = self.Z_corr.shape[0]
-        self.window_size     = 3
-        self.epsilon_kmeans  = epsilon_kmeans
+        self.Phi = Phi
+        self.Phi_moe = Phi_moe
+        self.N = self.Z_corr.shape[1]
+        self.Pr_b = Pr_b
+        self.B = self.Phi.shape[0]  # number of batch variables
+        self.d = self.Z_corr.shape[0]
+        self.window_size = 3
+        self.epsilon_kmeans = epsilon_kmeans
         self.epsilon_harmony = epsilon_harmony
 
-        self.lamb            = lamb
-        self.sigma           = sigma
-        self.sigma_prior     = sigma
-        self.block_size      = block_size
-        self.K               = K                # number of clusters
+        self.lamb = lamb
+        self.sigma = sigma
+        self.sigma_prior = sigma
+        self.block_size = block_size
+        self.K = K  # number of clusters
         self.max_iter_harmony = max_iter_harmony
         self.max_iter_kmeans = max_iter_kmeans
-        self.theta           = theta
+        self.theta = theta
 
-        self.objective_harmony        = []
-        self.objective_kmeans         = []
-        self.objective_kmeans_dist    = []
+        self.objective_harmony = []
+        self.objective_kmeans = []
+        self.objective_kmeans_dist = []
         self.objective_kmeans_entropy = []
-        self.objective_kmeans_cross   = []
-        self.kmeans_rounds  = []
+        self.objective_kmeans_cross = []
+        self.kmeans_rounds = []
 
         self.allocate_buffers()
-        if cluster_fn == 'kmeans':
+        if cluster_fn == "kmeans":
             cluster_fn = partial(Harmony._cluster_kmeans, random_state=random_state)
         self.init_cluster(cluster_fn)
         self.harmonize(self.max_iter_harmony)
@@ -127,19 +148,26 @@ class Harmony(object):
 
     def allocate_buffers(self):
         self._scale_dist = np.zeros((self.K, self.N))
-        self.dist_mat    = np.zeros((self.K, self.N))
-        self.O           = np.zeros((self.K, self.B))
-        self.E           = np.zeros((self.K, self.B))
-        self.W           = np.zeros((self.B + 1, self.d))
-        self.Phi_Rk      = np.zeros((self.B + 1, self.N))
+        self.dist_mat = np.zeros((self.K, self.N))
+        self.O = np.zeros((self.K, self.B))
+        self.E = np.zeros((self.K, self.B))
+        self.W = np.zeros((self.B + 1, self.d))
+        self.Phi_Rk = np.zeros((self.B + 1, self.N))
 
     @staticmethod
     def _cluster_kmeans(data, K, random_state):
         # Start with cluster centroids
-        return KMeans(
-            n_clusters=K, 
-            init='k-means++',
-            n_init=10, max_iter=25, random_state=random_state).fit(data).cluster_centers_
+        return (
+            KMeans(
+                n_clusters=K,
+                init="k-means++",
+                n_init=10,
+                max_iter=25,
+                random_state=random_state,
+            )
+            .fit(data)
+            .cluster_centers_
+        )
 
     def init_cluster(self, cluster_fn):
         self.Y = cluster_fn(self.Z_cos.T, self.K).T
@@ -148,13 +176,13 @@ class Harmony(object):
         # (2) Assign cluster probabilities
         self.dist_mat = 2 * (1 - np.dot(self.Y.T, self.Z_cos))
         self.R = -self.dist_mat
-        self.R = self.R / self.sigma[:,None]
-        self.R -= np.max(self.R, axis = 0)
+        self.R = self.R / self.sigma[:, None]
+        self.R -= np.max(self.R, axis=0)
         self.R = np.exp(self.R)
-        self.R = self.R / np.sum(self.R, axis = 0)
+        self.R = self.R / np.sum(self.R, axis=0)
         # (3) Batch diversity statistics
         self.E = np.outer(np.sum(self.R, axis=1), self.Pr_b)
-        self.O = np.inner(self.R , self.Phi)
+        self.O = np.inner(self.R, self.Phi)
         self.compute_objective()
         # Save results
         self.objective_harmony.append(self.objective_kmeans[-1])
@@ -162,10 +190,10 @@ class Harmony(object):
     def compute_objective(self):
         kmeans_error = np.sum(np.multiply(self.R, self.dist_mat))
         # Entropy
-        _entropy = np.sum(safe_entropy(self.R) * self.sigma[:,np.newaxis])
+        _entropy = np.sum(safe_entropy(self.R) * self.sigma[:, np.newaxis])
         # Cross Entropy
-        x = (self.R * self.sigma[:,np.newaxis])
-        y = np.tile(self.theta[:,np.newaxis], self.K).T
+        x = self.R * self.sigma[:, np.newaxis]
+        y = np.tile(self.theta[:, np.newaxis], self.K).T
         z = np.log((self.O + 1) / (self.E + 1))
         w = np.dot(y * z, self.Phi)
         _cross_entropy = np.sum(x * w)
@@ -177,13 +205,18 @@ class Harmony(object):
 
     def harmonize(self, iter_harmony=10):
         converged = False
-        for i in tqdmbar(range(1, iter_harmony + 1), desc='Harmonizing principal components'):
+        for i in tqdmbar(range(1, iter_harmony + 1), desc="Harmonizing batches"):
             # STEP 1: Clustering
             self.cluster()
             # STEP 2: Regress out covariates
             self.Z_cos, self.Z_corr, self.W, self.Phi_Rk = moe_correct_ridge(
-                self.Z_orig, self.R, self.W, self.K,
-                self.Phi_Rk, self.Phi_moe, self.lamb
+                self.Z_orig,
+                self.R,
+                self.W,
+                self.K,
+                self.Phi_Rk,
+                self.Phi_moe,
+                self.lamb,
             )
             # STEP 3: Check for convergence
             converged = self.check_convergence(1)
@@ -219,7 +252,7 @@ class Harmony(object):
 
     def update_R(self):
         self._scale_dist = -self.dist_mat
-        self._scale_dist = self._scale_dist / self.sigma[:,None]
+        self._scale_dist = self._scale_dist / self.sigma[:, None]
         self._scale_dist -= np.max(self._scale_dist, axis=0)
         self._scale_dist = np.exp(self._scale_dist)
         # Update cells in blocks
@@ -229,21 +262,20 @@ class Harmony(object):
         blocks = np.array_split(update_order, n_blocks)
         for b in blocks:
             # STEP 1: Remove cells
-            self.E -= np.outer(np.sum(self.R[:,b], axis=1), self.Pr_b)
-            self.O -= np.dot(self.R[:,b], self.Phi[:,b].T)
+            self.E -= np.outer(np.sum(self.R[:, b], axis=1), self.Pr_b)
+            self.O -= np.dot(self.R[:, b], self.Phi[:, b].T)
             # STEP 2: Recompute R for removed cells
-            self.R[:,b] = self._scale_dist[:,b]
-            self.R[:,b] = np.multiply(
-                self.R[:,b],
+            self.R[:, b] = self._scale_dist[:, b]
+            self.R[:, b] = np.multiply(
+                self.R[:, b],
                 np.dot(
-                    np.power((self.E + 1) / (self.O + 1), self.theta),
-                    self.Phi[:,b]
-                )
+                    np.power((self.E + 1) / (self.O + 1), self.theta), self.Phi[:, b]
+                ),
             )
-            self.R[:,b] = self.R[:,b] / np.linalg.norm(self.R[:,b], ord=1, axis=0)
+            self.R[:, b] = self.R[:, b] / np.linalg.norm(self.R[:, b], ord=1, axis=0)
             # STEP 3: Put cells back
-            self.E += np.outer(np.sum(self.R[:,b], axis=1), self.Pr_b)
-            self.O += np.dot(self.R[:,b], self.Phi[:,b].T)
+            self.E += np.outer(np.sum(self.R[:, b], axis=1), self.Pr_b)
+            self.O += np.dot(self.R[:, b], self.Phi[:, b].T)
         return 0
 
     def check_convergence(self, i_type):
@@ -277,10 +309,10 @@ def safe_entropy(x: np.array):
 def moe_correct_ridge(Z_orig, R, W, K, Phi_Rk, Phi_moe, lamb):
     Z_corr = Z_orig.copy()
     for i in range(K):
-        Phi_Rk = np.multiply(Phi_moe, R[i,:])
+        Phi_Rk = np.multiply(Phi_moe, R[i, :])
         x = np.dot(Phi_Rk, Phi_moe.T) + lamb
         W = np.dot(np.dot(np.linalg.inv(x), Phi_Rk), Z_orig.T)
-        W[0,:] = 0 # do not remove the intercept
+        W[0, :] = 0  # do not remove the intercept
         Z_corr -= np.dot(W.T, Phi_Rk)
     Z_cos = Z_corr / np.linalg.norm(Z_corr, ord=2, axis=0)
     return Z_cos, Z_corr, W, Phi_Rk
