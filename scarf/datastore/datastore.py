@@ -6,7 +6,8 @@ from loguru import logger
 from .mapping_datastore import MappingDatastore
 from ..writers import create_zarr_obj_array, create_zarr_dataset
 from ..utils import tqdmbar, controlled_compute
-from ..assay import RNAassay, ATACassay
+from ..assay import RNAassay, ATACassay, ADTassay
+from ..feat_utils import hto_demux
 
 __all__ = ["DataStore"]
 
@@ -178,6 +179,23 @@ class DataStore(MappingDatastore):
                 color="coral",
                 sup_title="Post-filtering distribution",
             )
+
+    def mark_hto_identities(
+        self,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        label: Optional[str] = "Hashtag_identity",
+    ) -> None:
+        if from_assay is None:
+            from_assay = "HTO"
+        assay: ADTassay = self._get_assay(from_assay)
+        counts = controlled_compute(
+            assay.rawData[self.cells.fetch_all(cell_key)], self.nthreads
+        )
+        hto_idents = hto_demux(
+            pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
+        )
+        self.cells.insert(column_name=label, values=hto_idents.values, overwrite=True, key=cell_key)
 
     def mark_hvgs(
         self,
