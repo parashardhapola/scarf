@@ -273,7 +273,7 @@ class BaseDataStore:
         return None
 
     def _get_assay(
-        self, from_assay: str
+        self, from_assay: Union[str, None],
     ) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """This is a convenience function used internally to quickly obtain the
         assay object that is linked to an assay name.
