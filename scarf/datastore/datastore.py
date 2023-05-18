@@ -1162,7 +1162,6 @@ class DataStore(MappingDatastore):
         )
         normed_frac = df.divide(df.sum(axis=1), axis="index")
         idxmax = df.idxmax()
-        missing_vals = list(set(df.index).difference(idxmax.unique()))
         new_names = {}
         for i in sorted(idxmax.unique()):
             j = normed_frac[idxmax[idxmax == i].index].loc[i]
@@ -1170,9 +1169,12 @@ class DataStore(MappingDatastore):
             for n, k in enumerate(j, start=1):
                 a = chr(ord("@") + n)
                 new_names[k] = f"{i}{a.lower()}"
-        miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
-        for k, v in miss_idxmax.items():
-            new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
+        
+        missing_vals = list(set(df.index).difference(idxmax.unique()))
+        if len(missing_vals) > 0:
+            miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
+            for k, v in miss_idxmax.items():
+                new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
 
         ret_val = [new_names[x] for x in self.cells.fetch(to_relabel, key=cell_key)]
         if new_col_name is None:
