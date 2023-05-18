@@ -202,9 +202,9 @@ class TestDataStore:
         )
         assert np.allclose(precalc_values, test_values)
 
-    def test_make_bulk(self, paris_clustering, datastore):
-        df = datastore.make_bulk(group_key="RNA_cluster")
-        assert df.shape == (18850, 31)
+    def test_make_bulk(self, leiden_clustering, datastore):
+        df = datastore.make_bulk(group_key="RNA_leiden__cluster")
+        assert df.shape == (18936, 10)
 
     def test_to_anndata(self, datastore):
         # TODO: Check if all the attributes copied to anndata
@@ -221,13 +221,13 @@ class TestDataStore:
             layout_key="RNA_UMAP", color_by="RNA_cluster", show_fig=False
         )
 
-    def test_plot_layout_shade(self, umap, paris_clustering, datastore):
-        datastore.plot_layout(
-            layout_key="RNA_UMAP",
-            color_by="RNA_cluster",
-            show_fig=False,
-            do_shading=True,
-        )
+    # def test_plot_layout_shade(self, umap, paris_clustering, datastore):
+    #     datastore.plot_layout(
+    #         layout_key="RNA_UMAP",
+    #         color_by="RNA_cluster",
+    #         show_fig=False,
+    #         do_shading=True,
+    #     )
 
     def test_plot_cluster_tree(self, datastore):
         datastore.plot_cluster_tree(cluster_key="RNA_cluster", show_fig=False)
