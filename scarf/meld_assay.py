@@ -11,7 +11,7 @@
 """
 
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Union
 import pandas as pd
 import numpy as np
 import gzip

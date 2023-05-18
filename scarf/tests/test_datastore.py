@@ -203,7 +203,7 @@ class TestDataStore:
         assert np.allclose(precalc_values, test_values)
 
     def test_make_bulk(self, leiden_clustering, datastore):
-        df = datastore.make_bulk(group_key="RNA_leiden__cluster")
+        df = datastore.make_bulk(group_key="RNA_leiden_cluster")
         assert df.shape == (18936, 10)
 
     def test_to_anndata(self, datastore):
