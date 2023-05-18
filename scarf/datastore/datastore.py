@@ -5,7 +5,7 @@ from dask import array as daskarr
 from loguru import logger
 from .mapping_datastore import MappingDatastore
 from ..writers import create_zarr_obj_array, create_zarr_dataset
-from ..utils import tqdmbar, controlled_compute
+from ..utils import tqdmbar, controlled_compute, ZARRLOC
 from ..assay import RNAassay, ATACassay, ADTassay
 from ..feat_utils import hto_demux
 
@@ -43,7 +43,7 @@ class DataStore(MappingDatastore):
 
     def __init__(
         self,
-        zarr_loc: str,
+        zarr_loc: ZARRLOC,
         assay_types: Optional[dict] = None,
         default_assay: Optional[str] = None,
         min_features_per_cell: int = 10,
@@ -198,7 +198,10 @@ class DataStore(MappingDatastore):
             pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
         )
         self.cells.insert(
-            column_name=label, values=np.array(hto_idents.values), overwrite=True, key=cell_key
+            column_name=label,
+            values=np.array(hto_idents.values),
+            overwrite=True,
+            key=cell_key,
         )
 
     def mark_hvgs(
@@ -586,7 +589,7 @@ class DataStore(MappingDatastore):
             )
         assay = self._get_assay(from_assay)
         try:
-            g = assay.z["markers"][f"{cell_key}__{group_key}"] # type: ignore
+            g = assay.z["markers"][f"{cell_key}__{group_key}"]  # type: ignore
         except KeyError:
             raise KeyError(
                 "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
@@ -608,7 +611,7 @@ class DataStore(MappingDatastore):
         dfs = []
         for gid in gids:
             if gid in g:
-                cols = [g[gid][x][:] for x in out_cols] # type: ignore
+                cols = [g[gid][x][:] for x in out_cols]  # type: ignore
                 df = pd.DataFrame(
                     cols,
                     index=out_cols,
@@ -763,7 +766,9 @@ class DataStore(MappingDatastore):
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
-        self.cells.insert(phase_label, np.array(phase.values), key=cell_key, overwrite=True)
+        self.cells.insert(
+            phase_label, np.array(phase.values), key=cell_key, overwrite=True
+        )
 
     def add_grouped_assay(
         self,
@@ -811,10 +816,10 @@ class DataStore(MappingDatastore):
 
         module_ids = [f"group_{x}" for x in group_set]
         g = create_zarr_count_assay(
-            z=assay.z["/"], # type: ignore
+            z=assay.z["/"],  # type: ignore
             assay_name=assay_label,
             workspace=self.workspace,
-            chunk_size=assay.rawData.chunksize, # type: ignore
+            chunk_size=assay.rawData.chunksize,  # type: ignore
             n_cells=assay.cells.N,
             feat_ids=module_ids,
             feat_names=module_ids,
@@ -892,7 +897,7 @@ class DataStore(MappingDatastore):
 
         assay = self._get_assay(from_assay)
         feature_bed = pd.read_csv(external_bed_fn, header=None, sep="\t").sort_values(
-            by=[0, 1] # type: ignore
+            by=[0, 1]  # type: ignore
         )
 
         peaks_coords = assay.feats.fetch_all(peaks_col)
@@ -948,7 +953,7 @@ class DataStore(MappingDatastore):
                          is considered a pseudo-replicate. (Default value: 3)
             remove_empty_features: Remove features that are not expressed in any cell. (Default value: True)
             null_vals: Values to be considered as missing values in the `group_key` column. These values will be skipped.
-            secondary_null_vals: Values to be considered as missing values in the `secondary_group_key` column. 
+            secondary_null_vals: Values to be considered as missing values in the `secondary_group_key` column.
                                  These values will be skipped.
             random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
 
@@ -987,7 +992,7 @@ class DataStore(MappingDatastore):
         for g in tqdmbar(sorted(set(groups))):
             if g in null_vals:
                 continue
-            for sg in sorted(set(sec_groups)): # type: ignore
+            for sg in sorted(set(sec_groups)):  # type: ignore
                 if sg in secondary_null_vals:
                     continue
                 if sg is None and len(sec_groups) == 1:
@@ -1009,7 +1014,7 @@ class DataStore(MappingDatastore):
                         vals[col_name] = controlled_compute(
                             assay.rawData[idx].sum(axis=0), self.nthreads
                         )
-                    elif aggr_type == "mean": 
+                    elif aggr_type == "mean":
                         vals[col_name] = controlled_compute(
                             assay.normed(cell_idx=idx, feat_idx=all_feat_idx).mean(
                                 axis=0
@@ -1030,12 +1035,20 @@ class DataStore(MappingDatastore):
         empty_idx = None
         if remove_empty_features:
             empty_idx = vals.sum(axis=1) != 0
-            vals = vals.loc[empty_idx]    
+            vals = vals.loc[empty_idx]
 
         if feature_label == "id":
-            vals.set_index(pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values, inplace=True, drop=True)
+            vals.set_index(
+                pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values,
+                inplace=True,
+                drop=True,
+            )
         elif feature_label == "name":
-            vals.set_index(pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values, inplace=True, drop=True)
+            vals.set_index(
+                pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values,
+                inplace=True,
+                drop=True,
+            )
 
         if return_fraction:
             fracs = pd.DataFrame(fracs).fillna(0)
@@ -1047,7 +1060,10 @@ class DataStore(MappingDatastore):
             return vals
 
     def to_anndata(
-        self, from_assay: Optional[str] = None, cell_key: Optional[str] = None, layers: Optional[dict] = None
+        self,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        layers: Optional[dict] = None,
     ):
         """Writes an assay of the Zarr hierarchy to AnnData file format.
 
@@ -1061,7 +1077,7 @@ class DataStore(MappingDatastore):
         """
         try:
             # noinspection PyPackageRequirements
-            from anndata import AnnData # type: ignore
+            from anndata import AnnData  # type: ignore
         except ImportError:
             logger.error(
                 "Package anndata is not installed because its an optional dependency. "
@@ -1096,11 +1112,9 @@ class DataStore(MappingDatastore):
         """
         print(self.zw[start].tree(expand=True, level=depth))
 
-
     def calc_membership_strength(
         self, from_assay: str, cell_key: str, feat_key: str, clust_key: str
     ) -> None:
-
         loc = self._get_latest_graph_loc(
             from_assay=from_assay, cell_key=cell_key, feat_key=feat_key
         )

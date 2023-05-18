@@ -7,7 +7,9 @@ from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
 
 
-def sanitize_hierarchy(z: zarr.Group, assay_name: str, workspace: Union[str, None]) -> bool:
+def sanitize_hierarchy(
+    z: zarr.Group, assay_name: str, workspace: Union[str, None]
+) -> bool:
     """Test if an assay node in zarr object was created properly.
 
     Args:
@@ -101,11 +103,10 @@ class BaseDataStore:
 
     @property
     def zw(self) -> zarr.Group:
-       
         if self.workspace is None:
             ret_val: zarr.Group = self.z
         else:
-             ret_val: zarr.Group = self.z[self.workspace]  # type: ignore
+            ret_val: zarr.Group = self.z[self.workspace]  # type: ignore
         return ret_val
 
     def _load_cells(self) -> MetaData:
@@ -116,7 +117,7 @@ class BaseDataStore:
             Metadata object
         """
         try:
-            cell_data: zarr.Group = self.zw["cellData"] # type: ignore
+            cell_data: zarr.Group = self.zw["cellData"]  # type: ignore
         except KeyError:
             raise KeyError("ERROR: cellData not found in zarr file")
         return MetaData(cell_data)
@@ -178,7 +179,9 @@ class BaseDataStore:
                 )
         return assay_name
 
-    def _load_assays(self, min_cells: int, custom_assay_types: Optional[dict] = None) -> None:
+    def _load_assays(
+        self, min_cells: int, custom_assay_types: Optional[dict] = None
+    ) -> None:
         """This function loads all the assay names present in attribute
         `assayNames` as Assay objects. An attempt is made to automatically
         determine the most appropriate Assay class for each assay based on
@@ -275,7 +278,8 @@ class BaseDataStore:
         return None
 
     def _get_assay(
-        self, from_assay: Union[str, None],
+        self,
+        from_assay: Union[str, None],
     ) -> Union[Assay, RNAassay, ADTassay, ATACassay]:
         """This is a convenience function used internally to quickly obtain the
         assay object that is linked to an assay name.

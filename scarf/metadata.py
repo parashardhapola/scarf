@@ -96,7 +96,9 @@ class MetaData:
 
         """
         reserved_cols = ["I", "ids", "names"]
-        col_map: Dict[str, Union[str, Tuple[str, str]]] = {x: "primary" for x in reserved_cols}
+        col_map: Dict[str, Union[str, Tuple[str, str]]] = {
+            x: "primary" for x in reserved_cols
+        }
         for loc, zgrp in self.locations.items():
             for i in zgrp.keys():
                 j = self._col_renamer(loc, i)

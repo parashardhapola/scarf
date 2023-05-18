@@ -153,9 +153,7 @@ def clean_array(x, fill_val: int = 0):
 
 
 def load_zarr(
-    zarr_loc: ZARRLOC,
-    mode: str,
-    synchronizer: Optional[zarr.ThreadSynchronizer] = None
+    zarr_loc: ZARRLOC, mode: str, synchronizer: Optional[zarr.ThreadSynchronizer] = None
 ) -> zarr.Group:
     if synchronizer is None:
         synchronizer = zarr.ThreadSynchronizer()
@@ -178,7 +176,7 @@ def controlled_compute(arr, nthreads):
     from multiprocessing.pool import ThreadPool
     import dask
 
-    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)): # type: ignore
+    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)):  # type: ignore
         res = arr.compute()
     return res
 

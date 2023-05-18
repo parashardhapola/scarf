@@ -24,7 +24,14 @@ import numpy as np
 from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 import os
 import pandas as pd
-from .utils import controlled_compute, logger, tqdmbar, show_dask_progress, load_zarr, ZARRLOC
+from .utils import (
+    controlled_compute,
+    logger,
+    tqdmbar,
+    show_dask_progress,
+    load_zarr,
+    ZARRLOC,
+)
 from scipy.sparse import csr_matrix
 
 __all__ = [
@@ -196,9 +203,7 @@ def create_zarr_count_assay(
 
 
 def load_count_store(
-    z: zarr.Group,
-    assay_name: str,
-    workspace: Union[str, None]
+    z: zarr.Group, assay_name: str, workspace: Union[str, None]
 ) -> zarr.Array:
     if workspace is None:
         return z[f"{assay_name}/counts"]  # type: ignore
@@ -207,10 +212,7 @@ def load_count_store(
 
 
 def create_cell_data(
-    z: zarr.Group,
-    workspace: Union[str, None],
-    ids: np.ndarray,
-    names: np.ndarray
+    z: zarr.Group, workspace: Union[str, None], ids: np.ndarray, names: np.ndarray
 ) -> zarr.Group:
     if workspace is None:
         g = z.create_group("cellData")
@@ -222,9 +224,7 @@ def create_cell_data(
     return g
 
 
-def sparse_writer(
-    store: zarr.Array, data_stream, n_cells: int, batch_size: int
-) -> int:
+def sparse_writer(store: zarr.Array, data_stream, n_cells: int, batch_size: int) -> int:
     (
         s,
         e,
@@ -493,7 +493,7 @@ class NaboH5ToZarr:
             self.assayName = "RNA"
         else:
             self.assayName = assay_name
-        self.z = load_zarr(zarr_loc, mode="w") # type: ignore
+        self.z = load_zarr(zarr_loc, mode="w")  # type: ignore
         self._ini_cell_data()
         create_zarr_count_assay(
             z=self.z,
@@ -1184,7 +1184,9 @@ class ZarrMerge:
             dtype=dtype,
         )
 
-    def _merge_cell_table(self, reset: bool, prepend_text: Optional[str] = None) -> pd.DataFrame:
+    def _merge_cell_table(
+        self, reset: bool, prepend_text: Optional[str] = None
+    ) -> pd.DataFrame:
         """Merges the cell metadata table for each sample.
 
         Args:
@@ -1541,9 +1543,7 @@ def to_mtx(assay, mtx_directory: str, compress: bool = False):
     for i in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
         i = coo_matrix((i.compute()))
         df = pd.DataFrame({"col": i.col + 1, "row": i.row + s + 1, "d": i.data})
-        df.to_csv(
-            h, sep=" ", header=False, index=False, mode="a", lineterminator="\n"
-        )
+        df.to_csv(h, sep=" ", header=False, index=False, mode="a", lineterminator="\n")
         s += i.shape[0]
     h.close()
     assay.cells.to_pandas_dataframe(["ids"]).to_csv(

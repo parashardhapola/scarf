@@ -36,7 +36,7 @@ def find_markers_by_rank(
     Args:
         assay:
         group_key:
-        cell_key:   
+        cell_key:
         batch_size:
         use_prenormed:
         prenormed_store:
@@ -48,21 +48,23 @@ def find_markers_by_rank(
     def calc(vdf):
         r = vdf.rank(method="dense").groupby(groups).mean().reindex(group_set)
         r = r / r.sum()
-        
+
         g = np.array([pd.Series(groups).value_counts().reindex(group_set).values]).T
         g_o = len(groups) - g
 
         s = vdf.groupby(groups).sum().reindex(group_set)
         m = s / g
         m_o = (s.sum() - s) / g_o
-        
+
         s = (vdf > 0).groupby(groups).sum().reindex(group_set)
         e = s / g
         e_o = (s.sum() - s) / g_o
 
         fc = (m / m_o).fillna(0)
 
-        return np.array([r.values, m.values, m_o.values, e.values, e_o.values, fc.values]).T
+        return np.array(
+            [r.values, m.values, m_o.values, e.values, e_o.values, fc.values]
+        ).T
 
     @jit(nopython=True)
     def calc_rank_mean(v):
@@ -117,8 +119,9 @@ def find_markers_by_rank(
             if "prenormed" in assay.z:
                 prenormed_store = assay.z["prenormed"]
             else:
-                logger.warning("Could not find prenormed values")
-                use_prenormed = False
+                raise ValueError(
+                    "Could not find prenormed values. Run with use_prenormed=False or create pre-normed values."
+                )
 
         results = {x: [] for x in group_set}
         cell_idx = assay.cells.active_index(cell_key)
@@ -143,12 +146,12 @@ def find_markers_by_rank(
         temp = np.vstack([calc(x) for x in batch_iterator])
         results = {}
         feat_index = assay.feats.active_index("I")
-        for n,i in enumerate(group_set):
-            results[i] = pd.DataFrame(
-                temp[:, n, :],
-                columns=out_cols[1:],
-                index=feat_index
-            ).sort_values(by="score", ascending=False).round(5)
+        for n, i in enumerate(group_set):
+            results[i] = (
+                pd.DataFrame(temp[:, n, :], columns=out_cols[1:], index=feat_index)
+                .sort_values(by="score", ascending=False)
+                .round(5)
+            )
             results[i]["feature_index"] = results[i].index
             results[i] = results[i][out_cols]
         return results
