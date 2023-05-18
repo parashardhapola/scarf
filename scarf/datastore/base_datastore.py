@@ -2,7 +2,7 @@ from typing import List, Union, Optional
 import numpy as np
 import zarr
 from loguru import logger
-from ..utils import show_dask_progress, controlled_compute, load_zarr
+from ..utils import show_dask_progress, controlled_compute, load_zarr, ZARRLOC
 from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
 
@@ -72,7 +72,7 @@ class BaseDataStore:
 
     def __init__(
         self,
-        zarr_loc: str,
+        zarr_loc: ZARRLOC,
         assay_types: dict,
         default_assay: str,
         min_features_per_cell: int,
