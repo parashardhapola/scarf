@@ -7,7 +7,7 @@ from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
 
 
-def sanitize_hierarchy(z: zarr.hierarchy, assay_name: str, workspace: str) -> bool:
+def sanitize_hierarchy(z: zarr.Group, assay_name: str, workspace: Union[str, None]) -> bool:
     """Test if an assay node in zarr object was created properly.
 
     Args:
@@ -100,11 +100,13 @@ class BaseDataStore:
         # TODO: Implement _defaults to hold default parameters for methods
 
     @property
-    def zw(self):
+    def zw(self) -> zarr.Group:
+       
         if self.workspace is None:
-            return self.z
+            ret_val: zarr.Group = self.z
         else:
-            return self.z[self.workspace]
+             ret_val: zarr.Group = self.z[self.workspace]  # type: ignore
+        return ret_val
 
     def _load_cells(self) -> MetaData:
         """This convenience function loads cellData level from the Zarr
@@ -114,7 +116,7 @@ class BaseDataStore:
             Metadata object
         """
         try:
-            cell_data = self.zw["cellData"]
+            cell_data: zarr.Group = self.zw["cellData"] # type: ignore
         except KeyError:
             raise KeyError("ERROR: cellData not found in zarr file")
         return MetaData(cell_data)
@@ -135,7 +137,7 @@ class BaseDataStore:
                 assays.append(i)
         return assays
 
-    def _load_default_assay(self, assay_name: str = None) -> str:
+    def _load_default_assay(self, assay_name: Optional[str] = None) -> str:
         """This function sets a given assay name as defaultAssay attribute. If
         `assay_name` value is None then the top-level directory attributes in
         the Zarr file are looked up for presence of previously used default
@@ -176,7 +178,7 @@ class BaseDataStore:
                 )
         return assay_name
 
-    def _load_assays(self, min_cells: int, custom_assay_types: dict = None) -> None:
+    def _load_assays(self, min_cells: int, custom_assay_types: Optional[dict] = None) -> None:
         """This function loads all the assay names present in attribute
         `assayNames` as Assay objects. An attempt is made to automatically
         determine the most appropriate Assay class for each assay based on
@@ -541,7 +543,7 @@ class BaseDataStore:
                 targets = []
                 layouts = []
                 for j in self.zw[i]["projections"]:
-                    if type(self.zw[i]["projections"][j]) == zarr.Group:
+                    if isinstance(self.zw[i]["projections"][j], zarr.Group):  # type: ignore
                         targets.append(j)
                     else:
                         layouts.append(j)

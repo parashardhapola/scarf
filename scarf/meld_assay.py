@@ -434,7 +434,7 @@ def create_counts_mat(
 
 def coordinate_melding(
     assay,
-    workspace: str,
+    workspace: Union[str, None],
     feature_bed: pd.DataFrame,
     new_assay_name: str,
     peaks_col: str = "ids",

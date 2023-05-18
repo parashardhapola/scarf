@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from scipy.sparse import csr_matrix, coo_matrix
-from dask.array import from_zarr
+from dask.array import from_zarr  # type: ignore
 from .base_datastore import BaseDataStore
 from ..utils import clean_array, show_dask_progress, system_call, tqdmbar
 from ..assay import Assay

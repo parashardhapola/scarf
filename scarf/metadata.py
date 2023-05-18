@@ -1,7 +1,7 @@
 """Contains the MetaData class, which is used for storing metadata about cells
 and features."""
 import re
-from typing import List, Iterable, Any, Dict, Tuple, Optional
+from typing import List, Iterable, Any, Dict, Tuple, Optional, Union
 import numpy as np
 from zarr import hierarchy as z_hierarchy
 import pandas as pd
@@ -89,14 +89,14 @@ class MetaData:
             return f"{loc}_{col}"
         return col
 
-    def _column_map(self) -> Dict[str, Tuple[str, str]]:
+    def _column_map(self) -> Dict[str, Union[str, Tuple[str, str]]]:
         """
 
         Returns:
 
         """
         reserved_cols = ["I", "ids", "names"]
-        col_map = {x: "primary" for x in reserved_cols}
+        col_map: Dict[str, Union[str, Tuple[str, str]]] = {x: "primary" for x in reserved_cols}
         for loc, zgrp in self.locations.items():
             for i in zgrp.keys():
                 j = self._col_renamer(loc, i)
@@ -386,7 +386,7 @@ class MetaData:
     def insert(
         self,
         column_name: str,
-        values: np.ndarray,
+        values: Union[np.ndarray, List],
         fill_value: Any = np.NaN,
         key: str = "I",
         overwrite: bool = False,
@@ -421,7 +421,7 @@ class MetaData:
                 "'values' parameter is of `list` type and not `np.ndarray` as expected. The correct dtype "
                 "may not be assigned to the column"
             )
-        v = self._fill_to_index(values, fill_value, key)
+        v = self._fill_to_index(np.array(values), fill_value, key)
         self._save(column_name, v, location=location)
         return None
 

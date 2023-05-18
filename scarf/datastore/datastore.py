@@ -190,7 +190,7 @@ class DataStore(MappingDatastore):
             from_assay = "HTO"
         if cell_key is None:
             cell_key = self._get_latest_cell_key(from_assay)
-        assay: ADTassay = self._get_assay(from_assay)
+        assay = self._get_assay(from_assay)
         counts = controlled_compute(
             assay.rawData[self.cells.fetch_all(cell_key)], self.nthreads
         )
@@ -198,7 +198,7 @@ class DataStore(MappingDatastore):
             pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
         )
         self.cells.insert(
-            column_name=label, values=hto_idents.values, overwrite=True, key=cell_key
+            column_name=label, values=np.array(hto_idents.values), overwrite=True, key=cell_key
         )
 
     def mark_hvgs(
@@ -258,7 +258,7 @@ class DataStore(MappingDatastore):
 
         if cell_key is None:
             cell_key = "I"
-        assay: RNAassay = self._get_assay(from_assay)
+        assay = self._get_assay(from_assay)
         if type(assay) != RNAassay:
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
@@ -314,7 +314,7 @@ class DataStore(MappingDatastore):
         """
         if cell_key is None:
             cell_key = "I"
-        assay: ATACassay = self._get_assay(from_assay)
+        assay = self._get_assay(from_assay)
         if type(assay) != ATACassay:
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
@@ -435,12 +435,12 @@ class DataStore(MappingDatastore):
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__r",
-            markers["r_value"].values,
+            np.array(markers["r_value"].values),
             overwrite=True,
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__p",
-            markers["p_value"].values,
+            np.array(markers["p_value"].values),
             overwrite=True,
         )
 
@@ -528,7 +528,8 @@ class DataStore(MappingDatastore):
             z_scale=z_scale,
             batch_size=batch_size,
         )
-
+        if ann_params is None:
+            ann_params = {}
         clusts = knn_clustering(
             d_array=df,
             n_neighbours=n_neighbours,
@@ -585,7 +586,7 @@ class DataStore(MappingDatastore):
             )
         assay = self._get_assay(from_assay)
         try:
-            g = assay.z["markers"][f"{cell_key}__{group_key}"]
+            g = assay.z["markers"][f"{cell_key}__{group_key}"] # type: ignore
         except KeyError:
             raise KeyError(
                 "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
@@ -607,7 +608,7 @@ class DataStore(MappingDatastore):
         dfs = []
         for gid in gids:
             if gid in g:
-                cols = [g[gid][x][:] for x in out_cols]
+                cols = [g[gid][x][:] for x in out_cols] # type: ignore
                 df = pd.DataFrame(
                     cols,
                     index=out_cols,
@@ -762,7 +763,7 @@ class DataStore(MappingDatastore):
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
-        self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
+        self.cells.insert(phase_label, np.array(phase.values), key=cell_key, overwrite=True)
 
     def add_grouped_assay(
         self,
@@ -810,10 +811,10 @@ class DataStore(MappingDatastore):
 
         module_ids = [f"group_{x}" for x in group_set]
         g = create_zarr_count_assay(
-            z=assay.z["/"],
+            z=assay.z["/"], # type: ignore
             assay_name=assay_label,
             workspace=self.workspace,
-            chunk_size=assay.rawData.chunksize,
+            chunk_size=assay.rawData.chunksize, # type: ignore
             n_cells=assay.cells.N,
             feat_ids=module_ids,
             feat_names=module_ids,
@@ -891,7 +892,7 @@ class DataStore(MappingDatastore):
 
         assay = self._get_assay(from_assay)
         feature_bed = pd.read_csv(external_bed_fn, header=None, sep="\t").sort_values(
-            by=[0, 1]
+            by=[0, 1] # type: ignore
         )
 
         peaks_coords = assay.feats.fetch_all(peaks_col)
@@ -986,7 +987,7 @@ class DataStore(MappingDatastore):
         for g in tqdmbar(sorted(set(groups))):
             if g in null_vals:
                 continue
-            for sg in sorted(set(sec_groups)):
+            for sg in sorted(set(sec_groups)): # type: ignore
                 if sg in secondary_null_vals:
                     continue
                 if sg is None and len(sec_groups) == 1:
@@ -1046,7 +1047,7 @@ class DataStore(MappingDatastore):
             return vals
 
     def to_anndata(
-        self, from_assay: str = None, cell_key: str = None, layers: dict = None
+        self, from_assay: Optional[str] = None, cell_key: Optional[str] = None, layers: Optional[dict] = None
     ):
         """Writes an assay of the Zarr hierarchy to AnnData file format.
 
@@ -1060,7 +1061,7 @@ class DataStore(MappingDatastore):
         """
         try:
             # noinspection PyPackageRequirements
-            from anndata import AnnData
+            from anndata import AnnData # type: ignore
         except ImportError:
             logger.error(
                 "Package anndata is not installed because its an optional dependency. "
@@ -1094,6 +1095,26 @@ class DataStore(MappingDatastore):
             None
         """
         print(self.zw[start].tree(expand=True, level=depth))
+
+
+    def calc_membership_strength(
+        self, from_assay: str, cell_key: str, feat_key: str, clust_key: str
+    ) -> None:
+
+        loc = self._get_latest_graph_loc(
+            from_assay=from_assay, cell_key=cell_key, feat_key=feat_key
+        )
+        n_cells, k = self._get_graph_ncells_k(graph_loc=loc)
+        clusts = self.cells.fetch(clust_key, key=cell_key)
+        v = pd.DataFrame(clusts[self.zw[loc]["edges"][:, 1].reshape(k, n_cells)])
+        x = np.array([v[x].value_counts().index[0] for x in v])
+        self.cells.insert(
+            f"{from_assay}_{cell_key}_cluster_membership_strength",
+            (np.array((v == x).sum().values) / k).round(3),
+            key=cell_key,
+            overwrite=True,
+        )
+        return None
 
     def smart_label(
         self,
@@ -1257,14 +1278,14 @@ class DataStore(MappingDatastore):
         layout_key: Optional[str] = None,
         color_by: Optional[str] = None,
         subselection_key: Optional[str] = None,
-        size_vals: Union[np.ndarray, List[float]] = None,
+        size_vals: Union[np.ndarray, List[float], None] = None,
         clip_fraction: float = 0.01,
         width: float = 6,
         height: float = 6,
         default_color: str = "steelblue",
         cmap: Optional[str] = None,
-        color_key: dict = None,
-        mask_values: list = None,
+        color_key: Optional[dict] = None,
+        mask_values: Optional[list] = None,
         mask_name: str = "NA",
         mask_color: str = "k",
         point_size: float = 10,
@@ -1282,7 +1303,7 @@ class DataStore(MappingDatastore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
-        title: Union[str, List[str]] = None,
+        title: Union[str, List[str], None] = None,
         title_size: int = 12,
         hide_title: bool = False,
         cbar_shrink: float = 0.6,
@@ -1291,7 +1312,7 @@ class DataStore(MappingDatastore):
         cspacing: float = 1,
         shuffle_df: bool = False,
         sort_values: bool = False,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
         ax=None,
         force_ints_as_cats: bool = True,
@@ -1299,7 +1320,7 @@ class DataStore(MappingDatastore):
         w_pad: float = 1,
         h_pad: float = 1,
         show_fig: bool = True,
-        scatter_kwargs: dict = None,
+        scatter_kwargs: Optional[dict] = None,
     ):
         """Create a scatter plot with a chosen layout. The method fetches the
         coordinates based from the cell metadata columns with `layout_key`
@@ -1425,7 +1446,7 @@ class DataStore(MappingDatastore):
                 "ERROR: clip_fraction cannot be larger than or equal to 0.5"
             )
         if isinstance(layout_key, str):
-            layout_key = [layout_key]
+            layout_key: List[str] = [layout_key]
         # If a list of layout keys and color_by (e.g. layout_key=['UMAP', 'tSNE'], color_by=['gene1', 'gene2'] the
         # grid layout will be: plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2
         dfs = []
@@ -1433,12 +1454,11 @@ class DataStore(MappingDatastore):
             x = self.cells.fetch(f"{lk}1", cell_key)
             y = self.cells.fetch(f"{lk}2", cell_key)
             if color_by is None:
-                color_by = ""
+                color_by = "vc"
             if isinstance(color_by, str):
-                color_by = [color_by]
+                color_by: List[str] = [color_by]
             for c in color_by:
-                if c == "":
-                    c = "vc"
+                if c == "vc":
                     v = np.ones(len(x)).astype(int)
                 else:
                     v = self.get_cell_vals(
