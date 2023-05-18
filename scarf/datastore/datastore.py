@@ -1,4 +1,4 @@
-from typing import Iterable, Optional, Union, List
+from typing import Iterable, Optional, Union, List, Literal, Tuple
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
@@ -184,10 +184,12 @@ class DataStore(MappingDatastore):
         self,
         from_assay: Optional[str] = None,
         cell_key: Optional[str] = None,
-        label: Optional[str] = "Hashtag_identity",
+        label: str = "Hashtag_identity",
     ) -> None:
         if from_assay is None:
             from_assay = "HTO"
+        if cell_key is None:
+            cell_key = self._get_latest_cell_key(from_assay)
         assay: ADTassay = self._get_assay(from_assay)
         counts = controlled_compute(
             assay.rawData[self.cells.fetch_all(cell_key)], self.nthreads
@@ -195,7 +197,9 @@ class DataStore(MappingDatastore):
         hto_idents = hto_demux(
             pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
         )
-        self.cells.insert(column_name=label, values=hto_idents.values, overwrite=True, key=cell_key)
+        self.cells.insert(
+            column_name=label, values=hto_idents.values, overwrite=True, key=cell_key
+        )
 
     def mark_hvgs(
         self,
@@ -917,56 +921,129 @@ class DataStore(MappingDatastore):
     def make_bulk(
         self,
         from_assay: Optional[str] = None,
+        cell_key: str = "I",
         group_key: Optional[str] = None,
-        pseudo_reps: int = 3,
+        secondary_group_key: Optional[str] = None,
+        aggr_type: Literal["mean", "sum"] = "mean",
+        return_fraction: bool = False,
+        feature_label: Literal["index", "id", "name"] = "index",
+        remove_empty_features: bool = True,
+        pseudo_reps: int = 1,
         null_vals: Optional[list] = None,
+        secondary_null_vals: Optional[list] = None,
         random_seed: int = 4466,
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame]]:
         """Merge data from cells to create a bulk profile.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Name of the column in cell metadata table to be used for selecting cells.
             group_key: Name of the column in cell metadata table to be used for grouping cells.
+            secondary_group_key: Name of the column in cell metadata table to be used for sub-grouping cells.
+            aggr_type: Type of aggregation to be used. Can be either 'mean' or 'sum'. (Default value: 'mean')
+            return_fraction: Return the fraction of cells expressing a gene in each group. (Default value: False)
+            feature_labels: The column in feature metadata table to use as row labels. (Default value: 'index')
             pseudo_reps: Within each group, cells will randomly be split into `pseudo_reps` partitions. Each partition
                          is considered a pseudo-replicate. (Default value: 3)
-            null_vals: Values to be considered as missing values in the `group_key` column. These values will be
+            remove_empty_features: Remove features that are not expressed in any cell. (Default value: True)
+            null_vals: Values to be considered as missing values in the `group_key` column. These values will be skipped.
+            secondary_null_vals: Values to be considered as missing values in the `secondary_group_key` column. 
+                                 These values will be skipped.
             random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
 
         Returns:
+            A pandas dataframe containing the bulk profile. If `return_fraction` is True, then a tuple of two dataframes is returned.
+            The second dataframe contains the fraction of cells expressing each feature in each group.
         """
 
-        def make_reps(v, n_reps: int, seed: int):
+        def make_reps(v, n_reps: int, seed: int) -> List[np.ndarray]:
             v = list(v)
-            np.random.seed(seed)
-            shuffled_idx = np.random.choice(v, len(v), replace=False)
+            random_state = np.random.RandomState(seed)
+            shuffled_idx = random_state.choice(v, len(v), replace=False)
             rep_idx = np.array_split(shuffled_idx, n_reps)
-            return [sorted(x) for x in rep_idx]
+            return [np.array(sorted(x)) for x in rep_idx]
 
         if pseudo_reps < 1:
             pseudo_reps = 1
         if null_vals is None:
-            null_vals = [-1]
-        assay = self._get_assay(from_assay)
+            null_vals = []
+        if secondary_null_vals is None:
+            secondary_null_vals = []
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
-        groups = self.cells.fetch_all(group_key)
+        else:
+            groups = self.cells.fetch(group_key, key=cell_key)
+        if secondary_group_key is None:
+            sec_groups = [None]
+        else:
+            sec_groups = self.cells.fetch(secondary_group_key, key=cell_key)
+
+        assay = self._get_assay(from_assay)
 
         vals = {}
+        fracs = {}
+        all_feat_idx = np.arange(assay.feats.N)
         for g in tqdmbar(sorted(set(groups))):
             if g in null_vals:
                 continue
-            rep_indices = make_reps(np.where(groups == g)[0], pseudo_reps, random_seed)
-            for n, idx in enumerate(rep_indices):
-                vals[f"{g}_Rep{n + 1}"] = controlled_compute(
-                    assay.rawData[idx].sum(axis=0), self.nthreads
-                )
-        vals = pd.DataFrame(vals)
-        vals = vals[(vals.sum(axis=1) != 0)]
-        vals["names"] = (
-            pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values
-        )
-        vals.index = pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values
-        return vals
+            for sg in sorted(set(sec_groups)):
+                if sg in secondary_null_vals:
+                    continue
+                if sg is None and len(sec_groups) == 1:
+                    g_idx = np.where(groups == g)[0]
+                else:
+                    g_idx = np.where((groups == g) & (sec_groups == sg))[0]
+                rep_indices = make_reps(g_idx, pseudo_reps, random_seed)
+                for n, idx in enumerate(rep_indices):
+                    if sg is None and len(sec_groups) == 1:
+                        col_name = f"{g}"
+                    else:
+                        col_name = f"{g}_{sg}"
+                    if pseudo_reps > 1:
+                        col_name += f"_Rep{n + 1}"
+                    if len(idx) == 0:
+                        vals[col_name] = np.zeros(assay.feats.N)
+                        continue
+                    if aggr_type == "sum":
+                        vals[col_name] = controlled_compute(
+                            assay.rawData[idx].sum(axis=0), self.nthreads
+                        )
+                    elif aggr_type == "mean": 
+                        vals[col_name] = controlled_compute(
+                            assay.normed(cell_idx=idx, feat_idx=all_feat_idx).mean(
+                                axis=0
+                            ),
+                            self.nthreads,
+                        )
+                    else:
+                        raise ValueError(
+                            "ERROR: `aggr_type` can only be either 'sum' or 'mean'"
+                        )
+                    if return_fraction:
+                        fracs[col_name] = (
+                            (assay.rawData[idx] > 0).mean(axis=0).compute()
+                        )
+
+        vals = pd.DataFrame(vals).fillna(0)
+
+        empty_idx = None
+        if remove_empty_features:
+            empty_idx = vals.sum(axis=1) != 0
+            vals = vals.loc[empty_idx]    
+
+        if feature_label == "id":
+            vals.set_index(pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values, inplace=True, drop=True)
+        elif feature_label == "name":
+            vals.set_index(pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values, inplace=True, drop=True)
+
+        if return_fraction:
+            fracs = pd.DataFrame(fracs).fillna(0)
+            if empty_idx is not None:
+                fracs = fracs[empty_idx]
+            fracs.set_index(vals.index, inplace=True, drop=True)
+            return vals, fracs
+        else:
+            return vals
 
     def to_anndata(
         self, from_assay: str = None, cell_key: str = None, layers: dict = None
