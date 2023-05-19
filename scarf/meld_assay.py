@@ -11,7 +11,7 @@
 """
 
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Union
 import pandas as pd
 import numpy as np
 import gzip
@@ -321,7 +321,6 @@ def get_feature_mappings(
     id_counter = {}
     n_no_match = 0
     for chrom in peaks_bed_df[0].unique():
-
         feats_chrom_idx = np.array(features_bed_df[0] == chrom)
         if feats_chrom_idx.shape[0] == 0:
             logger.warning(f"Chromosome {chrom} not in the input feature BED")
@@ -414,7 +413,6 @@ def create_counts_mat(
 
     s = 0
     for a in tqdmbar(assay.rawData.blocks, total=assay.rawData.numblocks[0]):
-
         a = controlled_compute(a, assay.nthreads)
         tf = a / n_term_per_doc[s : s + a.shape[0]].reshape(-1, 1)
         idf = np.log2(1 + (n_docs / (n_docs_per_term + 1)))
@@ -436,7 +434,7 @@ def create_counts_mat(
 
 def coordinate_melding(
     assay,
-    workspace: str,
+    workspace: Union[str, None],
     feature_bed: pd.DataFrame,
     new_assay_name: str,
     peaks_col: str = "ids",

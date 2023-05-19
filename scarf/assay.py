@@ -122,7 +122,7 @@ class Assay:
     def __init__(
         self,
         z: zarrGroup,
-        workspace: str,
+        workspace: Union[str, None],
         name: str,  # FIXME change to assay_name
         cell_data: MetaData,
         nthreads: int,
@@ -133,11 +133,11 @@ class Assay:
         self.nthreads = nthreads
         if workspace is None:
             self.rawData = from_zarr(z[f"{name}/counts"], inline_array=True)
-            self.feats = MetaData(z[f"{name}/featureData"])
-            self.z = z[self.name]
+            self.feats = MetaData(z[f"{name}/featureData"])  # type: ignore
+            self.z: zarr.Group = z[self.name]  # type: ignore
         else:
             self.rawData = from_zarr(z[f"matrices/{name}/counts"], inline_array=True)
-            self.feats = MetaData(z[f"{workspace}/{name}/featureData"])
+            self.feats = MetaData(z[f"{workspace}/{name}/featureData"])  # type: ignore
             self.z = z[f"{workspace}/{name}"]
         self.attrs = self.z.attrs
         if "percentFeatures" not in self.attrs:

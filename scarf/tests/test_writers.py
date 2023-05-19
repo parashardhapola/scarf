@@ -33,7 +33,7 @@ def test_loomtozarr(loom_reader):
     from ..writers import LoomToZarr
 
     fn = full_path("sympathetic.zarr")
-    writer = LoomToZarr(loom_reader, zarr_fn=fn)
+    writer = LoomToZarr(loom_reader, zarr_loc=fn)
     writer.dump()
     remove(fn)
 
@@ -52,7 +52,7 @@ def test_sparsetozarr():
 
     writer = SparseToZarr(
         mat,
-        zarr_fn=fn,
+        zarr_loc=fn,
         cell_ids=[f"cell_{x}" for x in range(3)],
         feature_ids=[f"feat_{x}" for x in range(10)],
     )

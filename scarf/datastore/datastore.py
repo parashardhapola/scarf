@@ -1,12 +1,13 @@
-from typing import Iterable, Optional, Union, List
+from typing import Iterable, Optional, Union, List, Literal, Tuple
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
 from .mapping_datastore import MappingDatastore
 from ..writers import create_zarr_obj_array, create_zarr_dataset
-from ..utils import tqdmbar, controlled_compute
-from ..assay import RNAassay, ATACassay
+from ..utils import tqdmbar, controlled_compute, ZARRLOC
+from ..assay import RNAassay, ATACassay, ADTassay
+from ..feat_utils import hto_demux
 
 __all__ = ["DataStore"]
 
@@ -42,7 +43,7 @@ class DataStore(MappingDatastore):
 
     def __init__(
         self,
-        zarr_loc: str,
+        zarr_loc: ZARRLOC,
         assay_types: Optional[dict] = None,
         default_assay: Optional[str] = None,
         min_features_per_cell: int = 10,
@@ -179,6 +180,30 @@ class DataStore(MappingDatastore):
                 sup_title="Post-filtering distribution",
             )
 
+    def mark_hto_identities(
+        self,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        label: str = "Hashtag_identity",
+    ) -> None:
+        if from_assay is None:
+            from_assay = "HTO"
+        if cell_key is None:
+            cell_key = self._get_latest_cell_key(from_assay)
+        assay = self._get_assay(from_assay)
+        counts = controlled_compute(
+            assay.rawData[self.cells.fetch_all(cell_key)], self.nthreads
+        )
+        hto_idents = hto_demux(
+            pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
+        )
+        self.cells.insert(
+            column_name=label,
+            values=np.array(hto_idents.values),
+            overwrite=True,
+            key=cell_key,
+        )
+
     def mark_hvgs(
         self,
         from_assay: Optional[str] = None,
@@ -236,7 +261,7 @@ class DataStore(MappingDatastore):
 
         if cell_key is None:
             cell_key = "I"
-        assay: RNAassay = self._get_assay(from_assay)
+        assay = self._get_assay(from_assay)
         if type(assay) != RNAassay:
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
@@ -292,7 +317,7 @@ class DataStore(MappingDatastore):
         """
         if cell_key is None:
             cell_key = "I"
-        assay: ATACassay = self._get_assay(from_assay)
+        assay = self._get_assay(from_assay)
         if type(assay) != ATACassay:
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
@@ -413,12 +438,12 @@ class DataStore(MappingDatastore):
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__r",
-            markers["r_value"].values,
+            np.array(markers["r_value"].values),
             overwrite=True,
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__p",
-            markers["p_value"].values,
+            np.array(markers["p_value"].values),
             overwrite=True,
         )
 
@@ -506,7 +531,8 @@ class DataStore(MappingDatastore):
             z_scale=z_scale,
             batch_size=batch_size,
         )
-
+        if ann_params is None:
+            ann_params = {}
         clusts = knn_clustering(
             d_array=df,
             n_neighbours=n_neighbours,
@@ -563,7 +589,7 @@ class DataStore(MappingDatastore):
             )
         assay = self._get_assay(from_assay)
         try:
-            g = assay.z["markers"][f"{cell_key}__{group_key}"]
+            g = assay.z["markers"][f"{cell_key}__{group_key}"]  # type: ignore
         except KeyError:
             raise KeyError(
                 "ERROR: Couldn't find the location of markers. Please make sure that you have already called "
@@ -585,7 +611,7 @@ class DataStore(MappingDatastore):
         dfs = []
         for gid in gids:
             if gid in g:
-                cols = [g[gid][x][:] for x in out_cols]
+                cols = [g[gid][x][:] for x in out_cols]  # type: ignore
                 df = pd.DataFrame(
                     cols,
                     index=out_cols,
@@ -740,7 +766,9 @@ class DataStore(MappingDatastore):
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
-        self.cells.insert(phase_label, phase.values, key=cell_key, overwrite=True)
+        self.cells.insert(
+            phase_label, np.array(phase.values), key=cell_key, overwrite=True
+        )
 
     def add_grouped_assay(
         self,
@@ -788,10 +816,10 @@ class DataStore(MappingDatastore):
 
         module_ids = [f"group_{x}" for x in group_set]
         g = create_zarr_count_assay(
-            z=assay.z["/"],
+            z=assay.z["/"],  # type: ignore
             assay_name=assay_label,
             workspace=self.workspace,
-            chunk_size=assay.rawData.chunksize,
+            chunk_size=assay.rawData.chunksize,  # type: ignore
             n_cells=assay.cells.N,
             feat_ids=module_ids,
             feat_names=module_ids,
@@ -869,7 +897,7 @@ class DataStore(MappingDatastore):
 
         assay = self._get_assay(from_assay)
         feature_bed = pd.read_csv(external_bed_fn, header=None, sep="\t").sort_values(
-            by=[0, 1]
+            by=[0, 1]  # type: ignore
         )
 
         peaks_coords = assay.feats.fetch_all(peaks_col)
@@ -899,59 +927,143 @@ class DataStore(MappingDatastore):
     def make_bulk(
         self,
         from_assay: Optional[str] = None,
+        cell_key: str = "I",
         group_key: Optional[str] = None,
-        pseudo_reps: int = 3,
+        secondary_group_key: Optional[str] = None,
+        aggr_type: Literal["mean", "sum"] = "mean",
+        return_fraction: bool = False,
+        feature_label: Literal["index", "id", "name"] = "index",
+        remove_empty_features: bool = True,
+        pseudo_reps: int = 1,
         null_vals: Optional[list] = None,
+        secondary_null_vals: Optional[list] = None,
         random_seed: int = 4466,
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame]]:
         """Merge data from cells to create a bulk profile.
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
+            cell_key: Name of the column in cell metadata table to be used for selecting cells.
             group_key: Name of the column in cell metadata table to be used for grouping cells.
+            secondary_group_key: Name of the column in cell metadata table to be used for sub-grouping cells.
+            aggr_type: Type of aggregation to be used. Can be either 'mean' or 'sum'. (Default value: 'mean')
+            return_fraction: Return the fraction of cells expressing a gene in each group. (Default value: False)
+            feature_labels: The column in feature metadata table to use as row labels. (Default value: 'index')
             pseudo_reps: Within each group, cells will randomly be split into `pseudo_reps` partitions. Each partition
                          is considered a pseudo-replicate. (Default value: 3)
-            null_vals: Values to be considered as missing values in the `group_key` column. These values will be
+            remove_empty_features: Remove features that are not expressed in any cell. (Default value: True)
+            null_vals: Values to be considered as missing values in the `group_key` column. These values will be skipped.
+            secondary_null_vals: Values to be considered as missing values in the `secondary_group_key` column.
+                                 These values will be skipped.
             random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
 
         Returns:
+            A pandas dataframe containing the bulk profile. If `return_fraction` is True, then a tuple of two dataframes is returned.
+            The second dataframe contains the fraction of cells expressing each feature in each group.
         """
 
-        def make_reps(v, n_reps: int, seed: int):
+        def make_reps(v, n_reps: int, seed: int) -> List[np.ndarray]:
             v = list(v)
-            np.random.seed(seed)
-            shuffled_idx = np.random.choice(v, len(v), replace=False)
+            random_state = np.random.RandomState(seed)
+            shuffled_idx = random_state.choice(v, len(v), replace=False)
             rep_idx = np.array_split(shuffled_idx, n_reps)
-            return [sorted(x) for x in rep_idx]
+            return [np.array(sorted(x)) for x in rep_idx]
 
         if pseudo_reps < 1:
             pseudo_reps = 1
         if null_vals is None:
-            null_vals = [-1]
-        assay = self._get_assay(from_assay)
+            null_vals = []
+        if secondary_null_vals is None:
+            secondary_null_vals = []
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
-        groups = self.cells.fetch_all(group_key)
+        else:
+            groups = self.cells.fetch(group_key, key=cell_key)
+        if secondary_group_key is None:
+            sec_groups = [None]
+        else:
+            sec_groups = self.cells.fetch(secondary_group_key, key=cell_key)
+
+        assay = self._get_assay(from_assay)
 
         vals = {}
+        fracs = {}
+        all_feat_idx = np.arange(assay.feats.N)
         for g in tqdmbar(sorted(set(groups))):
             if g in null_vals:
                 continue
-            rep_indices = make_reps(np.where(groups == g)[0], pseudo_reps, random_seed)
-            for n, idx in enumerate(rep_indices):
-                vals[f"{g}_Rep{n + 1}"] = controlled_compute(
-                    assay.rawData[idx].sum(axis=0), self.nthreads
-                )
-        vals = pd.DataFrame(vals)
-        vals = vals[(vals.sum(axis=1) != 0)]
-        vals["names"] = (
-            pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values
-        )
-        vals.index = pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values
-        return vals
+            for sg in sorted(set(sec_groups)):  # type: ignore
+                if sg in secondary_null_vals:
+                    continue
+                if sg is None and len(sec_groups) == 1:
+                    g_idx = np.where(groups == g)[0]
+                else:
+                    g_idx = np.where((groups == g) & (sec_groups == sg))[0]
+                rep_indices = make_reps(g_idx, pseudo_reps, random_seed)
+                for n, idx in enumerate(rep_indices):
+                    if sg is None and len(sec_groups) == 1:
+                        col_name = f"{g}"
+                    else:
+                        col_name = f"{g}_{sg}"
+                    if pseudo_reps > 1:
+                        col_name += f"_Rep{n + 1}"
+                    if len(idx) == 0:
+                        vals[col_name] = np.zeros(assay.feats.N)
+                        continue
+                    if aggr_type == "sum":
+                        vals[col_name] = controlled_compute(
+                            assay.rawData[idx].sum(axis=0), self.nthreads
+                        )
+                    elif aggr_type == "mean":
+                        vals[col_name] = controlled_compute(
+                            assay.normed(cell_idx=idx, feat_idx=all_feat_idx).mean(
+                                axis=0
+                            ),
+                            self.nthreads,
+                        )
+                    else:
+                        raise ValueError(
+                            "ERROR: `aggr_type` can only be either 'sum' or 'mean'"
+                        )
+                    if return_fraction:
+                        fracs[col_name] = (
+                            (assay.rawData[idx] > 0).mean(axis=0).compute()
+                        )
+
+        vals = pd.DataFrame(vals).fillna(0)
+
+        empty_idx = None
+        if remove_empty_features:
+            empty_idx = vals.sum(axis=1) != 0
+            vals = vals.loc[empty_idx]
+
+        if feature_label == "id":
+            vals.set_index(
+                pd.Series(assay.feats.fetch_all("ids")).reindex(vals.index).values,
+                inplace=True,
+                drop=True,
+            )
+        elif feature_label == "name":
+            vals.set_index(
+                pd.Series(assay.feats.fetch_all("names")).reindex(vals.index).values,
+                inplace=True,
+                drop=True,
+            )
+
+        if return_fraction:
+            fracs = pd.DataFrame(fracs).fillna(0)
+            if empty_idx is not None:
+                fracs = fracs[empty_idx]
+            fracs.set_index(vals.index, inplace=True, drop=True)
+            return vals, fracs
+        else:
+            return vals
 
     def to_anndata(
-        self, from_assay: str = None, cell_key: str = None, layers: dict = None
+        self,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        layers: Optional[dict] = None,
     ):
         """Writes an assay of the Zarr hierarchy to AnnData file format.
 
@@ -964,9 +1076,8 @@ class DataStore(MappingDatastore):
         Returns: anndata object
         """
         try:
-
             # noinspection PyPackageRequirements
-            from anndata import AnnData
+            from anndata import AnnData  # type: ignore
         except ImportError:
             logger.error(
                 "Package anndata is not installed because its an optional dependency. "
@@ -1001,6 +1112,24 @@ class DataStore(MappingDatastore):
         """
         print(self.zw[start].tree(expand=True, level=depth))
 
+    def calc_membership_strength(
+        self, from_assay: str, cell_key: str, feat_key: str, clust_key: str
+    ) -> None:
+        loc = self._get_latest_graph_loc(
+            from_assay=from_assay, cell_key=cell_key, feat_key=feat_key
+        )
+        n_cells, k = self._get_graph_ncells_k(graph_loc=loc)
+        clusts = self.cells.fetch(clust_key, key=cell_key)
+        v = pd.DataFrame(clusts[self.zw[loc]["edges"][:, 1].reshape(k, n_cells)])
+        x = np.array([v[x].value_counts().index[0] for x in v])
+        self.cells.insert(
+            f"{from_assay}_{cell_key}_cluster_membership_strength",
+            (np.array((v == x).sum().values) / k).round(3),
+            key=cell_key,
+            overwrite=True,
+        )
+        return None
+
     def smart_label(
         self,
         to_relabel: str,
@@ -1033,7 +1162,6 @@ class DataStore(MappingDatastore):
         )
         normed_frac = df.divide(df.sum(axis=1), axis="index")
         idxmax = df.idxmax()
-        missing_vals = list(set(df.index).difference(idxmax.unique()))
         new_names = {}
         for i in sorted(idxmax.unique()):
             j = normed_frac[idxmax[idxmax == i].index].loc[i]
@@ -1041,9 +1169,12 @@ class DataStore(MappingDatastore):
             for n, k in enumerate(j, start=1):
                 a = chr(ord("@") + n)
                 new_names[k] = f"{i}{a.lower()}"
-        miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
-        for k, v in miss_idxmax.items():
-            new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
+        
+        missing_vals = list(set(df.index).difference(idxmax.unique()))
+        if len(missing_vals) > 0:
+            miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()
+            for k, v in miss_idxmax.items():
+                new_names[v] = f"{new_names[v][:-1]}-{k}{new_names[v][-1]}"
 
         ret_val = [new_names[x] for x in self.cells.fetch(to_relabel, key=cell_key)]
         if new_col_name is None:
@@ -1163,14 +1294,14 @@ class DataStore(MappingDatastore):
         layout_key: Optional[str] = None,
         color_by: Optional[str] = None,
         subselection_key: Optional[str] = None,
-        size_vals: Union[np.ndarray, List[float]] = None,
+        size_vals: Union[np.ndarray, List[float], None] = None,
         clip_fraction: float = 0.01,
         width: float = 6,
         height: float = 6,
         default_color: str = "steelblue",
         cmap: Optional[str] = None,
-        color_key: dict = None,
-        mask_values: list = None,
+        color_key: Optional[dict] = None,
+        mask_values: Optional[list] = None,
         mask_name: str = "NA",
         mask_color: str = "k",
         point_size: float = 10,
@@ -1188,7 +1319,7 @@ class DataStore(MappingDatastore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
-        title: Union[str, List[str]] = None,
+        title: Union[str, List[str], None] = None,
         title_size: int = 12,
         hide_title: bool = False,
         cbar_shrink: float = 0.6,
@@ -1197,7 +1328,7 @@ class DataStore(MappingDatastore):
         cspacing: float = 1,
         shuffle_df: bool = False,
         sort_values: bool = False,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
         ax=None,
         force_ints_as_cats: bool = True,
@@ -1205,7 +1336,7 @@ class DataStore(MappingDatastore):
         w_pad: float = 1,
         h_pad: float = 1,
         show_fig: bool = True,
-        scatter_kwargs: dict = None,
+        scatter_kwargs: Optional[dict] = None,
     ):
         """Create a scatter plot with a chosen layout. The method fetches the
         coordinates based from the cell metadata columns with `layout_key`
@@ -1331,7 +1462,7 @@ class DataStore(MappingDatastore):
                 "ERROR: clip_fraction cannot be larger than or equal to 0.5"
             )
         if isinstance(layout_key, str):
-            layout_key = [layout_key]
+            layout_key: List[str] = [layout_key]
         # If a list of layout keys and color_by (e.g. layout_key=['UMAP', 'tSNE'], color_by=['gene1', 'gene2'] the
         # grid layout will be: plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2
         dfs = []
@@ -1339,12 +1470,11 @@ class DataStore(MappingDatastore):
             x = self.cells.fetch(f"{lk}1", cell_key)
             y = self.cells.fetch(f"{lk}2", cell_key)
             if color_by is None:
-                color_by = ""
+                color_by = "vc"
             if isinstance(color_by, str):
-                color_by = [color_by]
+                color_by: List[str] = [color_by]
             for c in color_by:
-                if c == "":
-                    c = "vc"
+                if c == "vc":
                     v = np.ones(len(x)).astype(int)
                 else:
                     v = self.get_cell_vals(

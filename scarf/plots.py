@@ -228,10 +228,10 @@ def plot_qc(
     data: pd.DataFrame,
     color: str = "steelblue",
     cmap: str = "tab20",
-    fig_size: tuple = None,
+    fig_size: Optional[Tuple] = None,
     label_size: float = 10.0,
     title_size: float = 10,
-    sup_title: str = None,
+    sup_title: Optional[str] = None,
     sup_title_size: float = 12,
     scatter_size: float = 1.0,
     max_points: int = 10000,
@@ -1258,7 +1258,6 @@ def plot_annotated_heatmap(
     save_dpi: int = 300,
     show_fig: bool = True,
 ):
-
     import matplotlib.gridspec as gridspec
     import matplotlib.ticker as mticker
 

@@ -1,7 +1,11 @@
+from typing import Optional
 import numpy as np
+import pandas as pd
+import dask.array as da
 from numpy.linalg import LinAlgError
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
+from .harmony import run_harmony
 
 
 __all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
@@ -72,6 +76,9 @@ class AnnStream:
         ann_idx,
         lsi_skip_first: bool,
         lsi_params: dict,
+        harmonize: bool,
+        harmonized_data: Optional[da.Array] = None,
+        batches: Optional[pd.DataFrame] = None,
     ):
         self.data = data
         self.k = k
@@ -98,6 +105,9 @@ class AnnStream:
         self.method = reduction_method
         self.nCells, self.nFeats = self.data.shape
         self.clusterLabels: np.ndarray = np.repeat(-1, self.nCells)
+        self.harmonize = harmonize
+        self.harmonizedData = harmonized_data
+        self.batches = batches
         disable_reduction = False
         if self.dims < 1:
             disable_reduction = True
@@ -277,6 +287,12 @@ class AnnStream:
             self.loadings = self._lsiModel.get_topics().T
 
     def _fit_ann(self):
+        def _transform_values():
+            pca_array = []
+            for _i in self.iter_blocks(msg="Calculating uncorrected latent dimensions"):
+                pca_array.append(self.reducer(_i))
+            return np.vstack(pca_array).T
+
         dims = self.dims
         if dims < 1:
             dims = self.data.shape[1]
@@ -291,8 +307,21 @@ class AnnStream:
             self.annEf,
             self.annThreads,
         )
-        for i in self.iter_blocks(msg="Fitting ANN"):
-            ann_idx.add_items(self.reducer(i))
+        if self.harmonize:
+            if self.harmonizedData is None:
+                self.harmonizedData = da.from_array(
+                    run_harmony(_transform_values(), self.batches).T,
+                    chunks=self.data.chunksize,
+                )
+            for i in tqdmbar(
+                self.harmonizedData.blocks,
+                desc="Fitting ANN",
+                total=self.harmonizedData.numblocks[0],
+            ):
+                ann_idx.add_items(controlled_compute(i, self.nthreads))
+        else:
+            for i in self.iter_blocks(msg="Fitting ANN"):
+                ann_idx.add_items(self.reducer(i))
         return ann_idx
 
     def _fit_kmeans(self, do_ann_fit):

@@ -9,6 +9,7 @@
     - rolling_window: applies rolling window mean over a vector
 """
 
+from typing import Union, Optional, TypeAlias
 from loguru import logger
 import sys
 import numpy as np
@@ -44,15 +45,17 @@ tqdm_params = {
     "colour": "#34abeb",
 }
 
+ZARRLOC: TypeAlias = Union[str, zarr.LRUStoreCache]
+
 
 def get_log_level():
     # noinspection PyUnresolvedReferences
-    return logger._core.min_level
+    return logger._core.min_level  # type: ignore
 
 
 def is_notebook() -> bool:
     try:
-        shell = get_ipython().__class__.__name__
+        shell = get_ipython().__class__.__name__  # type: ignore
         if shell == "ZMQInteractiveShell":
             return True
         elif shell == "TerminalInteractiveShell":
@@ -83,7 +86,7 @@ def tqdmbar(*args, **kwargs):
         return tqdm(*args, **kwargs, **params)
 
 
-def set_verbosity(level: str = None, filepath: str = None):
+def set_verbosity(level: Optional[str] = None, filepath: Optional[str] = None):
     """Set verbosity level of Scarf's output. Setting value of level='CRITICAL'
     should silence all logs. Progress bars are automatically disabled for
     levels above 'INFO'.
@@ -96,7 +99,7 @@ def set_verbosity(level: str = None, filepath: str = None):
     Returns:
     """
     # noinspection PyUnresolvedReferences
-    available_levels = logger._core.levels.keys()
+    available_levels = logger._core.levels.keys()  # type: ignore
 
     if level is None or level not in available_levels:
         raise ValueError(
@@ -104,9 +107,9 @@ def set_verbosity(level: str = None, filepath: str = None):
         )
     logger.remove()
     if filepath is None:
-        filepath = sys.stdout
+        filepath = sys.stdout  # type: ignore
     logger.add(
-        filepath,
+        filepath,  # type: ignore
         colorize=True,
         format="<level>{level}</level>: {message}",
         level=level,
@@ -149,13 +152,15 @@ def clean_array(x, fill_val: int = 0):
     return x
 
 
-def load_zarr(zarr_loc: str, mode: str, synchronizer=None) -> zarr.hierarchy:
+def load_zarr(
+    zarr_loc: ZARRLOC, mode: str, synchronizer: Optional[zarr.ThreadSynchronizer] = None
+) -> zarr.Group:
     if synchronizer is None:
         synchronizer = zarr.ThreadSynchronizer()
-    if type(zarr_loc) != str:
-        return zarr.group(zarr_loc, synchronizer=synchronizer)
+    if isinstance(zarr_loc, str):
+        return zarr.open_group(zarr_loc, mode=mode, synchronizer=synchronizer)
     else:
-        return zarr.open(zarr_loc, mode=mode, synchronizer=synchronizer)
+        return zarr.group(zarr_loc, synchronizer=synchronizer)
 
 
 def controlled_compute(arr, nthreads):
@@ -171,12 +176,12 @@ def controlled_compute(arr, nthreads):
     from multiprocessing.pool import ThreadPool
     import dask
 
-    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)):
+    with dask.config.set(schedular="threads", pool=ThreadPool(nthreads)):  # type: ignore
         res = arr.compute()
     return res
 
 
-def show_dask_progress(arr: Array, msg: str = None, nthreads: int = 1):
+def show_dask_progress(arr: Array, msg: Optional[str] = None, nthreads: int = 1):
     """Performs computation with Dask and shows progress bar.
 
     Args:
@@ -206,7 +211,7 @@ def system_call(command):
 
     process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
     while True:
-        output = process.stdout.readline()
+        output = process.stdout.readline()  # type: ignore
         if process.poll() is not None:
             break
         if output:

@@ -45,6 +45,27 @@ def find_markers_by_rank(
     Returns:
     """
 
+    def calc(vdf):
+        r = vdf.rank(method="dense").groupby(groups).mean().reindex(group_set)
+        r = r / r.sum()
+
+        g = np.array([pd.Series(groups).value_counts().reindex(group_set).values]).T
+        g_o = len(groups) - g
+
+        s = vdf.groupby(groups).sum().reindex(group_set)
+        m = s / g
+        m_o = (s.sum() - s) / g_o
+
+        s = (vdf > 0).groupby(groups).sum().reindex(group_set)
+        e = s / g
+        e_o = (s.sum() - s) / g_o
+
+        fc = (m / m_o).fillna(0)
+
+        return np.array(
+            [r.values, m.values, m_o.values, e.values, e_o.values, fc.values]
+        ).T
+
     @jit(nopython=True)
     def calc_rank_mean(v):
         """Calculates the mean rank of the data."""
@@ -93,47 +114,47 @@ def find_markers_by_rank(
         "frac_exp_rest",
         "fold_change",
     ]
-    results = {x: [] for x in group_set}
     if use_prenormed:
         if prenormed_store is None:
             if "prenormed" in assay.z:
                 prenormed_store = assay.z["prenormed"]
             else:
-                logger.warning("Could not find prenormed values")
-                use_prenormed = False
+                raise ValueError(
+                    "Could not find prenormed values. Run with use_prenormed=False or create pre-normed values."
+                )
 
-    if use_prenormed:
+        results = {x: [] for x in group_set}
         cell_idx = assay.cells.active_index(cell_key)
         batch_iterator = tqdmbar(prenormed_store.keys(), desc="Finding markers")
         temp = Parallel(n_jobs=n_threads)(
             delayed(prenormed_mean_rank_wrapper)(i) for i in batch_iterator
         )
+        for i in temp:
+            for j, k in zip(group_set, i[1].T):
+                results[j].append([i[0]] + list(k))
+        for i in results:
+            results[i] = (
+                pd.DataFrame(results[i], columns=out_cols)
+                .sort_values(by="score", ascending=False)
+                .round(5)
+            )
+        return results
     else:
         batch_iterator = assay.iter_normed_feature_wise(
             cell_key, "I", batch_size, "Finding markers", **norm_params
         )
-        temp = []
-        for val in batch_iterator:
-            temp1 = (
-                val.rank(method="dense")
-                .astype(int)
-                .apply(lambda x: calc_rank_mean(x.values))
+        temp = np.vstack([calc(x) for x in batch_iterator])
+        results = {}
+        feat_index = assay.feats.active_index("I")
+        for n, i in enumerate(group_set):
+            results[i] = (
+                pd.DataFrame(temp[:, n, :], columns=out_cols[1:], index=feat_index)
+                .sort_values(by="score", ascending=False)
+                .round(5)
             )
-            temp2 = val.apply(lambda x: calc_frac_fc(x.values))
-            for i in temp1.columns:
-                temp.append(
-                    (i, np.vstack([temp1[i].values, np.vstack(temp2[i].values)]))
-                )
-    for i in temp:
-        for j, k in zip(group_set, i[1].T):
-            results[j].append([i[0]] + list(k))
-    for i in results:
-        results[i] = (
-            pd.DataFrame(results[i], columns=out_cols)
-            .sort_values(by="score", ascending=False)
-            .round(5)
-        )
-    return results
+            results[i]["feature_index"] = results[i].index
+            results[i] = results[i][out_cols]
+        return results
 
 
 def find_markers_by_regression(

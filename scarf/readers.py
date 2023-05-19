@@ -202,10 +202,16 @@ class CrH5Reader(CrReader):
         grp: Current active group in the hierarchy.
     """
 
-    def __init__(self, h5_fn):
+    def __init__(self, h5_fn, is_filtered: bool = True, filtering_cutoff: int = 500):
         self.h5obj = h5py.File(h5_fn, mode="r")
         self.grp = None
+        self.validBarcodeIdx = None
         super().__init__(self._handle_version())
+        if is_filtered:
+            self.validBarcodeIdx = np.array(range(self.nCells))
+        else:
+            self.validBarcodeIdx = self._get_valid_barcodes(filtering_cutoff)
+        self.nCells = len(self.validBarcodeIdx)
 
     def _handle_version(self):
         root_key = list(self.h5obj.keys())[0]
@@ -226,26 +232,52 @@ class CrH5Reader(CrReader):
             }
         return grps
 
+    def _get_valid_barcodes(
+        self, filtering_cutoff: int, batch_size: int = 1000
+    ) -> np.ndarray:
+        valid_idx = []
+        test_counter = 0
+        indptr = self.grp["indptr"][:]
+        for s in tqdmbar(
+            range(0, len(indptr) - 1, batch_size),
+            desc=f"Filtering out background barcodes",
+        ):
+            idx = indptr[s : s + batch_size + 1]
+            data = self.grp["data"][idx[0] : idx[-1]]
+            indices = self.grp["indices"][idx[0] : idx[-1]]
+            cell_idx = np.repeat(range(len(idx) - 1), np.diff(idx))
+            mat = coo_matrix((data, (cell_idx, indices)))
+            valid_idx.append(np.array(mat.sum(axis=1)).T[0] > filtering_cutoff)
+            test_counter += data.shape[0]
+        assert test_counter == self.grp["data"].shape[0]
+        assert len(indptr) == (s + len(idx))
+        return np.where(np.hstack(valid_idx))[0]
+
     def _read_dataset(self, key: Optional[str] = None):
         return [x.decode("UTF-8") for x in self.grp[self.grpNames[key]][:]]
 
+    def cell_names(self) -> List[str]:
+        """Returns a list of names of the cells in the dataset."""
+        vals = np.array(self._read_dataset("cell_names"))
+        if self.validBarcodeIdx is not None:
+            vals = vals[self.validBarcodeIdx]
+        return list(vals)
+
     # noinspection DuplicatedCode
     def consume(
-        self, batch_size: int, lines_in_mem: int
+        self, batch_size: int, lines_in_mem: int = None
     ) -> Generator[coo_matrix, None, None]:
-        s = 0
-        for ind_n in range(0, self.nCells, batch_size):
-            i = self.grp["indptr"][ind_n : ind_n + batch_size]
-            e = i[-1]
-            if s != 0:
-                idx = np.array([s] + list(i))
-                idx = idx - idx[0]
-            else:
-                idx = np.array(i)
-            n = idx.shape[0] - 1
-            nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield coo_matrix((self.grp["data"][s:e], (nidx, self.grp["indices"][s:e])))
-            s = e
+        indptr = self.grp["indptr"][:]
+        for s in range(0, len(self.validBarcodeIdx), batch_size):
+            v_pos = self.validBarcodeIdx[s : s + batch_size]
+            idx = [np.arange(x, y) for x, y in zip(indptr[v_pos], indptr[v_pos + 1])]
+            cell_idx = np.repeat(np.arange(len(idx)), [len(x) for x in idx])
+            idx = np.hstack(idx)
+            data = self.grp["data"][idx[0] : idx[-1] + 1]
+            data = data[idx - idx[0]]
+            indices = self.grp["indices"][idx[0] : idx[-1] + 1]
+            indices = indices[idx - idx[0]]
+            yield coo_matrix((data, (cell_idx, indices)))
 
     def close(self) -> None:
         """Closes file connection."""
