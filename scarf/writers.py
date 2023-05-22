@@ -1141,11 +1141,11 @@ class ZarrMerge:
 
     def __init__(
         self,
-        zarr_path: str,
+        zarr_path: ZARRLOC,
         assays: list,
         names: List[str],
         merge_assay_name: str,
-        in_workspaces: Union[str, None] = None,
+        in_workspaces: Union[list[str], None] = None,
         out_workspace: Union[str, None] = None,
         chunk_size=(1000, 1000),
         dtype: Optional[str] = None,

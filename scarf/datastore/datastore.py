@@ -6,7 +6,7 @@ from loguru import logger
 from .mapping_datastore import MappingDatastore
 from ..writers import create_zarr_obj_array, create_zarr_dataset
 from ..utils import tqdmbar, controlled_compute, ZARRLOC
-from ..assay import RNAassay, ATACassay, ADTassay
+from ..assay import RNAassay, ATACassay
 from ..feat_utils import hto_demux
 
 __all__ = ["DataStore"]
@@ -948,7 +948,7 @@ class DataStore(MappingDatastore):
             secondary_group_key: Name of the column in cell metadata table to be used for sub-grouping cells.
             aggr_type: Type of aggregation to be used. Can be either 'mean' or 'sum'. (Default value: 'mean')
             return_fraction: Return the fraction of cells expressing a gene in each group. (Default value: False)
-            feature_labels: The column in feature metadata table to use as row labels. (Default value: 'index')
+            feature_label: The column in feature metadata table to use as row labels. (Default value: 'index')
             pseudo_reps: Within each group, cells will randomly be split into `pseudo_reps` partitions. Each partition
                          is considered a pseudo-replicate. (Default value: 3)
             remove_empty_features: Remove features that are not expressed in any cell. (Default value: True)
@@ -958,8 +958,8 @@ class DataStore(MappingDatastore):
             random_seed: A random values to set seed while creating `pseudo_reps` partitions cells randomly.
 
         Returns:
-            A pandas dataframe containing the bulk profile. If `return_fraction` is True, then a tuple of two dataframes is returned.
-            The second dataframe contains the fraction of cells expressing each feature in each group.
+            A pandas dataframe containing the bulk profile. If `return_fraction` is True, then a tuple of two dataframes
+            is returned. The second dataframe contains the fraction of cells expressing each feature in each group.
         """
 
         def make_reps(v, n_reps: int, seed: int) -> List[np.ndarray]:
@@ -1169,7 +1169,7 @@ class DataStore(MappingDatastore):
             for n, k in enumerate(j, start=1):
                 a = chr(ord("@") + n)
                 new_names[k] = f"{i}{a.lower()}"
-        
+
         missing_vals = list(set(df.index).difference(idxmax.unique()))
         if len(missing_vals) > 0:
             miss_idxmax = df.loc[missing_vals].idxmax(axis=1).to_dict()

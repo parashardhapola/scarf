@@ -517,7 +517,7 @@ class Assay:
         )
         logger.debug("Will iterate over data of shape: ", data.shape)
         chunks = np.array_split(
-            np.arange(0, data.shape[1]), int(data.shape[1] / batch_size)
+            np.arange(0, data.shape[1]), max(1, int(data.shape[1] / batch_size))
         )
         for chunk in tqdmbar(chunks, desc=msg, total=len(chunks)):
             if as_dataframe:
