@@ -1632,7 +1632,7 @@ class GraphDataStore(BaseDataStore):
         )
         if cluster_key is None:
             raise ValueError("ERROR: Please provide a value for cluster key")
-        clusters = pd.Series(self.cells.fetch(cluster_key, cell_key))
+        clusters = pd.Series(self.cells.fetch(cluster_key, key=cell_key))
         graph = self.load_graph(
             from_assay=from_assay,
             cell_key=cell_key,
@@ -1788,6 +1788,7 @@ class GraphDataStore(BaseDataStore):
         self,
         from_assay: Optional[str] = None,
         cell_key: Optional[str] = None,
+        subset_cell_key: Optional[str] = None,
         feat_key: Optional[str] = None,
         n_singular_vals: int = 30,
         source_sink_key: Optional[str] = None,
@@ -1807,6 +1808,7 @@ class GraphDataStore(BaseDataStore):
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
+            subset_cell_key: Cell key for the subset of cells for which pseudotime scoring is to be performed.
             feat_key: Feature key. Should be same as the one that was used in the desired graph. By default, the latest
                         used feature for the given assay will be used.
             n_singular_vals: Number of the smallest singular values to save.
@@ -1880,6 +1882,14 @@ class GraphDataStore(BaseDataStore):
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
         )
+        if subset_cell_key is None:
+            subset_cell_key = cell_key
+            cell_idx = self.cells.fetch(subset_cell_key, key=cell_key)
+        else:
+            cell_idx = self.cells.fetch(subset_cell_key, key=cell_key)
+            if cell_idx.sum() != self.cells.fetch_all(subset_cell_key).sum():
+                raise ValueError("subset_cell_key is not a complete subset of cell_key")
+
         graph = self.load_graph(
             from_assay=from_assay,
             cell_key=cell_key,
@@ -1887,6 +1897,9 @@ class GraphDataStore(BaseDataStore):
             symmetric=True,
             upper_only=False,
         )
+        if cell_idx.shape[0] != cell_idx.sum():
+            graph = graph[cell_idx][:, cell_idx]
+
 
         if source_sink_key is None:
             if sources is not None or sinks is not None:
@@ -1902,7 +1915,7 @@ class GraphDataStore(BaseDataStore):
                 )
                 ss_vec = np.ones(graph.shape[0])
             else:
-                clusts = pd.Series(self.cells.fetch(source_sink_key))
+                clusts = pd.Series(self.cells.fetch(source_sink_key, key=cell_key)[cell_idx])
                 if sources is None:
                     sources = []
                 else:
@@ -1950,9 +1963,9 @@ class GraphDataStore(BaseDataStore):
             ptime = ptime / ptime.max()
 
         self.cells.insert(
-            self._col_renamer(from_assay, cell_key, label),
+            self._col_renamer(from_assay, subset_cell_key, label),
             ptime,
-            key=cell_key,
+            key=subset_cell_key,
             overwrite=True,
         )
         return None
