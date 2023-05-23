@@ -570,7 +570,6 @@ class Assay:
         cell_key: str,
         feat_key: str,
         ordering_key: str,
-        min_exp: float = 10,
         window_size: int = 200,
         chunk_size: int = 50,
         smoothen: bool = True,
@@ -603,7 +602,6 @@ class Assay:
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
         params = {
-            "min_exp": min_exp,
             "window_size": window_size,
             "chunk_size": chunk_size,
             "smoothen": smoothen,
@@ -613,7 +611,9 @@ class Assay:
         location = f"aggregated_{cell_key}_{feat_key}_{ordering_key}"
         if (
             location in self.z
+            and "hashes" in self.z[location].attrs
             and hashes == self.z[location].attrs["hashes"]
+            and "params" in self.z[location].attrs
             and params == self.z[location].attrs["params"]
         ):
             logger.info(f"Using existing aggregated data from {location}")
@@ -630,7 +630,7 @@ class Assay:
                 (feat_idx.shape[0], chunk_size),
             )
             ordering_idx = np.argsort(cell_ordering)
-            valid_feat_idx = []
+            feat_idx = []
             s = 0
             for df in self.iter_normed_feature_wise(
                 cell_key,
@@ -640,33 +640,31 @@ class Assay:
                 True,
                 **norm_params,
             ):
-                valid_features = df.columns[df.sum() > min_exp]  # type: ignore
-                df = df[valid_features]  # type: ignore
+                feat_idx.extend(list(df.columns))
                 if smoothen:
                     df = rolling_window(df.reindex(ordering_idx).values, window_size)
                 if z_scale:
                     df = (df - df.mean(axis=0)) / df.std(axis=0)
-                df = np.array(
+                df_mean = np.array(
                     [x.mean(axis=0) for x in np.array_split(df, chunk_size)]
                 ).T
-                valid_feat_idx.extend(list(valid_features))
-                g[s : s + df.shape[0]] = df
-                s += df.shape[0]
+                g[s : s + df_mean.shape[0]] = df_mean
+                s += df_mean.shape[0]
 
             g = create_zarr_dataset(
                 self.z,
                 location + "/feature_indices",
-                (len(valid_feat_idx),),
+                (len(feat_idx),),
                 "uint64",
-                (len(valid_feat_idx),),
+                (len(feat_idx),),
             )
-            g[:] = np.array(valid_feat_idx).astype(int)
+            g[:] = np.array(feat_idx).astype(int)
             self.z[location].attrs["hashes"] = hashes
             self.z[location].attrs["params"] = params
 
         ret_val1 = from_zarr(self.z[location + "/data"], inline_array=True)
         ret_val2 = self.z[location + "/feature_indices"][:]
-        return ret_val1[: ret_val2.shape[0]], ret_val2
+        return ret_val1, ret_val2
 
     def score_features(
         self,

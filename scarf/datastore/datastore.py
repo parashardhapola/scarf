@@ -524,13 +524,15 @@ class DataStore(MappingDatastore):
             cell_key=cell_key,
             feat_key=feat_key,
             ordering_key=pseudotime_key,
-            min_exp=min_exp,
             window_size=window_size,
             chunk_size=chunk_size,
             smoothen=smoothen,
             z_scale=z_scale,
             batch_size=batch_size,
         )
+        # idx = df.sum(axis=1) > min_exp
+        # df = df[idx]
+        # feat_ids = feat_ids[idx]
         if ann_params is None:
             ann_params = {}
         clusts = knn_clustering(
