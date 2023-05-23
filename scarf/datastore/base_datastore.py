@@ -382,7 +382,7 @@ class BaseDataStore:
                     assay.add_percent_feature(ribo_pattern, var_name)
 
             if from_assay == self._defaultAssay:
-                v = self.cells.fetch(from_assay + "_nFeatures")
+                v = self.cells.fetch(from_assay + "_nFeatures", key="I")
                 if min_features > np.median(v):
                     logger.warning(
                         f"More than of half of the less have less than {min_features} features for assay: "
@@ -495,7 +495,7 @@ class BaseDataStore:
                     assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
                 ).astype(np.float_)
         else:
-            vals = self.cells.fetch(k, cell_key)
+            vals = self.cells.fetch(k, key=cell_key)
         if clip_fraction < 0 or clip_fraction > 1:
             raise ValueError(
                 "ERROR: Value for `clip_fraction` parameter should be between 0 and 1"

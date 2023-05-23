@@ -672,7 +672,10 @@ class DataStore(MappingDatastore):
             raise ValueError(
                 "ERROR: Please provide a value for parameter `csv_filename`"
             )
-        clusters = self.cells.fetch(group_key)
+        from_assay, cell_key, _ = self._get_latest_keys(
+            from_assay, cell_key, None
+        )
+        clusters = self.cells.fetch(group_key, key=cell_key)
         markers_table = {}
         for group_id in sorted(set(clusters)):
             m = self.get_markers(
@@ -762,7 +765,7 @@ class DataStore(MappingDatastore):
         g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
         self.cells.insert(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
 
-        phase = pd.Series(["S" for _ in range(self.cells.fetch(cell_key).sum())])
+        phase = pd.Series(["S" for _ in range(self.cells.fetch(cell_key, key=cell_key).sum())])
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
@@ -1467,8 +1470,8 @@ class DataStore(MappingDatastore):
         # grid layout will be: plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2
         dfs = []
         for lk in layout_key:
-            x = self.cells.fetch(f"{lk}1", cell_key)
-            y = self.cells.fetch(f"{lk}2", cell_key)
+            x = self.cells.fetch(f"{lk}1", key=cell_key)
+            y = self.cells.fetch(f"{lk}2", key=cell_key)
             if color_by is None:
                 color_by = "vc"
             if isinstance(color_by, str):
