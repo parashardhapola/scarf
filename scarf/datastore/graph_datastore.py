@@ -1900,7 +1900,6 @@ class GraphDataStore(BaseDataStore):
         if cell_idx.shape[0] != cell_idx.sum():
             graph = graph[cell_idx][:, cell_idx]
 
-
         if source_sink_key is None:
             if sources is not None or sinks is not None:
                 logger.warning(

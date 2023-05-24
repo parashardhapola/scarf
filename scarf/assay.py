@@ -570,6 +570,7 @@ class Assay:
         cell_key: str,
         feat_key: str,
         ordering_key: str,
+        min_exp: float = 1e-3,
         window_size: int = 200,
         chunk_size: int = 50,
         smoothen: bool = True,
@@ -580,8 +581,8 @@ class Assay:
         """
 
         Args:
-            cell_key:
-            feat_key:
+            cell_key: Name of the key (column) from cell attribute table. The data will be fetched for only those cells.
+            feat_key: Name of the key (column) from feature attribute table.
             ordering_key:
             min_exp:
             window_size:
@@ -602,6 +603,7 @@ class Assay:
         cell_idx, feat_idx = self._get_cell_feat_idx(cell_key, feat_key)
         hashes = [hash(tuple(x)) for x in (cell_idx, feat_idx, cell_ordering)]
         params = {
+            "min_exp": min_exp,
             "window_size": window_size,
             "chunk_size": chunk_size,
             "smoothen": smoothen,
@@ -631,6 +633,7 @@ class Assay:
             )
             ordering_idx = np.argsort(cell_ordering)
             feat_idx = []
+            valid_feats = []
             s = 0
             for df in self.iter_normed_feature_wise(
                 cell_key,
@@ -640,6 +643,7 @@ class Assay:
                 True,
                 **norm_params,
             ):
+                valid_feats.extend(list((df.mean() > min_exp).values))
                 feat_idx.extend(list(df.columns))
                 if smoothen:
                     df = rolling_window(df.reindex(ordering_idx).values, window_size)
@@ -659,11 +663,27 @@ class Assay:
                 (len(feat_idx),),
             )
             g[:] = np.array(feat_idx).astype(int)
+
+            g = create_zarr_dataset(
+                self.z,
+                location + "/valid_features",
+                (len(feat_idx),),
+                "bool",
+                (len(feat_idx),),
+            )
+            g[:] = np.array(valid_feats).astype(int)
+
             self.z[location].attrs["hashes"] = hashes
             self.z[location].attrs["params"] = params
 
         ret_val1 = from_zarr(self.z[location + "/data"], inline_array=True)
         ret_val2 = self.z[location + "/feature_indices"][:]
+
+        if location + "/valid_features" in self.z:
+            valid_feats = self.z[location + "/valid_features"][:]
+            ret_val1 = ret_val1[valid_feats]
+            ret_val2 = ret_val2[valid_feats]
+
         return ret_val1, ret_val2
 
     def score_features(

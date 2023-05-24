@@ -454,7 +454,7 @@ class DataStore(MappingDatastore):
         feat_key: Optional[str] = None,
         pseudotime_key: Optional[str] = None,
         cluster_label: Optional[str] = None,
-        min_exp: float = 10,
+        min_exp: float = 1e-3,
         window_size: int = 200,
         chunk_size: int = 50,
         smoothen: bool = True,
@@ -463,6 +463,7 @@ class DataStore(MappingDatastore):
         n_clusters: int = 10,
         batch_size: int = 100,
         ann_params: Optional[dict] = None,
+        nan_cluster_value: Union[int, str] = -1
     ) -> None:
         """This method performs clustering of features based on pseudotime
         ordered cells. The values from the pseudotime ordered cells are
@@ -481,7 +482,7 @@ class DataStore(MappingDatastore):
                             column contains values for pseudotime ordering of the cells.
             cluster_label: Required parameter. Name of the column under which the feature cluster identity will be
                            saved in the feature attribute table.
-            min_exp: Features with cumulative normalized expression than this value are dropped and hence not assigned
+            min_exp: Features with mean normalized expression than this value are dropped and hence not assigned
                      a cluster identity (Default value: 10)
             window_size: The window for calculating rolling mean of feature values along pseudotime ordering. Larger
                          values will slow down processing but produce more smoothened. The choice of value here depends
@@ -497,6 +498,8 @@ class DataStore(MappingDatastore):
             batch_size: Number of features to load at a time when processing the data. Larger values will increase
                         memory consumption (Default value: 100)
             ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
+            nan_cluster_value: The value to use for features that are not assigned a cluster identity.
+                               (Default value: -1)
 
         Returns: None
         """
@@ -524,15 +527,13 @@ class DataStore(MappingDatastore):
             cell_key=cell_key,
             feat_key=feat_key,
             ordering_key=pseudotime_key,
+            min_exp=min_exp,
             window_size=window_size,
             chunk_size=chunk_size,
             smoothen=smoothen,
             z_scale=z_scale,
             batch_size=batch_size,
         )
-        # idx = df.sum(axis=1) > min_exp
-        # df = df[idx]
-        # feat_ids = feat_ids[idx]
         if ann_params is None:
             ann_params = {}
         clusts = knn_clustering(
