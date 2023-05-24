@@ -454,7 +454,7 @@ class DataStore(MappingDatastore):
         feat_key: Optional[str] = None,
         pseudotime_key: Optional[str] = None,
         cluster_label: Optional[str] = None,
-        min_exp: float = 10,
+        min_exp: float = 1e-3,
         window_size: int = 200,
         chunk_size: int = 50,
         smoothen: bool = True,
@@ -463,6 +463,7 @@ class DataStore(MappingDatastore):
         n_clusters: int = 10,
         batch_size: int = 100,
         ann_params: Optional[dict] = None,
+        nan_cluster_value: Union[int, str] = -1
     ) -> None:
         """This method performs clustering of features based on pseudotime
         ordered cells. The values from the pseudotime ordered cells are
@@ -481,7 +482,7 @@ class DataStore(MappingDatastore):
                             column contains values for pseudotime ordering of the cells.
             cluster_label: Required parameter. Name of the column under which the feature cluster identity will be
                            saved in the feature attribute table.
-            min_exp: Features with cumulative normalized expression than this value are dropped and hence not assigned
+            min_exp: Features with mean normalized expression than this value are dropped and hence not assigned
                      a cluster identity (Default value: 10)
             window_size: The window for calculating rolling mean of feature values along pseudotime ordering. Larger
                          values will slow down processing but produce more smoothened. The choice of value here depends
@@ -497,6 +498,8 @@ class DataStore(MappingDatastore):
             batch_size: Number of features to load at a time when processing the data. Larger values will increase
                         memory consumption (Default value: 100)
             ann_params: The parameter to forward to HNSWlib index instantiation step. (Default value: {})
+            nan_cluster_value: The value to use for features that are not assigned a cluster identity.
+                               (Default value: -1)
 
         Returns: None
         """
@@ -672,7 +675,10 @@ class DataStore(MappingDatastore):
             raise ValueError(
                 "ERROR: Please provide a value for parameter `csv_filename`"
             )
-        clusters = self.cells.fetch(group_key)
+        from_assay, cell_key, _ = self._get_latest_keys(
+            from_assay, cell_key, None
+        )
+        clusters = self.cells.fetch(group_key, key=cell_key)
         markers_table = {}
         for group_id in sorted(set(clusters)):
             m = self.get_markers(
@@ -762,7 +768,7 @@ class DataStore(MappingDatastore):
         g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
         self.cells.insert(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
 
-        phase = pd.Series(["S" for _ in range(self.cells.fetch(cell_key).sum())])
+        phase = pd.Series(["S" for _ in range(self.cells.fetch(cell_key, key=cell_key).sum())])
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
@@ -1467,8 +1473,8 @@ class DataStore(MappingDatastore):
         # grid layout will be: plot1: UMAP + gene1, plot2: UMAP + gene2, plot3: tSNE + gene1, plot4: tSNE + gene2
         dfs = []
         for lk in layout_key:
-            x = self.cells.fetch(f"{lk}1", cell_key)
-            y = self.cells.fetch(f"{lk}2", cell_key)
+            x = self.cells.fetch(f"{lk}1", key=cell_key)
+            y = self.cells.fetch(f"{lk}2", key=cell_key)
             if color_by is None:
                 color_by = "vc"
             if isinstance(color_by, str):

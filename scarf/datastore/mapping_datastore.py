@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, List, Union, Callable, Optional
+from typing import Generator, Tuple, List, Dict, Union, Callable, Optional
 import os
 import numpy as np
 import pandas as pd
@@ -31,9 +31,9 @@ class MappingDatastore(GraphDataStore):
         target_assay: Assay,
         target_name: str,
         target_feat_key: str,
-        from_assay: str = None,
+        from_assay: Optional[str] = None,
         cell_key: str = "I",
-        feat_key: str = None,
+        feat_key: Optional[str] = None,
         save_k: int = 3,
         batch_size: int = 1000,
         ref_mu: bool = True,
@@ -198,8 +198,8 @@ class MappingDatastore(GraphDataStore):
     def get_mapping_score(
         self,
         target_name: str,
-        target_groups: np.ndarray = None,
-        from_assay: str = None,
+        target_groups: Optional[np.ndarray] = None,
+        from_assay: Optional[str] = None,
         cell_key: str = "I",
         log_transform: bool = True,
         multiplier: float = 1000,
@@ -274,12 +274,12 @@ class MappingDatastore(GraphDataStore):
     def get_target_classes(
         self,
         target_name: str,
-        from_assay: str = None,
+        from_assay: Optional[str] = None,
         cell_key: str = "I",
-        reference_class_group: str = None,
+        reference_class_group: Optional[str] = None,
         threshold_fraction: float = 0.5,
-        target_subset: List[int] = None,
-        na_val="NA",
+        target_subset: Optional[List[int]] = None,
+        na_val: str = "NA",
     ) -> pd.Series:
         """Perform classification of target cells using a reference group.
 
@@ -412,8 +412,8 @@ class MappingDatastore(GraphDataStore):
         if ini_embed_with == "kmeans":
             ini_embed = self._get_ini_embed(from_assay, cell_key, feat_key, 2)
         else:
-            x = self.cells.fetch(f"{ini_embed_with}1", cell_key)
-            y = self.cells.fetch(f"{ini_embed_with}2", cell_key)
+            x = self.cells.fetch(f"{ini_embed_with}1", key=cell_key)
+            y = self.cells.fetch(f"{ini_embed_with}2", key=cell_key)
             ini_embed = np.array([x, y]).T.astype(np.float32, order="C")
         targets_best_nn = np.array(np.argmax(graph, axis=1)).reshape(1, -1)[0][
             ref_n_cells:
@@ -453,9 +453,9 @@ class MappingDatastore(GraphDataStore):
     def run_unified_umap(
         self,
         target_names: List[str],
-        from_assay: str = None,
+        from_assay: Optional[str] = None,
         cell_key: str = "I",
-        feat_key: str = None,
+        feat_key: Optional[str] = None,
         use_k: int = 3,
         target_weight: float = 0.1,
         spread: float = 2.0,
@@ -468,7 +468,7 @@ class MappingDatastore(GraphDataStore):
         ini_embed_with: str = "kmeans",
         label: str = "unified_UMAP",
         parallel: bool = False,
-        nthreads: int = None,
+        nthreads: Optional[int] = None,
     ) -> None:
         """Calculates the UMAP embedding for graph obtained using
         ``load_unified_graph``.
@@ -559,9 +559,9 @@ class MappingDatastore(GraphDataStore):
     def run_unified_tsne(
         self,
         target_names: List[str],
-        from_assay: str = None,
+        from_assay: Optional[str] = None,
         cell_key: str = "I",
-        feat_key: str = None,
+        feat_key: Optional[str] = None,
         use_k: int = 3,
         target_weight: float = 0.5,
         lambda_scale: float = 1.0,
@@ -648,15 +648,15 @@ class MappingDatastore(GraphDataStore):
 
     def plot_unified_layout(
         self,
-        from_assay: str = None,
-        layout_key: str = None,
+        from_assay: Optional[str] = None,
+        layout_key: Optional[str] = None,
         show_target_only: bool = False,
         ref_name: str = "reference",
-        target_groups: list = None,
+        target_groups: Optional[List[str]] = None,
         width: float = 6,
         height: float = 6,
-        cmap=None,
-        color_key: dict = None,
+        cmap: Optional[str] = None,
+        color_key: Optional[Dict] = None,
         mask_color: str = "k",
         point_size: float = 10,
         ax_label_size: float = 12,
@@ -668,21 +668,21 @@ class MappingDatastore(GraphDataStore):
         legend_onside: bool = True,
         legend_size: float = 12,
         legends_per_col: int = 20,
-        title: Union[str, List[str]] = None,
+        title: Union[str, List[str], None] = None,
         title_size: int = 12,
         hide_title: bool = False,
         cbar_shrink: float = 0.6,
         marker_scale: float = 70,
         lspacing: float = 0.1,
         cspacing: float = 1,
-        savename: str = None,
+        savename: Optional[str] = None,
         save_dpi: int = 300,
         ax=None,
         force_ints_as_cats: bool = True,
         n_columns: int = 1,
         w_pad: float = 1,
         h_pad: float = 1,
-        scatter_kwargs: dict = None,
+        scatter_kwargs: Optional[Dict] = None,
         shuffle_zorder: bool = True,
         show_fig: bool = True,
     ):
