@@ -32,7 +32,7 @@ from .utils import (
     load_zarr,
     ZARRLOC,
 )
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, coo_matrix
 
 __all__ = [
     "create_zarr_dataset",
@@ -1338,6 +1338,12 @@ class ZarrMerge:
         else:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
+    def _dask_to_coo(self, d_arr, order: np.ndarray, n_threads: int) -> coo_matrix:
+        mat = np.zeros((d_arr.shape[0],  self.nFeats))
+        mat[:, order] = controlled_compute(d_arr, n_threads)
+        return coo_matrix(mat)
+
+
     def dump(self, nthreads=2):
         """Copy the values from individual assays to the merged assay.
 
@@ -1346,19 +1352,18 @@ class ZarrMerge:
 
         Returns:
         """
-        pos_start, pos_end = 0, 0
+        pos_start = 0
         for assay, feat_order in zip(self.assays, self.featOrder):
             for i in tqdmbar(
                 assay.rawData.blocks,
                 total=assay.rawData.numblocks[0],
                 desc=f"Writing data to merged file",
             ):
-                pos_end += i.shape[0]
-                a = np.zeros((i.shape[0], self.nFeats))
-                a[:, feat_order] = controlled_compute(i, nthreads)
-                # FIXME: make this operation sparse
-                self.assayGroup[pos_start:pos_end, :] = a
-                pos_start = pos_end
+                a = self._dask_to_coo(i, feat_order, nthreads)
+                self.assayGroup.set_coordinate_selection(
+                    (a.row + pos_start, a.col), a.data.astype(self.assayGroup.dtype)
+                )
+                pos_start += i.shape[0]
 
 
 def to_h5ad(
