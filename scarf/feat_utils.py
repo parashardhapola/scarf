@@ -1,7 +1,7 @@
 """Utility functions for features."""
 import pandas as pd
 import numpy as np
-from typing import List
+from typing import List, Tuple
 
 __all__ = ["fit_lowess", "binned_sampling", "hto_demux"]
 
@@ -78,10 +78,14 @@ def binned_sampling(
 
     control_genes = set()
     for cut in np.unique(obs_cut[list(feature_list)]):
-        # Replaced np.random.shuffle with pandas' sample method
-        r_genes = (
-            obs_cut[obs_cut == cut].sample(n=ctrl_size, random_state=rand_seed).index
-        )
+        sub_obs = obs_cut[obs_cut == cut]
+        if len(sub_obs) == 0:
+            continue
+        if len(sub_obs) < ctrl_size:
+            sample_size = len(sub_obs)
+        else:
+            sample_size = ctrl_size
+        r_genes = sub_obs.sample(n=sample_size, random_state=rand_seed).index
         control_genes.update(set(r_genes))
     return list(control_genes - feature_list)
 
@@ -113,7 +117,7 @@ def hto_demux(hto_counts: pd.DataFrame) -> pd.Series:
         kmeans.fit(df)
         return kmeans.labels_
 
-    def calc_cluster_avg_exp(df: pd.DataFrame) -> (pd.Series, pd.DataFrame):
+    def calc_cluster_avg_exp(df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
         df["cluster"] = calc_cluster_labels(df)
         return df["cluster"], df.groupby("cluster").mean()
 

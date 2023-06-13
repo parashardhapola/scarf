@@ -971,10 +971,13 @@ class RNAassay(Assay):
             min_mean = 2**min_mean
         if min_var != -np.Inf:
             min_var = 2**min_var
-
-        bl = self.feats.index_to_bool(
-            self.feats.get_index_by(self.feats.grep(blacklist), "names"), invert=True
-        )
+        
+        if blacklist != "":
+            bl = self.feats.index_to_bool(
+                self.feats.get_index_by(self.feats.grep(blacklist), "names"), invert=True
+            )
+        else:
+            bl = np.ones(self.feats.N).astype(bool)
         if min_var == -np.Inf:
             if top_n < 1:
                 raise ValueError(
