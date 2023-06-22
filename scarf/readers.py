@@ -77,6 +77,9 @@ class CrReader(ABC):
             "Gene Expression": "RNA",
             "Peaks": "ATAC",
             "Antibody Capture": "ADT",
+            "RNA": "RNA",
+            "ADT": "ADT",
+            "HTO": "HTO",
         }
         self.grpNames: Dict = grp_names
         self.nFeatures: int = len(self.feature_names())
@@ -246,7 +249,7 @@ class CrH5Reader(CrReader):
             data = self.grp["data"][idx[0] : idx[-1]]
             indices = self.grp["indices"][idx[0] : idx[-1]]
             cell_idx = np.repeat(range(len(idx) - 1), np.diff(idx))
-            mat = coo_matrix((data, (cell_idx, indices)))
+            mat = coo_matrix((data, (cell_idx, indices)), shape=(len(idx) - 1, self.nFeatures))
             valid_idx.append(np.array(mat.sum(axis=1)).T[0] > filtering_cutoff)
             test_counter += data.shape[0]
         assert test_counter == self.grp["data"].shape[0]
@@ -277,7 +280,7 @@ class CrH5Reader(CrReader):
             data = data[idx - idx[0]]
             indices = self.grp["indices"][idx[0] : idx[-1] + 1]
             indices = indices[idx - idx[0]]
-            yield coo_matrix((data, (cell_idx, indices)))
+            yield coo_matrix((data, (cell_idx, indices)), shape=(len(v_pos), self.nFeatures))
 
     def close(self) -> None:
         """Closes file connection."""
@@ -373,25 +376,29 @@ class CrDirReader(CrReader):
             vals = None
         return vals
 
-    def to_sparse(self, a: np.ndarray) -> coo_matrix:
+    def to_sparse(self, a: np.ndarray, dtype) -> coo_matrix:
         """Returns the input data as a sparse (COO) matrix.
 
         Args:
             a: Sparse matrix, contains a chunk of data from the MTX file.
+            dtype:
         """
+        c = (a[:, 1] - a[0, 1]).astype(int)
         return coo_matrix(
             (
                 a[:, 2],
                 (
-                    (a[:, 1] - a[0, 1]).astype(int),
+                    c,
                     (a[:, 0] + self.indexOffset).astype(int),
                 ),
-            )
+            ),
+            shape=(c[-1]+1, self.nFeatures),
+            dtype=dtype,
         )
 
     # noinspection DuplicatedCode
     def consume(
-        self, batch_size: int, lines_in_mem: int = int(1e5)
+        self, batch_size: int, lines_in_mem: int = int(1e5), dtype=np.uint32,
     ) -> Generator[coo_matrix, None, None]:
         stream = pd.read_csv(
             self.matFn, skiprows=3, sep=self.sep, header=None, chunksize=lines_in_mem
@@ -399,15 +406,15 @@ class CrDirReader(CrReader):
         start = 1
         dfs = []
         for df in stream:
-            if df.iloc[-1, 1] - start >= batch_size:
+            if df.iloc[-1, 1] - start > batch_size:
                 idx = df[1] < batch_size + start
                 dfs.append(df[idx])
-                yield self.to_sparse(np.vstack(dfs))
+                yield self.to_sparse(np.vstack(dfs), dtype=dtype)
                 dfs = [df[~idx]]
                 start += batch_size
             else:
                 dfs.append(df)
-        yield self.to_sparse(np.vstack(dfs))
+        yield self.to_sparse(np.vstack(dfs), dtype=dtype)
 
 
 class H5adReader:
@@ -710,7 +717,7 @@ class H5adReader:
                 idx = np.array(i)
             n = idx.shape[0] - 1
             nidx = np.repeat(range(n), np.diff(idx).astype("int32"))
-            yield coo_matrix((grp["data"][s:e], (nidx, grp["indices"][s:e])))
+            yield coo_matrix((grp["data"][s:e], (nidx, grp["indices"][s:e])), shape=(n, self.nFeatures))
             s = e
 
     def consume(self, batch_size: int):
