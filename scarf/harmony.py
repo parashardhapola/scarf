@@ -14,7 +14,7 @@ def run_harmony(
     nclust=None,
     tau=0,
     block_size=0.05,
-    max_iter_harmony=10,
+    max_iter_harmony=50,
     max_iter_kmeans=20,
     epsilon_cluster=1e-5,
     epsilon_harmony=1e-4,
@@ -294,7 +294,9 @@ class Harmony(object):
         if i_type == 1:
             obj_old = self.objective_harmony[-2]
             obj_new = self.objective_harmony[-1]
-            if (obj_old - obj_new) / abs(obj_old) < self.epsilon_harmony:
+            e = (obj_old - obj_new) / abs(obj_old)
+            logger.info(f"Error after {len(self.objective_harmony)} iterations: {e}")
+            if e < self.epsilon_harmony:
                 return True
             return False
         return True
