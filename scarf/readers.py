@@ -77,6 +77,9 @@ class CrReader(ABC):
             "Gene Expression": "RNA",
             "Peaks": "ATAC",
             "Antibody Capture": "ADT",
+            "RNA": "RNA",
+            "ADT": "ADT",
+            "HTO": "HTO",
         }
         self.grpNames: Dict = grp_names
         self.nFeatures: int = len(self.feature_names())
