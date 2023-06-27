@@ -984,21 +984,24 @@ class DataStore(MappingDatastore):
         if group_key is None:
             raise ValueError("ERROR: Please provide a value for `group_key` parameter")
         else:
-            groups = self.cells.fetch(group_key, key=cell_key)
+            groups = self.cells.fetch_all(group_key)
+            groups_set = sorted(set(self.cells.fetch(group_key, key=cell_key)))
         if secondary_group_key is None:
             sec_groups = [None]
+            sec_groups_set = [None]
         else:
-            sec_groups = self.cells.fetch(secondary_group_key, key=cell_key)
+            sec_groups = self.cells.fetch_all(secondary_group_key)
+            sec_groups_set = sorted(set(self.cells.fetch(secondary_group_key, key=cell_key)))
 
         assay = self._get_assay(from_assay)
 
         vals = {}
         fracs = {}
         all_feat_idx = np.arange(assay.feats.N)
-        for g in tqdmbar(sorted(set(groups))):
+        for g in tqdmbar(groups_set):
             if g in null_vals:
                 continue
-            for sg in sorted(set(sec_groups)):  # type: ignore
+            for sg in sec_groups_set:  # type: ignore
                 if sg in secondary_null_vals:
                     continue
                 if sg is None and len(sec_groups) == 1:
