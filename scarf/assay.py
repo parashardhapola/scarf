@@ -837,6 +837,9 @@ class RNAassay(Assay):
         if self._validate_stats_loc(stats_loc, cell_idx, feat_idx) is True:
             logger.info(f"Using cached feature stats for cell_key {cell_key}")
             return None
+        else:
+            if identifier in self.feats.locations:
+                del self.feats.locations[identifier]
         n_cells = show_dask_progress(
             (self.normed(cell_idx, feat_idx) > 0).sum(axis=0),
             f"({self.name}) Computing nCells",

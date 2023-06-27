@@ -204,7 +204,8 @@ class TestDataStore:
 
     def test_make_bulk(self, leiden_clustering, datastore):
         df = datastore.make_bulk(group_key="RNA_leiden_cluster")
-        assert df.shape == (18936, 10)
+        assert df.shape == (18850, 10)
+        assert hash(tuple((df.values.flatten()))) == -1872129810056415572
 
     def test_to_anndata(self, datastore):
         # TODO: Check if all the attributes copied to anndata
