@@ -174,9 +174,17 @@ def controlled_compute(arr, nthreads):
         Result of computation.
     """
     import dask
-    from concurrent.futures import ThreadPoolExecutor
 
-    with dask.config.set(schedular="threads", pool=ThreadPoolExecutor(nthreads)):  # type: ignore
+    try:
+        from multiprocessing.pool import ThreadPool
+
+        pool = ThreadPool(nthreads)
+    except Exception:
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = ThreadPoolExecutor(nthreads)
+
+    with dask.config.set(schedular="threads", pool=pool):  # type: ignore
         res = arr.compute()
     return res
 
