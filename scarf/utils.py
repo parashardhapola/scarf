@@ -176,6 +176,8 @@ def controlled_compute(arr, nthreads):
     import dask
 
     try:
+        # Multiprocessing may be faster, but it throws exception if SemLock is not implemented.
+        # For example, multiprocessing won't work on AWS Lambda, in those scenarios we switch ThreadPoolExecutor
         from multiprocessing.pool import ThreadPool
 
         pool = ThreadPool(nthreads)
