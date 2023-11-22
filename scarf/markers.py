@@ -25,6 +25,7 @@ def find_markers_by_rank(
     assay: Assay,
     group_key: str,
     cell_key: str,
+    feat_key: str,
     batch_size: int,
     use_prenormed: bool,
     prenormed_store: Optional[str],
@@ -37,6 +38,7 @@ def find_markers_by_rank(
         assay:
         group_key:
         cell_key:
+        feat_key:
         batch_size:
         use_prenormed:
         prenormed_store:
@@ -141,11 +143,15 @@ def find_markers_by_rank(
         return results
     else:
         batch_iterator = assay.iter_normed_feature_wise(
-            cell_key, "I", batch_size, "Finding markers", **norm_params
+            cell_key=cell_key,
+            feat_key=feat_key,
+            batch_size=batch_size,
+            msg="Finding markers",
+            **norm_params,
         )
         temp = np.vstack([calc(x) for x in batch_iterator])
         results = {}
-        feat_index = assay.feats.active_index("I")
+        feat_index = assay.feats.active_index(feat_key)
         for n, i in enumerate(group_set):
             results[i] = (
                 pd.DataFrame(temp[:, n, :], columns=out_cols[1:], index=feat_index)
@@ -160,6 +166,7 @@ def find_markers_by_rank(
 def find_markers_by_regression(
     assay: Assay,
     cell_key: str,
+    feat_key: str,
     regressor: np.ndarray,
     min_cells: int,
     batch_size: int = 50,
@@ -170,6 +177,7 @@ def find_markers_by_regression(
     Args:
         assay:
         cell_key:
+        feat_key:
         regressor:
         min_cells:
         batch_size:
@@ -180,10 +188,10 @@ def find_markers_by_regression(
 
     res = {}
     for df in assay.iter_normed_feature_wise(
-        cell_key,
-        "I",
-        batch_size,
-        "Finding correlated features",
+        cell_key=cell_key,
+        feat_key=feat_key,
+        batch_size=batch_size,
+        msg="Finding correlated features",
         **norm_params,
     ):
         for i in df:

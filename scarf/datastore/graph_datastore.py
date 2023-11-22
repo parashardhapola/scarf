@@ -1914,7 +1914,9 @@ class GraphDataStore(BaseDataStore):
                 )
                 ss_vec = np.ones(graph.shape[0])
             else:
-                clusts = pd.Series(self.cells.fetch(source_sink_key, key=cell_key)[cell_idx])
+                clusts = pd.Series(
+                    self.cells.fetch(source_sink_key, key=cell_key)[cell_idx]
+                )
                 if sources is None:
                     sources = []
                 else:

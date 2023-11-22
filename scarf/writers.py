@@ -1339,10 +1339,9 @@ class ZarrMerge:
             logger.info(f"cellData already exists so skipping _ini_cell_data")
 
     def _dask_to_coo(self, d_arr, order: np.ndarray, n_threads: int) -> coo_matrix:
-        mat = np.zeros((d_arr.shape[0],  self.nFeats))
+        mat = np.zeros((d_arr.shape[0], self.nFeats))
         mat[:, order] = controlled_compute(d_arr, n_threads)
         return coo_matrix(mat)
-
 
     def dump(self, nthreads=2):
         """Copy the values from individual assays to the merged assay.

@@ -330,6 +330,7 @@ class DataStore(MappingDatastore):
         from_assay: Optional[str] = None,
         group_key: Optional[str] = None,
         cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
         gene_batch_size: int = 50,
         use_prenormed: bool = False,
         prenormed_store: Optional[str] = None,
@@ -347,6 +348,7 @@ class DataStore(MappingDatastore):
                        how the cells will be grouped. Usually this would be a column denoting cell clusters.
             cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table. (Default value: 'I')
+            feat_key:
             gene_batch_size: Number of genes to be loaded in memory at a time. All cells (from ell_key) are loaded for
                              these number of cells at a time.
             use_prenormed: If True then prenormalized cache generated using Assay.save_normed_for_query is used.
@@ -367,17 +369,20 @@ class DataStore(MappingDatastore):
             )
         if cell_key is None:
             cell_key = "I"
+        if feat_key is None:
+            feat_key = "I"
         if n_threads is None:
             n_threads = self.nthreads
         assay = self._get_assay(from_assay)
         markers = find_markers_by_rank(
-            assay,
-            group_key,
-            cell_key,
-            gene_batch_size,
-            use_prenormed,
-            prenormed_store,
-            n_threads,
+            assay=assay,
+            group_key=group_key,
+            cell_key=cell_key,
+            feat_key=feat_key,
+            batch_size=gene_batch_size,
+            use_prenormed=use_prenormed,
+            prenormed_store=prenormed_store,
+            n_threads=n_threads,
             **norm_params,
         )
         z = self.zw[assay.name]
@@ -397,6 +402,7 @@ class DataStore(MappingDatastore):
         self,
         from_assay: Optional[str] = None,
         cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
         pseudotime_key: Optional[str] = None,
         min_cells: int = 10,
         gene_batch_size: int = 50,
@@ -412,6 +418,7 @@ class DataStore(MappingDatastore):
             from_assay: Name of the assay to be used. If no value is provided then the default assay will be used.
             cell_key: To run the test on specific subset of cells, provide the name of a boolean column in
                         the cell metadata table. (Default value: 'I')
+            feat_key:
             pseudotime_key: Required parameter. This has to be a column name from cell metadata table. This column
                             contains values for pseudotime ordering of the cells.
             min_cells: Minimum number of cells where a gene should have non-zero value to be considered for test.
@@ -431,10 +438,18 @@ class DataStore(MappingDatastore):
             )
         if cell_key is None:
             cell_key = "I"
+        if feat_key is None:
+            feat_key = "I"
         assay = self._get_assay(from_assay)
         ptime = assay.cells.fetch(pseudotime_key, key=cell_key)
         markers = find_markers_by_regression(
-            assay, cell_key, ptime, min_cells, gene_batch_size, **norm_params
+            assay=assay,
+            cell_key=cell_key,
+            feat_key=feat_key,
+            regressor=ptime,
+            min_cells=min_cells,
+            batch_size=gene_batch_size,
+            **norm_params,
         )
         assay.feats.insert(
             f"{cell_key}__{pseudotime_key}__r",
@@ -463,7 +478,7 @@ class DataStore(MappingDatastore):
         n_clusters: int = 10,
         batch_size: int = 100,
         ann_params: Optional[dict] = None,
-        nan_cluster_value: Union[int, str] = -1
+        nan_cluster_value: Union[int, str] = -1,
     ) -> None:
         """This method performs clustering of features based on pseudotime
         ordered cells. The values from the pseudotime ordered cells are
@@ -675,9 +690,7 @@ class DataStore(MappingDatastore):
             raise ValueError(
                 "ERROR: Please provide a value for parameter `csv_filename`"
             )
-        from_assay, cell_key, _ = self._get_latest_keys(
-            from_assay, cell_key, None
-        )
+        from_assay, cell_key, _ = self._get_latest_keys(from_assay, cell_key, None)
         clusters = self.cells.fetch(group_key, key=cell_key)
         markers_table = {}
         for group_id in sorted(set(clusters)):
@@ -768,7 +781,9 @@ class DataStore(MappingDatastore):
         g2m_score_label = self._col_renamer(from_assay, cell_key, g2m_score_label)
         self.cells.insert(g2m_score_label, g2m_score, key=cell_key, overwrite=True)
 
-        phase = pd.Series(["S" for _ in range(self.cells.fetch(cell_key, key=cell_key).sum())])
+        phase = pd.Series(
+            ["S" for _ in range(self.cells.fetch(cell_key, key=cell_key).sum())]
+        )
         phase[g2m_score > s_score] = "G2M"
         phase[(g2m_score < 0) & (s_score < 0)] = "G1"
         phase_label = self._col_renamer(from_assay, cell_key, phase_label)
@@ -991,7 +1006,9 @@ class DataStore(MappingDatastore):
             sec_groups_set = [None]
         else:
             sec_groups = self.cells.fetch_all(secondary_group_key)
-            sec_groups_set = sorted(set(self.cells.fetch(secondary_group_key, key=cell_key)))
+            sec_groups_set = sorted(
+                set(self.cells.fetch(secondary_group_key, key=cell_key))
+            )
 
         assay = self._get_assay(from_assay)
 
