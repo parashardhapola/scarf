@@ -818,16 +818,12 @@ class RNAassay(Assay):
         self.normMethod = norm_method_cache
         return val
 
-    def set_feature_stats(self, cell_key: str, min_cells: int) -> None:
+    def set_feature_stats(self, cell_key: str) -> None:
         """Calculates summary statistics for the features of the assay using
         only cells that are marked True by the 'cell_key' parameter.
 
         Args:
             cell_key: Name of the key (column) from cell attribute table.
-            min_cells: Minimum number of cells across which a given feature should be present. If a feature is present
-                       (has non zero un-normalized value) in fewer cells that it is ignored and summary statistics
-                       are not calculated for that feature. Also, such features will be disabled and `I` value of these
-                       features in the feature attribute table will be set to False
 
         Returns: None
         """
@@ -855,9 +851,9 @@ class RNAassay(Assay):
             f"({self.name}) Computing sigmas",
             self.nthreads,
         )
-        idx = n_cells > min_cells
-        self.feats.update_key(idx, key=feat_key)
-        n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
+        # idx = n_cells > min_cells
+        # self.feats.update_key(idx, key=feat_key)
+        # n_cells, tot, sigmas = n_cells[idx], tot[idx], sigmas[idx]
 
         self.z.create_group(stats_loc, overwrite=True)
         self.feats.mount_location(self.z[stats_loc], identifier)
@@ -870,9 +866,10 @@ class RNAassay(Assay):
             overwrite=True,
             location=identifier,
         )
+        nz_mean = np.divide(tot, n_cells, out=np.zeros_like(tot).astype(float), where=n_cells != 0)
         self.feats.insert(
             "nz_mean",
-            (tot / n_cells).astype(float),
+            nz_mean.astype(float),
             overwrite=True,
             location=identifier,
         )
@@ -950,7 +947,7 @@ class RNAassay(Assay):
         def col_renamer(x):
             return f"{identifier}_{x}"
 
-        self.set_feature_stats(cell_key, min_cells)
+        self.set_feature_stats(cell_key)
         identifier = self._load_stats_loc(cell_key)
         c_var_col = f"c_var__{n_bins}__{lowess_frac}"
         if col_renamer(c_var_col) in self.feats.columns:
