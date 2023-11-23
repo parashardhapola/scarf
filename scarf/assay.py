@@ -866,7 +866,9 @@ class RNAassay(Assay):
             overwrite=True,
             location=identifier,
         )
-        nz_mean = np.divide(tot, n_cells, out=np.zeros_like(tot).astype(float), where=n_cells != 0)
+        nz_mean = np.divide(
+            tot, n_cells, out=np.zeros_like(tot).astype(float), where=n_cells != 0
+        )
         self.feats.insert(
             "nz_mean",
             nz_mean.astype(float),
