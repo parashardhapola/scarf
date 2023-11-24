@@ -566,7 +566,12 @@ class MetaData:
         )
 
     def remove_trend(
-        self, x: str, y: str, n_bins: int = 200, lowess_frac: float = 0.1
+        self,
+        x: str,
+        y: str,
+        n_bins: int = 200,
+        lowess_frac: float = 0.1,
+        fill_value: float = 0,
     ) -> np.ndarray:
         """
 
@@ -575,17 +580,23 @@ class MetaData:
             y:
             n_bins:
             lowess_frac:
+            fill_value:
 
         Returns:
 
         """
-        a = fit_lowess(
-            self.fetch(x).astype(float),
-            self.fetch(y).astype(float),
+        a = self.fetch(x).astype(float)
+        b = self.fetch(y).astype(float)
+        idx = a > 0
+        c = fit_lowess(
+            a[idx],
+            b[idx],
             n_bins,
             lowess_frac,
         )
-        return a
+        ret_val = np.repeat(fill_value, len(a)).astype(float)
+        ret_val[idx] = c
+        return ret_val
 
     def __repr__(self):
         return f"MetaData of {self.fetch_all('I').sum()}({self.N}) elements"
