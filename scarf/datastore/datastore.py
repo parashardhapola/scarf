@@ -1,13 +1,16 @@
 from typing import Iterable, Optional, Union, List, Literal, Tuple
+
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
+
 from .mapping_datastore import MappingDatastore
-from ..writers import create_zarr_obj_array, create_zarr_dataset
-from ..utils import tqdmbar, controlled_compute, ZARRLOC
+from .. import doublet_scoring
 from ..assay import RNAassay, ATACassay
 from ..feat_utils import hto_demux
+from ..utils import tqdmbar, controlled_compute, ZARRLOC
+from ..writers import create_zarr_obj_array, create_zarr_dataset
 
 __all__ = ["DataStore"]
 
@@ -1207,6 +1210,44 @@ class DataStore(MappingDatastore):
             return ret_val
         else:
             self.cells.insert(new_col_name, ret_val, overwrite=True)
+
+    def predict_doublet_score(
+        self, sim_doublet_ratio: float = 2, smoothen_iteration: int = 2
+    ):
+        idx = doublet_scoring.get_simulated_pair_idx(
+            self.cells.fetch_all("I").sum(), sim_doublet_ratio=sim_doublet_ratio
+        )
+        simulated_doublets = doublet_scoring.get_simulated_doublets(self, idx)
+
+        # TODO: what should be the sim_dset_path
+        doublet_scoring.save_sim_doublets(
+            simulated_doublets, assay=self.RNA, idx=idx, sim_dset_path="workspace"
+        )
+        sim_ds = DataStore("workspace")
+        doublet_scoring.process_sim_ds(sim_ds)
+        self.run_mapping(
+            target_assay=sim_ds.RNA,
+            target_name="sim_ds",
+            target_feat_key="hvgs_ctrl",
+            save_k=11,
+            run_coral=False,
+        )
+
+        # TODO:  is this correct way of fetching?
+        _, ms = next(
+            self.get_mapping_score(
+                target_name="sim_ds", log_transform=False, multiplier=1e4
+            )
+        )
+
+        graph = self.load_graph()
+        doublet_scores = doublet_scoring.average_signal_by_neighbour(
+            graph.indices.reshape(graph.shape[0], 11).astype("int64"),
+            graph.data.reshape(graph.shape[0], 11).astype("float64"),
+            ms.astype("float64"),
+            t=smoothen_iteration,
+        )
+        self.cells.insert("doublet_scores", doublet_scores, overwrite=True)
 
     def plot_cells_dists(
         self,
