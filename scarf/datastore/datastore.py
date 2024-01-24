@@ -195,7 +195,7 @@ class DataStore(MappingDatastore):
             assay.rawData[self.cells.fetch_all(cell_key)], self.nthreads
         )
         hto_idents = hto_demux(
-            pd.DataFrame(counts, columns=assay.feats.fetch("ids", key=cell_key))
+            pd.DataFrame(counts, columns=assay.feats.fetch_all("ids"))
         )
         self.cells.insert(
             column_name=label,
