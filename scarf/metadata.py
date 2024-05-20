@@ -1,5 +1,6 @@
 """Contains the MetaData class, which is used for storing metadata about cells
 and features."""
+
 import re
 from typing import List, Iterable, Any, Dict, Tuple, Optional, Union
 import numpy as np
@@ -61,7 +62,10 @@ class MetaData:
         """
         sizes = []
         for i in zgrp.keys():
-            sizes.append(zgrp[i].shape[0])
+            try:
+                sizes.append(zgrp[i].shape[0])
+            except Exception:
+                pass
         if len(sizes) > 0:
             if len(set(sizes)) != 1:
                 raise ValueError(
