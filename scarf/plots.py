@@ -467,7 +467,7 @@ def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Serie
 def _scatter_make_colors(
     v: pd.Series, cmap, color_key: Optional[dict], mask_color: str, mask_name: str
 ):
-    from matplotlib.cm import get_cmap
+    from matplotlib.pyplot import get_cmap
 
     na_idx = v == mask_name
     uv = v[~na_idx].unique()

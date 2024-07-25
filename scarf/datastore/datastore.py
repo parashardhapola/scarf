@@ -374,6 +374,13 @@ class DataStore(MappingDatastore):
         if n_threads is None:
             n_threads = self.nthreads
         assay = self._get_assay(from_assay)
+
+        slot_name = f"{cell_key}__{group_key}"
+        z = self.zw[assay.name]
+        if "markers" not in z:
+            z.create_group("markers")
+        group = z["markers"].create_group(slot_name, overwrite=True)
+
         markers = find_markers_by_rank(
             assay=assay,
             group_key=group_key,
@@ -385,11 +392,7 @@ class DataStore(MappingDatastore):
             n_threads=n_threads,
             **norm_params,
         )
-        z = self.zw[assay.name]
-        slot_name = f"{cell_key}__{group_key}"
-        if "markers" not in z:
-            z.create_group("markers")
-        group = z["markers"].create_group(slot_name, overwrite=True)
+
         for i in markers:
             g = group.create_group(i)
             vals = markers[i]
