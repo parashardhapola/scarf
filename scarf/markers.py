@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 from typing import Optional
-from joblib import Parallel, delayed
 from scipy.stats import rankdata
 
 
@@ -46,6 +45,8 @@ def find_markers_by_rank(
 
     Returns:
     """
+
+    from joblib import Parallel, delayed
 
     def calc(vdf):
         r = vdf.rank(method="dense").groupby(groups).mean().reindex(group_set)

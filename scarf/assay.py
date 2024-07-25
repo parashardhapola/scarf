@@ -17,7 +17,6 @@ from dask.array.core import from_zarr
 from zarr import hierarchy as z_hierarchy
 from scipy.sparse import csr_matrix, vstack
 import pandas as pd
-from joblib import Parallel, delayed
 from .metadata import MetaData
 from .utils import show_dask_progress, controlled_compute, logger
 
@@ -548,6 +547,7 @@ class Assay:
         Returns:
             None
         """
+        from joblib import Parallel, delayed
         from .writers import create_zarr_obj_array
 
         def write_wrapper(idx: str, v: np.ndarray) -> None:

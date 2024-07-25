@@ -10,7 +10,6 @@ Classes:
     - fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
 """
 
-import requests
 import os
 import tarfile
 import pandas as pd
@@ -49,6 +48,8 @@ class OSFdownloader:
         self.sources = self._populate_sources()
 
     def get_json(self, storage, endpoint, url):
+        import requests
+
         if endpoint != "":
             endpoint = endpoint + "/"
         if url is None:
@@ -93,6 +94,8 @@ class OSFdownloader:
         return datasets, source_fn
 
     def _populate_sources(self):
+        import requests
+
         n_attempts = 0
         while n_attempts < 5:
             try:
