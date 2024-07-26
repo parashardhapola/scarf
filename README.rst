@@ -43,7 +43,13 @@
           <br />
          
           <p align="center">
-               <strong>Need support?</strong> Create an issue <a href="https://github.com/parashardhapola/scarf/issues">on Github</a> and connect with maintainers on this <a href="https://scarf-group.slack.com/archives/C0418C7RXU4">Slack channel</a>.
+               Install with all the dependencies:
+               <code style="background-color: #F0F0F0; padding: 2px 4px; border-radius: 4px; font-family: monospace;">pip install scarf[extra]</code>
+          </p>          
+
+          <br />
+          <p align="center">
+               <strong>Need support?</strong> Create an issue <a href="https://github.com/parashardhapola/scarf/issues">on Github</a>.
           </p>
          
      </embed>
