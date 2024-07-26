@@ -393,7 +393,7 @@ class MetaData:
         self,
         column_name: str,
         values: Union[np.ndarray, List],
-        fill_value: Any = np.NaN,
+        fill_value: Any = np.nan,
         key: str = "I",
         overwrite: bool = False,
         location: str = "primary",
@@ -404,7 +404,7 @@ class MetaData:
         Args:
             column_name (str): Name of column to modify.
             values (np.array): Values the column should contain.
-            fill_value (Any = np.NaN): Value to fill unassigned slots with.
+            fill_value (Any = np.nan): Value to fill unassigned slots with.
             key (str = 'I'):
             overwrite (bool = False): Should function overwrite column if it already exists?
             location (str = 'primary'):
