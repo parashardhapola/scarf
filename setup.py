@@ -40,13 +40,6 @@ if __name__ == "__main__":
     core_requirements = read_lines('requirements.txt')
     extra_requirements = read_lines('requirements_extra.txt')
 
-    install_requires = (
-        ["pybind11"]
-        + [x.strip() for x in open("requirements.txt")]
-        + ["dask[array]", "dask[dataframe]"]
-    )
-    dependency_links = []
-
     setup(
         name="scarf",
         version=version,

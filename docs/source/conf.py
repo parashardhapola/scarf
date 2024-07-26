@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.abspath("../.."))
 
 project = "Scarf"
-copyright = "2023, Parashar Dhapola"
+copyright = "2020-2024, Parashar Dhapola"
 author = "Parashar Dhapola"
 
 extensions = [
@@ -53,7 +53,6 @@ html_theme_options = {
     "path_to_docs": "docs/source",
     "use_download_button": True,
     "use_fullscreen_button": True,
-    "single_page": False,
     "home_page_in_toc": True,
     "extra_navbar": "",
     "logo_only": True,
@@ -64,9 +63,9 @@ html_theme_options = {
 htmlhelp_basename = "ScarfDoc"
 man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
 
-execution_allow_errors = True
-jupyter_execute_notebooks = "auto"
-execution_timeout = 5000
+nb_execution_allow_errors = True
+nb_execution_mode = "auto"
+nb_execution_timeout = 5000
 
 import matplotlib
 
