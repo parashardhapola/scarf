@@ -5,13 +5,13 @@ exclude .gitignore
 exclude .gitattribute
 exclude .readthedocs.yml
 exclude Dockerfile
-exclude push_pypi.sh
 prune scarf_toolkit.egg-info
 prune docs
 prune scarf/tests
 prune .circleci
 prune .github
 include requirements.txt
+include requirements_extra.txt
 include VERSION
 include pypi_README.rst
 graft bin
