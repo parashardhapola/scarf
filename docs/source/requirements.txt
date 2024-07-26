@@ -9,4 +9,4 @@ sphinx-copybutton
 sphinx-external-toc
 sphinx-tabs
 topacedo
-nbclient
+nbclient<=0.8

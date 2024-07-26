@@ -38,38 +38,32 @@ myst_enable_extensions = [
     "colon_fence",
 ]
 
-html_static_path = ["_static"]
-html_css_files = ["styles.css"]
+
 html_theme = "sphinx_book_theme"
 html_favicon = "favicon.ico"
 html_logo = "logo.png"
 html_title = "Scarf documentation"
 html_theme_options = {
     "repository_url": "https://github.com/parashardhapola/scarf",
-    "use_repository_button": True,
-    "use_issues_button": False,
-    "use_edit_page_button": False,
+    "home_page_in_toc": True,
     "path_to_docs": "docs/source",
+    "show_navbar_depth": 2,
+    "use_repository_button": True,
     "use_download_button": True,
     "use_fullscreen_button": True,
-    "home_page_in_toc": True,
-    "show_navbar_depth": 2,
+    "navigation_with_keys": False,
     "toc_title": "Sections",
 }
+html_static_path = ["_static"]
+html_css_files = ["styles.css"]
+
 htmlhelp_basename = "Scarf Documentation"
-html_sidebars = {
-    "**": [
-        "globaltoc.html",
-        "searchbox.html",
-    ],
-    'using/windows': ['windows-sidebar.html', 'searchbox.html'],
-}
 
 man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
 
 nb_execution_allow_errors = True
 nb_execution_mode = "auto"
-nb_execution_timeout = 5000
+nb_execution_timeout = 200
 
 import matplotlib
 
