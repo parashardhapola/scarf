@@ -730,11 +730,9 @@ class DataStore(MappingDatastore):
 
         - Average expression of all the genes in across `cell_key` cells is calculated
         - The log average expression is divided in `n_bins` bins
-        - A control set of genes is identified by sampling genes from same expression bins where phase's genes are
-        present.
+        - A control set of genes is identified by sampling genes from same expression bins where phase's genes are present.
         - The average expression of phase genes (Ep) and control genes (Ec) is calculated per cell.
-        - A phase score is calculated as: Ep-Ec
-        Cell cycle phase is assigned to each cell based on following rule set:
+        - A phase score is calculated as: Ep-Ec Cell cycle phase is assigned to each cell based on following rule set:
         - G1 phase: S score < -1 > G2M sore
         - S phase: S score > G2M score
         - G2M phase: G2M score > S score

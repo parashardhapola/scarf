@@ -28,7 +28,7 @@ To use Scarf you need the Python programming language, version 3.10 or upwards, 
 First, check whether you already have Python installed. To do so, you need to open a terminal
 window (aka command prompt).
 
-:::{eval-rst}
+```{eval-rst}
 .. tabs::
 
   .. tab:: Linux
@@ -46,7 +46,7 @@ window (aka command prompt).
 
      Press `CMD+Space` to open spotlight search, and type `terminal` and hit `RETURN`.
 
-:::
+```
 
 **Step 2:**
 

@@ -21,7 +21,6 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-source_suffix = [".rst"]
 master_doc = "index"
 exclude_patterns = [
     "_build",
@@ -39,9 +38,9 @@ myst_enable_extensions = [
     "colon_fence",
 ]
 
+html_static_path = ["_static"]
 html_css_files = ["styles.css"]
 html_theme = "sphinx_book_theme"
-html_static_path = ["_static"]
 html_favicon = "favicon.ico"
 html_logo = "logo.png"
 html_title = "Scarf documentation"
@@ -54,13 +53,18 @@ html_theme_options = {
     "use_download_button": True,
     "use_fullscreen_button": True,
     "home_page_in_toc": True,
-    "extra_navbar": "",
-    "logo_only": True,
     "show_navbar_depth": 2,
     "toc_title": "Sections",
 }
+htmlhelp_basename = "Scarf Documentation"
+html_sidebars = {
+    "**": [
+        "globaltoc.html",
+        "searchbox.html",
+    ],
+    'using/windows': ['windows-sidebar.html', 'searchbox.html'],
+}
 
-htmlhelp_basename = "ScarfDoc"
 man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
 
 nb_execution_allow_errors = True

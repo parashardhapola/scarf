@@ -25,17 +25,17 @@ extension.
 ## Contributors
 Contributors to the Scarf repository. Thank you everyone!
 
-:::{eval-rst}
+```{eval-rst}
 .. include:: contributors.rst
-:::
+```
 
 ## Open-source stack
 A diverse number of open-source packages in Python scientific stack are being used to build Scarf.
 Here we acknowledge some of them (atleast those with pretty logos..)
 
-:::{eval-rst}
+```{eval-rst}
 .. include:: logos.rst
-:::
+```
 
 [guideline]: https://www.dataschool.io/how-to-contribute-on-github
 [discussion page]: https://www.dataschool.io/how-to-contribute-on-github
