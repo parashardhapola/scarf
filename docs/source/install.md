@@ -2,9 +2,9 @@
 # Installation
 
 ## Installation through PyPi
-If you already have Python version 3.10.0 or greater, then you can install scarf using `pip`
+If you already have Python version 3.11.0 or greater, then you can install scarf using `pip`
 
-    pip install scarf
+    pip install scarf[extra]
 
 
 ````{note}
@@ -54,7 +54,7 @@ Okay, once you have got a terminal window open, type `python --version` and pres
 
 Now you may see one of the following three kinds of output:
 
-- If your output shows you have `Python 3.10.0` or a more recent version.
+- If your output shows you have `Python 3.11.0` or a more recent version.
   In this case, you are good to go, and you can skip Step 3.
 - If you have an earlier version than 3.10, for example 3.5 or 2.7, then see step 3.
 - If you see an error containing words `not found` or `not recognized` then most
@@ -93,7 +93,7 @@ That's it now you have the required build tools.
 
 We recommend that you first create an environment that you then install scarf into. 
 If you have followed the steps above, and you are using conda you create an environment
-by typing ``conda create --name scarf_env python=3.10`` in your terminal (Windows users must use Anaconda Prompt)
+by typing ``conda create --name scarf_env python=3.11`` in your terminal (Windows users must use Anaconda Prompt)
 
 This will also install python 3.10 into that environment. One of the benefits of working with
 environments is that you minimize the risk of some required package that you are using for
@@ -109,7 +109,7 @@ https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.h
 **Step 4:**
 
 Now, in your terminal, type this to install the latest version of Scarf:
-`pip install scarf`
+`pip install scarf[extra]`
 
 **Step 4.5 (Optional)**
 

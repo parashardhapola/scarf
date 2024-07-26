@@ -4,8 +4,13 @@ import os
 import glob
 
 
-def read(fname):
-    return open(os.path.join(os.path.dirname(__file__), fname)).read()
+def read(f_name):
+    with open(os.path.join(os.path.dirname(__file__), f_name)) as fp:
+        return fp.read().rstrip("\n")
+
+
+def read_lines(f_name):
+    return read(f_name).split("\n")
 
 
 class PostInstallCommand(install):
@@ -31,34 +36,41 @@ class PostInstallCommand(install):
 
 
 if __name__ == "__main__":
-    classifiers = [
-        "Development Status :: 4 - Beta",
-        "License :: OSI Approved :: BSD License",
-        "Natural Language :: English",
-        "Programming Language :: Python :: 3",
-    ]
-    keywords = ["store"]
-    version = open("VERSION").readline().rstrip("\n")
+    version = read("VERSION").rstrip("\n")
+    core_requirements = read_lines('requirements.txt')
+    extra_requirements = read_lines('requirements_extra.txt')
+
     install_requires = (
         ["pybind11"]
         + [x.strip() for x in open("requirements.txt")]
         + ["dask[array]", "dask[dataframe]"]
     )
     dependency_links = []
+
     setup(
         name="scarf",
-        description="Scarf",
+        version=version,
+        python_requires='>=3.11',
+        description="Scarf: A scalable tool for single-cell omics data analysis",
         long_description=read("pypi_README.rst"),
+        long_description_content_type="text/x-rst",
         author="Parashar Dhapola",
         author_email="parashar.dhapola@gmail.com",
         url="https://github.com/parashardhapola/scarf",
         license="BSD 3-Clause",
-        classifiers=classifiers,
-        keywords=keywords,
-        install_requires=install_requires,
-        dependency_links=dependency_links,
-        version=version,
-        packages=find_packages(),
+        classifiers=[
+            "Development Status :: 4 - Beta",
+            "License :: OSI Approved :: BSD License",
+            "Natural Language :: English",
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.12",
+        ],
+        keywords=['single-cell'],
+        install_requires=core_requirements,
+        extras_require={
+            'extra': extra_requirements,
+        },
+        packages=find_packages(exclude=['tests*']),
         include_package_data=False,
         cmdclass={"install": PostInstallCommand},
     )
