@@ -480,8 +480,8 @@ class MetaData:
     def sift(
         self,
         column: str,
-        min_v: float = -np.Inf,
-        max_v: float = np.Inf,
+        min_v: float = -np.inf,
+        max_v: float = np.inf,
         keep_bounds: bool = False,
     ) -> np.ndarray:
         """

@@ -147,7 +147,7 @@ def clean_array(x, fill_val: int = 0):
         fill_val: value to fill zero values with (default: 0)
     """
     x = np.nan_to_num(x, copy=True)
-    x[(x == np.Inf) | (x == -np.Inf)] = 0
+    x[(x == np.inf) | (x == -np.inf)] = 0
     x[x == 0] = fill_val
     return x
 

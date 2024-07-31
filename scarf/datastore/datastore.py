@@ -109,9 +109,9 @@ class DataStore(MappingDatastore):
                 )
                 continue
             if j is None:
-                j = -np.Inf
+                j = -np.inf
             if k is None:
-                k = np.Inf
+                k = np.inf
             x = self.cells.sift(i, j, k, keep_bounds=keep_bounds)
             logger.info(
                 f"{len(x) - x.sum()} cells flagged for filtering out using attribute {i}"
@@ -210,10 +210,10 @@ class DataStore(MappingDatastore):
         cell_key: Optional[str] = None,
         min_cells: Optional[int] = None,
         top_n: int = 500,
-        min_var: float = -np.Inf,
-        max_var: float = np.Inf,
-        min_mean: float = -np.Inf,
-        max_mean: float = np.Inf,
+        min_var: float = -np.inf,
+        max_var: float = np.inf,
+        min_mean: float = -np.inf,
+        max_mean: float = np.inf,
         n_bins: int = 200,
         lowess_frac: float = 0.1,
         blacklist: str = "^MT-|^RPS|^RPL|^MRPS|^MRPL|^CCN|^HLA-|^H2-|^HIST",

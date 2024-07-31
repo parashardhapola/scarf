@@ -965,13 +965,13 @@ class RNAassay(Assay):
             )
             self.feats.insert(c_var_col, c_var, overwrite=True, location=identifier)
 
-        if max_mean != np.Inf:
+        if max_mean != np.inf:
             max_mean = 2**max_mean
-        if max_var != np.Inf:
+        if max_var != np.inf:
             max_var = 2**max_var
-        if min_mean != -np.Inf:
+        if min_mean != -np.inf:
             min_mean = 2**min_mean
-        if min_var != -np.Inf:
+        if min_var != -np.inf:
             min_var = 2**min_var
 
         if blacklist != "":
@@ -981,7 +981,7 @@ class RNAassay(Assay):
             )
         else:
             bl = np.ones(self.feats.N).astype(bool)
-        if min_var == -np.Inf:
+        if min_var == -np.inf:
             if top_n < 1:
                 raise ValueError(
                     "ERROR: Please provide a value greater than 0 for `top_n` parameter"
@@ -989,7 +989,7 @@ class RNAassay(Assay):
             idx = self.feats.multi_sift(
                 [col_renamer("normed_n"), col_renamer("nz_mean")],
                 [min_cells, min_mean],
-                [np.Inf, max_mean],
+                [np.inf, max_mean],
                 keep_bounds=keep_bounds,
             )
             idx = idx & self.feats.fetch_all("I") & bl
@@ -1008,7 +1008,7 @@ class RNAassay(Assay):
         hvgs = self.feats.multi_sift(
             [col_renamer(x) for x in ["normed_n", "nz_mean", c_var_col]],
             [min_cells, min_mean, min_var],
-            [np.Inf, max_mean, max_var],
+            [np.inf, max_mean, max_var],
             keep_bounds=keep_bounds,
         )
         hvgs = hvgs & self.feats.fetch_all("I") & bl

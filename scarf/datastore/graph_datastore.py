@@ -1521,7 +1521,7 @@ class GraphDataStore(BaseDataStore):
                 graph_loc=graph_loc,
             )
             dendrogram = paris.fit_transform(graph)
-            dendrogram[dendrogram == np.Inf] = 0
+            dendrogram[dendrogram == np.inf] = 0
             g = create_zarr_dataset(
                 self.zw[graph_loc],
                 dendrogram_loc.rsplit("/", 1)[1],

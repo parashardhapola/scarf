@@ -390,7 +390,7 @@ class BaseDataStore:
                     )
                 else:
                     bv = self.cells.sift(
-                        from_assay + "_nFeatures", min_features, np.Inf
+                        from_assay + "_nFeatures", min_features, np.inf
                     )
                     # Making sure that the write operation is only done if the filtering results have changed
                     cur_index = self.cells.fetch_all("I")
