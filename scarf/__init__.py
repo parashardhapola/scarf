@@ -33,6 +33,7 @@ PyPI: https://pypi.org/project/scarf/
 """
 
 import warnings
+
 from dask.array import PerformanceWarning
 from importlib_metadata import version
 

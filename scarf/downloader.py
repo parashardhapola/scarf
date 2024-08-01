@@ -10,12 +10,14 @@ Classes:
     - fetch_dataset: Downloads datasets from online repositories and saves them in as-is format
 """
 
+import io
 import os
 import tarfile
-import pandas as pd
-import io
 import time
 from json import JSONDecodeError
+
+import pandas as pd
+
 from .utils import logger, tqdmbar
 
 __all__ = ["show_available_datasets", "fetch_dataset"]

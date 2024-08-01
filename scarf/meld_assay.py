@@ -10,17 +10,18 @@
     - coordinate_melding:
 """
 
+import gzip
 import logging
 from typing import Tuple, List, Union
-import pandas as pd
-import numpy as np
-import gzip
-from numba import jit
-from zarr import hierarchy
-from scipy.sparse import coo_matrix
-from .writers import create_zarr_count_assay
-from .utils import controlled_compute, logger, tqdmbar
 
+import numpy as np
+import pandas as pd
+from numba import jit
+from scipy.sparse import coo_matrix
+from zarr import hierarchy
+
+from .utils import controlled_compute, logger, tqdmbar
+from .writers import create_zarr_count_assay
 
 __all__ = ["GffReader", "coordinate_melding"]
 

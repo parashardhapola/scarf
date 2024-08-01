@@ -1,12 +1,12 @@
 from typing import Optional
+
+import dask.array as da
 import numpy as np
 import pandas as pd
-import dask.array as da
-
 from threadpoolctl import threadpool_limits
-from .utils import controlled_compute, logger, tqdmbar
-from .harmony import run_harmony
 
+from .harmony import run_harmony
+from .utils import controlled_compute, logger, tqdmbar
 
 __all__ = ["AnnStream", "instantiate_knn_index", "fix_knn_query"]
 

@@ -1,12 +1,15 @@
 """Module to find biomarkers."""
-from scarf.assay import Assay
-from scarf.utils import logger, tqdmbar
-from numba import jit
+
+from typing import Optional
+
 import numpy as np
 import pandas as pd
+from numba import jit
 from scipy.stats import linregress
-from typing import Optional
 from scipy.stats import rankdata
+
+from scarf.assay import Assay
+from scarf.utils import logger, tqdmbar
 
 
 def read_prenormed_batches(store, cell_idx: np.ndarray, batch_size: int, desc: str):

@@ -1,7 +1,9 @@
 """Utility functions for features."""
-import pandas as pd
-import numpy as np
+
 from typing import List, Tuple
+
+import numpy as np
+import pandas as pd
 
 __all__ = ["fit_lowess", "binned_sampling", "hto_demux"]
 

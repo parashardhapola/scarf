@@ -18,12 +18,15 @@
     - LoomToZarr: A class for converting data in a Loom file to a Zarr hierarchy.
 """
 
-import zarr
-from typing import Any, Tuple, List, Union, Dict, Optional
-import numpy as np
-from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 import os
+from typing import Any, Tuple, List, Union, Dict, Optional
+
+import numpy as np
 import pandas as pd
+import zarr
+from scipy.sparse import csr_matrix, coo_matrix
+
+from .readers import CrReader, H5adReader, NaboH5Reader, LoomReader, CSVReader
 from .utils import (
     controlled_compute,
     logger,
@@ -32,7 +35,6 @@ from .utils import (
     load_zarr,
     ZARRLOC,
 )
-from scipy.sparse import csr_matrix, coo_matrix
 
 __all__ = [
     "create_zarr_dataset",

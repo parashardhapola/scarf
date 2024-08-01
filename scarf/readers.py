@@ -9,14 +9,16 @@
     - LoomReader: A class to read in data in the form of a Loom file.
 """
 
+import os
 from abc import ABC, abstractmethod
 from typing import Generator, Dict, List, Optional, Tuple
+from typing import IO
+
+import h5py
 import numpy as np
 import pandas as pd
-import os
 from scipy.sparse import coo_matrix
-from typing import IO
-import h5py
+
 from .utils import logger, tqdmbar
 
 __all__ = [

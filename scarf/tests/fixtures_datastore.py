@@ -1,7 +1,8 @@
-import pytest
-from . import full_path, remove
 import numpy as np
 import pandas as pd
+import pytest
+
+from . import full_path, remove
 
 
 @pytest.fixture(scope="session")

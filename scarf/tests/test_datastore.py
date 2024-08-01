@@ -1,5 +1,6 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from . import full_path, remove
 
 
@@ -174,9 +175,7 @@ class TestDataStore:
             full_path("pseudotime_markers_r_values.csv"), index_col=0
         )
         assert np.all(precalc_markers.index == pseudotime_markers.index)
-        assert np.all(
-            precalc_markers.names.values == pseudotime_markers.names.values
-        )
+        assert np.all(precalc_markers.names.values == pseudotime_markers.names.values)
         assert np.allclose(
             precalc_markers.I__RNA_pseudotime__r.values,
             pseudotime_markers.I__RNA_pseudotime__r.values,

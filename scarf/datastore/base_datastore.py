@@ -1,10 +1,12 @@
 from typing import List, Union, Optional
+
 import numpy as np
 import zarr
 from loguru import logger
-from ..utils import show_dask_progress, controlled_compute, load_zarr, ZARRLOC
+
 from ..assay import RNAassay, ATACassay, ADTassay, Assay
 from ..metadata import MetaData
+from ..utils import show_dask_progress, controlled_compute, load_zarr, ZARRLOC
 
 
 def sanitize_hierarchy(

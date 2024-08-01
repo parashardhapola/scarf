@@ -37,13 +37,13 @@ class PostInstallCommand(install):
 
 if __name__ == "__main__":
     version = read("VERSION").rstrip("\n")
-    core_requirements = read_lines('requirements.txt')
-    extra_requirements = read_lines('requirements_extra.txt')
+    core_requirements = read_lines("requirements.txt")
+    extra_requirements = read_lines("requirements_extra.txt")
 
     setup(
         name="scarf",
         version=version,
-        python_requires='>=3.11',
+        python_requires=">=3.11",
         description="Scarf: A scalable tool for single-cell omics data analysis",
         long_description=read("pypi_README.rst"),
         long_description_content_type="text/x-rst",
@@ -58,12 +58,12 @@ if __name__ == "__main__":
             "Programming Language :: Python :: 3",
             "Programming Language :: Python :: 3.12",
         ],
-        keywords=['single-cell'],
+        keywords=["single-cell"],
         install_requires=core_requirements,
         extras_require={
-            'extra': extra_requirements,
+            "extra": extra_requirements,
         },
-        packages=find_packages(exclude=['tests*']),
+        packages=find_packages(exclude=["tests*"]),
         include_package_data=False,
         cmdclass={"install": PostInstallCommand},
     )

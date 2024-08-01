@@ -4,6 +4,7 @@
 # License: BSD 3 clause
 
 import locale
+
 from .utils import logger
 
 locale.setlocale(locale.LC_NUMERIC, "C")

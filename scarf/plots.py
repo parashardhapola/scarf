@@ -1,11 +1,14 @@
 """Contains the code for plotting in Scarf."""
-import matplotlib.pyplot as plt
+
+from typing import Tuple, Optional, Union, List
+
 import matplotlib as mpl
-import seaborn as sns
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional, Union, List
+import seaborn as sns
 from cmocean import cm
+
 from .utils import logger
 
 plt.rcParams["svg.fonttype"] = "none"
@@ -1258,7 +1261,6 @@ def plot_annotated_heatmap(
     save_dpi: int = 300,
     show_fig: bool = True,
 ):
-    import matplotlib.gridspec as gridspec
     import matplotlib.ticker as mticker
 
     if display_row_labels is None:

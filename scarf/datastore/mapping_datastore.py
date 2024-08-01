@@ -1,13 +1,14 @@
-from typing import Generator, Tuple, List, Dict, Union, Callable, Optional
 import os
+from typing import Generator, Tuple, List, Dict, Union, Callable, Optional
+
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
 from scipy.sparse import csr_matrix
+
 from .graph_datastore import GraphDataStore
 from ..assay import Assay, RNAassay
-from ..writers import create_zarr_dataset
 from ..utils import (
     show_dask_progress,
     clean_array,
@@ -15,6 +16,7 @@ from ..utils import (
     controlled_compute,
     system_call,
 )
+from ..writers import create_zarr_dataset
 
 
 class MappingDatastore(GraphDataStore):

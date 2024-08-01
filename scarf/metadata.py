@@ -3,12 +3,14 @@ and features."""
 
 import re
 from typing import List, Iterable, Any, Dict, Tuple, Optional, Union
+
 import numpy as np
-from zarr import hierarchy as z_hierarchy
 import pandas as pd
+from zarr import hierarchy as z_hierarchy
+
 from .feat_utils import fit_lowess
-from .writers import create_zarr_obj_array
 from .utils import logger
+from .writers import create_zarr_obj_array
 
 zarrGroup = z_hierarchy.Group
 

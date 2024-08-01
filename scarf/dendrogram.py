@@ -1,6 +1,8 @@
-import numpy as np
 from typing import List, Dict
+
 import networkx as nx
+import numpy as np
+
 from .utils import logger, tqdmbar
 
 __all__ = ["BalancedCut", "CoalesceTree", "make_digraph"]

@@ -1,10 +1,13 @@
 """Utility functions for the mapping."""
+
+from typing import Tuple
+
 import dask.array as daskarr
 import numpy as np
-from typing import Tuple
+import pandas as pd
+
 from .assay import Assay
 from .utils import controlled_compute, show_dask_progress, logger, tqdmbar
-import pandas as pd
 
 __all__ = ["align_features", "coral"]
 

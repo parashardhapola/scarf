@@ -1,5 +1,6 @@
-import pytest
 import numpy as np
+import pytest
+
 from . import full_path, remove
 
 

@@ -1,5 +1,6 @@
-from . import full_path, remove
 import numpy as np
+
+from . import full_path, remove
 
 
 def test_crtozarr(crh5_reader):

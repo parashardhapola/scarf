@@ -1,13 +1,15 @@
 """Utility functions for running the KNN algorithm."""
+
 from typing import List, Tuple
+
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix, coo_matrix
 from numba import jit
-from .writers import create_zarr_dataset
+from scipy.sparse import csr_matrix, coo_matrix
+
 from .ann import AnnStream
 from .utils import tqdmbar, controlled_compute
-
+from .writers import create_zarr_dataset
 
 __all__ = [
     "self_query_knn",

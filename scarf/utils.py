@@ -9,15 +9,15 @@
     - rolling_window: applies rolling window mean over a vector
 """
 
-from typing import Union, Optional, TypeAlias
-from loguru import logger
 import sys
-import numpy as np
-from tqdm.dask import TqdmCallback
-from dask.array.core import Array
-from numba import jit
-import zarr
+from typing import Union, Optional, TypeAlias
 
+import numpy as np
+import zarr
+from dask.array.core import Array
+from loguru import logger
+from numba import jit
+from tqdm.dask import TqdmCallback
 
 __all__ = [
     "logger",
