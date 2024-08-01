@@ -468,7 +468,7 @@ class NaboH5ToZarr:
 
     Attributes:
         h5: A Nabo h5 object.
-        fn: The file name for the Zarr hierarchy.
+        zarr_loc: The file name for the Zarr hierarchy.
         chunkSizes: The requested size of chunks to load into memory and process.
         assayName: The Zarr hierarchy (array or group).
         z: The Zarr hierarchy (array or group).

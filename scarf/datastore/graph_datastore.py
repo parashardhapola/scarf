@@ -2068,7 +2068,7 @@ class GraphDataStore(BaseDataStore):
             (n_cells * n_neighbors, 2),
         )
         zgw = create_zarr_dataset(
-            store, f"weights", (chunk_size,), np.float_, (n_cells * n_neighbors)
+            store, f"weights", (chunk_size,), np.float64, (n_cells * n_neighbors)
         )
 
         zge[:, 0] = merged_graph.row

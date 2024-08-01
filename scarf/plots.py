@@ -434,7 +434,7 @@ def plot_heatmap(
 def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
     vt = v.dtype
     if v.nunique() == 1:
-        return pd.Series(np.ones(len(v)), index=v.index).astype(np.float_)
+        return pd.Series(np.ones(len(v)), index=v.index).astype(np.float64)
     if vt in [np.bool_]:
         # converting first to int to handle bool
         return v.astype(np.int_).astype("category")
@@ -445,13 +445,13 @@ def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
             logger.warning("Too many categories. set force_ints_as_cats to false")
         return v.astype(np.int_).astype("category")
     else:
-        return v.astype(np.float_)
+        return v.astype(np.float64)
 
 
 def _scatter_fix_mask(v: pd.Series, mask_vals: list, mask_name: str) -> pd.Series:
     if mask_vals is None:
         mask_vals = []
-    mask_vals += [np.NaN]
+    mask_vals += [np.nan]
     iscat = False
     if v.dtype.name == "category":
         iscat = True

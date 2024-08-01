@@ -347,7 +347,7 @@ class BaseDataStore:
                     f"({from_assay}) Computing nCounts",
                     self.nthreads,
                 )
-                self.cells.insert(var_name, n_c.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_c.astype(np.float64), overwrite=True)
                 if type(assay) == RNAassay:
                     min_nc = min(n_c)
                     if min(n_c) < assay.sf:
@@ -362,7 +362,7 @@ class BaseDataStore:
                     f"({from_assay}) Computing nFeatures",
                     self.nthreads,
                 )
-                self.cells.insert(var_name, n_f.astype(np.float_), overwrite=True)
+                self.cells.insert(var_name, n_f.astype(np.float64), overwrite=True)
 
             if type(assay) == RNAassay:
                 if mito_pattern == "":
@@ -493,7 +493,7 @@ class BaseDataStore:
             if vals is None:
                 vals = controlled_compute(
                     assay.normed(cell_idx, feat_idx).mean(axis=1), self.nthreads
-                ).astype(np.float_)
+                ).astype(np.float64)
         else:
             vals = self.cells.fetch(k, key=cell_key)
         if clip_fraction < 0 or clip_fraction > 1:
@@ -501,7 +501,7 @@ class BaseDataStore:
                 "ERROR: Value for `clip_fraction` parameter should be between 0 and 1"
             )
         if clip_fraction > 0:
-            if vals.dtype in [np.float_, np.uint64]:
+            if vals.dtype in [np.float64, np.uint64]:
                 min_v = np.percentile(vals, 100 * clip_fraction)
                 max_v = np.percentile(vals, 100 - 100 * clip_fraction)
                 vals[vals < min_v] = min_v

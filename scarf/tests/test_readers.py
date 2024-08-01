@@ -2,11 +2,11 @@ import numpy as np
 
 
 def test_toy_crdir_assay_feats_table(toy_crdir_reader):
-    assert np.alltrue(
+    assert np.all(
         toy_crdir_reader.assayFeats.columns
         == np.array(["RNA", "ADT", "RNA", "HTO", "RNA"])
     )
-    assert np.alltrue(
+    assert np.all(
         toy_crdir_reader.assayFeats.values[1:]
         == [[0, 1, 3, 5, 6], [1, 3, 5, 6, 7], [1, 2, 2, 1, 1]]
     )

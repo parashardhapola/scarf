@@ -5,22 +5,22 @@ from . import full_path, remove
 
 class TestToyDataStore:
     def test_toy_crdir_metadata(self, toy_crdir_ds):
-        assert np.alltrue(
+        assert np.all(
             toy_crdir_ds.RNA.feats.fetch_all("ids") == ["g1", "g2", "g3", "g4"]
         )
-        assert np.alltrue(toy_crdir_ds.ADT.feats.fetch_all("ids") == ["a1", "a2"])
-        assert np.alltrue(toy_crdir_ds.HTO.feats.fetch_all("ids") == ["h1"])
-        assert np.alltrue(toy_crdir_ds.cells.fetch_all("ids") == ["b1", "b2", "b3"])
+        assert np.all(toy_crdir_ds.ADT.feats.fetch_all("ids") == ["a1", "a2"])
+        assert np.all(toy_crdir_ds.HTO.feats.fetch_all("ids") == ["h1"])
+        assert np.all(toy_crdir_ds.cells.fetch_all("ids") == ["b1", "b2", "b3"])
 
     def test_toy_crdir_rawdata(self, toy_crdir_ds):
-        assert np.alltrue(
+        assert np.all(
             toy_crdir_ds.RNA.rawData.compute()
             == [[5, 0, 0, 2], [3, 3, 0, 7], [3, 3, 0, 7]]
         )
-        assert np.alltrue(
+        assert np.all(
             toy_crdir_ds.ADT.rawData.compute() == [[30, 40], [30, 50], [0, 50]]
         )
-        assert np.alltrue(toy_crdir_ds.HTO.rawData.compute() == [[200], [100], [100]])
+        assert np.all(toy_crdir_ds.HTO.rawData.compute() == [[200], [100], [100]])
 
 
 class TestDataStore:
@@ -70,12 +70,12 @@ class TestDataStore:
     def test_graph_distances(self, make_graph, datastore):
         a = np.load(full_path("knn_distances.npy"))
         b = datastore.z[make_graph]["distances"][:]
-        assert np.alltrue((a - b) < 1e-3)
+        assert np.all((a - b) < 1e-3)
 
     def test_graph_weights(self, make_graph, datastore):
         a = np.load(full_path("knn_weights.npy"))
         b = datastore.z[make_graph]["graph__1.0__1.5"]["weights"][:]
-        assert np.alltrue((a - b) < 1e-5)
+        assert np.all((a - b) < 1e-5)
 
     def test_atac_graph_indices(self, make_atac_graph, atac_datastore):
         a = np.load(full_path("atac_knn_indices.npy"))
@@ -93,7 +93,7 @@ class TestDataStore:
 
         # TODO: activate this when this PR is merged and released in gensim
         # https://github.com/RaRe-Technologies/gensim/pull/3194
-        # assert np.alltrue((a - b) < 1e-5)
+        # assert np.all((a - b) < 1e-5)
 
     def test_leiden_values(self, leiden_clustering, cell_attrs):
         assert len(set(leiden_clustering)) == 10
@@ -117,7 +117,7 @@ class TestDataStore:
         precalc_umap = cell_attrs[["RNA_UMAP1", "RNA_UMAP2"]].values
         assert umap.shape == precalc_umap.shape
         # Disabled the following test because failing on CI
-        # assert np.alltrue((umap - precalc_umap) < 0.1)
+        # assert np.all((umap - precalc_umap) < 0.1)
 
     def test_get_markers(self, marker_search, paris_clustering, datastore):
         precalc_markers = pd.read_csv(full_path("markers_cluster1.csv"), index_col=0)
@@ -173,8 +173,8 @@ class TestDataStore:
         precalc_markers = pd.read_csv(
             full_path("pseudotime_markers_r_values.csv"), index_col=0
         )
-        assert np.alltrue(precalc_markers.index == pseudotime_markers.index)
-        assert np.alltrue(
+        assert np.all(precalc_markers.index == pseudotime_markers.index)
+        assert np.all(
             precalc_markers.names.values == pseudotime_markers.names.values
         )
         assert np.allclose(

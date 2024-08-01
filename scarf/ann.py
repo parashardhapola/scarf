@@ -2,7 +2,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import dask.array as da
-from numpy.linalg import LinAlgError
+
 from threadpoolctl import threadpool_limits
 from .utils import controlled_compute, logger, tqdmbar
 from .harmony import run_harmony
@@ -206,6 +206,7 @@ class AnnStream:
 
     def _fit_pca(self, disable_scaling, use_for_pca) -> None:
         from sklearn.decomposition import IncrementalPCA
+        from numpy.linalg import LinAlgError
 
         # We fit 1 extra PC dim than specified and then ignore the last PC.
         self._pca = IncrementalPCA(
