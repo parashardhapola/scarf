@@ -38,7 +38,7 @@ def _correlation_alignment(s: daskarr, t: daskarr, nthreads: int) -> daskarr:
     return daskarr.dot(s, a_coral)
 
 
-def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
+def coral(source_data, target_data, assay, feat_key: str, cell_key: str, nthreads: int):
     """Applies CORAL error correction to the input data.
 
     Args:
@@ -46,6 +46,7 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
         target_data ():
         assay ():
         feat_key ():
+        cell_key ():
         nthreads ():
     """
     from .writers import dask_to_zarr
@@ -87,7 +88,7 @@ def coral(source_data, target_data, assay, feat_key: str, nthreads: int):
     dask_to_zarr(
         data,
         assay.z["/"],
-        f"{assay.z.name}/normed__I__{feat_key}/data_coral",
+        f"{assay.z.name}/normed__${cell_key}__{feat_key}/data_coral",
         1000,
         nthreads,
         msg="Writing out coral corrected data",
@@ -149,6 +150,7 @@ def align_features(
     source_cell_key: str,
     source_feat_key: str,
     target_feat_key: str,
+    target_cell_key: str,
     filter_null: bool,
     exclude_missing: bool,
     nthreads: int,
@@ -185,11 +187,10 @@ def align_features(
     norm_params = source_assay.z[normed_loc].attrs["subset_params"]
     sorted_t_idx = np.array(sorted(t_idx[t_idx != -1]))
 
-    # TODO: add target cell key
     normed_data = target_assay.normed(
-        target_assay.cells.active_index("I"), sorted_t_idx, **norm_params
+        target_assay.cells.active_index(target_cell_key), sorted_t_idx, **norm_params
     )
-    loc = f"{target_assay.z.name}/normed__I__{target_feat_key}/data"
+    loc = f"{target_assay.z.name}/normed__{target_cell_key}__{target_feat_key}/data"
 
     og = create_zarr_dataset(
         target_assay.z["/"], loc, (1000,), "float64", (normed_data.shape[0], len(t_idx))
