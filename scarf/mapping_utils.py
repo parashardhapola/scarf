@@ -88,7 +88,7 @@ def coral(source_data, target_data, assay, feat_key: str, cell_key: str, nthread
     dask_to_zarr(
         data,
         assay.z["/"],
-        f"{assay.z.name}/normed__${cell_key}__{feat_key}/data_coral",
+        f"{assay.z.name}/normed__{cell_key}__{feat_key}/data_coral",
         1000,
         nthreads,
         msg="Writing out coral corrected data",
