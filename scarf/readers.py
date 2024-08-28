@@ -393,14 +393,6 @@ class CrDirReader(CrReader):
         return vals
 
     def read_header(self) -> pl.DataFrame:
-        # header = pd.read_csv(
-        #     self.matFn,
-        #     skiprows=2,
-        #     sep=self.sep,
-        #     header=None,
-        #     nrows=1,
-        #     names=["nFeatures", "nCells", "nCounts"],
-        # )
         header = pl.read_csv(
             self.matFn,
             skip_rows=2,
@@ -410,11 +402,6 @@ class CrDirReader(CrReader):
             new_columns=["nFeatures", "nCells", "nCounts"],
         )
         return header
-    
-    # def process_batch(self, dfs: List[pd.DataFrame], filtering_cutoff: int) -> List:
-    #     dfs_ = pd.concat(dfs).groupby(1).sum().reset_index()
-    #     dfs_ = dfs_[dfs_[2] > filtering_cutoff]
-    #     return dfs_[1].values
 
     def process_batch(self, dfs: pl.DataFrame, filtering_cutoff: int) -> List:
         """Returns a list of valid barcodes after filtering out background barcodes for a given batch.
@@ -440,9 +427,6 @@ class CrDirReader(CrReader):
             lines_in_mem: The number of lines to read into memory
         """
         test_counter = 0
-        # matrixIO = pd.read_csv(
-        #     self.matFn, skiprows=3, sep=self.sep, header=None, chunksize=lines_in_mem
-        # )
         matrixIO = pl.scan_csv(
             self.matFn, skip_rows=3, separator=self.sep, has_header=False,
         )
@@ -525,16 +509,6 @@ class CrDirReader(CrReader):
         df[1] = cell_idx
         return df.values
 
-    # def rename_batches(self, collect: List[pl.DataFrame], batch_size: int) -> np.array:
-    #     df = pl.concat(collect)
-    #     barcodes = np.array(df['barcode'])
-    #     count_hash = {}
-    #     for i, x in enumerate(np.unique(barcodes)):
-    #         count_hash[x] = i
-    #     cell_idx = np.array([count_hash[x] for x in barcodes])
-    #     df = df.with_columns([pl.Series("1", cell_idx)])
-    #     return np.array(df)
-
     # noinspection DuplicatedCode
     def consume(
         self,
@@ -552,12 +526,6 @@ class CrDirReader(CrReader):
         matrixIO = pd.read_csv(
             self.matFn, skiprows=3, sep=self.sep, header=None, chunksize=lines_in_mem
         )
-        # header = self.read_header()
-        # matrixIO = pl.scan_csv(
-        #     self.matFn, skip_rows=3, separator=self.sep, has_header=False,
-        # )
-        # assert len(matrixIO.collect_schema().names()) == 3
-        # matrixIO = matrixIO.rename({'column_1': 'gene', 'column_2': 'barcode', 'column_3': 'count'})
         unique_list = []
         collect = []
         # nchunks = math.ceil(header["nCounts"][0] / lines_in_mem)
@@ -573,19 +541,15 @@ class CrDirReader(CrReader):
                 diff = batch_size - (len(unique_list) - len(in_uniques))
                 diff_uniques = in_uniques[:diff]
                 extra = chunk[chunk[1].isin(diff_uniques)]
-                # mask_pos = in_uniques[:diff]
-                # mask_neg = in_uniques[diff:]
-                # extra = chunk.filter(pl.col('barcode').is_in(mask_pos))
                 collect.append(extra)
                 collect = self.rename_batches(collect, batch_size)
                 mtx = self.to_sparse(np.array(collect), dtype=dtype)
                 yield mtx
                 left_out = chunk[~chunk[1].isin(diff_uniques)]
-                # left_out = chunk.filter(pl.col('barcode').is_in(mask_neg))
                 collect = []
                 unique_list = list(in_uniques[diff:])
                 collect.append(left_out)
-            else:  # len(unique_list) <= batch_size:
+            else:
                 collect.append(chunk)
         if len(collect) > 0:
             collect = self.rename_batches(collect, batch_size)
