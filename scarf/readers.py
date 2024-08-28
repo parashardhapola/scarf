@@ -499,15 +499,15 @@ class CrDirReader(CrReader):
             vals = vals[(self.validBarcodeIdx + self.indexOffset)]
         return list(vals)
 
-    def rename_batches(self, collect: List[pd.DataFrame], batch_size: int) -> List:
-        df = pd.concat(collect)
-        barcodes = df[1].values
+    def rename_batches(self, collect: List[pl.DataFrame], batch_size: int) -> List:
+        df = pl.concat(collect)
+        barcodes = np.array(df['barcode'])
         count_hash = {}
         for i, x in enumerate(np.unique(barcodes)):
             count_hash[x] = i
         cell_idx = np.array([count_hash[x] for x in barcodes])
-        df[1] = cell_idx
-        return df.values
+        df = df.with_columns([pl.Series("barcode", cell_idx)])
+        return np.array(df)
 
     # noinspection DuplicatedCode
     def consume(
@@ -523,31 +523,38 @@ class CrDirReader(CrReader):
             lines_in_mem: The number of lines to read into memory.
             dtype: The data type of the matrix.
         """
-        matrixIO = pd.read_csv(
-            self.matFn, skiprows=3, sep=self.sep, header=None, chunksize=lines_in_mem
+        matrixIO = pl.read_csv_batched(
+            self.matFn, 
+            has_header=False, 
+            separator=self.sep, 
+            skip_rows=3, 
+            new_columns=['gene', 'barcode', 'count'], 
+            schema_overrides={'gene': pl.Int64, 'barcode': pl.Int64, 'count': pl.Int64},
+            batch_size=lines_in_mem
         )
         unique_list = []
         collect = []
-        # nchunks = math.ceil(header["nCounts"][0] / lines_in_mem)
-        for chunk in matrixIO:
-            # chunk = matrixIO.slice(i*lines_in_mem, lines_in_mem).collect()
-            chunk = chunk[chunk[1].isin(self.validBarcodeIdx)]
-            # chunk = chunk.filter(pl.col('barcode').is_in(self.validBarcodeIdx))
-            in_uniques = chunk[1].unique()
-            # in_uniques = np.unique(chunk['barcode'])
+        while True:
+            chunk = matrixIO.next_batches(1)
+            if chunk is None:
+                break
+            chunk = chunk[0]
+            chunk = chunk.filter(pl.col('barcode').is_in(self.validBarcodeIdx))
+            in_uniques = np.unique(chunk['barcode'])
             unique_list.extend(in_uniques)
             unique_list = list(set(unique_list))
             if len(unique_list) > batch_size:
                 diff = batch_size - (len(unique_list) - len(in_uniques))
-                diff_uniques = in_uniques[:diff]
-                extra = chunk[chunk[1].isin(diff_uniques)]
+                mask_pos = in_uniques[:diff]
+                mask_neg = in_uniques[diff:]
+                extra = chunk.filter(pl.col('barcode').is_in(mask_pos))
                 collect.append(extra)
                 collect = self.rename_batches(collect, batch_size)
                 mtx = self.to_sparse(np.array(collect), dtype=dtype)
                 yield mtx
-                left_out = chunk[~chunk[1].isin(diff_uniques)]
+                left_out = chunk.filter(pl.col('barcode').is_in(mask_neg))
                 collect = []
-                unique_list = list(in_uniques[diff:])
+                unique_list = list(mask_neg)
                 collect.append(left_out)
             else:
                 collect.append(chunk)
