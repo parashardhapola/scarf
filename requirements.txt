@@ -19,3 +19,4 @@ loguru
 setuptools
 packaging
 importlib_metadata
+polars
