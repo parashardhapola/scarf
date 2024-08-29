@@ -395,12 +395,18 @@ class CrDirReader(CrReader):
     def read_header(self) -> pl.DataFrame:
         header = pl.read_csv(
             self.matFn,
-            skip_rows=2,
+            comment_prefix = '%',
             separator=self.sep,
             has_header=False,
             n_rows=1,
             new_columns=["nFeatures", "nCells", "nCounts"],
         )
+        if header['nCells'][0] == 0 and self.nCells > 0:
+            raise ValueError("ERROR: Barcode count in MTX header is 0 but barcodes are present in the barcodes file")
+        if header['nCells'][0] > 0 and self.nCells == 0:
+            raise ValueError("ERROR: Barcode count in MTX header is greater than 0 but no barcodes are present in the barcodes file")
+        if header['nCells'][0] == 0 and self.nCells == 0:
+            raise ValueError("ERROR: Barcode count in MTX header and barcodes file is 0. No data to read")
         return header
 
     def process_batch(self, dfs: pl.DataFrame, filtering_cutoff: int) -> List:
@@ -428,7 +434,12 @@ class CrDirReader(CrReader):
         """
         test_counter = 0
         matrixIO = pl.scan_csv(
-            self.matFn, skip_rows=3, separator=self.sep, has_header=False,
+            self.matFn, 
+            comment_prefix='%',
+            # skip_rows=3,
+            skip_rows_after_header=1,
+            separator=self.sep, 
+            has_header=False,
         )
         assert len(matrixIO.collect_schema().names()) == 3
         matrixIO = matrixIO.rename({'column_1': 'gene', 'column_2': 'barcode', 'column_3': 'count'})
@@ -526,8 +537,9 @@ class CrDirReader(CrReader):
         matrixIO = pl.read_csv_batched(
             self.matFn, 
             has_header=False, 
-            separator=self.sep, 
-            skip_rows=3, 
+            separator=self.sep,
+            comment_prefix="%",
+            skip_rows_after_header=1, 
             new_columns=['gene', 'barcode', 'count'], 
             schema_overrides={'gene': pl.Int64, 'barcode': pl.Int64, 'count': pl.Int64},
             batch_size=lines_in_mem
