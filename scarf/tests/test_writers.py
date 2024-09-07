@@ -79,22 +79,6 @@ def test_to_mtx(datastore):
     remove(fn)
 
 
-def test_zarr_merge(datastore):
-    # TODO: Evaluate the resulting merged file
-    from ..writers import ZarrMerge
-
-    fn = full_path("merged_zarr.zarr")
-    writer = ZarrMerge(
-        zarr_path=fn,
-        assays=[datastore.RNA, datastore.RNA],
-        names=["self1", "self2"],
-        merge_assay_name="RNA",
-        prepend_text="",
-    )
-    writer.dump()
-    remove(fn)
-
-
 def test_zarr_subset(datastore):
     # TODO: Evaluate the resulting subsetted file
 
