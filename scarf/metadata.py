@@ -6,6 +6,7 @@ from typing import List, Iterable, Any, Dict, Tuple, Optional, Union
 
 import numpy as np
 import pandas as pd
+import polars as pl
 from zarr import hierarchy as z_hierarchy
 
 from .feat_utils import fit_lowess
@@ -552,6 +553,17 @@ class MetaData:
         df = pd.DataFrame({x: self.fetch_all(x) for x in columns if x in valid_cols})
         if key is not None:
             df = df.reindex(self.active_index(key))
+        return df
+
+    def to_polars_dataframe(
+        self, columns: List[str], key: Optional[str] = None
+    ) -> pl.DataFrame:  
+        """Returns the requested columns as a Polars DataFrame, sorted on
+        key."""
+        valid_cols = self.columns
+        df = pl.DataFrame({x: self.fetch_all(x) for x in columns if x in valid_cols})
+        if key is not None:
+            df = df[self.active_index(key)]
         return df
 
     def grep(self, pattern: str, only_valid=False) -> List[str]:

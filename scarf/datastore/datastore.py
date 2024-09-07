@@ -75,6 +75,24 @@ class DataStore(MappingDatastore):
             synchronizer=synchronizer,
         )
 
+    def get_assay(
+        self,
+        assay_name: str
+    ) -> Union[RNAassay, ATACassay]:
+        """Returns the assay object for the given assay name.
+
+        Args:
+            assay_name: Name of the assay to be returned.
+
+        Returns:
+            RNAassay or ATACassay object
+        """
+        if assay_name not in self.assay_names:
+            raise ValueError(f"ERROR: Assay {assay_name} not found in the Zarr file")
+        else:
+            return getattr(self, assay_name)
+        
+    
     def filter_cells(
         self,
         attrs: Iterable[str],
