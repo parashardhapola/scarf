@@ -2,9 +2,10 @@
 Methods and classes for merging datasets
 
 """
+
 import os
 from typing import Tuple, List, Union, Dict, Optional
-
+import dask as da
 import numpy as np
 import polars as pl
 from scipy.sparse import coo_matrix
@@ -24,6 +25,7 @@ __all__ = [
     "AssayMerge",
     "ZarrMerge",
 ]
+
 
 class AssayMerge:
     # class ZarrMerge is renamed to AssayMerge for better understanding
@@ -214,28 +216,25 @@ class AssayMerge:
         ret_val = []
         for assay, name in zip(self.assays, self.names):
             a = assay.cells.to_polars_dataframe(assay.cells.columns)
-            # a["ids"] = [f"{name}__{x}" for x in a["ids"]]
             a = a.with_columns(
                 [pl.Series("ids", np.array([f"{name}__{x}" for x in a["ids"]]))]
             )
             for i in a.columns:
                 if i not in ["ids", "I", "names"] and prepend_text is not None:
-                    # a[f"{prepend_text}_{i}"] = assay.cells.fetch_all(i)
                     a = a.with_columns(
                         [pl.Series(f"{prepend_text}_{i}", assay.cells.fetch_all(i))]
                     )
-                    # a = a.drop(columns=[i])
                     a = a.drop([i])
             if reset:
-                # a["I"] = np.ones(len(a["ids"])).astype(bool)
                 a = a.with_columns(
                     [pl.Series("I", np.ones(len(a["ids"])).astype(bool))]
                 )
             ret_val.append(a)
-        
+
         ret_val_df = pl.concat(
-            ret_val
-        )  # ret_val = pd.concat(ret_val).reset_index(drop=True)
+            ret_val,
+            how="diagonal",  # Finds a union between the column schemas and fills missing column values with null
+        )
 
         # Randomize the rows in chunks
         compiled_idx = [
@@ -287,12 +286,6 @@ class AssayMerge:
             }
         )
 
-        # Randomize the feats
-        # np.random.seed(seed)
-        # ids = ret_val["ids"].to_numpy()
-        # ids = np.random.permutation(len(ids))
-        # ret_val = ret_val[ids]
-
         r = ret_val.shape[0] / sum([x.feats.N for x in self.assays])
         if r == 1:
             raise ValueError(
@@ -306,7 +299,6 @@ class AssayMerge:
     def _ref_order_feat_idx(self) -> List[np.ndarray]:
         ret_val = []
         for ids in self.featCollection:
-            # ret_val.append(self.mergedFeats["idx"].reindex(list(ids.keys())).values)
             vals = self.mergedFeats.filter(pl.col("ids").is_in(list(ids.keys())))["idx"]
             ret_val.append(np.array(vals))
         return ret_val
@@ -334,7 +326,8 @@ class AssayMerge:
                     )
             try:
                 if not all(
-                    z[cell_slot]["ids"][:] == np.array(np.array(self.mergedCells["ids"]))  # type: ignore
+                    z[cell_slot]["ids"][:]
+                    == np.array(np.array(self.mergedCells["ids"]))  # type: ignore
                 ):
                     raise ValueError(
                         f"ERROR: order of cells does not match the one in existing file"  # noqa: F541
@@ -390,7 +383,6 @@ class AssayMerge:
         Returns:
         """
         counter = 0
-        _sum = 0
         for i, (assay, feat_order) in enumerate(zip(self.assays, self.featOrder)):
             for j, block in tqdmbar(
                 enumerate(assay.rawData.blocks),
@@ -398,7 +390,6 @@ class AssayMerge:
                 desc=f"Writing data to merged file",  # noqa: F541
             ):
                 a = self._dask_to_coo(block, feat_order, nthreads)
-                _sum += a.data.sum()
                 row_idx = self.cellOrder[i][j]
                 self.assayGroup.set_coordinate_selection(
                     (a.row + row_idx.min(), a.col), a.data.astype(self.assayGroup.dtype)
@@ -410,7 +401,6 @@ class AssayMerge:
             raise AssertionError(
                 "ERROR: Mismatch in number of cells in the merged assay. Please report this issue."
             )
-        print(f"Total sum of data: {_sum}")
 
 
 # Alias for ZarrMerge
@@ -428,12 +418,10 @@ class ZarrMerge(AssayMerge):
 
 class DatasetMerge:
     """
-    For Merging two datasets
+    Merge multiple datastores, handling different assay types and generating missing assays on the fly.
     """
 
     def __init__(
-        # Input A List of DS objects
-        # Output datastore on-the fly. Original Datastore remains the same
         self,
         ds_list: List[DataStore],
         zarr_path: ZARRLOC,
@@ -460,54 +448,35 @@ class DatasetMerge:
         self.seed = seed
         self.unique_assays = self.get_unique_assays()
         self.n_unique_assays = len(self.unique_assays)
-        # self.check_assay_existance()
-        self.merge_generators = self.merge_generator()
+        self.merge_generators = self.create_merge_generators()
 
     def get_unique_assays(self) -> List[str]:
         """
         Get unique assays from both datasets
         """
-        unique_assays = []
+        unique_assays = set()
         for ds in self.ds_list:
-            unique_assays.extend(ds.assay_names)
-        return list(np.unique(unique_assays))
+            unique_assays.update(ds.assay_names)
+        return list(unique_assays)
 
-    # def check_assay_existance(self) -> None:
-    #     """
-    #     Check if assay exists in both datasets. If not, create a dummy assay with entries as 0 and features as present in the other dataset.
-    #     """
-    #     for assay in self.unique_assays:
-    #         if assay not in self.ds1.assay_names:
-    #             # Create a dummy assay with entries as 0 and features as present in ds2
-    #             g = self.ds1.z.create_group(assay, overwrite=True)
-    #             shape = (self.ds1.cells.N, self.ds2.get_assay(assay).feats.N)
-    #             chunk_size = self.ds2.get_assay(assay).z.counts.chunks[0]
-    #             vals = np.zeros(shape)
-    #             create_zarr_obj_array(
-    #                 g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size
-    #             )
-    #         if assay not in self.ds2.assay_names:
-    #             # Create a dummy assay with entries as 0 and features as present in self.ds1
-    #             g = self.ds2.z.create_group(assay, overwrite=True)
-    #             shape = (self.ds2.cells.N, self.ds1.get_assay(assay).feats.N)
-    #             chunk_size = self.ds1.get_assay(assay).z.counts.chunks[0]
-    #             vals = np.zeros(shape)
-    #             create_zarr_obj_array(
-    #                 g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size
-    #             )
-    #     return None
-
-    def merge_generator(self) -> List[AssayMerge]:
+    def create_merge_generators(self) -> List[AssayMerge]:
         """
-        Merge two datasets
+        Create AssayMerge objects for each unique assay
         """
         gens = []
         for assay in self.unique_assays:
-
+            assay_list = []
+            for ds in self.ds_list:
+                if assay in ds.assay_names:
+                    assay_list.append(ds.get_assay(assay))
+                else:
+                    # Generate a dummy assay on the fly
+                    dummy_assay = self.generate_dummy_assay(ds, assay)
+                    assay_list.append(dummy_assay)
             gens.append(
                 AssayMerge(
                     zarr_path=self.zarr_path,
-                    assays=[sf.get_assay(assay) for sf in self.ds_list],
+                    assays=assay_list,
                     names=self.names,
                     merge_assay_name=assay,
                     in_workspaces=self.in_workspaces,
@@ -522,11 +491,37 @@ class DatasetMerge:
             )
         return gens
 
-    def dump(self) -> None:
+    def generate_dummy_assay(self, ds: DataStore, assay_name: str):
         """
-        Dump merged datasets
+        Generate a dummy assay for a datastore that doesn't have the specified assay
+        """
+        # Find a datastore that has this assay to get feature information
+        reference_ds = next(ds for ds in self.ds_list if assay_name in ds.assay_names)
+        reference_assay = reference_ds.get_assay(assay_name)
+        # Create a dummy assay with zero counts and matching features
+        dummy_shape = (ds.cells.N, reference_assay.feats.N)
+        dummy_counts = np.zeros(dummy_shape, dtype=reference_assay.rawData.dtype)
+        dummy_counts = da.array.from_array(
+            dummy_counts, chunks=reference_assay.rawData.chunksize
+        )
+
+        # Create a dummy Assay object
+        class DummyAssay:
+            def __init__(self, counts, feats):
+                self.rawData = counts
+                self.feats = feats
+                self.cells = ds.cells
+
+        dummy_assay = DummyAssay(dummy_counts, reference_assay.feats)
+        logger.info(f"Generated dummy {assay_name} assay for datastore {ds}")
+        return dummy_assay
+
+    def dump(self, nthreads=2) -> None:
+        """
+        Dump the merged data to the zarr file
         """
         for gen in self.merge_generators:
             print(f"Dumping {gen.merge_assay_name}")
-            gen.dump()
+            gen.dump(nthreads)
+        print("Merging complete")
         return None
