@@ -348,7 +348,7 @@ class MetaData:
         Returns:
 
         """
-        if isinstance(value_targets, Iterable) and type(value_targets) != str:
+        if isinstance(value_targets, Iterable) and not isinstance(value_targets, str):
             if key is None:
                 values = self.fetch_all(column)
             else:

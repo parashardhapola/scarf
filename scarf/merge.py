@@ -25,8 +25,8 @@ __all__ = [
     "ZarrMerge",
 ]
 
-class AssayMerge: 
-# class ZarrMerge is renamed to AssayMerge for better understanding
+class AssayMerge:
+    # class ZarrMerge is renamed to AssayMerge for better understanding
     """Merge multiple Zarr files into a single Zarr file.
 
     Args:
@@ -79,7 +79,9 @@ class AssayMerge:
         self.outWorkspace = out_workspace
         self.merge_assay_name = merge_assay_name
         self.chunk_size = chunk_size
-        self.permutes_rows, self.permutes_rows_offset, self.coordinates_permutes = self.perfrom_randomization_rows(seed)
+        self.permutes_rows, self.permutes_rows_offset, self.coordinates_permutes = (
+            self.perfrom_randomization_rows(seed)
+        )
         self.mergedCells: pl.DataFrame = self._merge_cell_table(
             reset_cell_filter, prepend_text
         )
@@ -103,15 +105,16 @@ class AssayMerge:
             workspace=self.outWorkspace,
             chunk_size=chunk_size,
             n_cells=self.nCells,
-            feat_ids=np.array(self.mergedFeats['ids']),
-            feat_names=np.array(self.mergedFeats['names']),
+            feat_ids=np.array(self.mergedFeats["ids"]),
+            feat_names=np.array(self.mergedFeats["names"]),
             dtype=dtype,
         )
 
     def perfrom_randomization_rows(
-            self,
-            seed:Optional[int]=42
-        ) -> Tuple[Dict[int, Dict[int, np.ndarray]], Dict[int, Dict[int, np.ndarray]], np.ndarray]:
+        self, seed: Optional[int] = 42
+    ) -> Tuple[
+        Dict[int, Dict[int, np.ndarray]], Dict[int, Dict[int, np.ndarray]], np.ndarray
+    ]:
         """
         Perform randomization of rows in the assays.
         Args:
@@ -119,45 +122,51 @@ class AssayMerge:
         Returns:
         """
         np.random.seed(seed)
-        rowChunks = np.array(
-            [x.rawData.chunksize[0] for x in self.assays]
-        )
-        rowCells = np.array(
-            [x.rawData.shape[0] for x in self.assays]
-        )
+        rowChunks = np.array([x.rawData.chunksize[0] for x in self.assays])
+        rowCells = np.array([x.rawData.shape[0] for x in self.assays])
         permutes = {
-            i: permute_in_chunks(rowCells[i], rowChunks[i]) for i in range(len(self.assays))
+            i: permute_in_chunks(rowCells[i], rowChunks[i])
+            for i in range(len(self.assays))
         }
-        
+
         permutes_rows = {}
         for key, arrays in permutes.items():
             in_dict = {i: x for i, x in enumerate(arrays)}
             permutes_rows[key] = in_dict
-        
+
         permutes_rows_offset = {}
         for i in range(len(permutes)):
-            in_dict = {}
-            last_key = i-1 if i > 0 else 0
+            in__dict: dict[int, np.ndarray] = {}
+            last_key = i - 1 if i > 0 else 0
             offset = rowCells[last_key] if i > 0 else 0
             for j, arr in enumerate(permutes[i]):
-                in_dict[j] = arr + offset
-            permutes_rows_offset[i] = in_dict
+                in__dict[j] = arr + offset
+            permutes_rows_offset[i] = in__dict
 
         coordinates = []
         extra = []
         for i in range(len(self.assays)):
             for j in range(len(permutes[i])):
-                if j == len(permutes[i])-1: # if j is last, append extra
+                if j == len(permutes[i]) - 1:  # if j is last, append extra
                     extra.append([i, j])
                     continue
                 coordinates.append([i, j])
-                
+
         coordinates_permutes = np.random.permutation(coordinates)
         coordinates_permutes = np.concatenate([coordinates_permutes, extra], axis=0)
-        
+
         try:
             assert permutes_rows_offset[0][0].min() == 0
-            assert permutes_rows_offset[list(permutes_rows_offset.keys())[-1]][list(permutes_rows_offset[list(permutes_rows_offset.keys())[-1]].keys())[-1]].max() == rowCells.sum()-1
+            assert (
+                permutes_rows_offset[list(permutes_rows_offset.keys())[-1]][
+                    list(
+                        permutes_rows_offset[
+                            list(permutes_rows_offset.keys())[-1]
+                        ].keys()
+                    )[-1]
+                ].max()
+                == rowCells.sum() - 1
+            )
         except AssertionError:
             raise AssertionError(
                 "ERROR: Randomization of rows failed. Please report this issue."
@@ -167,19 +176,19 @@ class AssayMerge:
     def _ref_order_cell_idx(self) -> Dict[int, Dict[int, np.ndarray]]:
         new_cells = {}
         for i in range(len(self.assays)):
-            in_dict = {}
+            in_dict: dict[int, np.ndarray] = {}
             for j in range(len(self.permutes_rows[i])):
-                in_dict[j] = []
+                in_dict[j] = np.array([])
             new_cells[i] = in_dict
 
         offset = 0
-        for i, (x,y) in enumerate(self.coordinates_permutes):
+        for i, (x, y) in enumerate(self.coordinates_permutes):
             arr = self.permutes_rows_offset[x][y]
             arr = np.array(range(len(arr)))
             arr = arr + offset
             new_cells[x][y] = arr
-            offset = arr.max() + 1 
-        
+            offset = arr.max() + 1
+
         return new_cells
 
     def _merge_cell_table(
@@ -206,29 +215,42 @@ class AssayMerge:
         for assay, name in zip(self.assays, self.names):
             a = assay.cells.to_polars_dataframe(assay.cells.columns)
             # a["ids"] = [f"{name}__{x}" for x in a["ids"]]
-            a=a.with_columns([pl.Series("ids", np.array([f"{name}__{x}" for x in a["ids"]]))])
+            a = a.with_columns(
+                [pl.Series("ids", np.array([f"{name}__{x}" for x in a["ids"]]))]
+            )
             for i in a.columns:
                 if i not in ["ids", "I", "names"] and prepend_text is not None:
                     # a[f"{prepend_text}_{i}"] = assay.cells.fetch_all(i)
-                    a=a.with_columns([pl.Series(f"{prepend_text}_{i}", assay.cells.fetch_all(i))])
+                    a = a.with_columns(
+                        [pl.Series(f"{prepend_text}_{i}", assay.cells.fetch_all(i))]
+                    )
                     # a = a.drop(columns=[i])
                     a = a.drop([i])
             if reset:
                 # a["I"] = np.ones(len(a["ids"])).astype(bool)
-                a=a.with_columns([pl.Series("I", np.ones(len(a["ids"])).astype(bool))])
+                a = a.with_columns(
+                    [pl.Series("I", np.ones(len(a["ids"])).astype(bool))]
+                )
             ret_val.append(a)
-        ret_val = pl.concat(ret_val) # ret_val = pd.concat(ret_val).reset_index(drop=True)
         
+        ret_val_df = pl.concat(
+            ret_val
+        )  # ret_val = pd.concat(ret_val).reset_index(drop=True)
+
         # Randomize the rows in chunks
-        compiled_idx = [self.permutes_rows_offset[i][j] for i, j in self.coordinates_permutes]
+        compiled_idx = [
+            self.permutes_rows_offset[i][j] for i, j in self.coordinates_permutes
+        ]
         compiled_idx = np.concatenate(compiled_idx)
-        ret_val = ret_val[compiled_idx] # Polars does not support iloc so we have to use this method
-        if sum([x.cells.N for x in self.assays]) != ret_val.shape[0]:
+        ret_val_df = ret_val_df[
+            compiled_idx
+        ]  # Polars does not support iloc so we have to use this method
+        if sum([x.cells.N for x in self.assays]) != ret_val_df.shape[0]:
             raise AssertionError(
                 "Unexpected number of cells in the merged table. This is unexpected, "
                 " please report this bug"
             )
-        return ret_val
+        return ret_val_df
 
     @staticmethod
     def _get_feat_ids(assays) -> List[Dict[str, str]]:
@@ -244,14 +266,7 @@ class AssayMerge:
         ret_val = []
         for i in assays:
             df = i.feats.to_polars_dataframe(["names", "ids"])
-            ret_val.append(
-                dict(
-                    zip(
-                        df["ids"].to_numpy(),
-                        df["names"].to_numpy()
-                    )
-                )
-            )
+            ret_val.append(dict(zip(df["ids"].to_numpy(), df["names"].to_numpy())))
         return ret_val
 
     def _merge_order_feats(self) -> pl.DataFrame:
@@ -292,7 +307,7 @@ class AssayMerge:
         ret_val = []
         for ids in self.featCollection:
             # ret_val.append(self.mergedFeats["idx"].reindex(list(ids.keys())).values)
-            vals = self.mergedFeats.filter(pl.col('ids').is_in(list(ids.keys())))['idx']
+            vals = self.mergedFeats.filter(pl.col("ids").is_in(list(ids.keys())))["idx"]
             ret_val.append(np.array(vals))
         return ret_val
 
@@ -308,7 +323,7 @@ class AssayMerge:
             z = load_zarr(zarr_loc, mode="r")
             if cell_slot not in z:
                 raise ValueError(
-                    f"ERROR: Zarr file exists but seems corrupted. Either delete the "    # noqa: F541
+                    f"ERROR: Zarr file exists but seems corrupted. Either delete the "  # noqa: F541
                     "existing file or choose another path"
                 )
             if assay_slot in z:
@@ -322,11 +337,11 @@ class AssayMerge:
                     z[cell_slot]["ids"][:] == np.array(np.array(self.mergedCells["ids"]))  # type: ignore
                 ):
                     raise ValueError(
-                        f"ERROR: order of cells does not match the one in existing file"    # noqa: F541
+                        f"ERROR: order of cells does not match the one in existing file"  # noqa: F541
                     )
             except KeyError:
                 raise ValueError(
-                    f"ERROR: 'cell data seems corrupted. Either delete the "    # noqa: F541
+                    f"ERROR: 'cell data seems corrupted. Either delete the "  # noqa: F541
                     "existing file or choose another path"
                 )
             return load_zarr(zarr_loc, mode="r+")
@@ -357,7 +372,9 @@ class AssayMerge:
                 vals = np.array(self.mergedCells[i])
                 create_zarr_obj_array(g, str(i), vals, vals.dtype, overwrite=True)
         else:
-            logger.info(f"cellData already exists so skipping _ini_cell_data")  # noqa: F541
+            logger.info(
+                f"cellData already exists so skipping _ini_cell_data"  # noqa: F541
+            )
 
     def _dask_to_coo(self, d_arr, order: np.ndarray, n_threads: int) -> coo_matrix:
         mat = np.zeros((d_arr.shape[0], self.nFeats))
@@ -395,20 +412,25 @@ class AssayMerge:
             )
         print(f"Total sum of data: {_sum}")
 
+
 # Alias for ZarrMerge
 class ZarrMerge(AssayMerge):
     """
     Alias for AssayMerge for backward compatibility.
     """
+
     def __init__(self, *args, **kwargs):
-        logger.warning("The 'ZarrMerge' class is deprecated and will be removed in a future release. Please use 'AssayMerge' instead.")
+        logger.warning(
+            "The 'ZarrMerge' class is deprecated and will be removed in a future release. Please use 'AssayMerge' instead."
+        )
         super().__init__(*args, **kwargs)
 
 
-class DatasetMerge():
+class DatasetMerge:
     """
     For Merging two datasets
     """
+
     def __init__(
         # Input A List of DS objects
         # Output datastore on-the fly. Original Datastore remains the same
@@ -436,11 +458,11 @@ class DatasetMerge():
         self.prepend_text = prepend_text
         self.reset_cell_filter = reset_cell_filter
         self.seed = seed
-        self.unique_assays = self.get_unique_assays(ds_list)
+        self.unique_assays = self.get_unique_assays()
         self.n_unique_assays = len(self.unique_assays)
-        self.check_assay_existance()
+        # self.check_assay_existance()
         self.merge_generators = self.merge_generator()
-    
+
     def get_unique_assays(self) -> List[str]:
         """
         Get unique assays from both datasets
@@ -448,28 +470,32 @@ class DatasetMerge():
         unique_assays = []
         for ds in self.ds_list:
             unique_assays.extend(ds.assay_names)
-        return np.unique(unique_assays)    
-    
-    def check_assay_existance(self) -> None:
-        """
-        Check if assay exists in both datasets. If not, create a dummy assay with entries as 0 and features as present in the other dataset.
-        """
-        for assay in self.unique_assays:
-            if assay not in self.ds1.assay_names:
-                # Create a dummy assay with entries as 0 and features as present in ds2
-                g = self.ds1.z.create_group(assay, overwrite=True)
-                shape = (self.ds1.cells.N, self.ds2.get_assay(assay).feats.N)
-                chunk_size = self.ds2.get_assay(assay).z.counts.chunks[0]
-                vals = np.zeros(shape)
-                create_zarr_obj_array(g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size)
-            if assay not in self.ds2.assay_names:
-                # Create a dummy assay with entries as 0 and features as present in self.ds1
-                g = self.ds2.z.create_group(assay, overwrite=True)
-                shape = (self.ds2.cells.N, self.ds1.get_assay(assay).feats.N)
-                chunk_size = self.ds1.get_assay(assay).z.counts.chunks[0]
-                vals = np.zeros(shape)
-                create_zarr_obj_array(g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size)
-        return None
+        return list(np.unique(unique_assays))
+
+    # def check_assay_existance(self) -> None:
+    #     """
+    #     Check if assay exists in both datasets. If not, create a dummy assay with entries as 0 and features as present in the other dataset.
+    #     """
+    #     for assay in self.unique_assays:
+    #         if assay not in self.ds1.assay_names:
+    #             # Create a dummy assay with entries as 0 and features as present in ds2
+    #             g = self.ds1.z.create_group(assay, overwrite=True)
+    #             shape = (self.ds1.cells.N, self.ds2.get_assay(assay).feats.N)
+    #             chunk_size = self.ds2.get_assay(assay).z.counts.chunks[0]
+    #             vals = np.zeros(shape)
+    #             create_zarr_obj_array(
+    #                 g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size
+    #             )
+    #         if assay not in self.ds2.assay_names:
+    #             # Create a dummy assay with entries as 0 and features as present in self.ds1
+    #             g = self.ds2.z.create_group(assay, overwrite=True)
+    #             shape = (self.ds2.cells.N, self.ds1.get_assay(assay).feats.N)
+    #             chunk_size = self.ds1.get_assay(assay).z.counts.chunks[0]
+    #             vals = np.zeros(shape)
+    #             create_zarr_obj_array(
+    #                 g, "counts", vals, vals.dtype, overwrite=True, chunk_size=chunk_size
+    #             )
+    #     return None
 
     def merge_generator(self) -> List[AssayMerge]:
         """
@@ -481,8 +507,8 @@ class DatasetMerge():
             gens.append(
                 AssayMerge(
                     zarr_path=self.zarr_path,
-                    assays=[self.ds1.get_assay(assay), self.ds2.get_assay(assay)],
-                    names = self.names,
+                    assays=[sf.get_assay(assay) for sf in self.ds_list],
+                    names=self.names,
                     merge_assay_name=assay,
                     in_workspaces=self.in_workspaces,
                     out_workspace=self.out_workspace,

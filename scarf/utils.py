@@ -251,8 +251,9 @@ def rolling_window(a, w):
             b[i, j] = a[x:y, j].mean()
     return b
 
-def permute_in_chunks(size:int, chunk_size:int, seed:int=42) -> List[np.ndarray]:
-    '''
+
+def permute_in_chunks(size: int, chunk_size: int, seed: int = 42) -> List[np.ndarray]:
+    """
     Permutate an array in chunks of a given size.
     Args:
         size: The size of the array to be permuted
@@ -262,12 +263,12 @@ def permute_in_chunks(size:int, chunk_size:int, seed:int=42) -> List[np.ndarray]
     Examples:
     >>> permute_in_chunks(10, 3)
     [array([2, 1, 0]), array([5, 4, 3]), array([8, 7, 6]), array([9])]
-    '''
+    """
     np.random.seed(seed)
     arr = np.arange(size)
     start = 0
     end = len(arr) - len(arr) % chunk_size
-    chunks = [arr[i:i+chunk_size] for i in range(start, end, chunk_size)]
+    chunks = [arr[i : i + chunk_size] for i in range(start, end, chunk_size)]
     # p_chunks = np.random.permutation(chunks)
     # p_values = [np.random.permutation(chunk) for chunk in p_chunks]
     p_values = [np.random.permutation(chunk) for chunk in chunks]
