@@ -422,6 +422,36 @@ class ZarrMerge(AssayMerge):
 class DatasetMerge:
     """
     Merge multiple datastores, handling different assay types and generating missing assays on the fly.
+
+    Args:
+        datasets: List of DataStore objects to be merged.
+        zarr_path: Name of the new, merged Zarr file with path.
+        names: Names of each of the dataset objects in the `datasets` parameter. They should be in the same order as in
+               `datasets` parameter.
+        in_workspaces: List of workspaces to be merged. If None, all workspaces are merged.
+        out_workspace: Name of the workspace in the merged Zarr file. If None, the name of the first workspace is used.
+        chunk_size: Tuple of cell and feature chunk size. (Default value: (1000, 1000)).
+        dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
+               assays have different dtypes then a float type is used.
+        overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False).
+        prepend_text: This text is pre-appended to each column name (Default value: 'orig').
+        reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
+                           are set as True as in the 'I' column. To keep the filtering information set the value for
+                           this parameter to False. (Default value: True)
+        seed: Seed for randomization of rows in the assays.
+
+    Example:
+        >>> # Assuming ds1, ds2 and ds3 are DataStore objects
+        >>> # ds1 has RNA and ADT assays. ds2 has RNA assay. ds3 has ADT assay.
+        >>> # Merge RNA and ADT assays from all the datastores
+        >>> merge = DatasetMerge(
+        >>>     datasets=[ds1, ds2, ds3],
+        >>>     zarr_path="merged.zarr",
+        >>>     names=["ds1", "ds2", "ds3"],
+        >>>     overwrite = True
+        >>> )
+        >>> merge.dump()
+        >>> # The merged.zarr file will have RNA and ADT assays from all the datastores
     """
 
     def __init__(
