@@ -155,7 +155,10 @@ class AssayMerge:
                 coordinates.append([i, j])
 
         coordinates_permutes = np.random.permutation(coordinates)
-        coordinates_permutes = np.concatenate([coordinates_permutes, extra], axis=0)
+        if len(coordinates_permutes) > 0:
+            coordinates_permutes = np.concatenate([coordinates_permutes, extra], axis=0)
+        else:
+            coordinates_permutes = np.array(extra)
 
         try:
             assert permutes_rows_offset[0][0].min() == 0
@@ -423,7 +426,7 @@ class DatasetMerge:
 
     def __init__(
         self,
-        ds_list: List[DataStore],
+        datasets: List[DataStore],
         zarr_path: ZARRLOC,
         names: List[str],
         in_workspaces: Union[list[str], None] = None,
@@ -435,7 +438,7 @@ class DatasetMerge:
         reset_cell_filter: bool = True,
         seed: Optional[int] = 42,
     ):
-        self.ds_list = ds_list
+        self.datasets = datasets
         self.names = names
         self.zarr_path = zarr_path
         self.in_workspaces = in_workspaces
@@ -455,7 +458,7 @@ class DatasetMerge:
         Get unique assays from both datasets
         """
         unique_assays = set()
-        for ds in self.ds_list:
+        for ds in self.datasets:
             unique_assays.update(ds.assay_names)
         return list(unique_assays)
 
@@ -466,7 +469,7 @@ class DatasetMerge:
         gens = []
         for assay in self.unique_assays:
             assay_list = []
-            for ds in self.ds_list:
+            for ds in self.datasets:
                 if assay in ds.assay_names:
                     assay_list.append(ds.get_assay(assay))
                 else:
@@ -496,7 +499,7 @@ class DatasetMerge:
         Generate a dummy assay for a datastore that doesn't have the specified assay
         """
         # Find a datastore that has this assay to get feature information
-        reference_ds = next(ds for ds in self.ds_list if assay_name in ds.assay_names)
+        reference_ds = next(ds for ds in self.datasets if assay_name in ds.assay_names)
         reference_assay = reference_ds.get_assay(assay_name)
         # Create a dummy assay with zero counts and matching features
         dummy_shape = (ds.cells.N, reference_assay.feats.N)
