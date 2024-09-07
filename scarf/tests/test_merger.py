@@ -1,4 +1,3 @@
-import numpy as np
 import zarr
 from . import full_path, remove
 
@@ -21,7 +20,7 @@ def test_assay_merge(datastore):
     assert int(tmp[...].sum()) == int(datastore.RNA.rawData.compute().sum()*2)
     remove(fn)
 
-def test_dataset_merge(datastore):
+def test_dataset_merge_2(datastore):
     from ..merge import DatasetMerge
     fn = full_path("merged_zarr.zarr")
     writer = DatasetMerge(
@@ -37,4 +36,22 @@ def test_dataset_merge(datastore):
     assert tmp2.shape[0] == 2*datastore.cells.N
     assert int(tmp1[...].sum()) == int(datastore.RNA.rawData.compute().sum()*2)
     assert int(tmp2[...].sum()) == int(datastore.assay2.rawData.compute().sum()*2)
+    remove(fn)
+
+def test_dataset_merge_3(datastore):
+    from ..merge import DatasetMerge
+    fn = full_path("merged_zarr.zarr")
+    writer = DatasetMerge(
+        zarr_path=fn,
+        datasets=[datastore, datastore, datastore],
+        names=["self1", "self2", "self3"],
+        prepend_text="",
+    )
+    writer.dump()
+    tmp1 = zarr.open(fn+"/RNA/counts")
+    tmp2 = zarr.open(fn+"/assay2/counts")
+    assert tmp1.shape[0] == 3*datastore.cells.N
+    assert tmp2.shape[0] == 3*datastore.cells.N
+    assert int(tmp1[...].sum()) == int(datastore.RNA.rawData.compute().sum()*3)
+    assert int(tmp2[...].sum()) == int(datastore.assay2.rawData.compute().sum()*3)
     remove(fn)

@@ -140,7 +140,7 @@ class AssayMerge:
         for i in range(len(permutes)):
             in__dict: dict[int, np.ndarray] = {}
             last_key = i - 1 if i > 0 else 0
-            offset = rowCells[last_key] if i > 0 else 0
+            offset = rowCells[last_key]+offset if i > 0 else 0
             for j, arr in enumerate(permutes[i]):
                 in__dict[j] = arr + offset
             permutes_rows_offset[i] = in__dict
