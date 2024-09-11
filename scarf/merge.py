@@ -4,27 +4,54 @@ Methods and classes for merging datasets
 """
 
 import os
-from typing import Tuple, List, Union, Dict, Optional
-import dask as da
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import polars as pl
+import zarr
+from dask.array import from_array
+from dask.array.core import Array as daskArrayType
 from scipy.sparse import coo_matrix
-from .datastore.datastore import DataStore
-from .writers import create_zarr_obj_array, create_zarr_count_assay
-from .utils import (
-    controlled_compute,
-    logger,
-    tqdmbar,
-    load_zarr,
-    ZARRLOC,
-    permute_in_chunks,
+
+from .assay import (
+    ADTassay,
+    ATACassay,
+    RNAassay,
 )
+from .datastore.datastore import DataStore
+from .metadata import MetaData
+from .utils import (
+    ZARRLOC,
+    controlled_compute,
+    load_zarr,
+    logger,
+    permute_into_chunks,
+    tqdmbar,
+)
+from .writers import create_zarr_count_assay, create_zarr_obj_array
 
 __all__ = [
     "DatasetMerge",
     "AssayMerge",
     "ZarrMerge",
 ]
+
+
+# Creating a dummy Assay object
+class DummyAssay:
+    """
+    A dummy assay object to be used in the AssayMerge class when an assay is missing in a dataset.
+    """
+
+    def __init__(
+        self,
+        ds: DataStore,
+        counts: daskArrayType,
+        feats: MetaData,
+    ):
+        self.rawData = counts
+        self.feats = feats
+        self.cells = ds.cells
 
 
 class AssayMerge:
@@ -63,7 +90,7 @@ class AssayMerge:
     def __init__(
         self,
         zarr_path: ZARRLOC,
-        assays: list,
+        assays: List[Union[RNAassay, ATACassay, ADTassay]],
         names: List[str],
         merge_assay_name: str,
         in_workspaces: Union[list[str], None] = None,
@@ -81,19 +108,23 @@ class AssayMerge:
         self.outWorkspace = out_workspace
         self.merge_assay_name = merge_assay_name
         self.chunk_size = chunk_size
-        self.permutes_rows, self.permutes_rows_offset, self.coordinates_permutes = (
-            self.perfrom_randomization_rows(seed)
-        )
+        (
+            self.permutations_rows,
+            self.permutations_rows_offset,
+            self.coordinates_permutations,
+        ) = self.perfrom_randomization_rows(seed)
         self.mergedCells: pl.DataFrame = self._merge_cell_table(
             reset_cell_filter, prepend_text
         )
         self.nCells: int = self.mergedCells.shape[0]
         self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
-        self.mergedFeats = self._merge_order_feats()
-        self.nFeats = self.mergedFeats.shape[0]
-        self.featOrder = self._ref_order_feat_idx()
-        self.cellOrder = self._ref_order_cell_idx()
-        self.z = self._use_existing_zarr(zarr_path, merge_assay_name, overwrite)
+        self.mergedFeats: pl.DataFrame = self._merge_order_feats()
+        self.nFeats: int = self.mergedFeats.shape[0]
+        self.featOrder: List[np.ndarray] = self._ref_order_feat_idx()
+        self.cellOrder: Dict[int, Dict[int, np.ndarray]] = self._ref_order_cell_idx()
+        self.z: zarr.Group = self._use_existing_zarr(
+            zarr_path, merge_assay_name, overwrite
+        )
         self._ini_cell_data(overwrite)
         if dtype is None:
             if len(set([str(x.rawData.dtype) for x in self.assays])) == 1:
@@ -124,71 +155,80 @@ class AssayMerge:
         Returns:
         """
         np.random.seed(seed)
-        rowChunks = np.array([x.rawData.chunksize[0] for x in self.assays])
-        rowCells = np.array([x.rawData.shape[0] for x in self.assays])
-        permutes = {
-            i: permute_in_chunks(rowCells[i], rowChunks[i])
+        chunkSize = np.array([x.rawData.chunksize[0] for x in self.assays])
+        nCells = np.array([x.rawData.shape[0] for x in self.assays])
+        permutations = {
+            i: permute_into_chunks(nCells[i], chunkSize[i])
             for i in range(len(self.assays))
         }
 
-        permutes_rows = {}
-        for key, arrays in permutes.items():
+        permutations_rows = {}
+        for key, arrays in permutations.items():
             in_dict = {i: x for i, x in enumerate(arrays)}
-            permutes_rows[key] = in_dict
+            permutations_rows[key] = in_dict
 
-        permutes_rows_offset = {}
-        for i in range(len(permutes)):
+        permutations_rows_offset = {}
+        for i in range(len(permutations)):
             in__dict: dict[int, np.ndarray] = {}
             last_key = i - 1 if i > 0 else 0
-            offset = rowCells[last_key]+offset if i > 0 else 0
-            for j, arr in enumerate(permutes[i]):
+            offset = nCells[last_key] + offset if i > 0 else 0
+            for j, arr in enumerate(permutations[i]):
                 in__dict[j] = arr + offset
-            permutes_rows_offset[i] = in__dict
+            permutations_rows_offset[i] = in__dict
 
         coordinates = []
         extra = []
         for i in range(len(self.assays)):
-            for j in range(len(permutes[i])):
-                if j == len(permutes[i]) - 1:  # if j is last, append extra
+            for j in range(len(permutations[i])):
+                if j == len(permutations[i]) - 1:  # if j is last, append extra
                     extra.append([i, j])
                     continue
                 coordinates.append([i, j])
 
-        coordinates_permutes = np.random.permutation(coordinates)
-        if len(coordinates_permutes) > 0:
-            coordinates_permutes = np.concatenate([coordinates_permutes, extra], axis=0)
+        coordinates_permutations = np.random.permutation(coordinates)
+        if len(coordinates_permutations) > 0:
+            coordinates_permutations = np.concatenate(
+                [coordinates_permutations, extra], axis=0
+            )
         else:
-            coordinates_permutes = np.array(extra)
+            coordinates_permutations = np.array(extra)
 
         try:
-            assert permutes_rows_offset[0][0].min() == 0
+            assert permutations_rows_offset[0][0].min() == 0
+        except AssertionError:
+            raise AssertionError(
+                "ERROR: Randomization of rows failed. The first row should be at 0.",
+                "Please report this issue.",
+            )
+        try:
             assert (
-                permutes_rows_offset[list(permutes_rows_offset.keys())[-1]][
+                permutations_rows_offset[list(permutations_rows_offset.keys())[-1]][
                     list(
-                        permutes_rows_offset[
-                            list(permutes_rows_offset.keys())[-1]
+                        permutations_rows_offset[
+                            list(permutations_rows_offset.keys())[-1]
                         ].keys()
                     )[-1]
                 ].max()
-                == rowCells.sum() - 1
+                == nCells.sum() - 1
             )
         except AssertionError:
             raise AssertionError(
-                "ERROR: Randomization of rows failed. Please report this issue."
+                "ERROR: Randomization of rows failed. The last row should be at the end of the dataset.",
+                "Please report this issue.",
             )
-        return permutes_rows, permutes_rows_offset, coordinates_permutes
+        return permutations_rows, permutations_rows_offset, coordinates_permutations
 
     def _ref_order_cell_idx(self) -> Dict[int, Dict[int, np.ndarray]]:
         new_cells = {}
         for i in range(len(self.assays)):
             in_dict: dict[int, np.ndarray] = {}
-            for j in range(len(self.permutes_rows[i])):
+            for j in range(len(self.permutations_rows[i])):
                 in_dict[j] = np.array([])
             new_cells[i] = in_dict
 
         offset = 0
-        for i, (x, y) in enumerate(self.coordinates_permutes):
-            arr = self.permutes_rows_offset[x][y]
+        for i, (x, y) in enumerate(self.coordinates_permutations):
+            arr = self.permutations_rows_offset[x][y]
             arr = np.array(range(len(arr)))
             arr = arr + offset
             new_cells[x][y] = arr
@@ -241,7 +281,8 @@ class AssayMerge:
 
         # Randomize the rows in chunks
         compiled_idx = [
-            self.permutes_rows_offset[i][j] for i, j in self.coordinates_permutes
+            self.permutations_rows_offset[i][j]
+            for i, j in self.coordinates_permutations
         ]
         compiled_idx = np.concatenate(compiled_idx)
         ret_val_df = ret_val_df[
@@ -306,7 +347,9 @@ class AssayMerge:
             ret_val.append(np.array(vals))
         return ret_val
 
-    def _use_existing_zarr(self, zarr_loc: ZARRLOC, merge_assay_name, overwrite):
+    def _use_existing_zarr(
+        self, zarr_loc: ZARRLOC, merge_assay_name, overwrite
+    ) -> zarr.Group:
         if self.outWorkspace is None:
             cell_slot = "cellData"
             assay_slot = merge_assay_name
@@ -504,7 +547,7 @@ class DatasetMerge:
                     assay_list.append(ds.get_assay(assay))
                 else:
                     # Generate a dummy assay on the fly
-                    dummy_assay = self.generate_dummy_assay(ds, assay)
+                    dummy_assay: DummyAssay = self.generate_dummy_assay(ds, assay)
                     assay_list.append(dummy_assay)
             gens.append(
                 AssayMerge(
@@ -524,7 +567,7 @@ class DatasetMerge:
             )
         return gens
 
-    def generate_dummy_assay(self, ds: DataStore, assay_name: str):
+    def generate_dummy_assay(self, ds: DataStore, assay_name: str) -> DummyAssay:
         """
         Generate a dummy assay for a datastore that doesn't have the specified assay
         """
@@ -534,18 +577,10 @@ class DatasetMerge:
         # Create a dummy assay with zero counts and matching features
         dummy_shape = (ds.cells.N, reference_assay.feats.N)
         dummy_counts = np.zeros(dummy_shape, dtype=reference_assay.rawData.dtype)
-        dummy_counts = da.array.from_array(
+        dummy_counts = from_array(
             dummy_counts, chunks=reference_assay.rawData.chunksize
         )
-
-        # Create a dummy Assay object
-        class DummyAssay:
-            def __init__(self, counts, feats):
-                self.rawData = counts
-                self.feats = feats
-                self.cells = ds.cells
-
-        dummy_assay = DummyAssay(dummy_counts, reference_assay.feats)
+        dummy_assay = DummyAssay(ds, dummy_counts, reference_assay.feats)
         logger.info(f"Generated dummy {assay_name} assay for datastore {ds}")
         return dummy_assay
 
