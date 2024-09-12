@@ -4,6 +4,7 @@ Methods and classes for merging datasets
 """
 
 import os
+import re
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -73,6 +74,8 @@ class AssayMerge:
         reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
                            are set as True as in the 'I' column. To keep the filtering information set the value for
                            this parameter to False. (Default value: True)
+        seed: Seed for randomization of rows in the assays.
+        feat_name_ids_same: If True, then feature names and feature ids are same in the assays. (Default value: False)
 
     Attributes:
         assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
@@ -101,6 +104,7 @@ class AssayMerge:
         prepend_text: Optional[str] = "orig",
         reset_cell_filter: bool = True,
         seed: Optional[int] = 42,
+        feat_name_ids_same: Optional[bool] = False,
     ):
         self.assays = assays
         self.names = names
@@ -108,6 +112,7 @@ class AssayMerge:
         self.outWorkspace = out_workspace
         self.merge_assay_name = merge_assay_name
         self.chunk_size = chunk_size
+        self.feat_name_ids_same = feat_name_ids_same
         (
             self.permutations_rows,
             self.permutations_rows_offset,
@@ -118,6 +123,9 @@ class AssayMerge:
         )
         self.nCells: int = self.mergedCells.shape[0]
         self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
+        self.check_feat_ids(self.featCollection, self.feat_name_ids_same)
+        if self.feat_name_ids_same is True:
+            self.featCollection = self.update_feat_ids()
         self.mergedFeats: pl.DataFrame = self._merge_order_feats()
         self.nFeats: int = self.mergedFeats.shape[0]
         self.featOrder: List[np.ndarray] = self._ref_order_feat_idx()
@@ -247,9 +255,6 @@ class AssayMerge:
 
         Returns:
         """
-        # TODO: This method is not very memory efficient
-        # Update: Implemented Polars for better memory efficiency
-
         if len(self.assays) != len(set(self.names)):
             raise ValueError(
                 "ERROR: A unique name should be provided for each of the assay"
@@ -311,6 +316,85 @@ class AssayMerge:
             df = i.feats.to_polars_dataframe(["names", "ids"])
             ret_val.append(dict(zip(df["ids"].to_numpy(), df["names"].to_numpy())))
         return ret_val
+
+    def check_feat_ids(
+        self, featCollection: List[Dict[str, str]], feat_name_ids_same: bool = False
+    ) -> None:
+        """
+        Check if feature names and feature ids are different in the assays.
+        """
+        isSame = False
+        for i, dict_ in enumerate(featCollection):
+            keys = np.array(list(dict_.keys()))
+            values = np.array(list(dict_.values()))
+            if np.equal(keys, values).all():
+                logger.warning(f"Same keys and values for dataset {i+1}")
+                isSame = True
+                break
+        if feat_name_ids_same and isSame:
+            pass
+        elif not feat_name_ids_same and not isSame:
+            pass
+        else:
+            raise ValueError(
+                "ERROR: Feature names and feature ids are different in the assays. "
+                "Please pass the argument `feat_name_ids_same` as False.",
+            )
+
+    def get_feat_suffix(self) -> Dict[int, int]:
+        """
+        Get the suffix of the feature ids.
+        """
+        feat_suffix = {}
+        for i, dict_ in enumerate(self.featCollection):
+            keys = np.array(list(dict_.keys()))
+            values = np.array(list(dict_.values()))
+            ends_0 = np.array([x.endswith("_0") for x in keys]).sum()
+            ends_1 = np.array([x.endswith("_1") for x in values]).sum()
+            ends_2 = np.array([x.endswith("_2") for x in keys]).sum()
+            if ends_0 > 0:
+                feat_suffix[i] = 0
+            elif ends_1 > 0:
+                feat_suffix[i] = 1
+            elif ends_0 > 0 and ends_1 > 0:
+                feat_suffix[i] = 0
+            elif ends_2 > 0:
+                raise ValueError(
+                    "Feature Numbering starts with 2, this is erroneous. Kindly check the data"
+                )
+            else:
+                feat_suffix[i] = -1
+        return feat_suffix
+
+    def update_feat_ids(self) -> List[Dict[str, str]]:
+        pattern = re.compile(r"_\d+$")
+        feat_suffix = self.get_feat_suffix()
+        vals = np.array(list(feat_suffix.values()))
+        vals = vals[vals > -1]
+        min_val = vals.min() if len(vals) > 0 else 0
+        new_featCollection = []
+        for i, dict_ in enumerate(self.featCollection):
+            in_dict = {}
+            if feat_suffix[i] == -1:
+                counter = {x: 0 for x in np.unique(list(dict_.values()))}
+                # Update all values from 'val' to 'val_{min}'
+                for _, val in dict_.items():
+                    updated_val = f"{val}_{min_val+counter[val]}"
+                    in_dict[updated_val] = updated_val
+                    counter[val] += 1
+            else:
+                for _, val in dict_.items():
+                    # check if the value ends with a number
+                    if pattern.search(val):
+                        num = int(val.split("_")[-1])
+                        # replace the number with min_val
+                        updated_val = pattern.sub(f"_{min_val-feat_suffix[i]+num}", val)
+                        in_dict[updated_val] = updated_val
+                    else:
+                        updated_val = f"{val}_{min_val}"
+                        in_dict[updated_val] = updated_val
+            new_featCollection.append(in_dict)
+        return new_featCollection
 
     def _merge_order_feats(self) -> pl.DataFrame:
         """Merge features from all the assays and determine their order.
@@ -510,6 +594,7 @@ class DatasetMerge:
         prepend_text: Optional[str] = "orig",
         reset_cell_filter: bool = True,
         seed: Optional[int] = 42,
+        feat_name_ids_same: Optional[bool] = False,
     ):
         self.datasets = datasets
         self.names = names
@@ -522,6 +607,7 @@ class DatasetMerge:
         self.prepend_text = prepend_text
         self.reset_cell_filter = reset_cell_filter
         self.seed = seed
+        self.name_ids_same = feat_name_ids_same
         self.unique_assays = self.get_unique_assays()
         self.n_unique_assays = len(self.unique_assays)
         self.merge_generators = self.create_merge_generators()
@@ -563,6 +649,7 @@ class DatasetMerge:
                     prepend_text=self.prepend_text,
                     reset_cell_filter=self.reset_cell_filter,
                     seed=self.seed,
+                    feat_name_ids_same=self.name_ids_same,
                 )
             )
         return gens
