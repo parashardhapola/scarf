@@ -5,6 +5,7 @@ Methods and classes for merging datasets
 
 import os
 import re
+from collections import Counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -375,13 +376,17 @@ class AssayMerge:
         new_featCollection = []
         for i, dict_ in enumerate(self.featCollection):
             in_dict = {}
+            counter = Counter(dict_.values())
             if feat_suffix[i] == -1:
-                counter = {x: 0 for x in np.unique(list(dict_.values()))}
+                sum_counter = {x: 0 for x in np.unique(list(dict_.values()))}
                 # Update all values from 'val' to 'val_{min}'
                 for _, val in dict_.items():
-                    updated_val = f"{val}_{min_val+counter[val]}"
-                    in_dict[updated_val] = updated_val
-                    counter[val] += 1
+                    if counter[val] == 1:  # Unique value
+                        in_dict[val] = val
+                    else:  # Multiple values -- update
+                        updated_val = f"{val}_{min_val+sum_counter[val]}"
+                        in_dict[updated_val] = updated_val
+                    sum_counter[val] += 1
             else:
                 for _, val in dict_.items():
                     # check if the value ends with a number
@@ -391,7 +396,7 @@ class AssayMerge:
                         updated_val = pattern.sub(f"_{min_val-feat_suffix[i]+num}", val)
                         in_dict[updated_val] = updated_val
                     else:
-                        updated_val = f"{val}_{min_val}"
+                        updated_val = f"{val}"  # _{min_val}"
                         in_dict[updated_val] = updated_val
             new_featCollection.append(in_dict)
         return new_featCollection
