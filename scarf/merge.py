@@ -50,10 +50,12 @@ class DummyAssay:
         ds: DataStore,
         counts: daskArrayType,
         feats: MetaData,
+        name: str,
     ):
         self.rawData = counts
         self.feats = feats
         self.cells = ds.cells
+        self.name = name
 
 
 class AssayMerge:
@@ -105,7 +107,6 @@ class AssayMerge:
         prepend_text: Optional[str] = "orig",
         reset_cell_filter: bool = True,
         seed: Optional[int] = 42,
-        feat_name_ids_same: Optional[bool] = False,
     ):
         self.assays = assays
         self.names = names
@@ -113,7 +114,6 @@ class AssayMerge:
         self.outWorkspace = out_workspace
         self.merge_assay_name = merge_assay_name
         self.chunk_size = chunk_size
-        self.feat_name_ids_same = feat_name_ids_same
         (
             self.permutations_rows,
             self.permutations_rows_offset,
@@ -124,7 +124,7 @@ class AssayMerge:
         )
         self.nCells: int = self.mergedCells.shape[0]
         self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
-        self.check_feat_ids(self.featCollection, self.feat_name_ids_same)
+        self.feat_name_ids_same = self.check_feat_ids(self.featCollection)
         if self.feat_name_ids_same is True:
             self.featCollection = self.update_feat_ids()
         self.mergedFeats: pl.DataFrame = self._merge_order_feats()
@@ -318,9 +318,7 @@ class AssayMerge:
             ret_val.append(dict(zip(df["ids"].to_numpy(), df["names"].to_numpy())))
         return ret_val
 
-    def check_feat_ids(
-        self, featCollection: List[Dict[str, str]], feat_name_ids_same: bool = False
-    ) -> None:
+    def check_feat_ids(self, featCollection: List[Dict[str, str]]) -> bool:
         """
         Check if feature names and feature ids are different in the assays.
         """
@@ -329,18 +327,12 @@ class AssayMerge:
             keys = np.array(list(dict_.keys()))
             values = np.array(list(dict_.values()))
             if np.equal(keys, values).all():
-                logger.warning(f"Same keys and values for dataset {i+1}")
+                logger.info(
+                    f"Encountered same feature names and ids for feature {self.assays[i].name} in dataset {self.names[i]}. The feature ids will be updated with feature names."
+                )
                 isSame = True
                 break
-        if feat_name_ids_same and isSame:
-            pass
-        elif not feat_name_ids_same and not isSame:
-            pass
-        else:
-            raise ValueError(
-                "ERROR: Feature names and feature ids are different in the assays. "
-                "Please pass the argument `feat_name_ids_same` as False.",
-            )
+        return isSame
 
     def get_feat_suffix(self) -> Dict[int, int]:
         """
@@ -599,7 +591,6 @@ class DatasetMerge:
         prepend_text: Optional[str] = "orig",
         reset_cell_filter: bool = True,
         seed: Optional[int] = 42,
-        feat_name_ids_same: Optional[bool] = False,
     ):
         self.datasets = datasets
         self.names = names
@@ -612,7 +603,6 @@ class DatasetMerge:
         self.prepend_text = prepend_text
         self.reset_cell_filter = reset_cell_filter
         self.seed = seed
-        self.name_ids_same = feat_name_ids_same
         self.unique_assays = self.get_unique_assays()
         self.n_unique_assays = len(self.unique_assays)
         self.merge_generators = self.create_merge_generators()
@@ -654,7 +644,6 @@ class DatasetMerge:
                     prepend_text=self.prepend_text,
                     reset_cell_filter=self.reset_cell_filter,
                     seed=self.seed,
-                    feat_name_ids_same=self.name_ids_same,
                 )
             )
         return gens
@@ -664,15 +653,29 @@ class DatasetMerge:
         Generate a dummy assay for a datastore that doesn't have the specified assay
         """
         # Find a datastore that has this assay to get feature information
-        reference_ds = next(ds for ds in self.datasets if assay_name in ds.assay_names)
+        reference_ds = next(
+            ds_ for ds_ in self.datasets if assay_name in ds_.assay_names
+        )
         reference_assay = reference_ds.get_assay(assay_name)
+
+        reference_chunk = [
+            ds.get_assay(ref).rawData.chunksize[0] for ref in ds.assay_names
+        ]
+        # check if entries in reference_chunk are the same
+        if not all(x == reference_chunk[0] for x in reference_chunk):
+            rowChunkShape = reference_chunk[0]
+        else:
+            rowChunkShape = max(reference_chunk)
+        colChunk = reference_assay.rawData.chunksize[1]
+        chunkShape = (rowChunkShape, colChunk)
+
         # Create a dummy assay with zero counts and matching features
         dummy_shape = (ds.cells.N, reference_assay.feats.N)
         dummy_counts = np.zeros(dummy_shape, dtype=reference_assay.rawData.dtype)
-        dummy_counts = from_array(
-            dummy_counts, chunks=reference_assay.rawData.chunksize
+        dummy_counts = from_array(dummy_counts, chunks=chunkShape)
+        dummy_assay = DummyAssay(
+            ds, dummy_counts, reference_assay.feats, reference_assay.name
         )
-        dummy_assay = DummyAssay(ds, dummy_counts, reference_assay.feats)
         logger.info(f"Generated dummy {assay_name} assay for datastore {ds}")
         return dummy_assay
 
