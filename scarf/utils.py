@@ -10,7 +10,7 @@
 """
 
 import sys
-from typing import Union, Optional, TypeAlias
+from typing import List, Optional, TypeAlias, Union
 
 import numpy as np
 import zarr
@@ -29,6 +29,7 @@ __all__ = [
     "rescale_array",
     "clean_array",
     "load_zarr",
+    "permute_into_chunks",
     "show_dask_progress",
     "controlled_compute",
     "rolling_window",
@@ -216,8 +217,8 @@ def show_dask_progress(arr: Array, msg: Optional[str] = None, nthreads: int = 1)
 
 def system_call(command):
     """Executes a command in the underlying operative system."""
-    import subprocess
     import shlex
+    import subprocess
 
     process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
     while True:
@@ -249,3 +250,27 @@ def rolling_window(a, w):
         for j in range(m):
             b[i, j] = a[x:y, j].mean()
     return b
+
+
+def permute_into_chunks(size: int, chunk_size: int, seed: int = 42) -> List[np.ndarray]:
+    """
+    Permute the chunks of an array of the given size.
+    Args:
+        size: The size of the array to be permuted
+        chunk_size: The size of the chunks to permute
+    Returns:
+        A permuted array of the given size
+    Examples:
+    >>> permute_into_chunks(10, 3)
+    [array([2, 1, 0]), array([3, 5, 4]), array([7, 8, 6]), array([9])]
+    """
+    rng = np.random.default_rng(seed=seed)
+    arr = np.arange(size)
+    start = 0
+    end = len(arr) - len(arr) % chunk_size
+    chunks = [arr[i : i + chunk_size] for i in range(start, end, chunk_size)]
+    p_values = [rng.permutation(chunk) for chunk in chunks]
+    # add the remaining elements
+    if end < len(arr):
+        p_values.append(rng.permutation(arr[end:]))
+    return p_values

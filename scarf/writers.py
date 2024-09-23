@@ -23,6 +23,7 @@ from typing import Any, Tuple, List, Union, Dict, Optional
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import zarr
 from scipy.sparse import csr_matrix, coo_matrix
 
@@ -42,7 +43,6 @@ __all__ = [
     "create_zarr_count_assay",
     "subset_assay_zarr",
     "dask_to_zarr",
-    "ZarrMerge",
     "SubsetZarr",
     "CrToZarr",
     "H5adToZarr",
@@ -987,7 +987,8 @@ class SubsetZarr:
 
     @staticmethod
     def _check_assays(assays):
-        if type(assays) != list:
+        # if type(assays) != list:
+        if isinstance(assays, list) is False:
             raise TypeError(
                 "Value for parameter `assays` should be a list. For example, `[ds.RNA]`"
             )
@@ -1002,8 +1003,8 @@ class SubsetZarr:
                 )
         if len(set(n)) != 1:
             raise ValueError(
-                f"ERROR: Provided assays do not have the same numer of cells. Please make "
-                f"sure that the assays are from the same DataStore."
+                f"ERROR: Provided assays do not have the same numer of cells. Please make "  # noqa: F541
+                f"sure that the assays are from the same DataStore."  # noqa: F541
             )
         return assays
 
@@ -1039,7 +1040,7 @@ class SubsetZarr:
                 )
             if max(cell_idx) >= self.assays[0].cells.N:
                 raise ValueError(
-                    f"ERROR: `cell_idx` max value is larger than the number of cells in the data."
+                    f"ERROR: `cell_idx` max value is larger than the number of cells in the data."  # noqa: F541
                 )
         return cell_idx
 
@@ -1107,264 +1108,6 @@ class SubsetZarr:
                     e += a.shape[0]
                     store[s:e] = a.compute()
                     s = e
-
-
-class ZarrMerge:
-    """Merge multiple Zarr files into a single Zarr file.
-
-    Args:
-        zarr_path: Name of the new, merged Zarr file with path.
-        assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
-        names: Names of each of the assay objects in the `assays` parameter. They should be in the same order as in
-               `assays` parameter.
-        merge_assay_name: Name of assay in the merged Zarr file. For example, for scRNA-Seq it could be simply,
-                          'RNA'.
-        chunk_size: Tuple of cell and feature chunk size. (Default value: (1000, 1000)).
-        dtype: Dtype of the raw values in the assay. Dtype is automatically inferred from the provided assays. If
-               assays have different dtypes then a float type is used.
-        overwrite: If True, then overwrites previously created assay in the Zarr file. (Default value: False).
-        prepend_text: This text is pre-appended to each column name (Default value: 'orig').
-        reset_cell_filter: If True, then the cell filtering information is removed, i.e. even the filtered out cells
-                           are set as True as in the 'I' column. To keep the filtering information set the value for
-                           this parameter to False. (Default value: True)
-
-    Attributes:
-        assays: List of assay objects to be merged. For example, [ds1.RNA, ds2.RNA].
-        names: Names of each assay objects in the `assays` parameter.
-        mergedCells:
-        nCells: Number of cells in dataset.
-        featCollection:
-        mergedFeats:
-        nFeats: Number of features in the dataset.
-        featOrder:
-        z: The merged Zarr file.
-        assayGroup:
-    """
-
-    def __init__(
-        self,
-        zarr_path: ZARRLOC,
-        assays: list,
-        names: List[str],
-        merge_assay_name: str,
-        in_workspaces: Union[list[str], None] = None,
-        out_workspace: Union[str, None] = None,
-        chunk_size=(1000, 1000),
-        dtype: Optional[str] = None,
-        overwrite: bool = False,
-        prepend_text: Optional[str] = "orig",
-        reset_cell_filter: bool = True,
-    ):
-        self.assays = assays
-        self.names = names
-        self.inWorkspaces = in_workspaces
-        self.outWorkspace = out_workspace
-        self.mergedCells: pd.DataFrame = self._merge_cell_table(
-            reset_cell_filter, prepend_text
-        )
-        self.nCells: int = self.mergedCells.shape[0]
-        self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
-        self.mergedFeats = self._merge_order_feats()
-        self.nFeats = self.mergedFeats.shape[0]
-        self.featOrder = self._ref_order_feat_idx()
-        self.z = self._use_existing_zarr(zarr_path, merge_assay_name, overwrite)
-        self._ini_cell_data(overwrite)
-        if dtype is None:
-            if len(set([str(x.rawData.dtype) for x in self.assays])) == 1:
-                dtype = str(self.assays[0].rawData.dtype)
-            else:
-                dtype = "float"
-
-        self.assayGroup = create_zarr_count_assay(
-            z=self.z,
-            assay_name=merge_assay_name,
-            workspace=self.outWorkspace,
-            chunk_size=chunk_size,
-            n_cells=self.nCells,
-            feat_ids=self.mergedFeats.index.values,
-            feat_names=np.array(self.mergedFeats.names.values),
-            dtype=dtype,
-        )
-
-    def _merge_cell_table(
-        self, reset: bool, prepend_text: Optional[str] = None
-    ) -> pd.DataFrame:
-        """Merges the cell metadata table for each sample.
-
-        Args:
-            reset: whether to remove filtering information
-            prepend_text: string to add as prefix for each cell column
-
-        Returns:
-        """
-        # TODO: This method is not very memory efficient
-
-        if len(self.assays) != len(set(self.names)):
-            raise ValueError(
-                "ERROR: A unique name should be provided for each of the assay"
-            )
-        if prepend_text == "":
-            prepend_text = None
-        ret_val = []
-        for assay, name in zip(self.assays, self.names):
-            a = assay.cells.to_pandas_dataframe(assay.cells.columns)
-            a["ids"] = [f"{name}__{x}" for x in a["ids"]]
-            for i in a.columns:
-                if i not in ["ids", "I", "names"] and prepend_text is not None:
-                    a[f"{prepend_text}_{i}"] = assay.cells.fetch_all(i)
-                    a = a.drop(columns=[i])
-            if reset:
-                a["I"] = np.ones(len(a["ids"])).astype(bool)
-            ret_val.append(a)
-        ret_val = pd.concat(ret_val).reset_index(drop=True)
-        if sum([x.cells.N for x in self.assays]) != ret_val.shape[0]:
-            raise AssertionError(
-                "Unexpected number of cells in the merged table. This is unexpected, "
-                " please report this bug"
-            )
-        return ret_val
-
-    @staticmethod
-    def _get_feat_ids(assays) -> List[Dict[str, str]]:
-        """Fetches ID->names mapping of features from each assay.
-
-        Args:
-            assays: List of Assay objects
-
-        Returns:
-            A list of dictionaries. Each dictionary is a id to name
-            mapping for each feature in the corresponding assay
-        """
-        ret_val = []
-        for i in assays:
-            ret_val.append(
-                i.feats.to_pandas_dataframe(["names", "ids"])
-                .set_index("ids")["names"]
-                .to_dict()
-            )
-        return ret_val
-
-    def _merge_order_feats(self) -> pd.DataFrame:
-        """Merge features from all the assays and determine their order.
-
-        Returns:
-        """
-        union_set = {}
-        for ids in self.featCollection:
-            for i in ids:
-                if i not in union_set:
-                    union_set[i] = ids[i]
-        ret_val = pd.DataFrame(
-            {
-                "idx": range(len(union_set)),
-                "names": list(union_set.values()),
-                "ids": list(union_set.keys()),
-            }
-        ).set_index("ids")
-        r = ret_val.shape[0] / sum([x.feats.N for x in self.assays])
-        if r == 1:
-            raise ValueError(
-                "No overlapping features found! Will not merge the files. Please check the features ids "
-                " are comparable across the assays"
-            )
-        if r > 0.9:
-            logger.warning("The number overlapping features is very low.")
-        return ret_val
-
-    def _ref_order_feat_idx(self) -> List[np.ndarray]:
-        ret_val = []
-        for ids in self.featCollection:
-            ret_val.append(self.mergedFeats["idx"].reindex(list(ids.keys())).values)
-        return ret_val
-
-    def _use_existing_zarr(self, zarr_loc: ZARRLOC, merge_assay_name, overwrite):
-        if self.outWorkspace is None:
-            cell_slot = "cellData"
-            assay_slot = merge_assay_name
-        else:
-            cell_slot = f"{self.outWorkspace}/cellData"
-            assay_slot = f"{self.outWorkspace}/merge_assay_name"
-
-        try:
-            z = load_zarr(zarr_loc, mode="r")
-            if cell_slot not in z:
-                raise ValueError(
-                    f"ERROR: Zarr file exists but seems corrupted. Either delete the "
-                    "existing file or choose another path"
-                )
-            if assay_slot in z:
-                if overwrite is False:
-                    raise ValueError(
-                        f"ERROR: Zarr file already contains {merge_assay_name} assay. Choose "
-                        "a different zarr path or a different assay name. Otherwise set overwrite to True"
-                    )
-            try:
-                if not all(
-                    z[cell_slot]["ids"][:] == np.array(self.mergedCells["ids"].values)  # type: ignore
-                ):
-                    raise ValueError(
-                        f"ERROR: order of cells does not match the one in existing file"
-                    )
-            except KeyError:
-                raise ValueError(
-                    f"ERROR: 'cell data seems corrupted. Either delete the "
-                    "existing file or choose another path"
-                )
-            return load_zarr(zarr_loc, mode="r+")
-        except ValueError:
-            # So no zarr file with same name exists. Check if a non zarr folder with the same name exists
-            if isinstance(zarr_loc, str) and os.path.exists(zarr_loc):
-                raise ValueError(
-                    f"ERROR: Directory/file with name `{zarr_loc}`exists. "
-                    f"Either delete it or use another name"
-                )
-            # creating a new zarr file
-            return load_zarr(zarr_loc, mode="w")
-
-    def _ini_cell_data(self, overwrite) -> None:
-        """Save cell attributes to Zarr.
-
-        Returns:
-            None
-        """
-        if self.outWorkspace is None:
-            cell_slot = "cellData"
-        else:
-            cell_slot = f"{self.outWorkspace}/cellData"
-
-        if (cell_slot in self.z and overwrite is True) or cell_slot not in self.z:
-            g = self.z.create_group(cell_slot, overwrite=True)
-            for i in self.mergedCells:
-                vals = self.mergedCells[i].values
-                create_zarr_obj_array(g, str(i), vals, vals.dtype, overwrite=True)
-        else:
-            logger.info(f"cellData already exists so skipping _ini_cell_data")
-
-    def _dask_to_coo(self, d_arr, order: np.ndarray, n_threads: int) -> coo_matrix:
-        mat = np.zeros((d_arr.shape[0], self.nFeats))
-        mat[:, order] = controlled_compute(d_arr, n_threads)
-        return coo_matrix(mat)
-
-    def dump(self, nthreads=2):
-        """Copy the values from individual assays to the merged assay.
-
-        Args:
-            nthreads: Number of compute threads to use. (Default value: 2)
-
-        Returns:
-        """
-        pos_start = 0
-        for assay, feat_order in zip(self.assays, self.featOrder):
-            for i in tqdmbar(
-                assay.rawData.blocks,
-                total=assay.rawData.numblocks[0],
-                desc=f"Writing data to merged file",
-            ):
-                a = self._dask_to_coo(i, feat_order, nthreads)
-                self.assayGroup.set_coordinate_selection(
-                    (a.row + pos_start, a.col), a.data.astype(self.assayGroup.dtype)
-                )
-                pos_start += i.shape[0]
 
 
 def to_h5ad(
