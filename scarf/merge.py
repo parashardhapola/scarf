@@ -580,25 +580,7 @@ class AssayMerge:
                 f"cellData already exists so skipping _ini_cell_data"  # noqa: F541
             )
 
-    # def _dask_to_coo(self, d_arr, order: np.ndarray, n_threads: int) -> coo_matrix:
-    #     mat = np.zeros((d_arr.shape[0], self.nFeats))
-    #     mat[:, order] = controlled_compute(d_arr, n_threads)
-    #     return coo_matrix(mat)
-
-    # def _dask_to_coo(self, d_arr, order: np.ndarray, order_map: np.ndarray, n_threads: int) -> coo_matrix:
-    #     mat = np.zeros((d_arr.shape[0], self.nFeats))
-    #     computed_data = controlled_compute(d_arr, n_threads)
-    #     # Create a mapping from original feature indices to their consolidated indices
-    #     consolidation_map = {orig: cons for orig, cons in zip(order, order_map)}
-    #     # Iterate through the columns of the computed data
-    #     for i, col_data in enumerate(computed_data.T):
-    #         consolidated_idx = consolidation_map[order[i]]
-    #         mat[:, consolidated_idx] += col_data
-    #     return coo_matrix(mat)
-
-    def _dask_to_coo(
-        self, d_arr, order: np.ndarray, order_map: np.ndarray, n_threads: int
-    ) -> coo_matrix:
+    def _dask_to_coo(self, d_arr, order: np.ndarray, order_map: np.ndarray, n_threads: int) -> coo_matrix:
         """
         Convert a Dask array to a sparse COO matrix.
         Args:
@@ -616,29 +598,15 @@ class AssayMerge:
         then the function will consolidate the data from the Dask array to the COO matrix using the `order_map`.
         For multiple indices mapping to the same consolidated index, the data is summed up.
         """
-        # Compute the data in parallel using the controlled_compute function
+        mat = np.zeros((d_arr.shape[0], self.nFeats))
         computed_data = controlled_compute(d_arr, n_threads)
-        # Create a dictionary mapping from original feature indices to their consolidated indices
+        # Create a mapping from original feature indices to their consolidated indices
         consolidation_map = {orig: cons for orig, cons in zip(order, order_map)}
-        # Apply the mapping to each column index in order
-        consolidated_idx = np.array([consolidation_map[o] for o in order])
-
-        # Number of non-zero elements is the same as number of elements in computed_data
-        row_indices = np.repeat(
-            np.arange(computed_data.shape[0]), computed_data.shape[1]
-        )
-        col_indices = np.tile(consolidated_idx, computed_data.shape[0])
-        data = computed_data.flatten()
-        # Filter out zero entries from data
-        non_zero_mask = data != 0
-        row_indices = row_indices[non_zero_mask]
-        col_indices = col_indices[non_zero_mask]
-        data = data[non_zero_mask]
-        # Create sparse COO matrix directly
-        sparse_mat = coo_matrix(
-            (data, (row_indices, col_indices)), shape=(d_arr.shape[0], self.nFeats)
-        )
-        return sparse_mat
+        # Iterate through the columns of the computed data
+        for i, col_data in enumerate(computed_data.T):
+            consolidated_idx = consolidation_map[order[i]]
+            mat[:, consolidated_idx] += col_data
+        return coo_matrix(mat)
 
     def dump(self, nthreads=4):
         """Copy the values from individual assays to the merged assay.
