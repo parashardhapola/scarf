@@ -18,6 +18,19 @@ def toy_crdir_reader():
     yield reader
     remove(out_fn)
 
+@pytest.fixture(scope="session")
+def toy_crdir_empty():
+    from ..readers import CrDirReader
+    import tarfile
+
+    fn = full_path("toy_cr_dir_empty.tar.gz")
+    out_fn = fn.replace(".tar.gz", "")
+    remove(out_fn)
+    tar = tarfile.open(fn, "r:gz")
+    tar.extractall(out_fn)
+    reader = CrDirReader(out_fn)
+    yield reader
+    remove(out_fn)
 
 @pytest.fixture(scope="session")
 def crh5_reader():

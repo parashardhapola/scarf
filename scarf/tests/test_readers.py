@@ -37,6 +37,26 @@ def test_toy_crdir_reader_cells_feats(toy_crdir_reader):
         "a3",
     ]
 
+def test_toy_crdir_empty(toy_crdir_empty):
+    assert toy_crdir_empty.nCells == 0
+    assert toy_crdir_empty.nFeatures == 4
+    assert toy_crdir_empty.feature_names() == [
+        "g1",
+        "a1",
+        "a2",
+        "g2",
+    ]
+    assert toy_crdir_empty.feature_ids() == [
+        "g1",
+        "a1",
+        "a2",
+        "g2",
+    ]
+    # check for raise ValueError
+    try:
+        toy_crdir_empty.read_header()
+    except ValueError:
+        pass
 
 def test_crh5reader(crh5_reader):
     assert crh5_reader.nCells == 892
