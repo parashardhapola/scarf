@@ -33,6 +33,7 @@ class MappingDatastore(GraphDataStore):
         target_assay: Assay,
         target_name: str,
         target_feat_key: str,
+        target_cell_key: str = "I",
         from_assay: Optional[str] = None,
         cell_key: str = "I",
         feat_key: Optional[str] = None,
@@ -57,6 +58,7 @@ class MappingDatastore(GraphDataStore):
             target_name: Name of target data. This used to keep track of projections in the Zarr hierarchy
             target_feat_key: This will be used to name wherein the normalized target data will be saved in its own
                              zarr hierarchy.
+            target_cell_key: Cell key for the target data. (Default value: 'I')
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
             cell_key: Cell key. Should be same as the one that was used in the desired graph. (Default value: 'I')
             feat_key:  Feature key. Should be same as the one that was used in the desired graph. By default, the latest
@@ -119,6 +121,7 @@ class MappingDatastore(GraphDataStore):
             cell_key,
             feat_key,
             target_feat_key,
+            target_cell_key,
             filter_null,
             exclude_missing,
             self.nthreads,
@@ -151,15 +154,23 @@ class MappingDatastore(GraphDataStore):
             logger.warning(f"`save_k` was decreased to {ann_obj.k}")
             save_k = ann_obj.k
         target_data = daskarr.from_zarr(
-            target_assay.z[f"normed__I__{target_feat_key}/data"], inline_array=True
+            target_assay.z[f"normed__{target_cell_key}__{target_feat_key}/data"],
+            inline_array=True,
         )
         if run_coral is True:
             # Reversing coral here to correct target data
             coral(
-                target_data, ann_obj.data, target_assay, target_feat_key, self.nthreads
+                target_data,
+                ann_obj.data,
+                target_assay,
+                target_feat_key,
+                target_cell_key,
+                self.nthreads,
             )
             target_data = daskarr.from_zarr(
-                target_assay.z[f"normed__I__{target_feat_key}/data_coral"],
+                target_assay.z[
+                    f"normed__{target_cell_key}__{target_feat_key}/data_coral"
+                ],
                 inline_array=True,
             )
         if ann_obj.method == "pca" and run_coral is False:
@@ -328,6 +339,7 @@ class MappingDatastore(GraphDataStore):
         store = self.zw[store_loc]
         indices = store["indices"][:]
         dists = store["distances"][:]
+
         preds = []
         weights = 1 - (dists / dists.max(axis=1).reshape(-1, 1))
         for n in range(indices.shape[0]):
