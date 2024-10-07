@@ -6,7 +6,7 @@ from dask import array as daskarr
 from loguru import logger
 
 from .mapping_datastore import MappingDatastore
-from ..assay import RNAassay, ATACassay
+from ..assay import Assay
 from ..feat_utils import hto_demux
 from ..utils import tqdmbar, controlled_compute, ZARRLOC
 from ..writers import create_zarr_obj_array, create_zarr_dataset
@@ -78,14 +78,14 @@ class DataStore(MappingDatastore):
     def get_assay(
         self,
         assay_name: str
-    ) -> Union[RNAassay, ATACassay]:
+    ) -> Assay:
         """Returns the assay object for the given assay name.
 
         Args:
             assay_name: Name of the assay to be returned.
 
         Returns:
-            RNAassay or ATACassay object
+            Assay object
         """
         if assay_name not in self.assay_names:
             raise ValueError(f"ERROR: Assay {assay_name} not found in the Zarr file")

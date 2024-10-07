@@ -118,7 +118,7 @@ class AssayMerge:
             self.permutations_rows,
             self.permutations_rows_offset,
             self.coordinates_permutations,
-        ) = self.perfrom_randomization_rows(seed)
+        ) = self.perform_randomization_rows(seed)
         self.mergedCells: pl.DataFrame = self._merge_cell_table(
             reset_cell_filter, prepend_text
         )
@@ -169,7 +169,7 @@ class AssayMerge:
             dtype=dtype,
         )
 
-    def perfrom_randomization_rows(
+    def perform_randomization_rows(
         self, seed: Optional[int] = 42
     ) -> Tuple[
         Dict[int, Dict[int, np.ndarray]], Dict[int, Dict[int, np.ndarray]], np.ndarray
@@ -780,7 +780,7 @@ class DatasetMerge:
 
         # Create a dummy assay with zero counts and matching features
         dummy_shape = (ds.cells.N, reference_assay.feats.N)
-        dummy_counts = np.zeros(dummy_shape, dtype=reference_assay.rawData.dtype)
+        dummy_counts = zarr.zeros(dummy_shape, chunks=chunkShape, dtype=reference_assay.rawData.dtype)
         dummy_counts = from_array(dummy_counts, chunks=chunkShape)
         dummy_assay = DummyAssay(
             ds, dummy_counts, reference_assay.feats, reference_assay.name
@@ -793,7 +793,7 @@ class DatasetMerge:
         Dump the merged data to the zarr file
         """
         for gen in self.merge_generators:
-            print(f"Dumping {gen.merge_assay_name}")
+            logger.info(f"Dumping {gen.merge_assay_name}")
             gen.dump(nthreads)
         print("Merging complete")
         return None
