@@ -795,5 +795,5 @@ class DatasetMerge:
         for gen in self.merge_generators:
             logger.info(f"Dumping {gen.merge_assay_name}")
             gen.dump(nthreads)
-        print("Merging complete")
+        logger.info("Merging complete")
         return None
