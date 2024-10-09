@@ -19,3 +19,4 @@ docs/jupyter_execute
 interrogate_badge.svg
 scarf/tests/datasets/*
 .mypy_cache
+test_data
