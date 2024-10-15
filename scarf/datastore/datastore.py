@@ -6,7 +6,7 @@ from dask import array as daskarr
 from loguru import logger
 
 from .mapping_datastore import MappingDatastore
-from ..assay import Assay
+from ..assay import Assay, RNAassay, ATACassay
 from ..feat_utils import hto_demux
 from ..utils import tqdmbar, controlled_compute, ZARRLOC
 from ..writers import create_zarr_obj_array, create_zarr_dataset
