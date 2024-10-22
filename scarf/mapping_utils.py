@@ -102,6 +102,7 @@ def _order_features(
     filter_null: bool,
     exclude_missing: bool,
     nthreads: int,
+    target_cell_key: str = "I",
 ) -> Tuple[np.ndarray, np.ndarray]:
     s_ids = pd.Series(s_assay.feats.fetch_all("ids"))
     t_ids = pd.Series(t_assay.feats.fetch_all("ids"))
@@ -119,7 +120,7 @@ def _order_features(
             t_idx[t_idx] = (
                 controlled_compute(
                     t_assay.rawData[:, list(t_idx[t_idx].index)][
-                        t_assay.cells.active_index("I"), :
+                        t_assay.cells.active_index(target_cell_key), :
                     ].sum(axis=0),
                     nthreads,
                 )
@@ -181,6 +182,7 @@ def align_features(
         filter_null,
         exclude_missing,
         nthreads,
+        target_cell_key,
     )
     logger.info(f"{(t_idx == -1).sum()} features missing in target data")
     normed_loc = f"normed__{source_cell_key}__{source_feat_key}"
