@@ -392,14 +392,14 @@ class CrDirReader(CrReader):
             vals = None
         return vals
 
-    def read_header(self) -> pl.DataFrame:
-        header = pl.read_csv(
+    def read_header(self) -> pd.DataFrame:
+        header = pd.read_csv(
             self.matFn,
-            comment_prefix = '%',
-            separator=self.sep,
-            has_header=False,
-            n_rows=1,
-            new_columns=["nFeatures", "nCells", "nCounts"],
+            skiprows=2,
+            sep=self.sep,
+            header=None,
+            nrows=1,
+            names=["nFeatures", "nCells", "nCounts"],
         )
         if header['nCells'][0] == 0 and self.nCells > 0:
             raise ValueError("ERROR: Barcode count in MTX header is 0 but barcodes are present in the barcodes file")
@@ -409,20 +409,23 @@ class CrDirReader(CrReader):
             raise ValueError("ERROR: Barcode count in MTX header and barcodes file is 0. No data to read")
         return header
 
-    def process_batch(self, dfs: pl.DataFrame, filtering_cutoff: int) -> List:
+    def process_batch(self, dfs: pd.DataFrame, filtering_cutoff: int) -> List:
         """Returns a list of valid barcodes after filtering out background barcodes for a given batch.
 
         Args:
             dfs: A Polar DataFrame containing a chunk of data from the MTX file.
             filtering_cutoff: The cutoff value for filtering out background barcodes
         """
-        dfs_ = dfs.group_by('barcode').agg(pl.sum('count'))
-        dfs_ = dfs_.filter(pl.col('count') > filtering_cutoff)
-        return np.sort(dfs_['barcode'])
+        # dfs_ = dfs.group_by('barcode').agg(pl.sum('count'))
+        # dfs_ = dfs_.filter(pl.col('count') > filtering_cutoff)
+        # return np.sort(dfs_['barcode'])
+        dfs_ = pd.concat(dfs).groupby('barcode').sum().reset_index()
+        dfs_ = dfs_[dfs_['count'] > filtering_cutoff]
+        return dfs_['barcode'].values
 
     def _get_valid_barcodes(
         self, filtering_cutoff: int,
-        batch_size: int = int(10e4),
+        batch_size: int = int(10e3),
         lines_in_mem: int = int(10e6)
     ) -> np.ndarray:
         """Returns a list of valid barcodes after filtering out background barcodes.
@@ -433,48 +436,65 @@ class CrDirReader(CrReader):
             lines_in_mem: The number of lines to read into memory
         """
         test_counter = 0
-        matrixIO = pl.scan_csv(
-            self.matFn, 
-            comment_prefix='%',
-            # skip_rows=3,
-            skip_rows_after_header=1,
-            separator=self.sep, 
-            has_header=False,
+        matrixIO = pd.read_csv(
+            self.matFn,
+            comment='%',
+            sep=self.sep, 
+            header=0, 
+            chunksize=lines_in_mem,
+            names=["gene", "barcode", "count"],
         )
-        assert len(matrixIO.collect_schema().names()) == 3
-        matrixIO = matrixIO.rename({'column_1': 'gene', 'column_2': 'barcode', 'column_3': 'count'})
+        # matrixIO = pl.scan_csv(
+        #     self.matFn, 
+        #     comment_prefix='%',
+        #     # skip_rows=3,
+        #     skip_rows_after_header=1,
+        #     separator=self.sep, 
+        #     has_header=False,
+        # )
+        # assert len(matrixIO.collect_schema().names()) == 3
+        # matrixIO = matrixIO.rename({'column_1': 'gene', 'column_2': 'barcode', 'column_3': 'count'})
         header = self.read_header()
         nChunks = math.ceil(header["nCounts"][0] / lines_in_mem)
         test_counter = 0
         valid_idx = []
         start = 1
-        dfs = pl.DataFrame()
-        for i in tqdmbar(
-            range(nChunks), desc="Filtering out background barcodes"
+        # dfs = pl.DataFrame()
+        dfs = []
+        for chunk in tqdmbar(
+            # range(nChunks), 
+            matrixIO, 
+            total=nChunks,
+            desc="Filtering out background barcodes"
         ):
-            chunk = matrixIO.slice(i*lines_in_mem, lines_in_mem).collect()
+            # chunk = matrixIO.slice(i*lines_in_mem, lines_in_mem).collect()
             # Check if we've reached or exceeded the current batch boundary
-            if (chunk[-1]['barcode'][0] - start) >= batch_size: # If the last "cell id" is greater than the start + batch size
+            # if (chunk[-1]['barcode'][0] - start) >= batch_size: # If the last "cell id" is greater than the start + batch size
+            if (chunk.iloc[-1]['barcode'] - start) >= batch_size: # If the last "cell id" is greater than the start + batch size
                 # Filter rows in the current chunk that belong to the current batch
-                idx = np.array(chunk['barcode'] < (batch_size + start))  # This is the crucial line. This makes sure that if any cell ID is spread over multiple chunks, it is not missed, as any cell ID that is less than the batch size + start is included.
+                # idx = np.array(chunk['barcode'] < (batch_size + start))  # This is the crucial line. This makes sure that if any cell ID is spread over multiple chunks, it is not missed, as any cell ID that is less than the batch size + start is included.
+                idx = np.array(chunk['barcode'].values < (batch_size + start))  # This is the crucial line. This makes sure that if any cell ID is spread over multiple chunks, it is not missed, as any cell ID that is less than the batch size + start is included.
                 # If no rows belong to the current batch, move to the next batch.
                 if idx.sum() == 0:
-                    dfs = pl.concat([dfs, chunk])
+                    # dfs = pl.concat([dfs, chunk])
+                    dfs.append(chunk)
                     start += batch_size
                     test_counter += len(chunk)
                     continue
                 # Process the rows belonging to the current batch
                 mask_pos = np.where(idx)[0]
                 mask_neg = np.where(~idx)[0]
-                dfs = pl.concat([dfs, chunk[mask_pos]])
+                # dfs = pl.concat([dfs, chunk[mask_pos]])
+                dfs.append(chunk.iloc[mask_pos])
                 valid_idx.append(self.process_batch(dfs, filtering_cutoff))
                 # Prepare for the next batch
                 del dfs
-                dfs = chunk[mask_neg]
+                dfs = [chunk.iloc[mask_neg]]
                 start += batch_size
             else:
                 # If we haven't reached the batch boundary, accumulate the chunk
-                dfs = pl.concat([dfs, chunk])
+                # dfs = pl.concat([dfs, chunk])
+                dfs.append(chunk)
             test_counter += len(chunk)
         # Process any remaining data after the main loop
         if len(dfs) > 0:
