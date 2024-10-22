@@ -415,16 +415,18 @@ class CrDirReader(CrReader):
             )
         return header
 
-    def process_batch(self, dfs: List[pd.DataFrame], filtering_cutoff: int) -> List:
+    def process_batch(self, dfs: List[pd.DataFrame], filtering_cutoff: int) -> np.array:
         """Returns a list of valid barcodes after filtering out background barcodes for a given batch.
 
         Args:
             dfs: A Polar DataFrame containing a chunk of data from the MTX file.
             filtering_cutoff: The cutoff value for filtering out background barcodes
         """
-        dfs_ = pd.concat(dfs).groupby("barcode").sum().reset_index()
-        dfs_ = dfs_[dfs_["count"] > filtering_cutoff]
-        return dfs_["barcode"].values
+        pl_dfs = [pl.DataFrame(df) for df in dfs]
+        pl_dfs = pl.concat(pl_dfs)
+        dfs_ = pl_dfs.group_by('barcode').agg(pl.sum('count'))
+        dfs_ = dfs_.filter(pl.col('count') > filtering_cutoff)
+        return np.sort(dfs_['barcode'])
 
     def _get_valid_barcodes(
         self,
