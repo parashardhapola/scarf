@@ -1,15 +1,15 @@
-from typing import Iterable, Optional, Union, List, Literal, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
 
-from .mapping_datastore import MappingDatastore
-from ..assay import Assay, RNAassay, ATACassay
+from ..assay import Assay, ATACassay, RNAassay
 from ..feat_utils import hto_demux
-from ..utils import tqdmbar, controlled_compute, ZARRLOC
-from ..writers import create_zarr_obj_array, create_zarr_dataset
+from ..utils import ZARRLOC, controlled_compute, tqdmbar
+from ..writers import create_zarr_dataset, create_zarr_obj_array
+from .mapping_datastore import MappingDatastore
 
 __all__ = ["DataStore"]
 
@@ -75,10 +75,7 @@ class DataStore(MappingDatastore):
             synchronizer=synchronizer,
         )
 
-    def get_assay(
-        self,
-        assay_name: str
-    ) -> Assay:
+    def get_assay(self, assay_name: str) -> Assay:
         """Returns the assay object for the given assay name.
 
         Args:
@@ -91,8 +88,7 @@ class DataStore(MappingDatastore):
             raise ValueError(f"ERROR: Assay {assay_name} not found in the Zarr file")
         else:
             return getattr(self, assay_name)
-        
-    
+
     def filter_cells(
         self,
         attrs: Iterable[str],
@@ -1496,7 +1492,7 @@ class DataStore(MappingDatastore):
         # TODO: add support for providing a list of subselections, from_assay and cell_keys
         # TODO: add support for different kinds of point markers
 
-        from ..plots import shade_scatter, plot_scatter
+        from ..plots import plot_scatter, shade_scatter
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1728,9 +1724,10 @@ class DataStore(MappingDatastore):
             None
         """
 
-        from ..plots import plot_cluster_hierarchy
+        from networkx import DiGraph, to_pandas_edgelist
+
         from ..dendrogram import CoalesceTree, make_digraph
-        from networkx import to_pandas_edgelist, DiGraph
+        from ..plots import plot_cluster_hierarchy
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
@@ -2049,3 +2046,88 @@ class DataStore(MappingDatastore):
             save_dpi=save_dpi,
             show_fig=show_fig,
         )
+
+    def metric_lisi(
+        self,
+        label_colnames: Iterable[str],
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        dims: Optional[str] = None,
+        reduction_method: Optional[str] = None,
+        pca_cell_key: Optional[str] = None,
+        ann_metric: Optional[str] = None,
+        ann_efc: Optional[int] = None,
+        ann_ef: Optional[int] = None,
+        ann_m: Optional[int] = None,
+        rand_state: Optional[int] = 4466,
+        k: Optional[int] = None,
+        return_lisi: bool = False,
+    ):
+        """
+        label_colnames: List of column names from cell metadata table that contains the ground truth labels.
+        """
+        if None in [from_assay, cell_key, feat_key, dims, k]:
+            knn_loc = self.get_latest_knn_loc(from_assay)
+            logger.info(f"Using the latest knn graph at location: {knn_loc}")
+        else:
+            if None in [
+                reduction_method,
+                pca_cell_key,
+                ann_metric,
+                ann_efc,
+                ann_ef,
+                ann_m,
+                rand_state,
+            ]:
+                raise ValueError(
+                    "Please provide values for all the parameters: reduction_method, pca_cell_key, ann_metric, ann_efc, ann_ef, ann_m, rand_state"
+                )
+            normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
+            reduction_loc = (
+                f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
+            )
+            ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
+            knn_loc = f"{ann_loc}/knn__{k}"
+
+            if knn_loc not in self.zw:
+                raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
+            logger.info(f"Using the knn graph at location: {knn_loc}")
+        knn = self.zw[knn_loc]
+
+        distances = knn["distances"]
+        indices = knn["indices"]
+        try:
+            metadata = self.cells.to_pandas_dataframe(columns=label_colnames)
+        except KeyError:
+            raise KeyError(
+                f"Could not find the column(s) {label_colnames} in the cell metadata table."
+            )
+
+        from ..metrics import compute_lisi
+
+        lisi_scores = compute_lisi(distances, indices, metadata, label_colnames)
+        # lisi_scores Shape -> (n_cells, n_labels)
+        if not return_lisi:
+            for col, vals in zip(label_colnames, lisi_scores.T):
+                col_name = f"lisi__{col}__{knn_loc.split('/')[-1]}"
+                self.cells.insert(column_name=col_name, values=vals, overwrite=True)
+        return list(zip(label_colnames, lisi_scores.T))
+
+    def metric_silhouette(
+        self,
+        from_assay: Optional[str] = None,
+        cell_key: Optional[str] = None,
+        feat_key: Optional[str] = None,
+        dims: Optional[str] = None,
+        reduction_method: Optional[str] = None,
+        pca_cell_key: Optional[str] = None,
+        ann_metric: Optional[str] = None,
+        ann_efc: Optional[int] = None,
+        ann_ef: Optional[int] = None,
+        ann_m: Optional[int] = None,
+        rand_state: Optional[int] = 4466,
+        k: Optional[int] = None,
+        return_silhouette: bool = False,
+    ):
+        pass
