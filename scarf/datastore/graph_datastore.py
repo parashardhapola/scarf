@@ -396,7 +396,7 @@ class GraphDataStore(BaseDataStore):
         knn_loc = self.zw[ann_loc].attrs["latest_knn"]
         return self.zw[knn_loc].attrs["latest_graph"]
 
-    def get_latest_knn_loc(self, from_assay: str = None) -> str:
+    def _get_latest_knn_loc(self, from_assay: str = None) -> str:
         """Convenience function to identify location of the latest KNN graph in
         the Zarr hierarchy.
 

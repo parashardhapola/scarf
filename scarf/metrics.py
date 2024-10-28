@@ -299,8 +299,13 @@ def process_cluster(cluster_cells, hvg_data, ann_obj, k):
     return data_cells, data_cells_2
 
 
-def silhouette_scoring(ds, ann_obj, graph, hvg_data, res_label):
-    clusters = ds.cells.fetch(f"RNA_{res_label}") - 1
+def silhouette_scoring(ds, ann_obj, graph, hvg_data, assay_type, res_label):
+    try:
+        clusters = ds.cells.fetch(f"{assay_type}_{res_label}") - 1 # RNA_{res_label}
+    except KeyError:
+        logger.error(f"Cluster labels not found for {assay_type}_{res_label}")
+        return None
+
     cluster_similarity = calculate_weighted_cluster_similarity(graph, clusters)
 
     k = 11
@@ -314,11 +319,15 @@ def silhouette_scoring(ds, ann_obj, graph, hvg_data, res_label):
                 f"Warning: Cluster {n} has fewer than 22 cells. Will adjust k to {k} instead"
             )
 
-    for n, i in tqdmbar(enumerate(cluster_similarity)):
+    for n, i in tqdmbar(enumerate(cluster_similarity), total=len(cluster_similarity)):
         this_cluster_cells = np.where(clusters == n)[0]
-
+        np.random.shuffle(this_cluster_cells)
         data_this_cells, data_this_cells_2 = process_cluster(
-            n, this_cluster_cells, hvg_data, ann_obj, k
+            # n,
+            this_cluster_cells,
+            hvg_data,
+            ann_obj,
+            k,
         )
 
         if data_this_cells.size == 0 or data_this_cells_2.size == 0:
@@ -341,6 +350,7 @@ def silhouette_scoring(ds, ann_obj, graph, hvg_data, res_label):
 
         nearest_cluster = np.argsort(i)[-1]
         nearest_cluster_cells = np.where(clusters == nearest_cluster)[0]
+        np.random.shuffle(nearest_cluster_cells)
 
         if len(nearest_cluster_cells) < k:
             logger.warning(
@@ -350,7 +360,11 @@ def silhouette_scoring(ds, ann_obj, graph, hvg_data, res_label):
             continue
 
         data_nearest_cells, _ = process_cluster(
-            nearest_cluster, nearest_cluster_cells, hvg_data, ann_obj, k
+            # nearest_cluster,
+            nearest_cluster_cells,
+            hvg_data,
+            ann_obj,
+            k,
         )
 
         if data_nearest_cells.size == 0:
@@ -367,3 +381,25 @@ def silhouette_scoring(ds, ann_obj, graph, hvg_data, res_label):
         score.append((other_dist - self_dist) / max(self_dist, other_dist))
 
     return np.array(score)
+
+
+def integration_score(
+        batch_labels: np.ndarray,
+        metric: str = 'ari'
+):
+    from sklearn.metrics import adjusted_rand_score
+    from sklearn.metrics import normalized_mutual_info_score
+    # from sklearn.metrics import calinski_harabasz_score
+    # from sklearn.metrics import davies_bouldin_score
+
+    if metric == 'ari':
+        return adjusted_rand_score(batch_labels[0], batch_labels[1])
+    elif metric == 'nmi':
+        return normalized_mutual_info_score(batch_labels[0], batch_labels[1])
+    # elif metric == 'calinski_harabasz':
+    #     return calinski_harabasz_score(batch_labels[0], batch_labels[1])
+    # elif metric == 'davies_bouldin':
+    #     return davies_bouldin_score(batch_labels[0], batch_labels[1])
+    else:
+        logger.error(f"Metric {metric} not recognized. Please choose from 'ari', 'nmi', 'calinski_harabasz', or 'davies_bouldin'.")
+        return None
