@@ -2,39 +2,19 @@
 Methods and classes for evluation
 """
 
-import math
-import os
-import re
-from collections import Counter
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
-import polars as pl
-import zarr
-from dask.array import from_array
-from dask.array.core import Array as daskArrayType
-from scipy.io import mmwrite
-from scipy.sparse import coo_matrix, csr_matrix
-from sklearn.neighbors import NearestNeighbors
+from scipy.sparse import csr_matrix
 from zarr.core import Array as zarrArrayType
 
-from .assay import (
-    ADTassay,
-    ATACassay,
-    RNAassay,
-)
+from .ann import AnnStream
 from .datastore.datastore import DataStore
-from .metadata import MetaData
 from .utils import (
-    ZARRLOC,
-    controlled_compute,
-    load_zarr,
     logger,
-    permute_into_chunks,
     tqdmbar,
 )
-from .writers import create_zarr_count_assay, create_zarr_obj_array
 
 
 # LISI - The Local Inverse Simpson Index
@@ -45,30 +25,31 @@ def compute_lisi(
     metadata: pd.DataFrame,
     label_colnames: Iterable[str],
     perplexity: float = 30,
-):
+) -> np.ndarray:
     """Compute the Local Inverse Simpson Index (LISI) for each column in metadata.
 
-    LISI is a statistic computed for each item (row) in the data matrix X.
+    LISI measures how well mixed different groups of cells are in the neighborhood of each cell.
+    Higher values indicate better mixing of different groups.
 
-    The following example may help to interpret the LISI values.
+    Args:
+        distances: Pre-computed distances between cells, stored in zarr array format
+        indices: Pre-computed nearest neighbor indices, stored in zarr array format
+        metadata: DataFrame containing categorical labels for each cell
+        label_colnames: Column names in metadata to compute LISI for
+        perplexity: Parameter controlling the effective number of neighbors (default: 30)
 
-    Suppose one of the columns in metadata is a categorical variable with 3 categories.
+    Returns:
+        np.ndarray: Matrix of LISI scores with shape (n_cells, n_labels)
+        Each column corresponds to LISI scores for one label column in metadata
 
-        - If LISI is approximately equal to 3 for an item in the data matrix,
-          that means that the item is surrounded by neighbors from all 3
-          categories.
+    Example:
+        For metadata with a 'batch' column having 3 categories:
+        - LISI ≈ 3: Cell has neighbors from all 3 batches (well mixed)
+        - LISI ≈ 1: Cell has neighbors from only 1 batch (poorly mixed)
 
-        - If LISI is approximately equal to 1, then the item is surrounded by
-          neighbors from 1 category.
-
-    The LISI statistic is useful to evaluate whether multiple datasets are
-    well-integrated by algorithms such as Harmony [1].
-
-    [1]: Korsunsky et al. 2019 doi: 10.1038/s41592-019-0619-0
+    References:
+        Korsunsky et al. 2019 doi: 10.1038/s41592-019-0619-0
     """
-    # # We need at least 3 * n_neigbhors to compute the perplexity
-    # knn = NearestNeighbors(n_neighbors = math.ceil(perplexity * 3), algorithm = 'kd_tree').fit(X)
-    # distances, indices = knn.kneighbors(X)
 
     n_cells = metadata.shape[0]
     n_labels = len(label_colnames)
@@ -96,7 +77,23 @@ def compute_simpson(
     n_categories: int,
     perplexity: float,
     tol: float = 1e-5,
-):
+) -> np.ndarray:
+    """Compute Simpson's diversity index with Gaussian kernel weighting.
+
+    This function implements the core calculation for LISI, computing a diversity score
+    based on the distribution of categories in each cell's neighborhood.
+
+    Args:
+        distances: Distance matrix between points, shape (n_neighbors, n_points)
+        indices: Index matrix for nearest neighbors, shape (n_neighbors, n_points)
+        labels: Categorical labels for each point
+        n_categories: Number of unique categories in labels
+        perplexity: Target perplexity for Gaussian kernel
+        tol: Convergence tolerance for perplexity calibration (default: 1e-5)
+
+    Returns:
+        np.ndarray: Array of Simpson's diversity indices, one per point
+    """
     n = distances.shape[1]
     P = np.zeros(distances.shape[0])
     simpson = np.zeros(n)
@@ -161,18 +158,18 @@ def compute_simpson(
 def knn_to_csr_matrix(
     neighbor_indices: np.ndarray, neighbor_distances: np.ndarray
 ) -> csr_matrix:
-    """
-    Convert k-nearest neighbors data to a Compressed Sparse Row (CSR) matrix.
+    """Convert k-nearest neighbors data to a Compressed Sparse Row (CSR) matrix.
 
-    Parameters:
-    neighbor_indices : 2D array
-        Indices of k-nearest neighbors for each data point.
-    neighbor_distances : 2D array
-        Distances to k-nearest neighbors for each data point.
+    Creates a sparse adjacency matrix representation of the k-nearest neighbors graph
+    where edge weights are the distances between points.
+
+    Args:
+        neighbor_indices: Indices matrix from k-nearest neighbors, shape (n_samples, k)
+        neighbor_distances: Distances matrix from k-nearest neighbors, shape (n_samples, k)
 
     Returns:
-    scipy.sparse.csr_matrix
-        A sparse matrix representation of the KNN graph.
+        scipy.sparse.csr_matrix: Sparse adjacency matrix of shape (n_samples, n_samples)
+        where non-zero entries represent distances between neighboring points
     """
     num_samples, num_neighbors = neighbor_indices.shape
     row_indices = np.repeat(np.arange(num_samples), num_neighbors)
@@ -185,15 +182,21 @@ def knn_to_csr_matrix(
 def calculate_weighted_cluster_similarity(
     knn_graph: csr_matrix, cluster_labels: np.ndarray
 ) -> np.ndarray:
-    """
-    Calculate similarity between clusters based on shared weighted edges.
+    """Calculate similarity between clusters based on shared weighted edges.
 
-    Parameters:
-    - knn_graph: CSR matrix representing the KNN graph
-    - cluster_labels: 1D array with cluster/community index for each node. Contiguous and start from 1.
+    Uses a weighted Jaccard index to compute similarities between clusters in a KNN graph.
+
+    Args:
+        knn_graph: CSR matrix representing the KNN graph, shape (n_samples, n_samples)
+        cluster_labels: Cluster assignments for each node, must be contiguous integers
+            starting from 0
 
     Returns:
-    - similarity_matrix: 2D numpy array with similarity scores between clusters
+        np.ndarray: Symmetric matrix of shape (n_clusters, n_clusters) containing
+        pairwise similarities between clusters
+
+    Raises:
+        AssertionError: If cluster labels are not contiguous integers starting from 0
     """
     unique_cluster_ids = np.unique(cluster_labels)
     expected_cluster_ids = np.arange(0, len(unique_cluster_ids))
@@ -247,21 +250,22 @@ def calculate_weighted_cluster_similarity(
 def calculate_top_k_neighbor_distances(
     matrix_a: np.ndarray, matrix_b: np.ndarray, k: int
 ) -> np.ndarray:
-    """
-    Calculate the distances of the top k nearest neighbors from matrix_b for each point in matrix_a.
+    """Calculate distances to k nearest neighbors between two sets of points.
 
-    Parameters:
-    matrix_a : numpy.ndarray
-        First matrix of shape (m, d)
-    matrix_b : numpy.ndarray
-        Second matrix of shape (n, d)
-    k : int
-        Number of nearest neighbors to consider
+    For each point in matrix_a, finds the k nearest neighbors in matrix_b
+    and returns their distances.
+
+    Args:
+        matrix_a: First set of points, shape (m, d)
+        matrix_b: Second set of points, shape (n, d)
+        k: Number of nearest neighbors to find
 
     Returns:
-    numpy.ndarray
-        Array of shape (m, k) containing the distances of the k nearest neighbors
-        from matrix_b for each point in matrix_a
+        np.ndarray: Matrix of shape (m, k) containing the distances to the
+        k nearest neighbors in matrix_b for each point in matrix_a
+
+    Raises:
+        AssertionError: If matrices don't have the same number of features
     """
     # Check if the matrices have the same number of features (d)
     assert (
@@ -288,7 +292,26 @@ def calculate_top_k_neighbor_distances(
     return np.sqrt(top_k_distances)
 
 
-def process_cluster(cluster_cells, hvg_data, ann_obj, k):
+def process_cluster(
+    cluster_cells: np.ndarray,
+    hvg_data: Union[np.ndarray, zarrArrayType],
+    ann_obj: AnnStream,
+    k: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Process a cluster of cells to prepare data for silhouette scoring.
+
+    Randomly splits cluster cells into two groups and applies dimensionality reduction.
+
+    Args:
+        cluster_cells: Indices of cells belonging to the cluster
+        hvg_data: Expression data for highly variable genes
+        ann_obj: Object containing dimensionality reduction method
+        k: Number of cells to sample from cluster
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Two arrays containing reduced data for
+        different subsets of cells from the cluster
+    """
     np.random.shuffle(cluster_cells)
     data_cells = np.array(
         [ann_obj.reducer(hvg_data[i]) for i in sorted(cluster_cells[:k])]
@@ -299,9 +322,37 @@ def process_cluster(cluster_cells, hvg_data, ann_obj, k):
     return data_cells, data_cells_2
 
 
-def silhouette_scoring(ds, ann_obj, graph, hvg_data, assay_type, res_label):
+def silhouette_scoring(
+    ds: DataStore,
+    ann_obj: AnnStream,
+    graph: csr_matrix,
+    hvg_data: Union[np.ndarray, zarrArrayType],
+    assay_type: str,
+    res_label: str,
+) -> Optional[np.ndarray]:
+    """Compute modified silhouette scores for clusters in single-cell data.
+
+    This implementation differs from the standard silhouette score by using
+    a graph-based approach and comparing clusters to their nearest neighbors.
+
+    Args:
+        ds: DataStore object containing cell metadata
+        ann_obj: Object containing dimensionality reduction method
+        graph: CSR matrix representing the KNN graph
+        hvg_data: Expression data for highly variable genes
+        assay_type: Type of assay (e.g., 'RNA', 'ATAC')
+        res_label: Label for clustering resolution
+
+    Returns:
+        Optional[np.ndarray]: Array of silhouette scores for each cluster,
+        or None if cluster labels are not found
+
+    Notes:
+        Scores are calculated using a sampling approach for efficiency.
+        NaN values indicate clusters that couldn't be scored due to size constraints.
+    """
     try:
-        clusters = ds.cells.fetch(f"{assay_type}_{res_label}") - 1 # RNA_{res_label}
+        clusters = ds.cells.fetch(f"{assay_type}_{res_label}") - 1  # RNA_{res_label}
     except KeyError:
         logger.error(f"Cluster labels not found for {assay_type}_{res_label}")
         return None
@@ -384,22 +435,32 @@ def silhouette_scoring(ds, ann_obj, graph, hvg_data, assay_type, res_label):
 
 
 def integration_score(
-        batch_labels: np.ndarray,
-        metric: str = 'ari'
-):
-    from sklearn.metrics import adjusted_rand_score
-    from sklearn.metrics import normalized_mutual_info_score
-    # from sklearn.metrics import calinski_harabasz_score
-    # from sklearn.metrics import davies_bouldin_score
+    batch_labels: Sequence[np.ndarray], metric: str = "ari"
+) -> Optional[float]:
+    """Calculate integration score between two sets of batch labels.
 
-    if metric == 'ari':
+    Args:
+        batch_labels: Sequence containing two arrays of batch labels to compare
+        metric: Metric to use for comparison, one of:
+            - 'ari': Adjusted Rand Index
+            - 'nmi': Normalized Mutual Information
+
+    Returns:
+        Optional[float]: Integration score between 0 and 1, or None if metric
+        is not recognized
+
+    Notes:
+        Higher scores indicate better agreement between batch labels,
+        suggesting more effective batch integration.
+    """
+    from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
+    if metric == "ari":
         return adjusted_rand_score(batch_labels[0], batch_labels[1])
-    elif metric == 'nmi':
+    elif metric == "nmi":
         return normalized_mutual_info_score(batch_labels[0], batch_labels[1])
-    # elif metric == 'calinski_harabasz':
-    #     return calinski_harabasz_score(batch_labels[0], batch_labels[1])
-    # elif metric == 'davies_bouldin':
-    #     return davies_bouldin_score(batch_labels[0], batch_labels[1])
     else:
-        logger.error(f"Metric {metric} not recognized. Please choose from 'ari', 'nmi', 'calinski_harabasz', or 'davies_bouldin'.")
+        logger.error(
+            f"Metric {metric} not recognized. Please choose from 'ari', 'nmi', 'calinski_harabasz', or 'davies_bouldin'."
+        )
         return None

@@ -621,8 +621,8 @@ class DataStore(MappingDatastore):
             cell_key = "I"
         if group_key is None:
             raise ValueError(
-                f"ERROR: Please provide a value for group_key. "
-                f"This should be same as used for `run_marker_search`"
+                "ERROR: Please provide a value for group_key. "
+                "This should be same as used for `run_marker_search`"
             )
         assay = self._get_assay(from_assay)
         try:
@@ -702,8 +702,8 @@ class DataStore(MappingDatastore):
         # Not testing the values of from_assay and cell_key because they will be tested in `get_markers`
         if group_key is None:
             raise ValueError(
-                f"ERROR: Please provide a value for group_key. "
-                f"This should be same as used for `run_marker_search`"
+                "ERROR: Please provide a value for group_key. "
+                "This should be same as used for `run_marker_search`"
             )
         if csv_filename is None:
             raise ValueError(
@@ -2008,8 +2008,8 @@ class DataStore(MappingDatastore):
         else:
             if hashes != assay.z[location].attrs["hashes"]:
                 raise ValueError(
-                    f"ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
-                    f"`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
+                    "ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
+                    "`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
                 )
 
         da = daskarr.from_zarr(assay.z[location + "/data"], inline_array=True)
@@ -2065,12 +2065,49 @@ class DataStore(MappingDatastore):
         k: Optional[int] = None,
         save_result: bool = True,
         return_lisi: bool = False,
-    ) -> Union[None, List[Tuple[str, np.ndarray]]]:
+    ) -> Optional[List[Tuple[str, np.ndarray]]]:
+        """Calculate Local Inverse Simpson Index (LISI) scores for cell populations.
+
+        LISI measures how well mixed different cell populations are in the local neighborhood
+        of each cell. Higher scores indicate better mixing of different populations.
+
+        Args:
+            label_colnames: Column names from cell metadata containing population labels
+            use_latest_knn: Whether to use the most recent KNN graph (default: True)
+            from_assay: Name of assay to use if not using latest KNN
+            cell_key: Cell filtering key for normalization
+            feat_key: Feature selection key for normalization
+            dims: Number of dimensions used for reduction
+            reduction_method: Name of dimensionality reduction method
+            pca_cell_key: Cell key used for PCA
+            ann_metric: Metric used for approximate nearest neighbors
+            ann_efc: Construction time/accuracy trade-off for ANN index
+            ann_ef: Query time/accuracy trade-off for ANN index
+            ann_m: Max number of connections in ANN graph
+            rand_state: Random seed for reproducibility (default: 4466)
+            k: Number of nearest neighbors
+            save_result: Whether to save LISI scores to cell metadata (default: True)
+            return_lisi: Whether to return LISI scores (default: False)
+
+        Returns:
+            If return_lisi is True, returns list of tuples containing:
+            - Label column name
+            - numpy array of LISI scores for that label
+            If return_lisi is False, returns None
+
+        Raises:
+            ValueError: If using custom KNN graph but required parameters are missing
+            KeyError: If label columns not found in cell metadata
+
+        Notes:
+            LISI scores are computed for each label column separately.
+            Scores near 1 indicate cells grouped with similar labels.
+            Higher scores indicate more mixing between different labels.
         """
-        label_colnames: List of column names from cell metadata table that contains the ground truth labels.
-        """
+
         if use_latest_knn:
             knn_loc = self._get_latest_knn_loc(from_assay)
+            cell_key = self.zw[self._load_default_assay()].attrs["latest_cell_key"]
             logger.info(f"Using the latest knn graph at location: {knn_loc}")
         else:
             if None in [
@@ -2106,7 +2143,10 @@ class DataStore(MappingDatastore):
         distances = knn["distances"]
         indices = knn["indices"]
         try:
-            metadata = self.cells.to_pandas_dataframe(columns=label_colnames)
+            metadata = self.cells.to_pandas_dataframe(
+                columns=label_colnames + [cell_key]
+            )
+            metadata = metadata[metadata[cell_key]]
         except KeyError:
             raise KeyError(
                 f"Could not find the column(s) {label_colnames} in the cell metadata table."
@@ -2142,10 +2182,44 @@ class DataStore(MappingDatastore):
         ann_m: Optional[int] = None,
         rand_state: Optional[int] = 4466,
         k: Optional[int] = None,
-    ):
+    ) -> Optional[np.ndarray]:
+        """Calculate modified silhouette scores for evaluating cluster separation.
+
+        This implements a graph-based silhouette score that measures how similar cells
+        are to their own cluster compared to the nearest neighboring cluster.
+
+        Args:
+            use_latest_knn: Whether to use most recent KNN graph (default: True)
+            res_label: Column name containing cluster labels (default: "leiden_cluster")
+            from_assay: Name of assay to use if not using latest KNN
+            cell_key: Cell filtering key for normalization
+            feat_key: Feature selection key for normalization
+            dims: Number of dimensions used for reduction
+            reduction_method: Name of dimensionality reduction method
+            pca_cell_key: Cell key used for PCA
+            ann_metric: Metric used for approximate nearest neighbors
+            ann_efc: Construction time/accuracy trade-off for ANN index
+            ann_ef: Query time/accuracy trade-off for ANN index
+            ann_m: Max number of connections in ANN graph
+            rand_state: Random seed for reproducibility (default: 4466)
+            k: Number of nearest neighbors
+
+        Returns:
+            numpy array of silhouette scores for each cluster, or None if computation fails
+
+        Raises:
+            ValueError: If using custom KNN graph but required parameters are missing
+
+        Notes:
+            Scores range from -1 to 1:
+            - Near 1: Cluster is well-separated from neighboring clusters
+            - Near 0: Cluster overlaps with neighboring clusters
+            - Near -1: Cluster may be incorrectly assigned
+
+            Implementation uses sampling for efficiency with large datasets.
+            NaN values indicate clusters that couldn't be scored due to size constraints.
         """
-        label_colnames: List of column names from cell metadata table that contains the ground truth labels.
-        """
+
         if use_latest_knn:
             knn_loc = self._get_latest_knn_loc(from_assay)
             from_assay = self._load_default_assay()
@@ -2183,7 +2257,7 @@ class DataStore(MappingDatastore):
                 raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
             logger.info(f"Using the knn graph at location: {knn_loc}")
 
-        from ..metrics import silhouette_scoring, knn_to_csr_matrix
+        from ..metrics import knn_to_csr_matrix, silhouette_scoring
 
         isHarmonized = self.zw[knn_loc.rsplit("/", 1)[0]].attrs["isHarmonized"]
         batches = None
@@ -2201,21 +2275,38 @@ class DataStore(MappingDatastore):
             batch_columns=batches,
         )
         graph = knn_to_csr_matrix(self.z[knn_loc].indices, self.z[knn_loc].distances)
-        # if isHarmonized and harmonize:
-        #     logger.info("Using harmonized data for silhouette scoring")
-        #     hvg_data = self.z[knn_loc.rsplit("/", 2)[0] + "/harmonizedData"]
-        # else:
-        #     hvg_data = self.z[knn_loc.rsplit("/", 3)[0] + "/data"]
+
         hvg_data = self.z[knn_loc.rsplit("/", 3)[0] + "/data"]
+
         scores = silhouette_scoring(
             self, ann_obj, graph, hvg_data, from_assay, res_label
         )
         return scores
 
+    def metric_integration(
+        self, batch_labels: List[str], metric: Literal["ari", "nmi"] = "ari"
+    ) -> Optional[float]:
+        """Calculate integration score between different batch labels.
 
-    def metric_integration(self, batch_labels: List[str], metric: str = "ari"):
-        """
-        label_colnames: List of column names from cell metadata table that contains the ground truth labels.
+        Measures how well aligned different batches are after integration by comparing
+        their cluster assignments using standard clustering metrics.
+
+        Args:
+            batch_labels: List of column names containing batch labels to compare
+            metric: Metric to use for comparison (default: "ari")
+                - "ari": Adjusted Rand Index
+                - "nmi": Normalized Mutual Information
+
+        Returns:
+            Integration score between 0 and 1, or None if metric is not recognized
+            Higher scores indicate better alignment between batches
+
+        Notes:
+            ARI and NMI measure the agreement between different batch labelings:
+            - Score near 1: Batches are well integrated
+            - Score near 0: Batches show poor integration
+
+            ARI is adjusted for chance and generally more stringent than NMI.
         """
         from ..metrics import integration_score
 
@@ -2223,6 +2314,6 @@ class DataStore(MappingDatastore):
         for batch in batch_labels:
             vals = np.array(self.cells.fetch_all(batch))
             batch_labels_vals.append(vals)
-            
+
         scores = integration_score(batch_labels_vals, metric)
         return scores
