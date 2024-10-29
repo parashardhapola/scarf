@@ -19,7 +19,6 @@ from .utils import (
 
 # LISI - The Local Inverse Simpson Index
 def compute_lisi(
-    # X: np.array,
     distances: zarrArrayType,
     indices: zarrArrayType,
     metadata: pd.DataFrame,
@@ -56,7 +55,6 @@ def compute_lisi(
     # Don't count yourself
     indices = indices[:, 1:]
     distances = distances[:, 1:]
-    # Save the result
     lisi_df = np.zeros((n_cells, n_labels))
     for i, label in enumerate(label_colnames):
         logger.info(f"Computing LISI for {label}")
@@ -66,7 +64,6 @@ def compute_lisi(
             distances.T, indices.T, labels, n_categories, perplexity
         )
         lisi_df[:, i] = 1 / simpson
-    # lisi_df = lisi_df.flatten()
     return lisi_df
 
 
