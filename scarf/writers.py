@@ -19,7 +19,11 @@
 """
 
 import os
-from typing import Any, Tuple, List, Union, Dict, Optional
+from typing import Any, Tuple, List, Union, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .merge import AssayMerge
+
 
 import numpy as np
 import pandas as pd
@@ -52,8 +56,8 @@ __all__ = [
     "to_h5ad",
     "to_mtx",
     "CSVtoZarr",
+    "ZarrMerge"
 ]
-
 
 def create_zarr_dataset(
     g: zarr.Group,
@@ -241,6 +245,25 @@ def sparse_writer(store: zarr.Array, data_stream, n_cells: int, batch_size: int)
         s = e
     return e
 
+
+def _import_merge():
+    from .merge import AssayMerge
+    return AssayMerge
+
+# Alias for ZarrMerge
+class ZarrMerge:
+    """
+    Proxy class for backward compatibility.
+    Lazily imports AssayMerge to avoid circular imports.
+    """
+    def __new__(cls, *args, **kwargs):
+        from loguru import logger
+        logger.warning(
+            "The 'ZarrMerge' class is deprecated and will be removed in a future release. "
+            "Please use 'AssayMerge' instead."
+        )
+        AssayMerge = _import_merge()
+        return AssayMerge(*args, **kwargs)
 
 class CrToZarr:
     """A class for converting data in the Cellranger format to a Zarr

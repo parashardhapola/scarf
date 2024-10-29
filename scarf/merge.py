@@ -35,7 +35,7 @@ from .writers import create_zarr_count_assay, create_zarr_obj_array
 __all__ = [
     "DatasetMerge",
     "AssayMerge",
-    "ZarrMerge",
+    # "ZarrMerge",
 ]
 
 
@@ -640,16 +640,16 @@ class AssayMerge:
 
 
 # Alias for ZarrMerge
-class ZarrMerge(AssayMerge):
-    """
-    Alias for AssayMerge for backward compatibility.
-    """
+# class ZarrMerge(AssayMerge):
+#     """
+#     Alias for AssayMerge for backward compatibility.
+#     """
 
-    def __init__(self, *args, **kwargs):
-        logger.warning(
-            "The 'ZarrMerge' class is deprecated and will be removed in a future release. Please use 'AssayMerge' instead."
-        )
-        super().__init__(*args, **kwargs)
+#     def __init__(self, *args, **kwargs):
+#         logger.warning(
+#             "The 'ZarrMerge' class is deprecated and will be removed in a future release. Please use 'AssayMerge' instead."
+#         )
+#         super().__init__(*args, **kwargs)
 
 
 class DatasetMerge:
