@@ -549,16 +549,6 @@ class CrDirReader(CrReader):
             lines_in_mem: The number of lines to read into memory.
             dtype: The data type of the matrix.
         """
-        # matrixIO = pl.read_csv_batched(
-        #     self.matFn,
-        #     has_header=False,
-        #     separator=self.sep,
-        #     comment_prefix="%",
-        #     skip_rows_after_header=1,
-        #     new_columns=["gene", "barcode", "count"],
-        #     schema_overrides={"gene": pl.Int64, "barcode": pl.Int64, "count": pl.Int64},
-        #     batch_size=lines_in_mem,
-        # )
         matrixIO = pd.read_csv(
             self.matFn,
             comment="%",
@@ -569,15 +559,8 @@ class CrDirReader(CrReader):
         )
         unique_list = []
         collect = []
-        # while True:
         for chunk in matrixIO:
-            # chunk = matrixIO.next_batches(1)
-            # if chunk is None:
-            #     break
-            # chunk = chunk[0]
-            # chunk = chunk.filter(pl.col("barcode").is_in(self.validBarcodeIdx))
             chunk = chunk[chunk["barcode"].isin(self.validBarcodeIdx)]
-            # in_uniques = np.unique(chunk["barcode"])
             in_uniques = np.unique(chunk["barcode"].values)
             unique_list.extend(in_uniques)
             unique_list = list(set(unique_list))
@@ -585,13 +568,11 @@ class CrDirReader(CrReader):
                 diff = batch_size - (len(unique_list) - len(in_uniques))
                 mask_pos = in_uniques[:diff]
                 mask_neg = in_uniques[diff:]
-                # extra = chunk.filter(pl.col("barcode").is_in(mask_pos))
                 extra = chunk[chunk["barcode"].isin(mask_pos)]
                 collect.append(extra)
                 collect = self.rename_batches(collect)
                 mtx = self.to_sparse(np.array(collect), dtype=dtype)
                 yield mtx
-                # left_out = chunk.filter(pl.col("barcode").is_in(mask_neg))
                 left_out = chunk[chunk["barcode"].isin(mask_neg)]
                 collect = []
                 unique_list = list(mask_neg)
