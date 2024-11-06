@@ -71,7 +71,6 @@ def compute_simpson(
     distances: np.ndarray,
     indices: np.ndarray,
     labels: pd.Categorical,
-    n_categories: int,
     perplexity: float,
     tol: float = 1e-5,
 ) -> np.ndarray:
@@ -84,7 +83,6 @@ def compute_simpson(
         distances: Distance matrix between points, shape (n_neighbors, n_points)
         indices: Index matrix for nearest neighbors, shape (n_neighbors, n_points)
         labels: Categorical labels for each point
-        n_categories: Number of unique categories in labels
         perplexity: Target perplexity for Gaussian kernel
         tol: Convergence tolerance for perplexity calibration (default: 1e-5)
 
@@ -96,7 +94,7 @@ def compute_simpson(
     simpson = np.zeros(n)
     logU = np.log(perplexity)
     # Loop through each cell.
-    for i in range(n):
+    for i in tqdmbar(range(n), desc="Computing Simpson's Diversity Index"):
         beta = 1
         betamin = -np.inf
         betamax = np.inf
@@ -367,7 +365,11 @@ def silhouette_scoring(
                 f"Warning: Cluster {n} has fewer than 22 cells. Will adjust k to {k} instead"
             )
 
-    for n, i in tqdmbar(enumerate(cluster_similarity), total=len(cluster_similarity)):
+    for n, i in tqdmbar(
+        enumerate(cluster_similarity),
+        total=len(cluster_similarity),
+        desc="Calculating Silhouette Scores",
+    ):
         this_cluster_cells = np.where(clusters == n)[0]
         np.random.shuffle(this_cluster_cells)
         data_this_cells, data_this_cells_2 = process_cluster(

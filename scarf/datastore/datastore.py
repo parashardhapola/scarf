@@ -2063,8 +2063,8 @@ class DataStore(MappingDatastore):
         ann_m: Optional[int] = None,
         rand_state: Optional[int] = 4466,
         k: Optional[int] = None,
-        save_result: bool = True,
-        return_lisi: bool = False,
+        save_result: bool = False,
+        return_lisi: bool = True,
     ) -> Optional[List[Tuple[str, np.ndarray]]]:
         """Calculate Local Inverse Simpson Index (LISI) scores for cell populations.
 
