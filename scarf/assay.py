@@ -906,7 +906,8 @@ class RNAassay(Assay):
         Args:
             cell_key: Name of the key (column) from cell attribute table.
             n_bins: Number of bins to divide the data into.
-            lowess_frac: Fraction of the data to use when estimating the fit between mean and variance.
+            lowess_frac: Between 0 and 1. The fraction of the data used when estimating the fit between mean and
+                         variance. This is same as `frac` in statsmodels.nonparametric.smoothers_lowess.lowess
 
         Returns:
             A tuple of two strings.
@@ -919,6 +920,10 @@ class RNAassay(Assay):
 
         if cell_key is None:
             cell_key = "I"
+
+        # check lowess_frac is between 0 and 1
+        if not 0 <= lowess_frac <= 1:
+            raise ValueError("lowess_frac must be between 0 and 1")
 
         self.set_feature_stats(cell_key)
         identifier = self._load_stats_loc(cell_key)
