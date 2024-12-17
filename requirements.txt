@@ -20,3 +20,4 @@ setuptools
 packaging
 importlib_metadata
 polars
+pyarrow
