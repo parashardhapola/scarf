@@ -15,11 +15,7 @@ from dask.array import from_array
 from dask.array.core import Array as daskArrayType
 from scipy.sparse import coo_matrix
 
-from .assay import (
-    ADTassay,
-    ATACassay,
-    RNAassay,
-)
+from .assay import Assay
 from .datastore.datastore import DataStore
 from .metadata import MetaData
 from .utils import (
@@ -96,7 +92,7 @@ class AssayMerge:
     def __init__(
         self,
         zarr_path: ZARRLOC,
-        assays: List[Union[RNAassay, ATACassay, ADTassay]],
+        assays: List[Assay],
         names: List[str],
         merge_assay_name: str,
         in_workspaces: Union[list[str], None] = None,
@@ -124,10 +120,10 @@ class AssayMerge:
         )
         self.nCells: int = self.mergedCells.shape[0]
         self.featCollection: List[Dict[str, str]] = self._get_feat_ids(assays)
-        self.feat_suffix: Dict[int, int] = self.get_feat_suffix()
         self.feat_name_ids_same: bool = self.check_feat_ids(self.featCollection)
 
         if self.feat_name_ids_same is True:
+            self.feat_suffix: Dict[int, int] = self.get_feat_suffix()
             self.featCollection = self.update_feat_ids()
             self.featCollection_map: List[Dict[str, str]] = (
                 self.update_feat_ids_for_map()
@@ -197,7 +193,7 @@ class AssayMerge:
         for i in range(len(permutations)):
             in__dict: dict[int, np.ndarray] = {}
             last_key = i - 1 if i > 0 else 0
-            offset = nCells[last_key] + offset if i > 0 else 0
+            offset = nCells[last_key] + offset if i > 0 else 0  # noqa: F821
             for j, arr in enumerate(permutations[i]):
                 in__dict[j] = arr + offset
             permutations_rows_offset[i] = in__dict
@@ -580,7 +576,9 @@ class AssayMerge:
                 f"cellData already exists so skipping _ini_cell_data"  # noqa: F541
             )
 
-    def _dask_to_coo(self, d_arr, order: np.ndarray, order_map: np.ndarray, n_threads: int) -> coo_matrix:
+    def _dask_to_coo(
+        self, d_arr, order: np.ndarray, order_map: np.ndarray, n_threads: int
+    ) -> coo_matrix:
         """
         Convert a Dask array to a sparse COO matrix.
         Args:
@@ -780,7 +778,9 @@ class DatasetMerge:
 
         # Create a dummy assay with zero counts and matching features
         dummy_shape = (ds.cells.N, reference_assay.feats.N)
-        dummy_counts = zarr.zeros(dummy_shape, chunks=chunkShape, dtype=reference_assay.rawData.dtype)
+        dummy_counts = zarr.zeros(
+            dummy_shape, chunks=chunkShape, dtype=reference_assay.rawData.dtype
+        )
         dummy_counts = from_array(dummy_counts, chunks=chunkShape)
         dummy_assay = DummyAssay(
             ds, dummy_counts, reference_assay.feats, reference_assay.name
