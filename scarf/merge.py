@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import zarr
 from dask.array import from_array
@@ -176,7 +177,8 @@ class AssayMerge:
             seed: Seed for randomization
         Returns:
         """
-        np.random.seed(seed)
+        rng = np.random.default_rng(seed=seed)
+        # np.random.seed(seed)
         chunkSize = np.array([x.rawData.chunksize[0] for x in self.assays])
         nCells = np.array([x.rawData.shape[0] for x in self.assays])
         permutations = {
@@ -190,13 +192,20 @@ class AssayMerge:
             permutations_rows[key] = in_dict
 
         permutations_rows_offset = {}
-        for i in range(len(permutations)):
+        # for i in range(len(permutations)):
+        #     in__dict: dict[int, np.ndarray] = {}
+        #     last_key = i - 1 if i > 0 else 0
+        #     offset = nCells[last_key] + offset if i > 0 else 0  # noqa: F821
+        #     for j, arr in enumerate(permutations[i]):
+        #         in__dict[j] = arr + offset
+        #     permutations_rows_offset[i] = in__dict
+        offset = 0
+        for key, val_dict in permutations_rows.items():
             in__dict: dict[int, np.ndarray] = {}
-            last_key = i - 1 if i > 0 else 0
-            offset = nCells[last_key] + offset if i > 0 else 0  # noqa: F821
-            for j, arr in enumerate(permutations[i]):
-                in__dict[j] = arr + offset
-            permutations_rows_offset[i] = in__dict
+            for in_key, arrs in val_dict.items():
+                in__dict[in_key] = arrs + offset
+            permutations_rows_offset[key] = in__dict
+            offset += nCells[key]
 
         coordinates = []
         extra = []
@@ -207,7 +216,8 @@ class AssayMerge:
                     continue
                 coordinates.append([i, j])
 
-        coordinates_permutations = np.random.permutation(coordinates)
+        # coordinates_permutations = np.random.permutation(coordinates)
+        coordinates_permutations = rng.permutation(coordinates)
         if len(coordinates_permutations) > 0:
             coordinates_permutations = np.concatenate(
                 [coordinates_permutations, extra], axis=0
@@ -250,7 +260,8 @@ class AssayMerge:
 
         offset = 0
         for i, (x, y) in enumerate(self.coordinates_permutations):
-            arr = self.permutations_rows_offset[x][y]
+            # arr = self.permutations_rows_offset[x][y]
+            arr = self.permutations_rows[x][y]
             arr = np.array(range(len(arr)))
             arr = arr + offset
             new_cells[x][y] = arr
@@ -291,22 +302,25 @@ class AssayMerge:
                 a = a.with_columns(
                     [pl.Series("I", np.ones(len(a["ids"])).astype(bool))]
                 )
-            ret_val.append(a)
+            ret_val.append(a.to_pandas())
 
-        ret_val_df = pl.concat(
-            ret_val,
-            how="diagonal",  # Finds a union between the column schemas and fills missing column values with null
-        )
+        # ret_val_df = pl.concat(
+        #     ret_val,
+        #     how="diagonal",  # Finds a union between the column schemas and fills missing column values with null
+        # )
+        ret_val_df = pd.concat(ret_val, axis=0).reset_index(drop=True)
 
         # Randomize the rows in chunks
         compiled_idx = [
             self.permutations_rows_offset[i][j]
             for i, j in self.coordinates_permutations
         ]
+
         compiled_idx = np.concatenate(compiled_idx)
-        ret_val_df = ret_val_df[
-            compiled_idx
-        ]  # Polars does not support iloc so we have to use this method
+        # ret_val_df = ret_val_df[
+        #     compiled_idx
+        # ]  # Polars does not support iloc so we have to use this method
+        ret_val_df = ret_val_df.iloc[compiled_idx]
         if sum([x.cells.N for x in self.assays]) != ret_val_df.shape[0]:
             raise AssertionError(
                 "Unexpected number of cells in the merged table. This is unexpected, "
@@ -604,6 +618,7 @@ class AssayMerge:
         for i, col_data in enumerate(computed_data.T):
             consolidated_idx = consolidation_map[order[i]]
             mat[:, consolidated_idx] += col_data
+
         return coo_matrix(mat)
 
     def dump(self, nthreads=4):
@@ -623,11 +638,17 @@ class AssayMerge:
                 total=assay.rawData.numblocks[0],
                 desc=f"Writing data from assay {i+1}/{len(self.assays)} to merged file",
             ):
+                perm_order = self.permutations_rows[i][j]
+                perm_order = perm_order - perm_order.min()
+                # bring a to same order
+                block = block[perm_order, :]
                 a = self._dask_to_coo(block, feat_order, feat_order_map, nthreads)
                 row_idx = self.cellOrder[i][j]
+                # bring a to same order
                 self.assayGroup.set_coordinate_selection(
                     (a.row + row_idx.min(), a.col), a.data.astype(self.assayGroup.dtype)
                 )
+                # self.assayGroup[row_idx, :] = a
                 counter += a.shape[0]
         try:
             assert counter == self.nCells
