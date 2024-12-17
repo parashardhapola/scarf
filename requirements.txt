@@ -8,7 +8,7 @@ threadpoolctl
 joblib
 numba
 hnswlib
-dask[array]>=2024.7.1
+dask[array]==2024.7.1
 zarr
 h5py>=3.3.0
 umap-learn
