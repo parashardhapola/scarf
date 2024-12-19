@@ -1,16 +1,16 @@
 import os
-from typing import Tuple, Optional, Union, List, Callable
+from typing import Callable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from dask.array import from_zarr  # type: ignore
 from loguru import logger
-from scipy.sparse import csr_matrix, coo_matrix
+from scipy.sparse import coo_matrix, csr_matrix
 
-from .base_datastore import BaseDataStore
 from ..assay import Assay
 from ..utils import clean_array, show_dask_progress, system_call, tqdmbar
 from ..writers import create_zarr_dataset
+from .base_datastore import BaseDataStore
 
 
 class GraphDataStore(BaseDataStore):
@@ -396,6 +396,34 @@ class GraphDataStore(BaseDataStore):
         knn_loc = self.zw[ann_loc].attrs["latest_knn"]
         return self.zw[knn_loc].attrs["latest_graph"]
 
+    def _get_latest_knn_loc(self, from_assay: str = None) -> str:
+        """Convenience function to identify location of the latest KNN graph in
+        the Zarr hierarchy.
+
+        Args:
+            from_assay: Name of the assay.
+
+        Returns:
+            Path of KNN graph in the Zarr hierarchy
+        """
+        if from_assay is None:
+            logger.info("Using default assay for KNN graph.")
+            from_assay = self._load_default_assay()
+
+        if from_assay not in self.assay_names:
+            raise ValueError(f"ERROR: Assay {from_assay} does not exist")
+
+        latest_cell_key = self.zw[from_assay].attrs["latest_cell_key"]
+        latest_feat_key = self.zw[from_assay].attrs["latest_feat_key"]
+        normed_loc = f"{from_assay}/normed__{latest_cell_key}__{latest_feat_key}"
+        reduction_loc = self.zw[normed_loc].attrs["latest_reduction"]
+        if "reduction" not in self.zw[reduction_loc]:
+            raise ValueError(f"ERROR: PCA Reduction not found in {reduction_loc}")
+        latest_ann = self.zw[reduction_loc].attrs["latest_ann"]
+        ann_loc = self.zw[latest_ann]
+        latest_knn = ann_loc.attrs["latest_knn"]
+        return latest_knn
+
     def _get_ini_embed(
         self, from_assay: str, cell_key: str, feat_key: str, n_comps: int
     ) -> np.ndarray:
@@ -414,6 +442,7 @@ class GraphDataStore(BaseDataStore):
             Matrix with n_comps dimensions representing initial embedding of cells.
         """
         from sklearn.decomposition import PCA
+
         from ..utils import rescale_array
 
         normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
