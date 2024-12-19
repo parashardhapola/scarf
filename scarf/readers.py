@@ -325,7 +325,7 @@ class CrDirReader(CrReader):
         mtx_separator: str = " ",
         index_offset: int = -1,
         is_filtered: bool = True,
-        filtering_cutoff: int = 500,
+        filtering_cutoff: int | None = None,
     ):
         self.loc: str = loc.rstrip("/") + "/"
         self.matFn = None
@@ -337,6 +337,14 @@ class CrDirReader(CrReader):
             self.validBarcodeIdx = np.array(range(self.nCells))
             self.validBarcodeIdx -= self.indexOffset
         else:
+            if filtering_cutoff is None:
+                if self.nFeatures < 500:
+                    filtering_cutoff = 1
+                elif self.nFeatures < 5000:
+                    filtering_cutoff = self.nFeatures // 10
+                else:
+                    filtering_cutoff = 500
+                logger.info(f"Using {filtering_cutoff} as filtering cutoff")
             self.validBarcodeIdx = self._get_valid_barcodes(filtering_cutoff)
         self.nCells = len(self.validBarcodeIdx)
 
