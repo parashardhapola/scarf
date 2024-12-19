@@ -208,7 +208,7 @@ class CrH5Reader(CrReader):
         grp: Current active group in the hierarchy.
     """
 
-    def __init__(self, h5_fn, is_filtered: bool = True, filtering_cutoff: int = 500):
+    def __init__(self, h5_fn, is_filtered: bool = True, filtering_cutoff: int | None = None):
         self.h5obj = h5py.File(h5_fn, mode="r")
         self.grp = None
         self.validBarcodeIdx = None
@@ -216,6 +216,14 @@ class CrH5Reader(CrReader):
         if is_filtered:
             self.validBarcodeIdx = np.array(range(self.nCells))
         else:
+            if filtering_cutoff is None:
+                if self.nFeatures < 500:
+                    filtering_cutoff = 1
+                elif self.nFeatures < 5000:
+                    filtering_cutoff = self.nFeatures // 10
+                else:
+                    filtering_cutoff = 500
+                logger.info(f"Using {filtering_cutoff} as filtering cutoff")
             self.validBarcodeIdx = self._get_valid_barcodes(filtering_cutoff)
         self.nCells = len(self.validBarcodeIdx)
 
