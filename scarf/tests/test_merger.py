@@ -17,6 +17,7 @@ def test_assay_merge(datastore):
         names=["self1", "self2"],
         merge_assay_name="RNA",
         prepend_text="",
+        overwrite=True,
     )
     writer.dump()
     tmp = zarr.open(fn + "/RNA/counts")
@@ -37,6 +38,7 @@ def test_dataset_merge_2(datastore):
         datasets=[datastore, datastore],
         names=["self1", "self2"],
         prepend_text="",
+        overwrite=True
     )
     writer.dump()
     # Check if the merged file has the correct shape and counts
@@ -68,6 +70,7 @@ def test_dataset_merge_3(datastore):
         datasets=[datastore, datastore, datastore],
         names=["self1", "self2", "self3"],
         prepend_text="",
+        overwrite=True
     )
     writer.dump()
     # Check if the merged file has the correct shape and counts
@@ -84,3 +87,26 @@ def test_dataset_merge_3(datastore):
         datastore.assay2.rawData.compute().sum() * 3
     )
     remove(fn)
+
+def test_dataset_merge_cells(datastore):
+    from ..merge import DatasetMerge
+    from ..datastore.datastore import DataStore
+
+    fn = full_path("merged_zarr.zarr")
+    writer = DatasetMerge(
+        zarr_path=fn,
+        datasets=[datastore, datastore],
+        names=["self1", "self2"],
+        prepend_text="orig",
+        overwrite=True,
+    )
+    writer.dump()
+
+    ds = DataStore(
+        fn,
+        default_assay="RNA",
+    )
+    
+    df = ds.cells.to_pandas_dataframe(ds.cells.columns)
+    df_diff = df[df['orig_RNA_nCounts'] != df['RNA_nCounts']]
+    assert len(df_diff) == 0
