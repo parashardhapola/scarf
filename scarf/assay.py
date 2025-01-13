@@ -22,8 +22,6 @@ from zarr import hierarchy as z_hierarchy
 from .metadata import MetaData
 from .utils import controlled_compute, logger, show_dask_progress
 
-zarrGroup = z_hierarchy.Group
-
 __all__ = ["Assay", "RNAassay", "ATACassay", "ADTassay"]
 
 
@@ -102,7 +100,7 @@ class Assay:
     for later KNN graph construction.
 
     Args:
-        z (zarrGroup): Zarr hierarchy where raw data is located
+        z (z_hierarchy.Group): Zarr hierarchy where raw data is located
         name (str): A label/name for assay.
         cell_data: Metadata class object for the cell attributes.
         nthreads: number for threads to use for dask parallel computations
@@ -122,7 +120,7 @@ class Assay:
 
     def __init__(
         self,
-        z: zarrGroup,
+        z: z_hierarchy.Group,
         workspace: Union[str, None],
         name: str,  # FIXME change to assay_name
         cell_data: MetaData,
@@ -757,7 +755,7 @@ class RNAassay(Assay):
     normalization of scRNA-Seq data.
 
     Args:
-        z (zarrGroup): Zarr hierarchy where raw data is located
+        z (z_hierarchy.Group): Zarr hierarchy where raw data is located
         name (str): A label/name for assay.
         cell_data: Metadata class object for the cell attributes.
         **kwargs: kwargs to be passed to the Assay class
@@ -769,7 +767,7 @@ class RNAassay(Assay):
                 It is set to None until normed method is called.
     """
 
-    def __init__(self, z: zarrGroup, name: str, cell_data: MetaData, **kwargs):
+    def __init__(self, z: z_hierarchy.Group, name: str, cell_data: MetaData, **kwargs):
         super().__init__(z=z, name=name, cell_data=cell_data, **kwargs)
         self.normMethod = norm_lib_size
         if "size_factor" in self.attrs:
@@ -1076,12 +1074,12 @@ class ATACassay(Assay):
     """This subclass of Assay is designed for feature selection and
     normalization of scATAC-Seq data."""
 
-    def __init__(self, z: zarrGroup, name: str, cell_data: MetaData, **kwargs):
+    def __init__(self, z: z_hierarchy.Group, name: str, cell_data: MetaData, **kwargs):
         """This Assay subclass is designed for feature selection and
         normalization of scATAC-Seq data.
 
         Args:
-            z (zarrGroup): Zarr hierarchy where raw data is located
+            z (z_hierarchy.Group): Zarr hierarchy where raw data is located
             name (str): A label/name for assay.
             cell_data: Metadata class object for the cell attributes.
             **kwargs:
@@ -1208,7 +1206,7 @@ class ADTassay(Assay):
     (feature-barcodes library) data from CITE-Seq experiments.
 
     Args:
-        z (zarrGroup): Zarr hierarchy where raw data is located
+        z (z_hierarchy.Group): Zarr hierarchy where raw data is located
         name (str): A label/name for assay.
         cell_data: Metadata class object for the cell attributes.
         **kwargs:
@@ -1217,7 +1215,7 @@ class ADTassay(Assay):
         normMethod: Pointer to the function to be used for normalization of the raw data
     """
 
-    def __init__(self, z: zarrGroup, name: str, cell_data: MetaData, **kwargs):
+    def __init__(self, z: z_hierarchy.Group, name: str, cell_data: MetaData, **kwargs):
         """This subclass of Assay is designed for normalization of ADT/HTO
         (feature-barcodes library) data from CITE-Seq experiments."""
         super().__init__(z=z, name=name, cell_data=cell_data, **kwargs)

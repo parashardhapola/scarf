@@ -278,7 +278,7 @@ class DataStore(MappingDatastore):
         if cell_key is None:
             cell_key = "I"
         assay = self._get_assay(from_assay)
-        if type(assay) != RNAassay:
+        if type(assay) != RNAassay:  # noqa: E721
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
                 f"The provided assay is {type(assay)} type"
@@ -334,7 +334,7 @@ class DataStore(MappingDatastore):
         if cell_key is None:
             cell_key = "I"
         assay = self._get_assay(from_assay)
-        if type(assay) != ATACassay:
+        if type(assay) != ATACassay:  # noqa: E721
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
                 f"The provided assay is {type(assay)} type"
@@ -1286,7 +1286,7 @@ class DataStore(MappingDatastore):
             pass
 
         if cols is not None:
-            if type(cols) != list:
+            if type(cols) != list:  # noqa: E721
                 raise ValueError("ERROR: 'cols' argument must be of type list")
             plot_cols = []
             for i in cols:
@@ -2052,17 +2052,7 @@ class DataStore(MappingDatastore):
         label_colnames: Iterable[str],
         use_latest_knn: bool = True,
         from_assay: Optional[str] = None,
-        cell_key: Optional[str] = None,
-        feat_key: Optional[str] = None,
-        dims: Optional[str] = None,
-        reduction_method: Optional[str] = None,
-        pca_cell_key: Optional[str] = None,
-        ann_metric: Optional[str] = None,
-        ann_efc: Optional[int] = None,
-        ann_ef: Optional[int] = None,
-        ann_m: Optional[int] = None,
-        rand_state: Optional[int] = 4466,
-        k: Optional[int] = None,
+        knn_loc: Optional[str] = None,
         save_result: bool = False,
         return_lisi: bool = True,
     ) -> Optional[List[Tuple[str, np.ndarray]]]:
@@ -2075,17 +2065,7 @@ class DataStore(MappingDatastore):
             label_colnames: Column names from cell metadata containing population labels
             use_latest_knn: Whether to use the most recent KNN graph (default: True)
             from_assay: Name of assay to use if not using latest KNN
-            cell_key: Cell filtering key for normalization
-            feat_key: Feature selection key for normalization
-            dims: Number of dimensions used for reduction
-            reduction_method: Name of dimensionality reduction method
-            pca_cell_key: Cell key used for PCA
-            ann_metric: Metric used for approximate nearest neighbors
-            ann_efc: Construction time/accuracy trade-off for ANN index
-            ann_ef: Query time/accuracy trade-off for ANN index
-            ann_m: Max number of connections in ANN graph
-            rand_state: Random seed for reproducibility (default: 4466)
-            k: Number of nearest neighbors
+            knn_loc: Location of KNN graph if not using latest (default: None)
             save_result: Whether to save LISI scores to cell metadata (default: True)
             return_lisi: Whether to return LISI scores (default: False)
 
@@ -2105,43 +2085,24 @@ class DataStore(MappingDatastore):
             Higher scores indicate more mixing between different labels.
         """
 
-        if use_latest_knn:
+        if use_latest_knn and knn_loc is None:
             knn_loc = self._get_latest_knn_loc(from_assay)
             cell_key = self.zw[self._load_default_assay()].attrs["latest_cell_key"]
             logger.info(f"Using the latest knn graph at location: {knn_loc}")
-        else:
-            if None in [
-                from_assay,
-                cell_key,
-                feat_key,
-                dims,
-                k,
-                reduction_method,
-                pca_cell_key,
-                ann_metric,
-                ann_efc,
-                ann_ef,
-                ann_m,
-                rand_state,
-            ]:
-                raise ValueError(
-                    "Please provide values for all the parameters: from_assay, cell_key, feat_key, dims, k, reduction_method, pca_cell_key, ann_metric, ann_efc, ann_ef, ann_m, rand_state"
-                )
-            normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-            reduction_loc = (
-                f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
-            )
-            ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
-            knn_loc = f"{ann_loc}/knn__{k}"
 
+        else:
+            if knn_loc is None:
+                raise ValueError("Please provide values for the KNN graph location.")
             if knn_loc not in self.zw:
                 raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
+
             logger.info(f"Using the knn graph at location: {knn_loc}")
 
         knn = self.zw[knn_loc]
 
         distances = knn["distances"]
         indices = knn["indices"]
+
         try:
             metadata = self.cells.to_pandas_dataframe(
                 columns=label_colnames + [cell_key]
@@ -2171,17 +2132,7 @@ class DataStore(MappingDatastore):
         use_latest_knn: bool = True,
         res_label: str = "leiden_cluster",
         from_assay: Optional[str] = None,
-        cell_key: Optional[str] = None,
-        feat_key: Optional[str] = None,
-        dims: Optional[str] = None,
-        reduction_method: Optional[str] = None,
-        pca_cell_key: Optional[str] = None,
-        ann_metric: Optional[str] = None,
-        ann_efc: Optional[int] = None,
-        ann_ef: Optional[int] = None,
-        ann_m: Optional[int] = None,
-        rand_state: Optional[int] = 4466,
-        k: Optional[int] = None,
+        knn_loc: Optional[str] = None,
     ) -> Optional[np.ndarray]:
         """Calculate modified silhouette scores for evaluating cluster separation.
 
@@ -2191,18 +2142,8 @@ class DataStore(MappingDatastore):
         Args:
             use_latest_knn: Whether to use most recent KNN graph (default: True)
             res_label: Column name containing cluster labels (default: "leiden_cluster")
-            from_assay: Name of assay to use if not using latest KNN
-            cell_key: Cell filtering key for normalization
-            feat_key: Feature selection key for normalization
-            dims: Number of dimensions used for reduction
-            reduction_method: Name of dimensionality reduction method
-            pca_cell_key: Cell key used for PCA
-            ann_metric: Metric used for approximate nearest neighbors
-            ann_efc: Construction time/accuracy trade-off for ANN index
-            ann_ef: Query time/accuracy trade-off for ANN index
-            ann_m: Max number of connections in ANN graph
-            rand_state: Random seed for reproducibility (default: 4466)
-            k: Number of nearest neighbors
+            from_assay: Name of assay to use if not using latest KNN (default: None)
+            knn_loc: Location of KNN graph if not using latest (default: None)
 
         Returns:
             numpy array of silhouette scores for each cluster, or None if computation fails
@@ -2220,46 +2161,34 @@ class DataStore(MappingDatastore):
             NaN values indicate clusters that couldn't be scored due to size constraints.
         """
 
-        if use_latest_knn:
-            knn_loc = self._get_latest_knn_loc(from_assay)
-            from_assay = self._load_default_assay()
-            logger.info(f"Using the latest knn graph at location: {knn_loc}")
+        def compute_graph_feats(knn_loc: str):
             k = knn_loc.rsplit("/", 1)[-1].split("__")[-1]
             dims = knn_loc.rsplit("/", 2)[0].split("__")[-2]
             feat_key = knn_loc.split("/")[1].split("__")[-1]
+            return k, dims, feat_key
+
+        if from_assay is None:
+            from_assay = self._load_default_assay()
+
+        if use_latest_knn and knn_loc is None:
+            knn_loc = self._get_latest_knn_loc(from_assay)
+            k, dims, feat_key = compute_graph_feats(knn_loc)
+            logger.info(
+                f"Using the latest knn graph at location: {knn_loc} for assay: {from_assay}"
+            )
 
         else:
-            if None in [
-                from_assay,
-                cell_key,
-                feat_key,
-                dims,
-                k,
-                reduction_method,
-                pca_cell_key,
-                ann_metric,
-                ann_efc,
-                ann_ef,
-                ann_m,
-                rand_state,
-            ]:
-                raise ValueError(
-                    "Please provide values for all the parameters: from_assay, cell_key, feat_key, dims, k, reduction_method, pca_cell_key, ann_metric, ann_efc, ann_ef, ann_m, rand_state"
-                )
-            normed_loc = f"{from_assay}/normed__{cell_key}__{feat_key}"
-            reduction_loc = (
-                f"{normed_loc}/reduction__{reduction_method}__{dims}__{pca_cell_key}"
-            )
-            ann_loc = f"{reduction_loc}/ann__{ann_metric}__{ann_efc}__{ann_ef}__{ann_m}__{rand_state}"
-            knn_loc = f"{ann_loc}/knn__{k}"
-
+            if knn_loc is None:
+                raise ValueError("Please provide values for the KNN graph location.")
             if knn_loc not in self.zw:
                 raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
+            k, dims, feat_key, from_assay = compute_graph_feats(knn_loc)
             logger.info(f"Using the knn graph at location: {knn_loc}")
 
         from ..metrics import knn_to_csr_matrix, silhouette_scoring
 
         isHarmonized = self.zw[knn_loc.rsplit("/", 1)[0]].attrs["isHarmonized"]
+
         batches = None
         if isHarmonized:
             batches = self.zw[knn_loc.rsplit("/", 2)[0] + "/harmonizedData"].attrs[
@@ -2274,10 +2203,9 @@ class DataStore(MappingDatastore):
             harmonize=isHarmonized,
             batch_columns=batches,
         )
+
         graph = knn_to_csr_matrix(self.z[knn_loc].indices, self.z[knn_loc].distances)
-
         hvg_data = self.z[knn_loc.rsplit("/", 3)[0] + "/data"]
-
         scores = silhouette_scoring(
             self, ann_obj, graph, hvg_data, from_assay, res_label
         )
