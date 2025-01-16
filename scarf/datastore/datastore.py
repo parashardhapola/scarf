@@ -1,15 +1,15 @@
-from typing import Iterable, Optional, Union, List, Literal, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from dask import array as daskarr
 from loguru import logger
 
-from .mapping_datastore import MappingDatastore
-from ..assay import Assay, RNAassay, ATACassay
+from ..assay import Assay, ATACassay, RNAassay
 from ..feat_utils import hto_demux
-from ..utils import tqdmbar, controlled_compute, ZARRLOC
-from ..writers import create_zarr_obj_array, create_zarr_dataset
+from ..utils import ZARRLOC, controlled_compute, tqdmbar
+from ..writers import create_zarr_dataset, create_zarr_obj_array
+from .mapping_datastore import MappingDatastore
 
 __all__ = ["DataStore"]
 
@@ -75,10 +75,7 @@ class DataStore(MappingDatastore):
             synchronizer=synchronizer,
         )
 
-    def get_assay(
-        self,
-        assay_name: str
-    ) -> Assay:
+    def get_assay(self, assay_name: str) -> Assay:
         """Returns the assay object for the given assay name.
 
         Args:
@@ -91,8 +88,7 @@ class DataStore(MappingDatastore):
             raise ValueError(f"ERROR: Assay {assay_name} not found in the Zarr file")
         else:
             return getattr(self, assay_name)
-        
-    
+
     def filter_cells(
         self,
         attrs: Iterable[str],
@@ -282,7 +278,7 @@ class DataStore(MappingDatastore):
         if cell_key is None:
             cell_key = "I"
         assay = self._get_assay(from_assay)
-        if type(assay) != RNAassay:
+        if type(assay) != RNAassay:  # noqa: E721
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to RNAassay type of assay. "
                 f"The provided assay is {type(assay)} type"
@@ -338,7 +334,7 @@ class DataStore(MappingDatastore):
         if cell_key is None:
             cell_key = "I"
         assay = self._get_assay(from_assay)
-        if type(assay) != ATACassay:
+        if type(assay) != ATACassay:  # noqa: E721
             raise TypeError(
                 f"ERROR: This method of feature selection can only be applied to ATACassay type of assay. "
                 f"The provided assay is {type(assay)} type"
@@ -625,8 +621,8 @@ class DataStore(MappingDatastore):
             cell_key = "I"
         if group_key is None:
             raise ValueError(
-                f"ERROR: Please provide a value for group_key. "
-                f"This should be same as used for `run_marker_search`"
+                "ERROR: Please provide a value for group_key. "
+                "This should be same as used for `run_marker_search`"
             )
         assay = self._get_assay(from_assay)
         try:
@@ -706,8 +702,8 @@ class DataStore(MappingDatastore):
         # Not testing the values of from_assay and cell_key because they will be tested in `get_markers`
         if group_key is None:
             raise ValueError(
-                f"ERROR: Please provide a value for group_key. "
-                f"This should be same as used for `run_marker_search`"
+                "ERROR: Please provide a value for group_key. "
+                "This should be same as used for `run_marker_search`"
             )
         if csv_filename is None:
             raise ValueError(
@@ -1290,7 +1286,7 @@ class DataStore(MappingDatastore):
             pass
 
         if cols is not None:
-            if type(cols) != list:
+            if type(cols) != list:  # noqa: E721
                 raise ValueError("ERROR: 'cols' argument must be of type list")
             plot_cols = []
             for i in cols:
@@ -1496,7 +1492,7 @@ class DataStore(MappingDatastore):
         # TODO: add support for providing a list of subselections, from_assay and cell_keys
         # TODO: add support for different kinds of point markers
 
-        from ..plots import shade_scatter, plot_scatter
+        from ..plots import plot_scatter, shade_scatter
 
         if from_assay is None:
             from_assay = self._defaultAssay
@@ -1728,9 +1724,10 @@ class DataStore(MappingDatastore):
             None
         """
 
-        from ..plots import plot_cluster_hierarchy
+        from networkx import DiGraph, to_pandas_edgelist
+
         from ..dendrogram import CoalesceTree, make_digraph
-        from networkx import to_pandas_edgelist, DiGraph
+        from ..plots import plot_cluster_hierarchy
 
         from_assay, cell_key, feat_key = self._get_latest_keys(
             from_assay, cell_key, feat_key
@@ -2011,8 +2008,8 @@ class DataStore(MappingDatastore):
         else:
             if hashes != assay.z[location].attrs["hashes"]:
                 raise ValueError(
-                    f"ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
-                    f"`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
+                    "ERROR: The values under one or more of these columns: `cell_key`, `feat_key` or/and "
+                    "`pseudotime_key have been updated after running `run_pseudotime_aggregation`"
                 )
 
         da = daskarr.from_zarr(assay.z[location + "/data"], inline_array=True)
@@ -2049,3 +2046,202 @@ class DataStore(MappingDatastore):
             save_dpi=save_dpi,
             show_fig=show_fig,
         )
+
+    def metric_lisi(
+        self,
+        label_colnames: Iterable[str],
+        use_latest_knn: bool = True,
+        from_assay: Optional[str] = None,
+        knn_loc: Optional[str] = None,
+        save_result: bool = False,
+        return_lisi: bool = True,
+    ) -> Optional[List[Tuple[str, np.ndarray]]]:
+        """Calculate Local Inverse Simpson Index (LISI) scores for cell populations.
+
+        LISI measures how well mixed different cell populations are in the local neighborhood
+        of each cell. Higher scores indicate better mixing of different populations.
+
+        Args:
+            label_colnames: Column names from cell metadata containing population labels
+            use_latest_knn: Whether to use the most recent KNN graph (default: True)
+            from_assay: Name of assay to use if not using latest KNN
+            knn_loc: Location of KNN graph if not using latest (default: None)
+            save_result: Whether to save LISI scores to cell metadata (default: True)
+            return_lisi: Whether to return LISI scores (default: False)
+
+        Returns:
+            If return_lisi is True, returns list of tuples containing:
+            - Label column name
+            - numpy array of LISI scores for that label
+            If return_lisi is False, returns None
+
+        Raises:
+            ValueError: If using custom KNN graph but required parameters are missing
+            KeyError: If label columns not found in cell metadata
+
+        Notes:
+            LISI scores are computed for each label column separately.
+            Scores near 1 indicate cells grouped with similar labels.
+            Higher scores indicate more mixing between different labels.
+        """
+
+        if use_latest_knn and knn_loc is None:
+            knn_loc = self._get_latest_knn_loc(from_assay)
+            cell_key = self.zw[self._load_default_assay()].attrs["latest_cell_key"]
+            logger.info(f"Using the latest knn graph at location: {knn_loc}")
+
+        else:
+            if knn_loc is None:
+                raise ValueError("Please provide values for the KNN graph location.")
+            if knn_loc not in self.zw:
+                raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
+
+            logger.info(f"Using the knn graph at location: {knn_loc}")
+
+        knn = self.zw[knn_loc]
+
+        distances = knn["distances"]
+        indices = knn["indices"]
+
+        try:
+            metadata = self.cells.to_pandas_dataframe(
+                columns=label_colnames + [cell_key]
+            )
+            metadata = metadata[metadata[cell_key]]
+        except KeyError:
+            raise KeyError(
+                f"Could not find the column(s) {label_colnames} in the cell metadata table."
+            )
+
+        from ..metrics import compute_lisi
+
+        lisi_scores = compute_lisi(distances, indices, metadata, label_colnames)
+        # lisi_scores Shape -> (n_cells, n_labels)
+        if save_result:
+            for col, vals in zip(label_colnames, lisi_scores.T):
+                col_name = f"lisi__{col}__{knn_loc.split('/')[-1]}"
+                self.cells.insert(column_name=col_name, values=vals, overwrite=True)
+
+        if return_lisi:
+            return list(zip(label_colnames, lisi_scores.T))
+        else:
+            return None
+
+    def metric_silhouette(
+        self,
+        use_latest_knn: bool = True,
+        res_label: str = "leiden_cluster",
+        from_assay: Optional[str] = None,
+        knn_loc: Optional[str] = None,
+    ) -> Optional[np.ndarray]:
+        """Calculate modified silhouette scores for evaluating cluster separation.
+
+        This implements a graph-based silhouette score that measures how similar cells
+        are to their own cluster compared to the nearest neighboring cluster.
+
+        Args:
+            use_latest_knn: Whether to use most recent KNN graph (default: True)
+            res_label: Column name containing cluster labels (default: "leiden_cluster")
+            from_assay: Name of assay to use if not using latest KNN (default: None)
+            knn_loc: Location of KNN graph if not using latest (default: None)
+
+        Returns:
+            numpy array of silhouette scores for each cluster, or None if computation fails
+
+        Raises:
+            ValueError: If using custom KNN graph but required parameters are missing
+
+        Notes:
+            Scores range from -1 to 1:
+            - Near 1: Cluster is well-separated from neighboring clusters
+            - Near 0: Cluster overlaps with neighboring clusters
+            - Near -1: Cluster may be incorrectly assigned
+
+            Implementation uses sampling for efficiency with large datasets.
+            NaN values indicate clusters that couldn't be scored due to size constraints.
+        """
+
+        def compute_graph_feats(knn_loc: str):
+            k = knn_loc.rsplit("/", 1)[-1].split("__")[-1]
+            dims = knn_loc.rsplit("/", 2)[0].split("__")[-2]
+            feat_key = knn_loc.split("/")[1].split("__")[-1]
+            return k, dims, feat_key
+
+        if from_assay is None:
+            from_assay = self._load_default_assay()
+
+        if use_latest_knn and knn_loc is None:
+            knn_loc = self._get_latest_knn_loc(from_assay)
+            k, dims, feat_key = compute_graph_feats(knn_loc)
+            logger.info(
+                f"Using the latest knn graph at location: {knn_loc} for assay: {from_assay}"
+            )
+
+        else:
+            if knn_loc is None:
+                raise ValueError("Please provide values for the KNN graph location.")
+            if knn_loc not in self.zw:
+                raise ValueError(f"Could not find the knn graph at location: {knn_loc}")
+            k, dims, feat_key, from_assay = compute_graph_feats(knn_loc)
+            logger.info(f"Using the knn graph at location: {knn_loc}")
+
+        from ..metrics import knn_to_csr_matrix, silhouette_scoring
+
+        isHarmonized = self.zw[knn_loc.rsplit("/", 1)[0]].attrs["isHarmonized"]
+
+        batches = None
+        if isHarmonized:
+            batches = self.zw[knn_loc.rsplit("/", 2)[0] + "/harmonizedData"].attrs[
+                "batches"
+            ]
+
+        ann_obj = self.make_graph(
+            feat_key=feat_key,
+            dims=dims,
+            k=k,
+            return_ann_object=True,
+            harmonize=isHarmonized,
+            batch_columns=batches,
+        )
+
+        graph = knn_to_csr_matrix(self.z[knn_loc].indices, self.z[knn_loc].distances)
+        hvg_data = self.z[knn_loc.rsplit("/", 3)[0] + "/data"]
+        scores = silhouette_scoring(
+            self, ann_obj, graph, hvg_data, from_assay, res_label
+        )
+        return scores
+
+    def metric_integration(
+        self, batch_labels: List[str], metric: Literal["ari", "nmi"] = "ari"
+    ) -> Optional[float]:
+        """Calculate integration score between different batch labels.
+
+        Measures how well aligned different batches are after integration by comparing
+        their cluster assignments using standard clustering metrics.
+
+        Args:
+            batch_labels: List of column names containing batch labels to compare
+            metric: Metric to use for comparison (default: "ari")
+                - "ari": Adjusted Rand Index
+                - "nmi": Normalized Mutual Information
+
+        Returns:
+            Integration score between 0 and 1, or None if metric is not recognized
+            Higher scores indicate better alignment between batches
+
+        Notes:
+            ARI and NMI measure the agreement between different batch labelings:
+            - Score near 1: Batches are well integrated
+            - Score near 0: Batches show poor integration
+
+            ARI is adjusted for chance and generally more stringent than NMI.
+        """
+        from ..metrics import integration_score
+
+        batch_labels_vals = []
+        for batch in batch_labels:
+            vals = np.array(self.cells.fetch_all(batch))
+            batch_labels_vals.append(vals)
+
+        scores = integration_score(batch_labels_vals, metric)
+        return scores
