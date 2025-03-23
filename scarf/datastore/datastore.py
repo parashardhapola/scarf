@@ -351,8 +351,9 @@ class DataStore(MappingDatastore):
         use_prenormed: bool = False,
         prenormed_store: Optional[str] = None,
         n_threads: Optional[int] = None,
+        skip_save: bool = False,
         **norm_params,
-    ) -> None:
+    ) -> Optional[dict]:
         """Identifies group specific features for a given assay.
 
         Please check out the ``find_markers_by_rank`` function for further details of how marker features for groups
@@ -372,6 +373,7 @@ class DataStore(MappingDatastore):
             prenormed_store: If prenormalized values were computed in a custom manner then, the Zarr group's location
                              can be provided here. (Default value: None)
             n_threads: Number of threads to use to run the marker search. Only used if use_prenormed is True.
+            skip_save: If True then the results are not saved to the Zarr hierarchy.
 
         Returns:
             None
@@ -409,13 +411,16 @@ class DataStore(MappingDatastore):
             **norm_params,
         )
 
-        for i in markers:
-            g = group.create_group(i)
-            vals = markers[i]
-            if len(vals) != 0:
-                for j in vals.columns:
-                    create_zarr_obj_array(g, j, vals[j].values, dtype=vals[j].dtype)
-        return None
+        if skip_save:
+            return markers
+        else:
+            for i in markers:
+                g = group.create_group(i)
+                vals = markers[i]
+                if len(vals) != 0:
+                    for j in vals.columns:
+                        create_zarr_obj_array(g, j, vals[j].values, dtype=vals[j].dtype)
+            return None
 
     def run_pseudotime_marker_search(
         self,

@@ -34,19 +34,22 @@ def find_markers_by_rank(
     n_threads: int,
     **norm_params,
 ) -> dict:
-    """Identify marker genes for given groups.
+    """Identify marker genes/features for given groups using a rank-based approach.
 
     Args:
-        assay:
-        group_key:
-        cell_key:
-        feat_key:
-        batch_size:
-        use_prenormed:
-        prenormed_store:
-        n_threads:
+        assay: An Assay object containing the data to analyze (accessed via iter_normed_feature_wise) 
+        group_key: Column name in cell metadata containing group labels
+        cell_key: Column name in cell metadata indicating which cells to use
+        feat_key: Column name in feature metadata indicating which features to analyze
+        batch_size: Number of features to process at once for memory efficiency
+        use_prenormed: Whether to use pre-normalized data if available
+        prenormed_store: Name of the store containing pre-normalized data
+        n_threads: Number of threads to use for parallel processing
+        **norm_params: Additional parameters to pass to normalization functions
 
     Returns:
+        dict: Dictionary containing marker analysis results for each group, with statistics
+              like fold changes, p-values, and effect sizes
     """
 
     from joblib import Parallel, delayed
@@ -176,18 +179,21 @@ def find_markers_by_regression(
     batch_size: int = 50,
     **norm_params,
 ) -> pd.DataFrame:
-    """
+    """Find features that correlate with a continuous variable using linear regression.
 
     Args:
-        assay:
-        cell_key:
-        feat_key:
-        regressor:
-        min_cells:
-        batch_size:
+        assay: An Assay object containing the data to analyze
+        cell_key: Column name in cell metadata indicating which cells to use
+        feat_key: Column name in feature metadata indicating which features to analyze
+        regressor: 1D numpy array containing the continuous variable to correlate against
+        min_cells: Minimum number of cells where feature must be expressed to be analyzed
+        batch_size: Number of features to process at once for memory efficiency
+        **norm_params: Additional parameters to pass to normalization functions
 
     Returns:
-
+        pd.DataFrame: DataFrame containing correlation results with columns:
+            - r_value: Pearson correlation coefficient
+            - p_value: Statistical significance of correlation
     """
 
     res = {}
@@ -215,14 +221,15 @@ def knn_clustering(
     """
 
     Args:
-        d_array:
-        n_neighbours:
-        n_clusters:
-        n_threads:
-        ann_params:
+        d_array: 2D numpy array of data to cluster (n_samples x n_features)
+        n_neighbours: Number of nearest neighbors to use for building the graph
+        n_clusters: Number of clusters to generate
+        n_threads: Number of threads to use for parallel processing
+        ann_params: Dictionary of parameters for approximate nearest neighbor search.
+                   See default_ann_params in function for available options.
 
     Returns:
-
+        np.ndarray: 1D array of cluster assignments (integers from 1 to n_clusters)
     """
 
     from .ann import instantiate_knn_index, fix_knn_query
@@ -230,15 +237,15 @@ def knn_clustering(
     from scipy.sparse import csr_matrix
 
     def make_knn_mat(data, k, t):
-        """
+        """Create a sparse KNN adjacency matrix from the input data.
 
         Args:
-            data:
-            k:
-            t:
+            data: Input data array to build KNN graph from
+            k: Number of nearest neighbors to find for each point
+            t: Number of threads to use for parallel processing
 
         Returns:
-
+            scipy.sparse.csr_matrix: Sparse adjacency matrix representing the KNN graph
         """
 
         for i in tqdmbar(data.blocks, desc="Fitting KNNs", total=data.numblocks[0]):
@@ -270,14 +277,14 @@ def knn_clustering(
         )
 
     def make_clusters(mat, nc):
-        """
+        """Generate clusters from a KNN adjacency matrix using hierarchical clustering.
 
         Args:
-            mat:
-            nc:
+            mat: Sparse adjacency matrix representing the KNN graph
+            nc: Number of clusters to generate
 
         Returns:
-
+            np.ndarray: Cluster assignments for each point
         """
         import sknetwork as skn
 
@@ -287,15 +294,15 @@ def knn_clustering(
         return skn.hierarchy.cut_straight(dendrogram, n_clusters=nc)
 
     def fix_cluster_order(data, clusters, t):
-        """
+        """Reorder cluster labels based on feature expression patterns.
 
         Args:
-            data:
-            clusters:
-            t:
+            data: Original data array used for clustering
+            clusters: Initial cluster assignments
+            t: Number of threads to use for parallel processing
 
         Returns:
-
+            np.ndarray: Reordered cluster assignments (1-based indexing)
         """
 
         idxmax = show_dask_progress(data.argmax(axis=1), "Sorting clusters", t)
