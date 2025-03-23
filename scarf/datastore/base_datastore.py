@@ -120,8 +120,8 @@ class BaseDataStore:
         """
         try:
             cell_data: zarr.Group = self.zw["cellData"]  # type: ignore
-        except KeyError:
-            raise KeyError("ERROR: cellData not found in zarr file")
+        except KeyError as e:
+            raise KeyError(f"cellData not found in zarr file at {self.z.path}") from e
         return MetaData(cell_data)
 
     @property
@@ -430,11 +430,11 @@ class BaseDataStore:
         Raises:
             ValueError: if `assay_name` is not found in attribute `assayNames`
         """
-        if assay_name in self.assay_names:
-            self._defaultAssay = assay_name
-            self.zw.attrs["defaultAssay"] = assay_name
-        else:
-            raise ValueError(f"ERROR: {assay_name} assay was not found.")
+        if assay_name not in self.assay_names:
+            available = ", ".join(self.assay_names)
+            raise ValueError(f"Assay '{assay_name}' not found. Available assays: {available}")
+        self._defaultAssay = assay_name
+        self.zw.attrs["defaultAssay"] = assay_name
 
     def get_cell_vals(
         self,
@@ -442,9 +442,9 @@ class BaseDataStore:
         cell_key: str,
         k: str,
         clip_fraction: float = 0,
-        use_precached: bool = True,  # FIXE change to use_cached
+        use_precached: bool = True,
         cache_key: str = "prenormed",
-    ):
+    ) -> np.ndarray:
         """Fetches data from the Zarr file.
 
         This convenience function allows fetching values for cells from either cell metadata table or values of a
