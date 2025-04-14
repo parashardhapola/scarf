@@ -957,7 +957,7 @@ class RNAassay(Assay):
         hvg_key_name: str,
         keep_bounds: bool,
         show_plot: bool,
-        max_cells: float,
+        max_cells: int,
         **plot_kwargs,
     ) -> None:
         """Identifies highly variable genes in the dataset.

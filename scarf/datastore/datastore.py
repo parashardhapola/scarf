@@ -236,7 +236,7 @@ class DataStore(MappingDatastore):
         keep_bounds: bool = False,
         show_plot: bool = True,
         hvg_key_name: str = "hvgs",
-        max_cells: float = np.inf,
+        max_cells: int | None = np.inf,
         **plot_kwargs,
     ) -> None:
         """Identify and mark genes as highly variable genes (HVGs). This is a
@@ -293,6 +293,8 @@ class DataStore(MappingDatastore):
                 f"Setting `min_cells` to {min_cells}. Only those genes that are present in atleast this number "
                 f"of cells will be considered HVGs."
             )
+        if max_cells is None:
+            max_cells = np.inf
         assay.mark_hvgs(
             cell_key=cell_key,
             min_cells=min_cells,
