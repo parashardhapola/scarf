@@ -236,6 +236,7 @@ class DataStore(MappingDatastore):
         keep_bounds: bool = False,
         show_plot: bool = True,
         hvg_key_name: str = "hvgs",
+        max_cells: float = np.inf,
         **plot_kwargs,
     ) -> None:
         """Identify and mark genes as highly variable genes (HVGs). This is a
@@ -252,6 +253,9 @@ class DataStore(MappingDatastore):
                        ratio in the selected features. By default, a value is set assuming smallest population has no
                        less than 1% of all cells. So for example, if you have 1000 cells (as per cell_key parameter)
                        then `min-cells` will be set to 10.
+            max_cells: Maximum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. This can be useful to filter out genes that are
+                       expressed in too many cells. Default value is infinity, meaning no upper limit.
             top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
                    for `min_var` parameter. (Default: 500)
             min_var: Minimum variance threshold for HVG selection. (Default: -Infinity)
@@ -290,19 +294,20 @@ class DataStore(MappingDatastore):
                 f"of cells will be considered HVGs."
             )
         assay.mark_hvgs(
-            cell_key,
-            min_cells,
-            top_n,
-            min_var,
-            max_var,
-            min_mean,
-            max_mean,
-            n_bins,
-            lowess_frac,
-            blacklist,
-            hvg_key_name,
-            keep_bounds,
-            show_plot,
+            cell_key=cell_key,
+            min_cells=min_cells,
+            max_cells=max_cells,
+            top_n=top_n,
+            min_var=min_var,
+            max_var=max_var,
+            min_mean=min_mean,
+            max_mean=max_mean,
+            n_bins=n_bins,
+            lowess_frac=lowess_frac,
+            blacklist=blacklist,
+            hvg_key_name=hvg_key_name,
+            keep_bounds=keep_bounds,
+            show_plot=show_plot,
             **plot_kwargs,
         )
 

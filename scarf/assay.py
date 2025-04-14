@@ -957,6 +957,7 @@ class RNAassay(Assay):
         hvg_key_name: str,
         keep_bounds: bool,
         show_plot: bool,
+        max_cells: float,
         **plot_kwargs,
     ) -> None:
         """Identifies highly variable genes in the dataset.
@@ -979,6 +980,9 @@ class RNAassay(Assay):
                        considered a candidate for HVG selection. Large values for this parameter might make it difficult
                        to identify rare populations of cells. Very small values might lead to higher signal to noise
                        ratio in the selected features.
+            max_cells: Maximum number of cells where a gene should have non-zero expression values for it to be
+                       considered a candidate for HVG selection. This can be useful to filter out genes that are
+                       expressed in too many cells. Default value is infinity, meaning no upper limit.
             top_n: Number of top most variable genes to be set as HVGs. This value is ignored if a value is provided
                    for `min_var` parameter.
             min_var: Minimum variance threshold for HVG selection.
@@ -1031,7 +1035,7 @@ class RNAassay(Assay):
             idx = self.feats.multi_sift(
                 [col_renamer("normed_n"), col_renamer("nz_mean")],
                 [min_cells, min_mean],
-                [np.inf, max_mean],
+                [max_cells, max_mean],
                 keep_bounds=keep_bounds,
             )
             idx = idx & self.feats.fetch_all("I") & bl
@@ -1050,7 +1054,7 @@ class RNAassay(Assay):
         hvgs = self.feats.multi_sift(
             [col_renamer(x) for x in ["normed_n", "nz_mean", c_var_col]],
             [min_cells, min_mean, min_var],
-            [np.inf, max_mean, max_var],
+            [max_cells, max_mean, max_var],
             keep_bounds=keep_bounds,
         )
         hvgs = hvgs & self.feats.fetch_all("I") & bl
