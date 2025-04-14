@@ -11,6 +11,7 @@ hnswlib
 dask[array]<=2024.7.1
 zarr<=2.16.0
 h5py>=3.3.0
+numcodecs<0.16
 umap-learn
 leidenalg
 scikit-network
