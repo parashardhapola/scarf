@@ -13,6 +13,7 @@ dynamic = [
 ]
 
 dependencies = [
+    "cmocean>=2.1.0",
     "dask[array]<=2024.7.1",
     "h5py>=3.3.0",
     "hnswlib>=0.8.0",
