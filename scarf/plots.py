@@ -438,15 +438,15 @@ def _scatter_fix_type(v: pd.Series, ints_as_cats: bool) -> pd.Series:
     vt = v.dtype
     if v.nunique() == 1:
         return pd.Series(np.ones(len(v)), index=v.index).astype(np.float64)
-    if vt in [np.bool_]:
+    if vt in [np.bool]:
         # converting first to int to handle bool
-        return v.astype(np.int_).astype("category")
+        return v.astype(np.int64).astype("category")
     if vt in [str, object] or vt.name == "category":
         return v.astype("category")
     elif np.issubdtype(vt.type, np.integer) and ints_as_cats:
         if v.nunique() > 100:
             logger.warning("Too many categories. set force_ints_as_cats to false")
-        return v.astype(np.int_).astype("category")
+        return v.astype(np.int64).astype("category")
     else:
         return v.astype(np.float64)
 
