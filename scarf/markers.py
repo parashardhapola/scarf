@@ -238,8 +238,8 @@ def find_markers_by_rank(
                 temp[:, n, :], columns=out_cols[1:], index=feat_index
             ).sort_values(by="score", ascending=False)
             
-            mask = df.index != pval_col
-            df.loc[mask] = df.loc[mask].round(5)
+            cols_to_round = [col for col in df.columns if col != pval_col]
+            df.loc[:, cols_to_round] = df.loc[:, cols_to_round].round(5)
             results[i] = df
 
             results[i]["feature_index"] = results[i].index
