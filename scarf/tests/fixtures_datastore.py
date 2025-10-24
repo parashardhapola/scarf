@@ -102,7 +102,7 @@ def umap(make_graph, datastore):
 
 
 @pytest.fixture(scope="class")
-def marker_search(datastore):
+def marker_search(paris_clustering, datastore):
     # Testing this with Paris clusters rather than Leiden clusters because of reproducibility.
     datastore.run_marker_search(group_key="RNA_cluster")
 
@@ -176,6 +176,10 @@ def cell_cycle_scoring(datastore):
 
 @pytest.fixture(scope="class")
 def topacedo_sampler(paris_clustering, datastore):
+    try:
+        import topacedo
+    except ImportError:
+        pytest.skip("topacedo package not installed")
     datastore.run_topacedo_sampler(cluster_key="RNA_cluster")
     return datastore.cells.fetch("RNA_sketched")
 
