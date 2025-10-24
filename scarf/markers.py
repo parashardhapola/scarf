@@ -25,11 +25,12 @@ def read_prenormed_batches(store, cell_idx: np.ndarray, batch_size: int, desc: s
 
 def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
     """
-    Vectorized Mann-Whitney U test using pre-computed ranks.
+    Vectorized Mann-Whitney U test using pre-computed ranks with tie correction.
 
     This function calculates p-values for the one-sided "greater" alternative
     by reusing rank data that has already been computed, avoiding redundant
-    ranking operations.
+    ranking operations. Includes tie correction which is critical for 
+    zero-inflated data (e.g., scRNA-seq) where many values are identical.
 
     Args:
         ranked_df: DataFrame with ranks (same shape as original data)
@@ -47,6 +48,23 @@ def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
     # Group sizes
     group_counts = pd.Series(groups).value_counts().reindex(group_set).values
 
+    # Calculate tie correction factor for each feature (column)
+    # This is critical for zero-inflated data where many cells have the same value
+    # T = Σ(t³ - t) / (n * (n - 1)) where t is the size of each tied group
+    tie_corrections = np.zeros(ranked_df.shape[1])
+    
+    for col_idx in range(ranked_df.shape[1]):
+        ranks = ranked_df.iloc[:, col_idx].values
+        # Count occurrences of each unique rank
+        unique_ranks, counts = np.unique(ranks, return_counts=True)
+        # Only tied ranks (appearing more than once) contribute to correction
+        tied_counts = counts[counts > 1]
+        if len(tied_counts) > 0:
+            # Σ(t³ - t) for all tied groups
+            tie_sum = np.sum(tied_counts ** 3 - tied_counts)
+            # Normalize by n*(n-1) to get the correction term
+            tie_corrections[col_idx] = tie_sum / (n_total * (n_total - 1))
+
     pvals = {}
 
     for idx, cluster in enumerate(group_set):
@@ -60,17 +78,17 @@ def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
         # U = R1 - n1*(n1+1)/2
         U1 = R1 - (n1 * (n1 + 1)) / 2
 
-        # Mean and standard deviation of U under null hypothesis
+        # Mean of U under null hypothesis
         mu_U = (n1 * n2) / 2
 
-        # For tied ranks, we need a correction factor
-        # Calculate ties correction for each feature
-        # std_U = sqrt(n1*n2*(n1+n2+1)/12 - n1*n2*sum(t^3-t)/(12*n*(n-1)))
-        # For simplicity and speed, we'll use the uncorrected version first
-        # The correction is usually small unless there are many ties
-        sigma_U = np.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12)
+        # Standard deviation of U with tie correction
+        # Without ties: σ = sqrt(n1*n2*(n+1)/12)
+        # With ties: σ = sqrt((n1*n2/12) * ((n+1) - T))
+        # where T = Σ(t³-t)/(n*(n-1))
+        sigma_U = np.sqrt((n1 * n2 / 12) * ((n_total + 1) - tie_corrections))
 
         # Continuity correction for normal approximation
+        # Reduces bias when approximating discrete distribution with continuous
         z = (U1 - mu_U - 0.5) / sigma_U
 
         # One-sided p-value (alternative='greater')
@@ -114,6 +132,7 @@ def find_markers_by_rank(
     def calc(vdf):
         # Rank data once for all subsequent calculations
         ranked_vdf = vdf.rank(method="dense")
+        ranked_vdf_average = vdf.rank(method="average")
 
         # Calculate normalized mean ranks
         r = ranked_vdf.groupby(groups).mean().reindex(group_set)
@@ -133,7 +152,7 @@ def find_markers_by_rank(
         fc = (m / m_o).fillna(0)
 
         # Vectorized Mann-Whitney U test using pre-computed ranks
-        pvals = mannwhitneyu_from_ranks(ranked_vdf, groups, group_set)
+        pvals = mannwhitneyu_from_ranks(ranked_vdf_average, groups, group_set)
 
         return np.array(
             [
@@ -179,7 +198,12 @@ def find_markers_by_rank(
         d = prenormed_store[gene_idx][:][cell_idx]
         r = calc_rank_mean(rankdata(d, method="dense"))
         m, m_o, e, e_o, fc = calc_frac_fc(d)
-        return gene_idx, np.vstack([r, m, m_o, e, e_o, fc])
+        # Calculate p-values for this single feature
+        ranked_d = rankdata(d, method="dense").reshape(-1, 1)
+        ranked_df = pd.DataFrame(ranked_d)
+        pvals_df = mannwhitneyu_from_ranks(ranked_df, groups, group_set)
+        p = pvals_df.iloc[:, 0].values  # Extract p-values for all groups
+        return gene_idx, np.vstack([r, m, m_o, e, e_o, fc, p])
 
     groups = assay.cells.fetch(group_key, cell_key)
     group_set = np.array(sorted(set(groups)))
