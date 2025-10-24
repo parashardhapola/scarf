@@ -652,6 +652,7 @@ class DataStore(MappingDatastore):
             "frac_exp",
             "frac_exp_rest",
             "fold_change",
+            "p_value",
         ]
         gids = sorted(set(assay.cells.fetch(group_key, key=cell_key)))
         if group_id is not None:
