@@ -27,10 +27,10 @@ def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
     """
     Vectorized Mann-Whitney U test using pre-computed ranks with tie correction.
 
-    This function calculates p-values for the one-sided "greater" alternative
-    by reusing rank data that has already been computed, avoiding redundant
-    ranking operations. Includes tie correction which is critical for 
-    zero-inflated data (e.g., scRNA-seq) where many values are identical.
+    This function calculates two-sided p-values by reusing rank data that has 
+    already been computed, avoiding redundant ranking operations. Includes tie 
+    correction which is critical for zero-inflated data (e.g., scRNA-seq) where 
+    many values are identical.
 
     Args:
         ranked_df: DataFrame with ranks (same shape as original data)
@@ -38,7 +38,7 @@ def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
         group_set: Sorted array of unique group labels
 
     Returns:
-        DataFrame of p-values (groups x features)
+        DataFrame of two-sided p-values (groups x features)
     """
     n_total = len(groups)
 
@@ -91,9 +91,9 @@ def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
         # Reduces bias when approximating discrete distribution with continuous
         z = (U1 - mu_U - 0.5) / sigma_U
 
-        # One-sided p-value (alternative='greater')
-        # We want P(U > observed), so we use survival function
-        pvals[cluster] = norm.sf(z)
+        # Two-sided p-value: test if cluster is different (either direction)
+        # P(|U - μ| > |observed - μ|) = 2 * P(Z > |z|)
+        pvals[cluster] = 2 * norm.sf(np.abs(z))
 
     return pd.DataFrame(pvals, index=ranked_df.columns).T
 
@@ -111,6 +111,10 @@ def find_markers_by_rank(
 ) -> dict:
     """Identify marker genes/features for given groups using a rank-based approach.
 
+    Uses a two-sided Mann-Whitney U test with tie correction to identify genes
+    that are differentially expressed (either up or down) in each group compared
+    to all other groups.
+
     Args:
         assay: An Assay object containing the data to analyze (accessed via iter_normed_feature_wise)
         group_key: Column name in cell metadata containing group labels
@@ -124,7 +128,7 @@ def find_markers_by_rank(
 
     Returns:
         dict: Dictionary containing marker analysis results for each group, with statistics
-              like fold changes, p-values, and effect sizes
+              like fold changes, two-sided p-values, and effect sizes
     """
 
     from joblib import Parallel, delayed
