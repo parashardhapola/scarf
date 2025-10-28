@@ -203,7 +203,7 @@ def find_markers_by_rank(
         r = calc_rank_mean(rankdata(d, method="dense"))
         m, m_o, e, e_o, fc = calc_frac_fc(d)
         # Calculate p-values for this single feature
-        ranked_d = rankdata(d, method="dense").reshape(-1, 1)
+        ranked_d = rankdata(d, method="average").reshape(-1, 1)
         ranked_df = pd.DataFrame(ranked_d)
         pvals_df = mannwhitneyu_from_ranks(ranked_df, groups, group_set)
         p = pvals_df.iloc[:, 0].values  # Extract p-values for all groups
