@@ -1,6 +1,6 @@
 pytest
 pytest-cov
 topacedo
-anndata
+anndata==0.11.4
 black
 scalene

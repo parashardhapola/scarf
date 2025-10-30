@@ -6,7 +6,7 @@ joblib
 leidenalg
 loguru
 networkx==3.4.2
-numba==0.61.2
+numba<=0.61.2
 numcodecs<0.16
 numpy==1.26.4
 packaging
