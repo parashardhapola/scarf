@@ -10,3 +10,4 @@ sphinx-external-toc
 sphinx-tabs
 topacedo
 nbclient<=0.8
+matplotlib
