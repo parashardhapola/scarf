@@ -159,8 +159,8 @@ class TestDataStore:
 
     def test_get_mapping_score(self, run_mapping, cell_attrs, datastore):
         scores = next(datastore.get_mapping_score(target_name="selfmap"))[1]
-        # Mapping has non-determinism across runs, so just verify it returns correct shape
-        assert len(scores) == len(cell_attrs["mapping_scores"])
+        diff = scores - cell_attrs["mapping_scores"].values
+        assert np.all(diff < 1e-2)
 
     def test_coral_mapping_score(self, run_mapping_coral, cell_attrs, datastore):
         # TODO: add test values for coral
