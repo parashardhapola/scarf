@@ -118,7 +118,7 @@
 
 ### Zarr Merge
 ```{eval-rst}
-.. autoclass:: scarf.writers.ZarrMerge
+.. autoclass:: scarf.merge.ZarrMerge
     :members:
 ```
 
