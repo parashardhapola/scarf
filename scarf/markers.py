@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from numba import jit
-from scipy.stats import linregress
+from scipy.stats import linregress, norm
 from scipy.stats import rankdata
 
 from scarf.assay import Assay
@@ -23,6 +23,81 @@ def read_prenormed_batches(store, cell_idx: np.ndarray, batch_size: int, desc: s
         yield pd.DataFrame(batch)
 
 
+def mannwhitneyu_from_ranks(ranked_df, groups, group_set):
+    """
+    Vectorized Mann-Whitney U test using pre-computed ranks with tie correction.
+
+    This function calculates two-sided p-values by reusing rank data that has 
+    already been computed, avoiding redundant ranking operations. Includes tie 
+    correction which is critical for zero-inflated data (e.g., scRNA-seq) where 
+    many values are identical.
+
+    Args:
+        ranked_df: DataFrame with ranks (same shape as original data)
+        groups: Array of group labels for each sample
+        group_set: Sorted array of unique group labels
+
+    Returns:
+        DataFrame of two-sided p-values (groups x features)
+    """
+    n_total = len(groups)
+
+    # Calculate rank sums for each group and feature (vectorized)
+    rank_sums = ranked_df.groupby(groups).sum().reindex(group_set)
+
+    # Group sizes
+    group_counts = pd.Series(groups).value_counts().reindex(group_set).values
+
+    # Calculate tie correction factor for each feature (column)
+    # This is critical for zero-inflated data where many cells have the same value
+    # T = Σ(t³ - t) / (n * (n - 1)) where t is the size of each tied group
+    tie_corrections = np.zeros(ranked_df.shape[1])
+    
+    for col_idx in range(ranked_df.shape[1]):
+        ranks = ranked_df.iloc[:, col_idx].values
+        # Count occurrences of each unique rank
+        unique_ranks, counts = np.unique(ranks, return_counts=True)
+        # Only tied ranks (appearing more than once) contribute to correction
+        tied_counts = counts[counts > 1]
+        if len(tied_counts) > 0:
+            # Σ(t³ - t) for all tied groups
+            tie_sum = np.sum(tied_counts ** 3 - tied_counts)
+            # Normalize by n*(n-1) to get the correction term
+            tie_corrections[col_idx] = tie_sum / (n_total * (n_total - 1))
+
+    pvals = {}
+
+    for idx, cluster in enumerate(group_set):
+        n1 = group_counts[idx]  # Size of current cluster
+        n2 = n_total - n1  # Size of rest
+
+        # Get rank sum for this cluster (vectorized across all features)
+        R1 = rank_sums.iloc[idx].values
+
+        # Calculate U statistic from rank sum
+        # U = R1 - n1*(n1+1)/2
+        U1 = R1 - (n1 * (n1 + 1)) / 2
+
+        # Mean of U under null hypothesis
+        mu_U = (n1 * n2) / 2
+
+        # Standard deviation of U with tie correction
+        # Without ties: σ = sqrt(n1*n2*(n+1)/12)
+        # With ties: σ = sqrt((n1*n2/12) * ((n+1) - T))
+        # where T = Σ(t³-t)/(n*(n-1))
+        sigma_U = np.sqrt((n1 * n2 / 12) * ((n_total + 1) - tie_corrections))
+
+        # Continuity correction for normal approximation
+        # Reduces bias when approximating discrete distribution with continuous
+        z = (U1 - mu_U - 0.5) / sigma_U
+
+        # Two-sided p-value: test if cluster is different (either direction)
+        # P(|U - μ| > |observed - μ|) = 2 * P(Z > |z|)
+        pvals[cluster] = 2 * norm.sf(np.abs(z))
+
+    return pd.DataFrame(pvals, index=ranked_df.columns).T
+
+
 def find_markers_by_rank(
     assay: Assay,
     group_key: str,
@@ -36,8 +111,12 @@ def find_markers_by_rank(
 ) -> dict:
     """Identify marker genes/features for given groups using a rank-based approach.
 
+    Uses a two-sided Mann-Whitney U test with tie correction to identify genes
+    that are differentially expressed (either up or down) in each group compared
+    to all other groups.
+
     Args:
-        assay: An Assay object containing the data to analyze (accessed via iter_normed_feature_wise) 
+        assay: An Assay object containing the data to analyze (accessed via iter_normed_feature_wise)
         group_key: Column name in cell metadata containing group labels
         cell_key: Column name in cell metadata indicating which cells to use
         feat_key: Column name in feature metadata indicating which features to analyze
@@ -49,13 +128,18 @@ def find_markers_by_rank(
 
     Returns:
         dict: Dictionary containing marker analysis results for each group, with statistics
-              like fold changes, p-values, and effect sizes
+              like fold changes, two-sided p-values, and effect sizes
     """
 
     from joblib import Parallel, delayed
 
     def calc(vdf):
-        r = vdf.rank(method="dense").groupby(groups).mean().reindex(group_set)
+        # Rank data once for all subsequent calculations
+        ranked_vdf = vdf.rank(method="dense")
+        ranked_vdf_average = vdf.rank(method="average")
+
+        # Calculate normalized mean ranks
+        r = ranked_vdf.groupby(groups).mean().reindex(group_set)
         r = r / r.sum()
 
         g = np.array([pd.Series(groups).value_counts().reindex(group_set).values]).T
@@ -71,8 +155,19 @@ def find_markers_by_rank(
 
         fc = (m / m_o).fillna(0)
 
+        # Vectorized Mann-Whitney U test using pre-computed ranks
+        pvals = mannwhitneyu_from_ranks(ranked_vdf_average, groups, group_set)
+
         return np.array(
-            [r.values, m.values, m_o.values, e.values, e_o.values, fc.values]
+            [
+                r.values,
+                m.values,
+                m_o.values,
+                e.values,
+                e_o.values,
+                fc.values,
+                pvals.values,
+            ]
         ).T
 
     @jit(nopython=True)
@@ -107,7 +202,12 @@ def find_markers_by_rank(
         d = prenormed_store[gene_idx][:][cell_idx]
         r = calc_rank_mean(rankdata(d, method="dense"))
         m, m_o, e, e_o, fc = calc_frac_fc(d)
-        return gene_idx, np.vstack([r, m, m_o, e, e_o, fc])
+        # Calculate p-values for this single feature
+        ranked_d = rankdata(d, method="average").reshape(-1, 1)
+        ranked_df = pd.DataFrame(ranked_d)
+        pvals_df = mannwhitneyu_from_ranks(ranked_df, groups, group_set)
+        p = pvals_df.iloc[:, 0].values  # Extract p-values for all groups
+        return gene_idx, np.vstack([r, m, m_o, e, e_o, fc, p])
 
     groups = assay.cells.fetch(group_key, cell_key)
     group_set = np.array(sorted(set(groups)))
@@ -122,6 +222,7 @@ def find_markers_by_rank(
         "frac_exp",
         "frac_exp_rest",
         "fold_change",
+        "p_value",
     ]
     if use_prenormed:
         if prenormed_store is None:
@@ -159,12 +260,16 @@ def find_markers_by_rank(
         temp = np.vstack([calc(x) for x in batch_iterator])
         results = {}
         feat_index = assay.feats.active_index(feat_key)
+        pval_col = "p_value"
         for n, i in enumerate(group_set):
-            results[i] = (
-                pd.DataFrame(temp[:, n, :], columns=out_cols[1:], index=feat_index)
-                .sort_values(by="score", ascending=False)
-                .round(5)
-            )
+            df = pd.DataFrame(
+                temp[:, n, :], columns=out_cols[1:], index=feat_index
+            ).sort_values(by="score", ascending=False)
+            
+            cols_to_round = [col for col in df.columns if col != pval_col]
+            df.loc[:, cols_to_round] = df.loc[:, cols_to_round].round(5)
+            results[i] = df
+
             results[i]["feature_index"] = results[i].index
             results[i] = results[i][out_cols]
         return results

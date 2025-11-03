@@ -28,7 +28,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements_extra.txt
-        pip install pytest pytest-cov topacedo anndata pcst_fast
+        pip install pytest pytest-cov topacedo anndata==0.11.4 pcst_fast
     - name: Test with pytest
       run: |
         pytest --cov=.

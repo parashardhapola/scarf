@@ -176,6 +176,10 @@ def cell_cycle_scoring(datastore):
 
 @pytest.fixture(scope="class")
 def topacedo_sampler(paris_clustering, datastore):
+    try:
+        import topacedo
+    except ImportError:
+        pytest.skip("topacedo package not installed")
     datastore.run_topacedo_sampler(cluster_key="RNA_cluster")
     return datastore.cells.fetch("RNA_sketched")
 
