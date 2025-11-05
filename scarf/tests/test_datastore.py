@@ -193,7 +193,7 @@ class TestDataStore:
     def test_run_pseudotime_aggregation(self, pseudotime_aggregation, datastore):
         precalc_values = np.load(full_path("aggregated_feat_idx.npy"))
         test_values = datastore.z.RNA.aggregated_I_I_RNA_pseudotime.feature_indices[:]
-        assert np.all(precalc_values == test_values)
+        assert np.array_equal(precalc_values.astype(np.int64), test_values.astype(np.int64))
 
         precalc_values = np.load(full_path("aggregated_df_top_10.npy"))
         test_values = datastore.z.RNA.aggregated_I_I_RNA_pseudotime.data[:10]
