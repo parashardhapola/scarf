@@ -201,7 +201,8 @@ class TestDataStore:
 
         precalc_values = np.load(full_path("pseudotime_clusters.npy"))
         test_values = datastore.RNA.feats.fetch_all("pseudotime_clusters")
-        assert np.all(precalc_values == test_values)
+        # Compare values ignoring dtype differences (dtype can vary by platform/numpy version)
+        assert np.array_equal(precalc_values.astype(np.int64), test_values.astype(np.int64))
 
     def test_add_grouped_assay(self, grouped_assay, datastore):
         precalc_values = np.load(full_path("ptime_modules_group_1.npy"))
