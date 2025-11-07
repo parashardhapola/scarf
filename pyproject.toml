@@ -1,4 +1,64 @@
-[build.system]
+[project]
+name = "scarf"
+version = "0.31.4"
+readme = { file = "README.rst", content-type = "text/x-rst" }
+
+dynamic = [
+    "description",
+    "requires-python",
+    "license",
+    "authors",
+    "keywords",
+    "classifiers",
+]
+
+dependencies = [
+    "cmocean>=2.1.0",
+    "dask[array]<=2024.7.1",
+    "h5py>=3.3.0",
+    "hnswlib>=0.8.0",
+    "importlib-metadata>=8.7.0",
+    "joblib>=1.5.1",
+    "leidenalg>=0.10.2",
+    "loguru>=0.7.3",
+    "networkx>=3.4.2",
+    "numba>=0.61.2",
+    "numcodecs<0.16",
+    "numpy>=1.26.4,<3.0",
+    "packaging>=25.0",
+    "pandas>=2.2.3",
+    "polars>=1.30.0",
+    "pyarrow>=20.0.0",
+    "scikit-learn>=1.6.1",
+    "scikit-network>=0.33.3",
+    "scipy>=1.15.3",
+    "setuptools>=80.9.0",
+    "statsmodels>=0.14.4",
+    "threadpoolctl>=3.6.0",
+    "tqdm>=4.67.1",
+    "umap-learn>=0.5.7",
+    "zarr<=2.16.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "requests",
+    "pytest",
+    "pytest-cov"
+]
+extra = [
+    "requests",
+    "gensim",
+    "kneed",
+    "matplotlib",
+    "seaborn",
+    "cmocean",
+    "datashader",
+    "ipython-autotime",
+    "ipywidgets"
+]
+
+[build-system]
 requires = [
     "setuptools",
     "wheel"
