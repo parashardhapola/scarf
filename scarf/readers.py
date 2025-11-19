@@ -12,7 +12,7 @@
 import math
 import os
 from abc import ABC, abstractmethod
-from typing import IO, Dict, Generator, List, Optional, Tuple
+from typing import IO, Dict, Generator, List, Optional, Tuple, Union
 
 import h5py
 import numpy as np
@@ -778,7 +778,9 @@ class H5adReader:
         )
         return self.feat_ids()
 
-    def _replace_category_values(self, v: np.ndarray, key: str, group: str):
+    def _replace_category_values(
+        self, v: Union[np.ndarray, h5py.Group, h5py.Dataset], key: str, group: str
+    ) -> np.ndarray:
         # check if v is a Group with codes + categories structure
         if isinstance(v, h5py.Group):
             if "codes" in v and "categories" in v:
