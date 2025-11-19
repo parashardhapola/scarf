@@ -769,10 +769,7 @@ class H5adReader:
     def feat_names(self) -> np.ndarray:
         """Returns a list of feature names."""
         if self._check_exists(self.featureAttrsKey, self.featNamesKey):
-            if self.groupCodes[self.featureAttrsKey] == 1:
-                values = self.h5[self.featureAttrsKey][self.featNamesKey]
-            else:
-                values = self.h5[self.featureAttrsKey][self.featNamesKey]
+            values = self.h5[self.featureAttrsKey][self.featNamesKey]
             return self._replace_category_values(
                 values, self.featNamesKey, self.featureAttrsKey
             ).astype(object)
