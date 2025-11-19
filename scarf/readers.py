@@ -772,7 +772,7 @@ class H5adReader:
             if self.groupCodes[self.featureAttrsKey] == 1:
                 values = self.h5[self.featureAttrsKey][self.featNamesKey]
             else:
-                values = self.h5[self.featureAttrsKey][self.featNamesKey][:]
+                values = self.h5[self.featureAttrsKey][self.featNamesKey]
             return self._replace_category_values(
                 values, self.featNamesKey, self.featureAttrsKey
             ).astype(object)
@@ -782,6 +782,25 @@ class H5adReader:
         return self.feat_ids()
 
     def _replace_category_values(self, v: np.ndarray, key: str, group: str):
+        # check if v is a Group with codes + categories structure
+        if isinstance(v, h5py.Group):
+            if "codes" in v and "categories" in v:
+                codes = v["codes"][:]
+                categories = v["categories"][:]
+                try:
+                    return np.array([categories[x] for x in codes])
+                except (IndexError, TypeError):
+                    logger.warning(f"Failed to decode categorical data for {key}")
+                    return np.array([f"feature_{x}" for x in range(len(codes))])
+            else:
+                # It's a Group but doesn't have the expected structure, try to read it as dataset
+                logger.warning(f"{key} is a Group but missing 'codes' or 'categories', attempting to extract data")
+                return v[:]
+        
+        # if v is a Dataset
+        if isinstance(v, h5py.Dataset):
+            v = v[:]
+        
         if self.catNamesKey is not None:
             if self._check_exists(group, self.catNamesKey):
                 cat_g = self.h5[group][self.catNamesKey]
