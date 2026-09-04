@@ -59,8 +59,14 @@ type AgentReport = (
     | BiologicalInterpretationReport
 )
 type AgentPersistenceTarget = str | Path | zarr.Group | DataStore
-type AgentWorkflowStatus = Literal["running", "completed", "failed", "abandoned"]
-type AgentTerminalStatus = Literal["completed", "failed", "abandoned"]
+type AgentWorkflowStatus = Literal[
+    "running",
+    "completed",
+    "abstained",
+    "failed",
+    "abandoned",
+]
+type AgentTerminalStatus = Literal["completed", "abstained", "failed", "abandoned"]
 
 _FORMAT = "scarf_agent_reports"
 _RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
@@ -1509,8 +1515,8 @@ def finalize_agent_workflow(
     workspace: str | None = None,
 ) -> AgentWorkflowRun:
     """Write the one terminal event allowed for a running workflow."""
-    if status not in {"completed", "failed", "abandoned"}:
-        raise ValueError("status must be completed, failed, or abandoned")
+    if status not in {"completed", "abstained", "failed", "abandoned"}:
+        raise ValueError("status must be completed, abstained, failed, or abandoned")
     if not isinstance(message, str):
         raise TypeError("message must be a string")
     group, datastore, resolved_workspace, _analysis_store = _resolve_target(
@@ -1541,8 +1547,10 @@ def finalize_agent_workflow(
         workflow_run_id,
         resolved_workspace,
     )
-    if status == "completed" and not reports:
-        raise ValueError("A completed workflow must contain at least one report")
+    if status in {"completed", "abstained"} and not reports:
+        raise ValueError(
+            "A completed or abstained workflow must contain at least one report"
+        )
     finalization = AgentWorkflowFinalization(
         workflowRunId=workflow_run_id,
         workspace=resolved_workspace,

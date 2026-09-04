@@ -13,7 +13,9 @@ from ...datastore.datastore import DataStore
 from ...storage.stores import zarr_root_path
 from ...utils.logging import logger
 from .. import record_io
+from ..decision_persistence import load_latest_decision_workflow_snapshot
 from ..ingest import IngestResult, detect_format, ingest
+from ..ingest.manifest import DatasetManifest, inspect_h5ad_manifest
 from ..persistence import (
     AgentWorkflowRun,
     create_agent_workflow,
@@ -21,6 +23,7 @@ from ..persistence import (
     load_agent_report,
     load_agent_workflow,
 )
+from ..study_contract import StudyContract
 from . import journal
 from .context import ContextStagesMixin
 from .finalization import FinalizationStagesMixin
@@ -91,6 +94,7 @@ class AgentOrchestrator(
     def run(self, request: AutomatedWorkflowRequest) -> AutomatedWorkflowResult:
         """Ingest the request and continue until completion or a persisted pause."""
         format_name = detect_format(request.sourcePath)
+        dataset_manifest: DatasetManifest | None = None
         logger.info(
             f"Starting automated agent workflow from {format_name!r} input "
             f"(workspace={request.workspace is not None})"
@@ -119,6 +123,68 @@ class AgentOrchestrator(
                     currentStage="ingest",
                     notes=["An existing Zarr input cannot be copied implicitly"],
                 )
+        if format_name == "h5ad":
+            matrix_key = request.ingestDirections.get("matrixKey")
+            try:
+                dataset_manifest = inspect_h5ad_manifest(
+                    request.sourcePath,
+                    source_uri=(
+                        str(request.ingestDirections["sourceUri"])
+                        if request.ingestDirections.get("sourceUri") is not None
+                        else request.sourcePath
+                    ),
+                    author_label_policy=request.authorLabelPolicy,
+                    matrix_key=str(matrix_key) if matrix_key is not None else None,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                return AutomatedWorkflowResult(
+                    status="failed",
+                    currentStage="ingest",
+                    notes=[f"CELLxGENE manifest inspection failed: {exc}"],
+                )
+            manifest_decision = dataset_manifest.decision
+            if manifest_decision.status == "needsInput":
+                return AutomatedWorkflowResult(
+                    status="needsInput",
+                    currentStage="ingest",
+                    datasetManifest=dataset_manifest,
+                    needsInput=WorkflowNeedsInput(
+                        questions=[
+                            WorkflowQuestion(
+                                questionId="datasetMatrixKey",
+                                question=(
+                                    manifest_decision.summary
+                                    + ". Rerun with ingestDirections.matrixKey set "
+                                    "to the selected option."
+                                ),
+                                options=list(manifest_decision.options),
+                                evidenceIds=list(manifest_decision.evidenceIds),
+                            )
+                        ]
+                    ),
+                    limitations=list(dataset_manifest.priorFiltering.limitations),
+                )
+            if manifest_decision.status == "abstained":
+                return AutomatedWorkflowResult(
+                    status="abstained",
+                    currentStage="ingest",
+                    datasetManifest=dataset_manifest,
+                    limitations=list(dataset_manifest.priorFiltering.limitations),
+                    unresolvedClaims=[manifest_decision.summary],
+                    notes=[
+                        "The count-dependent RNA workflow did not run because its "
+                        "input contract is not satisfied."
+                    ],
+                )
+            selected_matrix = manifest_decision.selectedMatrixKey
+            if selected_matrix is None:
+                raise RuntimeError("Supported manifest lacks a selected matrix")
+            ingest_directions = {
+                **request.ingestDirections,
+                "matrixKey": selected_matrix,
+            }
+            request = request.model_copy(update={"ingestDirections": ingest_directions})
+
         if format_name == "zarr" and request.workspace is not None:
             zarr_path = str(Path(request.sourcePath).resolve())
             effective_request = request.model_copy(update={"zarrPath": zarr_path})
@@ -196,6 +262,7 @@ class AgentOrchestrator(
             workflow,
             request_record,
             ingest_result,
+            dataset_manifest,
         )
         return self._continue(
             store,
@@ -647,8 +714,7 @@ class AgentOrchestrator(
             terminal_candidates = [
                 outcome
                 for outcome in observed
-                if outcome.stage == "biological_interpretation"
-                and outcome.status == "done"
+                if outcome.stage == "analysis_finalization" and outcome.status == "done"
             ]
         elif workflow.status == "failed":
             terminal_candidates = [
@@ -683,6 +749,28 @@ class AgentOrchestrator(
             preprocessing_plan = AutomatedPreprocessingPlan.model_validate(
                 plan_outcome.outputs["preprocessingPlan"]
             )
+        feature_preprocessing = validated_done.get("feature_policy_preprocessing")
+        if (
+            feature_preprocessing is not None
+            and "resolvedPreprocessingPlan" in feature_preprocessing.outputs
+        ):
+            preprocessing_plan = AutomatedPreprocessingPlan.model_validate(
+                feature_preprocessing.outputs["resolvedPreprocessingPlan"]
+            )
+
+        dataset_manifest: DatasetManifest | None = None
+        ingest_stage = validated_done.get("ingest")
+        if ingest_stage is not None and ingest_stage.outputs.get("datasetManifest"):
+            dataset_manifest = DatasetManifest.model_validate(
+                ingest_stage.outputs["datasetManifest"]
+            )
+
+        study_contract: StudyContract | None = None
+        context_outcome = validated_done.get("experimental_context")
+        if context_outcome is not None and "studyContract" in context_outcome.outputs:
+            study_contract = StudyContract.model_validate(
+                context_outcome.outputs["studyContract"]
+            )
 
         final_analysis: FinalAnalysisHandoff | None = None
         finalization_outcome = validated_done.get("analysis_finalization")
@@ -693,18 +781,62 @@ class AgentOrchestrator(
             final_analysis = FinalAnalysisHandoff.model_validate(
                 finalization_outcome.outputs["finalAnalysis"]
             )
+            persisted_handoff = journal.load_final_analysis_handoff(
+                store,
+                prefix,
+                workflow.workflowRunId,
+                final_analysis.handoffId,
+            )
+            if persisted_handoff != final_analysis:
+                raise ValueError("Final handoff journal content differs from outcome")
 
         for reference in workflow.reports:
             load_agent_report(store, reference)
         notes = [workflow.finalizationMessage] if workflow.finalizationMessage else []
+        verification_summary: list[str] = []
+        decision_run_id: str | None = None
+        if workflow.status == "completed":
+            decision_snapshot = load_latest_decision_workflow_snapshot(
+                store,
+                workflow.workflowRunId,
+                workspace=request_record.request.workspace,
+            )
+            if (
+                final_analysis is None
+                or decision_snapshot.workflow.status != "completed"
+                or decision_snapshot.workflow.finalHandoffId != final_analysis.handoffId
+            ):
+                raise ValueError(
+                    "Terminal orchestration and decision ledger do not resolve"
+                )
+            decision_run_id = workflow.workflowRunId
+            verification_by_record = {
+                value.decisionRecordId: value
+                for value in decision_snapshot.workflow.verificationRecords
+            }
+            verification_summary = [
+                (
+                    f"{record.decisionId}: "
+                    f"{len(verification_by_record[record.recordId].checks)} "
+                    f"deterministic checks passed ({record.source})."
+                )
+                for record in decision_snapshot.workflow.active_decision_records()
+            ]
         result = AutomatedWorkflowResult(
             status=cast(AutomatedWorkflowStatus, workflow.status),
             currentStage=terminal_outcome.stage,
             zarrPath=str(store.zarr_loc),
             workflowRun=workflow,
             reportReferences=list(workflow.reports),
+            datasetManifest=dataset_manifest,
             preprocessingPlan=preprocessing_plan,
+            studyContract=study_contract,
             finalAnalysis=final_analysis,
+            finalHandoffId=(
+                final_analysis.handoffId if final_analysis is not None else None
+            ),
+            decisionRunId=decision_run_id,
+            verificationSummary=verification_summary,
             notes=notes,
         )
         result = result.model_copy(
@@ -726,6 +858,7 @@ class AgentOrchestrator(
         """Continue the stage machine from the latest validated checkpoint."""
         logger.info(f"Running stage sequence for workflow {workflow.workflowRunId}")
         prefix = journal._ensure_orchestration_store(store)
+        self._load_or_create_decision_workflow(store, request_record)
         ingest_outcome = journal._validated_done_outcome(
             store,
             prefix,
@@ -736,6 +869,11 @@ class AgentOrchestrator(
         )
         if ingest_outcome is None:
             raise RuntimeError("The persisted ingest stage is missing")
+        dataset_manifest = (
+            DatasetManifest.model_validate(ingest_outcome.outputs["datasetManifest"])
+            if ingest_outcome.outputs.get("datasetManifest") is not None
+            else None
+        )
         cell_selection = ingest_outcome.artifacts.get("cellSelection")
         if cell_selection is None or cell_selection.kind != "cell_selection":
             raise RuntimeError(
@@ -758,6 +896,7 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 enrichment_outcome,
+                dataset_manifest=dataset_manifest,
             )
         parents = [journal._parent_link(enrichment_outcome)]
 
@@ -776,6 +915,7 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 hto_outcome,
+                dataset_manifest=dataset_manifest,
             )
         quality_metric_artifacts = self._named_stage_artifacts(
             hto_outcome,
@@ -807,7 +947,11 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 context_outcome,
+                dataset_manifest=dataset_manifest,
             )
+        study_contract = StudyContract.model_validate(
+            context_outcome.outputs["studyContract"]
+        )
         parents = [journal._parent_link(context_outcome)]
 
         plan_outcome, preprocessing_plan = self.preprocessing_plan_stage(
@@ -818,6 +962,7 @@ class AgentOrchestrator(
             enrichment,
             experimental,
             ingest_outcome,
+            study_contract,
             answers,
             resume_record=resume_record,
         )
@@ -827,17 +972,25 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 plan_outcome,
+                dataset_manifest=dataset_manifest,
                 preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
             )
         parents = [journal._parent_link(plan_outcome)]
 
-        preprocessing_outcome, preprocessed = self.preprocessing_stage(
+        (
+            preprocessing_outcome,
+            preprocessed,
+            preprocessing_plan,
+        ) = self.preprocessing_stage(
             store,
             workflow,
             request_record,
             parents,
             preprocessing_plan,
             experimental,
+            study_contract,
+            answers,
             resume_record=resume_record,
         )
         if preprocessing_outcome.status != "done":
@@ -846,7 +999,9 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 preprocessing_outcome,
+                dataset_manifest=dataset_manifest,
                 preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
             )
         parents = [journal._parent_link(preprocessing_outcome)]
 
@@ -861,6 +1016,7 @@ class AgentOrchestrator(
             enrichment_outcome.reportReferences[0],
             context_outcome.reportReferences[0],
             answers,
+            study_contract=study_contract,
             resume_record=resume_record,
         )
         if tuning_outcome.status != "done":
@@ -869,7 +1025,127 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 tuning_outcome,
+                dataset_manifest=dataset_manifest,
                 preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
+            )
+        baseline_preprocessing_outcome = preprocessing_outcome
+        baseline_preprocessed = list(preprocessed)
+        baseline_tuning_outcome = tuning_outcome
+        baseline_tuning_report = tuning_report
+        parents = [journal._parent_link(baseline_tuning_outcome)]
+
+        (
+            feature_review_outcome,
+            preprocessing_plan,
+            feature_policy_revised,
+        ) = self.feature_policy_review_stage(
+            store,
+            workflow,
+            request_record,
+            parents,
+            preprocessing_plan,
+            baseline_tuning_report,
+            answers,
+            resume_record=resume_record,
+        )
+        if feature_review_outcome.status != "done":
+            return journal.paused_or_failed_result(
+                store,
+                workflow,
+                request_record,
+                feature_review_outcome,
+                dataset_manifest=dataset_manifest,
+                preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
+            )
+        parents = [journal._parent_link(feature_review_outcome)]
+
+        if feature_policy_revised:
+            (
+                feature_preprocessing_outcome,
+                preprocessed,
+                preprocessing_plan,
+            ) = self.preprocessing_stage(
+                store,
+                workflow,
+                request_record,
+                parents,
+                preprocessing_plan,
+                experimental,
+                study_contract,
+                answers,
+                resume_record=resume_record,
+                stage_name="feature_policy_preprocessing",
+            )
+        else:
+            (
+                feature_preprocessing_outcome,
+                preprocessed,
+                preprocessing_plan,
+            ) = self.reuse_feature_policy_preprocessing_stage(
+                store,
+                workflow,
+                request_record,
+                parents,
+                preprocessing_plan,
+                baseline_preprocessing_outcome,
+                baseline_preprocessed,
+                resume_record=resume_record,
+            )
+        if feature_preprocessing_outcome.status != "done":
+            return journal.paused_or_failed_result(
+                store,
+                workflow,
+                request_record,
+                feature_preprocessing_outcome,
+                dataset_manifest=dataset_manifest,
+                preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
+            )
+        parents = [journal._parent_link(feature_preprocessing_outcome)]
+
+        if feature_policy_revised:
+            tuning_outcome, tuning_report = self.parameter_tuning_stage(
+                store,
+                workflow,
+                request_record,
+                parents,
+                preprocessing_plan,
+                preprocessed,
+                experimental,
+                enrichment_outcome.reportReferences[0],
+                context_outcome.reportReferences[0],
+                answers,
+                study_contract=study_contract,
+                resume_record=resume_record,
+                stage_name="feature_policy_tuning",
+            )
+            tuning_reference = (
+                tuning_outcome.reportReferences[0]
+                if tuning_outcome.reportReferences
+                else baseline_tuning_outcome.reportReferences[0]
+            )
+        else:
+            tuning_outcome, tuning_report = self.reuse_feature_policy_tuning_stage(
+                store,
+                workflow,
+                request_record,
+                parents,
+                baseline_tuning_outcome,
+                baseline_tuning_report,
+                resume_record=resume_record,
+            )
+            tuning_reference = baseline_tuning_outcome.reportReferences[0]
+        if tuning_outcome.status != "done":
+            return journal.paused_or_failed_result(
+                store,
+                workflow,
+                request_record,
+                tuning_outcome,
+                dataset_manifest=dataset_manifest,
+                preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
             )
         parents = [journal._parent_link(tuning_outcome)]
 
@@ -881,7 +1157,8 @@ class AgentOrchestrator(
             preprocessing_plan,
             preprocessed,
             tuning_report,
-            tuning_outcome.reportReferences[0],
+            tuning_reference,
+            study_contract,
             resume_record=resume_record,
         )
         if finalization_outcome.status != "done":
@@ -890,50 +1167,57 @@ class AgentOrchestrator(
                 workflow,
                 request_record,
                 finalization_outcome,
+                dataset_manifest=dataset_manifest,
                 preprocessing_plan=preprocessing_plan,
-            )
-        parents = [journal._parent_link(finalization_outcome)]
-
-        biology_outcome = self.biological_interpretation_stage(
-            store,
-            workflow,
-            request_record,
-            parents,
-            enrichment,
-            experimental,
-            tuning_report,
-            final_analysis,
-            enrichment_outcome.reportReferences[0],
-            context_outcome.reportReferences[0],
-            tuning_outcome.reportReferences[0],
-            answers,
-            resume_record=resume_record,
-        )
-        if biology_outcome.status != "done":
-            return journal.paused_or_failed_result(
-                store,
-                workflow,
-                request_record,
-                biology_outcome,
-                preprocessing_plan=preprocessing_plan,
-                final_analysis=final_analysis,
+                study_contract=study_contract,
             )
 
         terminal = finalize_agent_workflow(
             store,
             workflow.workflowRunId,
             status="completed",
-            message="Automated Scarf agent workflow completed",
+            message="Decision-driven Scarf analysis completed",
         )
+        decision_snapshot = load_latest_decision_workflow_snapshot(
+            store,
+            workflow.workflowRunId,
+            workspace=request_record.request.workspace,
+        )
+        if (
+            decision_snapshot.workflow.status != "completed"
+            or decision_snapshot.workflow.finalHandoffId != final_analysis.handoffId
+        ):
+            raise ValueError(
+                "Completed orchestration and decision handoff identities differ"
+            )
+        verification_by_record = {
+            value.decisionRecordId: value
+            for value in decision_snapshot.workflow.verificationRecords
+        }
+        verification_summary = [
+            (
+                f"{record.decisionId}: "
+                f"{len(verification_by_record[record.recordId].checks)} "
+                f"deterministic checks passed ({record.source})."
+            )
+            for record in decision_snapshot.workflow.active_decision_records()
+        ]
         completed = AutomatedWorkflowResult(
             status="completed",
-            currentStage="biological_interpretation",
+            currentStage="analysis_finalization",
             zarrPath=str(store.zarr_loc),
             workflowRun=terminal,
             reportReferences=list(terminal.reports),
+            datasetManifest=dataset_manifest,
             preprocessingPlan=preprocessing_plan,
+            studyContract=study_contract,
             finalAnalysis=final_analysis,
-            notes=["Automated analysis completed"],
+            finalHandoffId=final_analysis.handoffId,
+            decisionRunId=workflow.workflowRunId,
+            verificationSummary=verification_summary,
+            limitations=list(study_contract.limitations),
+            unresolvedClaims=list(study_contract.unsupportedClaims),
+            notes=["Decision-driven RNA analysis completed"],
         )
         completed = completed.model_copy(
             update={"contentSha256": journal._record_checksum(completed)}

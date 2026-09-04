@@ -14,6 +14,7 @@ from zarr.core.sync import sync
 from ...datastore.datastore import DataStore
 from ...utils.logging import logger
 from .. import record_io
+from ..ingest.manifest import DatasetManifest
 from ..persistence import (
     AgentInvocation,
     AgentName,
@@ -29,6 +30,7 @@ from ..persistence import (
     save_agent_report,
 )
 from ..types import AgentDataModel, ArtifactReferenceModel
+from ..study_contract import StudyContract
 from .models import (
     _ORCHESTRATION_FORMAT,
     _ORCHESTRATION_VERSION,
@@ -151,6 +153,64 @@ def _result_key(prefix: str, workflow_run_id: str) -> str:
     return record_io.join_key(prefix, workflow_run_id, "result.json")
 
 
+def _handoff_key(
+    prefix: str,
+    workflow_run_id: str,
+    handoff_id: str,
+) -> str:
+    marker, separator, digest = handoff_id.partition(":")
+    if (
+        marker != "handoff"
+        or separator != ":"
+        or len(digest) != 64
+        or any(value not in "0123456789abcdef" for value in digest)
+    ):
+        raise ValueError("handoff_id must contain a lowercase SHA-256 digest")
+    return record_io.join_key(
+        prefix,
+        workflow_run_id,
+        "handoffs",
+        f"{digest}.json",
+    )
+
+
+def save_final_analysis_handoff(
+    store: DataStore,
+    prefix: str,
+    handoff: FinalAnalysisHandoff,
+) -> FinalAnalysisHandoff:
+    handoff = FinalAnalysisHandoff.model_validate(handoff.model_dump(mode="json"))
+    if not handoff.handoffId:
+        raise ValueError("Final analysis handoff requires its content identity")
+    key = _handoff_key(prefix, handoff.workflowRunId, handoff.handoffId)
+    payload = record_io.display_json_bytes(handoff.model_dump(mode="json"))
+    stored = record_io.read_key(store.zw, key)
+    if stored is None:
+        try:
+            _write_key_once(store.zw, key, payload)
+        except FileExistsError:
+            stored = record_io.read_key(store.zw, key)
+            if stored != payload:
+                raise
+    elif stored != payload:
+        raise FileExistsError("Final handoff identity has conflicting content")
+    return handoff
+
+
+def load_final_analysis_handoff(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    handoff_id: str,
+) -> FinalAnalysisHandoff:
+    key = _handoff_key(prefix, workflow_run_id, handoff_id)
+    value = _read_model(store.zw, key, FinalAnalysisHandoff)
+    handoff = cast(FinalAnalysisHandoff, value)
+    if handoff.workflowRunId != workflow_run_id or handoff.handoffId != handoff_id:
+        raise ValueError("Final handoff identity does not match its journal key")
+    return handoff
+
+
 def _read_model(
     group: zarr.Group,
     key: str,
@@ -180,7 +240,7 @@ def _stage_checksum(attempt: WorkflowStageAttempt) -> str:
 def _complete_attempt(
     started: WorkflowStageAttempt,
     *,
-    status: Literal["done", "needsInput", "failed"],
+    status: Literal["done", "needsInput", "abstained", "failed"],
     report_references: Sequence[AgentReportReference] = (),
     artifacts: Mapping[str, ArtifactReferenceModel] | None = None,
     outputs: Mapping[str, Any] | None = None,
@@ -296,6 +356,11 @@ def _save_outcome(
             f"Workflow {outcome.workflowRunId}: stage={outcome.stage!r} paused "
             f"for {question_count} input question(s) ({details}; "
             f"{elapsed_seconds:.1f}s)"
+        )
+    elif outcome.status == "abstained":
+        logger.info(
+            f"Workflow {outcome.workflowRunId}: stage={outcome.stage!r} "
+            f"abstained ({details}; {elapsed_seconds:.1f}s)"
         )
     else:
         logger.info(
@@ -423,6 +488,36 @@ def _resume_answer_errors(
     for question_id in sorted(expected_ids & supplied_ids):
         question = questions[question_id]
         answer = answers[question_id]
+        if question.decisionId is not None:
+            if not isinstance(answer, Mapping):
+                errors.append(
+                    f"Resume answer for {question_id!r} must contain decisionId, "
+                    "optionId, and rationale"
+                )
+                continue
+            if set(answer) != {"decisionId", "optionId", "rationale"}:
+                errors.append(
+                    f"Resume answer for {question_id!r} must contain exactly "
+                    "decisionId, optionId, and rationale"
+                )
+                continue
+            if answer.get("decisionId") != question.decisionId:
+                errors.append(
+                    f"Resume answer for {question_id!r} does not match decision "
+                    f"{question.decisionId!r}"
+                )
+            option_id = answer.get("optionId")
+            if not isinstance(option_id, str) or option_id not in question.options:
+                errors.append(
+                    f"Resume answer for {question_id!r} must select one persisted "
+                    f"option {question.options!r}"
+                )
+            rationale = answer.get("rationale")
+            if not isinstance(rationale, str) or not rationale.strip():
+                errors.append(
+                    f"Resume answer for {question_id!r} requires a non-empty rationale"
+                )
+            continue
         if unsafe_context and question_id == "experimentalDirections":
             if _unsafe_context_resolution(answer) is None:
                 errors.append(
@@ -981,13 +1076,30 @@ def paused_or_failed_result(
     request_record: OrchestrationRequestRecord,
     outcome: WorkflowStageAttempt,
     *,
+    dataset_manifest: DatasetManifest | None = None,
     preprocessing_plan: AutomatedPreprocessingPlan | None = None,
+    study_contract: StudyContract | None = None,
     final_analysis: FinalAnalysisHandoff | None = None,
 ) -> AutomatedWorkflowResult:
     prefix = _ensure_orchestration_store(store)
     current = load_agent_workflow(store, workflow.workflowRunId)
+    if outcome.status == "abstained" and current.status == "running":
+        current = finalize_agent_workflow(
+            store,
+            workflow.workflowRunId,
+            status="abstained",
+            message=(
+                outcome.notes[0]
+                if outcome.notes
+                else "The available data do not support a defensible result"
+            ),
+        )
     status: AutomatedWorkflowStatus = (
-        "needsInput" if outcome.status == "needsInput" else "failed"
+        "needsInput"
+        if outcome.status == "needsInput"
+        else "abstained"
+        if outcome.status == "abstained"
+        else "failed"
     )
     result = AutomatedWorkflowResult(
         status=status,
@@ -995,13 +1107,16 @@ def paused_or_failed_result(
         zarrPath=str(store.zarr_loc),
         workflowRun=current,
         reportReferences=list(current.reports),
+        datasetManifest=dataset_manifest,
         preprocessingPlan=preprocessing_plan,
+        studyContract=study_contract,
         finalAnalysis=final_analysis,
+        decisionRunId=request_record.workflowRunId,
         needsInput=outcome.needsInput,
         notes=[*outcome.notes, *([outcome.error] if outcome.error else [])],
     )
     result = result.model_copy(update={"contentSha256": _record_checksum(result)})
-    if status == "failed":
+    if status in {"failed", "abstained"}:
         return _persist_terminal_result(store, prefix, current, result)
     logger.info(
         f"Workflow {workflow.workflowRunId}: returning needsInput at "

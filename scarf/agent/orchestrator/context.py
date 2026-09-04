@@ -19,11 +19,13 @@ from ..experimental_context import (
     NamedArtifactSource,
 )
 from ..ingest import IngestResult
+from ..ingest.manifest import DatasetManifest, is_author_label_column
 from ..persistence import (
     AgentInvocation,
     AgentReportReference,
     AgentWorkflowRun,
 )
+from ..study_contract import build_study_contract
 from ..types import AgentRunInfo, ArtifactReferenceModel
 from . import journal
 from .models import (
@@ -114,6 +116,7 @@ class ContextStagesMixin:
         workflow: AgentWorkflowRun,
         request_record: OrchestrationRequestRecord,
         ingest_result: IngestResult,
+        dataset_manifest: DatasetManifest | None = None,
     ) -> WorkflowStageAttempt:
         existing = journal._validated_done_outcome(
             store,
@@ -159,6 +162,11 @@ class ContextStagesMixin:
                     else None
                 ),
                 "summary": ingest_result.summary,
+                "datasetManifest": (
+                    dataset_manifest.model_dump(mode="json")
+                    if dataset_manifest is not None
+                    else None
+                ),
                 "operations": [
                     {
                         "operation": "snapshot_cell_selection",
@@ -230,6 +238,7 @@ class ContextStagesMixin:
             parents,
             inputs={
                 "studyContext": request.studyContext,
+                "studyObjective": request.studyObjective,
                 "assays": selected_assays,
                 "cellSelection": cell_selection.model_dump(mode="json"),
                 "allowDownload": request_record.config.allowDownloads,
@@ -240,7 +249,10 @@ class ContextStagesMixin:
         actions: list[str] = []
         operations: list[dict[str, Any]] = []
         try:
-            context_payload: dict[str, Any] = {"studyContext": request.studyContext}
+            context_payload: dict[str, Any] = {
+                "studyContext": request.studyContext,
+                "studyObjective": request.studyObjective,
+            }
             supplied_context = answers.get("dataEnrichmentContext")
             if isinstance(supplied_context, Mapping):
                 context_payload.update(dict(supplied_context))
@@ -659,11 +671,57 @@ class ContextStagesMixin:
             required_status="needsInput",
         )
         directions = dict(request_record.request.experimentalDirections)
+        directions["registeredQcOnly"] = True
         supplied_directions = answers.get("experimentalDirections")
         if isinstance(supplied_directions, Mapping):
             directions.update(dict(supplied_directions))
         elif isinstance(supplied_directions, str) and supplied_directions.strip():
             directions["callerAnswer"] = supplied_directions.strip()
+        if request_record.request.authorLabelPolicy == "holdout":
+            held_out_columns = sorted(
+                column
+                for column in store.cells.columns
+                if is_author_label_column(column)
+            )
+            existing_exclusions = directions.get("excludeColumns")
+            if existing_exclusions is None:
+                existing_exclusion_list: list[str] = []
+            elif isinstance(existing_exclusions, list) and all(
+                isinstance(value, str) for value in existing_exclusions
+            ):
+                existing_exclusion_list = existing_exclusions
+            else:
+                raise ValueError("experimentalDirections.excludeColumns must be a list")
+
+            referenced_held_out: set[str] = set()
+
+            def find_held_out_references(value: Any) -> None:
+                if isinstance(value, str):
+                    if value in held_out_columns:
+                        referenced_held_out.add(value)
+                    return
+                if isinstance(value, Mapping):
+                    for nested in value.values():
+                        find_held_out_references(nested)
+                    return
+                if isinstance(value, list | tuple | set):
+                    for nested in value:
+                        find_held_out_references(nested)
+
+            for key, value in directions.items():
+                if key != "excludeColumns":
+                    find_held_out_references(value)
+            if referenced_held_out:
+                raise ValueError(
+                    "authorLabelPolicy='holdout' forbids runtime use of author "
+                    "annotation columns: " + ", ".join(sorted(referenced_held_out))
+                )
+            directions["excludeColumns"] = sorted(
+                {
+                    *held_out_columns,
+                    *existing_exclusion_list,
+                }
+            )
         started = journal._start_attempt(
             store.zw,
             prefix,
@@ -673,6 +731,7 @@ class ContextStagesMixin:
             parents,
             inputs={
                 "studyContext": request_record.request.studyContext,
+                "studyObjective": request_record.request.studyObjective,
                 "cellSelection": cell_selection.model_dump(mode="json"),
                 "directions": directions,
                 "qualityMetricArtifacts": [
@@ -834,6 +893,7 @@ class ContextStagesMixin:
                     report = agent.run(
                         store,
                         study_context=request_record.request.studyContext,
+                        study_objective=request_record.request.studyObjective,
                         cell_selection=cell_selection_ref,
                         directions=directions,
                         quality_metric_artifacts=quality_metric_artifacts,
@@ -849,6 +909,7 @@ class ContextStagesMixin:
                         parentReports=parent_reports,
                         inputs={
                             "studyContext": request_record.request.studyContext,
+                            "studyObjective": request_record.request.studyObjective,
                             "cellSelection": cell_selection.model_dump(mode="json"),
                             "directions": directions,
                             "qualityMetricArtifacts": [
@@ -942,6 +1003,24 @@ class ContextStagesMixin:
                     notes=report.notes,
                 )
             else:
+                physical_capture = directions.get("physicalCaptureColumn")
+                if not isinstance(physical_capture, str) or not physical_capture:
+                    physical_capture = None
+                elif physical_capture not in {
+                    *store.cells.columns,
+                    *report.htoIdentityColumns,
+                }:
+                    raise ValueError(
+                        "physicalCaptureColumn must identify observed metadata or "
+                        "an exact HTO identity"
+                    )
+                study_contract = build_study_contract(
+                    study_context=request_record.request.studyContext,
+                    study_objective=request_record.request.studyObjective,
+                    experimental_result=report,
+                    author_label_policy=(request_record.request.authorLabelPolicy),
+                    physical_capture_column=physical_capture,
+                )
                 outcome = journal._complete_attempt(
                     started,
                     status="done",
@@ -962,6 +1041,7 @@ class ContextStagesMixin:
                             for source in quality_metric_artifacts
                         ],
                         "metadataColumns": report.htoIdentityColumns,
+                        "studyContract": study_contract.model_dump(mode="json"),
                     },
                     actions=actions,
                     notes=report.notes,

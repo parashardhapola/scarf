@@ -107,6 +107,20 @@ class ParameterMetrics(AgentDataModel):
     pcaSilhouette: float | None = None
     macroF1: float | None = None
     weightedF1: float | None = None
+    seedStability: float | None = None
+    subsampleStability: float | None = None
+    markerCoherence: float | None = None
+    crossUnitSupport: float | None = None
+    technicalAssociation: dict[str, float] = Field(default_factory=dict)
+    componentVariance: list[float] = Field(default_factory=list)
+    loadingFamilyEnrichment: dict[str, float] = Field(default_factory=dict)
+    technicalPcaAssociation: dict[str, float] = Field(default_factory=dict)
+    protectedPcaAssociation: dict[str, float] = Field(default_factory=dict)
+    qcPcaAssociation: dict[str, float] = Field(default_factory=dict)
+    neighborPrefixOverlap: float | None = None
+    markerFamilyEnrichment: dict[str, float] = Field(default_factory=dict)
+    protectedMarkerFamilies: list[str] = Field(default_factory=list)
+    doubletHighScoreConcentration: float | None = None
     batchMixing: dict[str, float] = Field(default_factory=dict)
     biologicalPreservation: dict[str, dict[str, float]] = Field(default_factory=dict)
 
@@ -2169,13 +2183,17 @@ def validate_parameter_tuning_batch_report(
     )
 
 
-def fallback_parameter_tuning_report(
+def pending_parameter_tuning_report(
     deps: ParameterTuningDependencies,
     *,
     search_plan: ParameterSearchPlan,
     agent_name: str,
 ) -> ParameterTuningReport:
-    """Retain the first eligible branch when structured selection is unavailable."""
+    """Pause when structured selection is unavailable.
+
+    Completed executor evidence is retained for an exact human resume, but it is
+    never converted into an implicit scientific recommendation.
+    """
 
     evaluations = [
         deps.evaluations[candidate_id]
@@ -2184,107 +2202,35 @@ def fallback_parameter_tuning_report(
     ]
     successful = [item for item in evaluations if item.status == "done"]
     eligible = [item for item in successful if item.eligible]
-    comparison_required = len(deps.candidates) > 1 and deps.maxCandidates > 1
-    evidence_by_candidate = {
-        item.candidateId: next(
-            (
-                evidence_id
-                for evidence_id in item.evidenceIds
-                if evidence_id == f"candidate:{item.candidateId}:clusters"
-            ),
-            next(iter(item.evidenceIds), None),
-        )
-        for item in successful
-    }
-    cannot_recommend = (
-        not eligible
-        or (comparison_required and len(successful) < 2)
-        or (
-            comparison_required
-            and "baseline" in deps.candidates
-            and not any(item.candidateId == "baseline" for item in successful)
-        )
-        or any(evidence_by_candidate[item.candidateId] is None for item in successful)
-    )
-    if cannot_recommend:
-        logger.warning(
-            f"Parameter tuning fallback for assay {deps.fromAssay!r} requires "
-            f"input: completed={len(successful)}, eligible={len(eligible)}"
-        )
-        known_evidence = sorted(
-            {
-                evidence_id
-                for evaluation in evaluations
-                for evidence_id in evaluation.evidenceIds
-            }
-        )
-        report = ParameterTuningReport(
-            status="needsInput",
-            confidence="low",
-            rationale=(
-                "Structured model selection was unavailable and the executed "
-                "screen does not support a conservative automatic fallback."
-            ),
-            limitations=[
-                "No parameter branch was selected without complete eligible "
-                "executor evidence."
-            ],
-            stopReason="The bounded screen completed without an automatic choice.",
-            needsInput=ParameterTuningNeedsInput(
-                question="Select one eligible executed parameter candidate.",
-                options=[item.candidateId for item in eligible],
-                evidenceIds=known_evidence,
-            ),
-            runInfo=AgentRunInfo(agentName=agent_name),
-        )
-        return validate_parameter_tuning_report(
-            report,
-            deps,
-            search_plan=search_plan,
-        )
-
-    selected = eligible[0]
     logger.warning(
-        f"Parameter tuning fallback retained candidate "
-        f"{selected.candidateId!r} for assay {deps.fromAssay!r} from "
-        f"{len(eligible)} eligible candidate(s)"
+        f"Parameter tuning for assay {deps.fromAssay!r} requires input after "
+        f"model exhaustion: completed={len(successful)}, eligible={len(eligible)}"
     )
-    selected_evidence = evidence_by_candidate[selected.candidateId]
-    assert selected_evidence is not None
-    comparisons: list[CandidateComparison] = []
-    if comparison_required:
-        for item in successful:
-            if item.candidateId == selected.candidateId:
-                continue
-            comparator_evidence = evidence_by_candidate[item.candidateId]
-            assert comparator_evidence is not None
-            comparisons.append(
-                CandidateComparison(
-                    candidateId=item.candidateId,
-                    summary=(
-                        "This executed branch remains a grounded comparator to the "
-                        "conservatively retained first eligible branch."
-                    ),
-                    evidenceIds=[selected_evidence, comparator_evidence],
-                )
-            )
+    known_evidence = sorted(
+        {
+            evidence_id
+            for evaluation in evaluations
+            for evidence_id in evaluation.evidenceIds
+        }
+    )
     report = ParameterTuningReport(
-        status="done",
-        recommendedCandidateId=selected.candidateId,
+        status="needsInput",
         confidence="low",
         rationale=(
-            "The bounded structured model selection was unavailable; the first "
-            "eligible authorized branch was retained conservatively."
+            "The bounded structured selection was unavailable. Executor evidence "
+            "is complete enough to resume, but it cannot choose a scientific "
+            "alternative by itself."
         ),
-        evidenceIds=[selected_evidence],
-        comparisons=comparisons,
-        tradeoffs=["No model-authored metric trade-off ranking was available."],
-        limitations=[
-            "The fallback does not claim that the retained branch is metric-optimal."
-        ],
-        stopReason=(
-            "The deterministic screen completed and retained its first eligible "
-            "authorized branch."
+        evidenceIds=known_evidence,
+        limitations=["No candidate was selected merely to complete the workflow."],
+        stopReason="The bounded screen completed without a valid decision.",
+        needsInput=ParameterTuningNeedsInput(
+            question=(
+                "Select one eligible executed candidate and provide a scientific "
+                "rationale tied to the cited evidence."
+            ),
+            options=[item.candidateId for item in eligible],
+            evidenceIds=known_evidence,
         ),
         runInfo=AgentRunInfo(agentName=agent_name),
     )
@@ -2295,61 +2241,32 @@ def fallback_parameter_tuning_report(
     )
 
 
-def fallback_parameter_tuning_batch_report(
+def pending_parameter_tuning_batch_report(
     dependencies: Mapping[str, ParameterTuningDependencies],
     *,
     search_plans: Mapping[str, ParameterSearchPlan],
     primary_assay: str,
 ) -> ParameterTuningReport:
-    """Build one grounded aggregate fallback over completed assay screens."""
+    """Build one grounded pause over completed assay screens."""
 
     logger.warning(
-        f"Using parameter tuning batch fallback for {len(dependencies)} assay(s)"
+        f"Pausing parameter tuning after model exhaustion for "
+        f"{len(dependencies)} assay(s)"
     )
     assay_reports = {
-        assay: fallback_parameter_tuning_report(
+        assay: pending_parameter_tuning_report(
             deps,
             search_plan=search_plans[assay],
-            agent_name="parameter_tuning_batch_fallback",
+            agent_name="parameter_tuning_batch_needs_input",
         )
         for assay, deps in dependencies.items()
     }
-    if any(item.status != "done" for item in assay_reports.values()):
-        primary = assay_reports[primary_assay]
-        if primary.status == "done":
-            primary = ParameterTuningReport(
-                status="needsInput",
-                confidence="low",
-                rationale=(
-                    "At least one assay lacks a conservative automatic parameter "
-                    "selection."
-                ),
-                limitations=[
-                    "The multimodal native screen requires an explicit selection."
-                ],
-                stopReason="The bounded native screens completed without all choices.",
-                needsInput=ParameterTuningNeedsInput(
-                    question="Select eligible parameter candidates for every assay.",
-                    options=[],
-                    evidenceIds=list(primary.evidenceIds),
-                ),
-                runInfo=AgentRunInfo(agentName="parameter_tuning_batch_fallback"),
-            )
-            assay_reports[primary_assay] = validate_parameter_tuning_report(
-                primary,
-                dependencies[primary_assay],
-                search_plan=search_plans[primary_assay],
-            )
     aggregate = ParameterTuningReport(
-        status=(
-            "done"
-            if all(item.status == "done" for item in assay_reports.values())
-            else "needsInput"
-        ),
+        status="needsInput",
         assayReports=assay_reports,
         rationale=(
-            "Structured model selection was unavailable; each completed native "
-            "screen used the conservative fallback policy."
+            "Structured model selection was unavailable. All completed evidence "
+            "was retained without choosing a branch."
         ),
         evidenceIds=list(
             dict.fromkeys(
@@ -2358,15 +2275,12 @@ def fallback_parameter_tuning_batch_report(
                 for evidence_id in assay_report.evidenceIds
             )
         ),
-        limitations=[
-            "Fallback recommendations retain first eligible authorized branches "
-            "without claiming a metric-optimal ranking."
-        ],
-        stopReason="The bounded native screens completed.",
-        runInfo=AgentRunInfo(agentName="parameter_tuning_batch_fallback"),
+        limitations=["No assay candidate was selected merely to finish the workflow."],
+        stopReason="The bounded native screens completed without valid decisions.",
+        runInfo=AgentRunInfo(agentName="parameter_tuning_batch_needs_input"),
     )
     logger.warning(
-        f"Parameter tuning batch fallback status={aggregate.status}; "
+        f"Parameter tuning batch pause status={aggregate.status}; "
         f"completed_assays={sum(item.status == 'done' for item in assay_reports.values())}"
     )
     return validate_parameter_tuning_batch_report(
@@ -2687,7 +2601,7 @@ def select_final_parameter_graph(
                         ),
                     ),
                     runInfo=AgentRunInfo(
-                        agentName="parameter_tuning_final_graph_fallback"
+                        agentName="parameter_tuning_final_graph_needs_input"
                     ),
                 ),
                 report,
@@ -3364,9 +3278,9 @@ def tune_parameters_batch(
         logger.warning(
             "Batched parameter selection model run failed within its bounds "
             f"({type(exc).__name__}); "
-            "using the conservative executor-evidence fallback"
+            "returning needsInput with the completed executor evidence"
         )
-        return fallback_parameter_tuning_batch_report(
+        return pending_parameter_tuning_batch_report(
             dependencies,
             search_plans=batch_plan.assayPlans,
             primary_assay=resolved_primary,
@@ -3552,13 +3466,13 @@ def tune_parameters(
     except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
         logger.warning(
             f"Parameter selection for assay {from_assay!r} failed within its "
-            f"model-run bounds ({type(exc).__name__}); using the conservative "
-            "executor-evidence fallback"
+            f"model-run bounds ({type(exc).__name__}); returning needsInput "
+            "with the completed executor evidence"
         )
-        return fallback_parameter_tuning_report(
+        return pending_parameter_tuning_report(
             deps,
             search_plan=plan,
-            agent_name="parameter_tuning_fallback",
+            agent_name="parameter_tuning_needs_input",
         )
     if not isinstance(selection_execution.output, ParameterTuningReport):
         raise TypeError("Parameter tuning agent returned an unexpected output type")

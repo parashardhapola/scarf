@@ -10,7 +10,7 @@ except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
 
 
-type StageStatus = Literal["done", "needsInput", "failed"]
+type StageStatus = Literal["done", "needsInput", "abstained", "failed"]
 type BatchCorrectionAction = Literal[
     "skip",
     "evaluateHarmony",

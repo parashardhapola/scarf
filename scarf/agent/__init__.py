@@ -23,13 +23,35 @@ from .data_enrichment import (
     StudyContextSummary,
 )
 from .decide import DecisionValidationError, decide
+from .decision_kernel import (
+    DecisionEvidence,
+    DecisionOption,
+    DecisionRecord,
+    DecisionSelection,
+    DecisionSpec,
+    DecisionWorkflowRun,
+    DeterministicDecisionAuditor,
+    EvidenceBundle,
+    PendingDecision,
+    ProtectedVariableEffect,
+    RevisionRequest,
+    VerificationCheck,
+    VerificationRecord,
+)
 from .experimental_context import (
     CellQcPlan,
     ExperimentalContextAgent,
     ExperimentalContextResult,
     NamedArtifactSource,
 )
-from .ingest import IngestResult, detect_format, ingest
+from .ingest import (
+    DatasetManifest,
+    DatasetManifestDecision,
+    IngestResult,
+    detect_format,
+    ingest,
+    inspect_h5ad_manifest,
+)
 from .orchestrator import (
     AgentOrchestrator,
     AssayPreprocessingPlan,
@@ -81,6 +103,7 @@ from .persistence import (
 )
 from .report import generate_agent_report
 from .runtime import check_runtime, load_env
+from .study_contract import StudyContract
 from .types import (
     BatchSafetyEvidence,
     Decision,
@@ -123,8 +146,18 @@ __all__ = [
     "DataEnrichmentContext",
     "DataEnrichmentReport",
     "Decision",
+    "DecisionEvidence",
+    "DecisionOption",
+    "DecisionRecord",
+    "DecisionSelection",
+    "DecisionSpec",
+    "DecisionWorkflowRun",
     "DecisionValidationError",
+    "DeterministicDecisionAuditor",
+    "DatasetManifest",
+    "DatasetManifestDecision",
     "EvidenceItem",
+    "EvidenceBundle",
     "ExperimentalBiologyHandoff",
     "ExperimentalContextAgent",
     "ExperimentalContextResult",
@@ -138,20 +171,26 @@ __all__ = [
     "NativeAnalysisHandoff",
     "NamedArtifactSource",
     "NeedsInput",
+    "PendingDecision",
     "ParameterCandidate",
     "ParameterSearchPlan",
     "ParameterTuningAssayInput",
     "ParameterTuningAgent",
     "ParameterTuningReport",
     "PreprocessedAssayHandoff",
+    "ProtectedVariableEffect",
+    "RevisionRequest",
     "StageResult",
     "StageStatus",
     "StudyContextSummary",
+    "StudyContract",
     "TuningBiologyHandoff",
     "WorkflowNeedsInput",
     "WorkflowQuestion",
     "WorkflowStageAttempt",
     "WorkflowStageLink",
+    "VerificationCheck",
+    "VerificationRecord",
     "characterize_covariates",
     "characterize_features",
     "check_runtime",
@@ -161,6 +200,7 @@ __all__ = [
     "get_default_parameter_candidates",
     "generate_agent_report",
     "ingest",
+    "inspect_h5ad_manifest",
     "load_env",
     "finalize_agent_workflow",
     "list_agent_reports",

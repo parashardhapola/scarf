@@ -5,7 +5,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
 from ...datastore.datastore import DataStore
-from ...storage.refs import ArtifactRef
 from ...utils.logging import logger
 from ..biological_interpretation import (
     BiologicalContext,
@@ -13,13 +12,22 @@ from ..biological_interpretation import (
     BiologicalInterpretationReport,
 )
 from ..data_enrichment import DataEnrichmentReport
+from ..decision_persistence import (
+    complete_decision_workflow,
+    load_latest_decision_workflow_snapshot,
+    save_decision_workflow_snapshot,
+)
 from ..experimental_context import ExperimentalContextResult
-from ..parameter_tuning import ParameterTuningAgent, ParameterTuningReport
+from ..parameter_tuning import (
+    ParameterTuningAgent,
+    ParameterTuningReport,
+)
 from ..persistence import (
     AgentInvocation,
     AgentReportReference,
     AgentWorkflowRun,
 )
+from ..study_contract import StudyContract
 from ..types import ArtifactReferenceModel, ExperimentalBiologyHandoff
 from . import journal
 from .models import (
@@ -53,6 +61,7 @@ class FinalizationStagesMixin:
         preprocessed: Sequence[PreprocessedAssayHandoff],
         tuning_report: ParameterTuningReport,
         tuning_reference: AgentReportReference,
+        study_contract: StudyContract,
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, FinalAnalysisHandoff]:
@@ -69,9 +78,18 @@ class FinalizationStagesMixin:
             logger.info(
                 f"Workflow {workflow.workflowRunId}: reusing finalized analysis"
             )
-            return existing, FinalAnalysisHandoff.model_validate(
+            handoff = FinalAnalysisHandoff.model_validate(
                 existing.outputs["finalAnalysis"]
             )
+            persisted = journal.load_final_analysis_handoff(
+                store,
+                prefix,
+                workflow.workflowRunId,
+                handoff.handoffId,
+            )
+            if persisted != handoff:
+                raise ValueError("Finalization outcome and handoff journal differ")
+            return existing, handoff
         if tuning_report.cellSelection is None:
             raise ValueError("Parameter Tuning lacks an exact cell selection")
         cell_selection = tuning_report.cellSelection
@@ -114,118 +132,195 @@ class FinalizationStagesMixin:
                 or tuning_report.finalClusterArtifact is None
             ):
                 raise ValueError("Parameter Tuning has no finalized cluster branch")
-            preprocessed_by_assay = {value.assay: value for value in preprocessed}
-            plan_by_assay = {value.assay: value for value in plan.assays}
-            agent = ParameterTuningAgent(
+            if plan.primaryAssay != plan.markerAssay or len(preprocessed) != 1:
+                raise ValueError(
+                    "Decision-driven v1 finalization requires exactly one RNA assay"
+                )
+            if tuning_report.recommendedIntegrationId is not None:
+                raise ValueError(
+                    "Decision-driven v1 cannot finalize an integrated SNN or WNN graph"
+                )
+            preprocessed_assay = preprocessed[0]
+            if preprocessed_assay.assay != plan.primaryAssay:
+                raise ValueError("The final RNA assay does not match preprocessing")
+            if (
+                preprocessed_assay.normalized is None
+                or preprocessed_assay.markerFeatures is None
+            ):
+                raise ValueError(
+                    "Finalization requires exact normalized and marker features"
+                )
+            tuning_agent = ParameterTuningAgent(
                 self.model,
                 config=request_record.config.agentRunConfig,
             )
-            native_handoffs, native_umaps = self.finalize_native_analyses(
+            native_analyses, native_umaps = self.finalize_native_analyses(
                 store,
-                agent,
+                tuning_agent,
                 request_record,
                 tuning_report,
-                preprocessed_by_assay,
+                {preprocessed_assay.assay: preprocessed_assay},
                 artifacts,
                 actions,
                 operations,
             )
-            (
-                graph_method,
-                final_graph,
-                final_initialization,
-                final_umap,
-            ) = self.finalize_selected_graph(
-                store,
-                plan,
+            if len(native_analyses) != 1:
+                raise ValueError("Decision-driven v1 requires one native analysis")
+            graph_method, final_graph, final_initialization, final_umap = (
+                self.finalize_selected_graph(
+                    store,
+                    plan,
+                    tuning_report,
+                    native_analyses,
+                    native_umaps,
+                    actions,
+                    operations,
+                )
+            )
+            native = native_analyses[0]
+            if native.clusters is None:
+                raise ValueError("Selected native analysis lacks clusters")
+            final_clusters = native.clusters
+            if artifact_model_to_ref(final_clusters) != artifact_model_to_ref(
+                tuning_report.finalClusterArtifact
+            ):
+                raise ValueError(
+                    "Finalization changed the selected cluster artifact identity"
+                )
+
+            assay_report = tuning_report.assayReports.get(
+                plan.primaryAssay,
                 tuning_report,
-                native_handoffs,
-                native_umaps,
-                actions,
-                operations,
             )
-            final_clusters = ArtifactReferenceModel.model_validate(
-                tuning_report.finalClusterArtifact.model_dump()
-            )
-            marker_handoff = preprocessed_by_assay[plan.markerAssay]
-            if marker_handoff.markerFeatures is None:
-                raise ValueError("Marker assay lacks an exact feature panel")
-            marker_plan = plan_by_assay[plan.markerAssay]
-            marker_ref = store.run_marker_search(
-                artifact_model_to_ref(final_clusters),
-                from_assay=plan.markerAssay,
-                features=artifact_model_to_ref(marker_handoff.markerFeatures),
-                invalidate_cache=False,
-                log_transform=bool(
-                    marker_plan.normalizationParameters.get("logTransform", False)
+            selected = next(
+                (
+                    evaluation
+                    for evaluation in assay_report.evaluations
+                    if evaluation.candidateId == assay_report.recommendedCandidateId
                 ),
-                renormalize_subset=bool(
-                    marker_plan.normalizationParameters.get("renormalizeSubset", False)
-                ),
+                None,
             )
-            if not isinstance(marker_ref, ArtifactRef):
-                raise TypeError("Saved marker search did not return an artifact")
-            marker_model = ArtifactReferenceModel.from_artifact_ref(marker_ref)
-            artifacts.update(
-                {
-                    "final_graph": final_graph,
-                    "final_clusters": final_clusters,
-                    "final_embedding_initialization": final_initialization,
-                    "final_umap": final_umap,
-                    "marker_features": marker_handoff.markerFeatures,
-                    "markers": marker_model,
-                }
-            )
+            if selected is None or selected.status != "done" or not selected.eligible:
+                raise ValueError("Final tuning selected an ineligible RNA candidate")
+            marker_record = selected.artifacts.get("markerTable")
+            if marker_record is None:
+                marker_ref = store.run_marker_search(
+                    artifact_model_to_ref(final_clusters),
+                    from_assay=plan.markerAssay,
+                    features=artifact_model_to_ref(preprocessed_assay.markerFeatures),
+                    invalidate_cache=False,
+                )
+                marker_model = ArtifactReferenceModel.from_artifact_ref(marker_ref)
+                actions.append("run_final_marker_search")
+                operations.append(
+                    {
+                        "operation": "run_marker_search",
+                        "clusters": final_clusters.model_dump(mode="json"),
+                        "features": preprocessed_assay.markerFeatures.model_dump(
+                            mode="json"
+                        ),
+                        "artifact": marker_model.model_dump(mode="json"),
+                    }
+                )
+            else:
+                marker_model = ArtifactReferenceModel.model_validate(
+                    marker_record.model_dump()
+                )
+                store.load_artifact(artifact_model_to_ref(marker_model))
+                actions.append("reuse_selected_marker_table")
+            artifacts["markers"] = marker_model
+
             limitations = list(
                 dict.fromkeys([*plan.limitations, *tuning_report.limitations])
             )
-            if marker_plan.assayType == "ATAC":
-                limitations.append(
-                    "ATAC peak markers are descriptive and cannot establish "
-                    "confident cell identities alone"
+            doublet_scores = [
+                ArtifactReferenceModel.model_validate(artifact.model_dump())
+                for name, artifact in sorted(selected.artifacts.items())
+                if name.startswith("doubletScore:")
+            ]
+            if not doublet_scores:
+                raise ValueError(
+                    "Selected cluster evidence lacks advisory doublet scores"
                 )
+            for index, doublet_model in enumerate(doublet_scores):
+                store.load_artifact(artifact_model_to_ref(doublet_model))
+                artifacts[f"doubletScore{index}"] = doublet_model
+            limitations.extend(
+                warning
+                for warning in selected.warnings
+                if "doublet" in warning.lower()
+                or "physical capture identity" in warning.lower()
+            )
+            actions.append("reuse_advisory_doublet_scores")
+            operations.append(
+                {
+                    "operation": "reuse_advisory_doublet_scores",
+                    "artifacts": [
+                        value.model_dump(mode="json") for value in doublet_scores
+                    ],
+                }
+            )
+
             final_analysis = FinalAnalysisHandoff(
                 workflowRunId=workflow.workflowRunId,
                 primaryAssay=plan.primaryAssay,
                 markerAssay=plan.markerAssay,
                 cellSelection=cell_selection,
-                nativeAnalyses=native_handoffs,
+                nativeAnalyses=native_analyses,
                 graph=final_graph,
                 graphMethod=graph_method,
                 clusters=final_clusters,
                 embeddingInitialization=final_initialization,
                 umap=final_umap,
-                markerFeatures=marker_handoff.markerFeatures,
+                markerFeatures=preprocessed_assay.markerFeatures,
                 markers=marker_model,
+                doubletScores=doublet_scores,
                 parameterReport=tuning_reference,
                 limitations=list(dict.fromkeys(limitations)),
-            )
-            actions.append(f"run_markers:{plan.markerAssay}")
+            ).with_handoff_id()
+            journal.save_final_analysis_handoff(store, prefix, final_analysis)
+            actions.append("persist_final_analysis_handoff")
             operations.append(
                 {
-                    "operation": "run_marker_search",
-                    "assay": plan.markerAssay,
-                    "clusters": final_clusters.model_dump(mode="json"),
-                    "cellSelection": cell_selection.model_dump(mode="json"),
-                    "features": marker_handoff.markerFeatures.model_dump(mode="json"),
-                    "invalidateCache": False,
-                    "logTransform": bool(
-                        marker_plan.normalizationParameters.get("logTransform", False)
-                    ),
-                    "renormalizeSubset": bool(
-                        marker_plan.normalizationParameters.get(
-                            "renormalizeSubset", False
-                        )
-                    ),
-                    "artifact": marker_model.model_dump(mode="json"),
+                    "operation": "persist_final_analysis_handoff",
+                    "handoffId": final_analysis.handoffId,
+                    "artifacts": {
+                        name: value.model_dump(mode="json")
+                        for name, value in artifacts.items()
+                    },
                 }
             )
+
+            decision_snapshot = load_latest_decision_workflow_snapshot(
+                store,
+                workflow.workflowRunId,
+                workspace=request_record.request.workspace,
+            )
+            decision_workflow = decision_snapshot.workflow
+            if decision_workflow.status == "completed":
+                if decision_workflow.finalHandoffId != final_analysis.handoffId:
+                    raise ValueError(
+                        "Completed decision ledger references another final handoff"
+                    )
+                completed_snapshot = decision_snapshot
+            else:
+                completed_workflow = complete_decision_workflow(
+                    decision_workflow,
+                    final_analysis.handoffId,
+                )
+                completed_snapshot = save_decision_workflow_snapshot(
+                    store,
+                    completed_workflow,
+                    workspace=request_record.request.workspace,
+                )
             outcome = journal._complete_attempt(
                 started,
                 status="done",
                 artifacts=artifacts,
                 outputs={
                     "finalAnalysis": final_analysis.model_dump(mode="json"),
+                    "handoffId": final_analysis.handoffId,
+                    "decisionSnapshotSha256": (completed_snapshot.contentSha256),
                     "operations": operations,
                 },
                 actions=actions,
@@ -234,8 +329,8 @@ class FinalizationStagesMixin:
             journal._save_outcome(store.zw, prefix, outcome)
             logger.info(
                 f"Workflow {workflow.workflowRunId}: finalized "
-                f"graphMethod={graph_method!r}, nativeLayouts="
-                f"{len(native_handoffs)}, markerAssay={plan.markerAssay!r}"
+                f"handoff={final_analysis.handoffId!r}, "
+                f"markerAssay={plan.markerAssay!r}"
             )
             return outcome, final_analysis
         except Exception as exc:

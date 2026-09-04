@@ -72,8 +72,10 @@ _SYSTEM_PROMPT = (
         feature decision is needed. Absent or ambiguous lookup results must never
         enter a policy. If inspection resolves a supported species, copy that exact
         species key. Use caller organism context only when inspection leaves the
-        species unknown. Exclude only observed families with defaultExclude=true,
-        and never exclude a family with defaultExclude=false.
+        species unknown. Use excludeFamilies only to nominate one conditional
+        representation-sensitivity bundle from observed families with
+        defaultExclude=true. It is not an instruction to remove those families.
+        Never nominate a family with defaultExclude=false.
 
         Persisted assay types determine modality routes; never infer a route from
         an assay label. The validator fills assay type, modality eligibility, ADT
@@ -81,11 +83,12 @@ _SYSTEM_PROMPT = (
         report-level evidence. Leave those derived fields at their defaults instead
         of copying them into the output. Treat Ensembl release misses as unresolved,
         not artificial. Mitochondrial, ribosomal, and histone families may be
-        exclusion candidates. Sex-linked and cell-cycle families are protected by
-        default in this initial implementation.
+        sensitivity candidates. Sex-linked and cell-cycle families are protected
+        by default. Marker testing retains conditional biological families.
 
         Structure studyContextSummary using only verbatim spans from the supplied
-        study paragraph or exact caller references. Do not paraphrase, infer, or
+        study paragraph, study objective, or exact caller references. Do not
+        paraphrase, infer, or
         invent an organism, tissue, cell type, experiment, hypothesis, or analysis
         intent. Empty optional hint lists do not mean that the paragraph lacks
         those references. When a category is explicitly present in the paragraph,
@@ -104,6 +107,7 @@ class DataEnrichmentContext(AgentDataModel):
     """Study evidence that may help resolve organism and feature policy."""
 
     studyContext: str = ""
+    studyObjective: str = ""
     organismHint: str = ""
     tissueReferences: list[str] = Field(default_factory=list)
     cellTypeReferences: list[str] = Field(default_factory=list)
@@ -117,6 +121,9 @@ class DataEnrichmentContext(AgentDataModel):
     def get_example(cls) -> "DataEnrichmentContext":
         return cls(
             studyContext="Single-cell profiling of treated lung tissue",
+            studyObjective=(
+                "Discover stable populations while preserving treatment effects."
+            ),
             organismHint="human",
             tissueReferences=["lung"],
             cellTypeReferences=["alveolar macrophage", "T cell"],
@@ -128,6 +135,7 @@ class StudyContextSummary(AgentDataModel):
     """Verbatim, evidence-backed references extracted from the study context."""
 
     studyContext: str = ""
+    studyObjective: str = ""
     organismReferences: list[str] = Field(default_factory=list)
     tissueReferences: list[str] = Field(default_factory=list)
     cellTypeReferences: list[str] = Field(default_factory=list)
@@ -146,6 +154,9 @@ class StudyContextSummary(AgentDataModel):
             studyContext=(
                 "Single-cell profiling of treated human lung tests whether "
                 "treatment changes alveolar macrophage states."
+            ),
+            studyObjective=(
+                "Discover populations while preserving the treatment comparison."
             ),
             organismReferences=["human"],
             tissueReferences=["lung"],
@@ -1222,11 +1233,13 @@ def _ground_study_context_summary(
 ) -> StudyContextSummary:
     """Bind structured context references to exact caller text."""
     original_context = context.studyContext
+    original_objective = context.studyObjective
+    grounded_text = f"{original_context}\n{original_objective}"
     organism_references = [context.organismHint] if context.organismHint else []
     for species in _SUPPORTED_SPECIES.values():
         match = re.search(
             rf"\b{re.escape(species.label)}\b",
-            original_context,
+            grounded_text,
             flags=re.IGNORECASE,
         )
         if match is not None:
@@ -1258,7 +1271,7 @@ def _ground_study_context_summary(
         invalid = [
             value
             for value in combined
-            if value not in supplied and value not in original_context
+            if value not in supplied and value not in grounded_text
         ]
         if invalid:
             raise ValueError(
@@ -1272,6 +1285,8 @@ def _ground_study_context_summary(
     evidence_ids: list[str] = []
     if original_context:
         evidence_ids.append("context:study")
+    if original_objective:
+        evidence_ids.append("context:objective")
     if context.organismHint:
         evidence_ids.append("context:organism")
     evidence_ids.extend(
@@ -1288,6 +1303,7 @@ def _ground_study_context_summary(
     )
     return StudyContextSummary(
         studyContext=original_context,
+        studyObjective=original_objective,
         **grounded,
         evidenceIds=evidence_ids,
     )
@@ -1473,89 +1489,36 @@ def validate_data_enrichment_report(
     return report
 
 
-def fallback_data_enrichment_report(
+def pending_data_enrichment_report(
     deps: DataEnrichmentDependencies,
     *,
     error: UnexpectedModelBehavior | UsageLimitExceeded,
     model_name: str,
 ) -> DataEnrichmentReport:
-    """Build a conservative policy from completed deterministic inspections."""
+    """Pause after deterministic inspection when no valid policy was selected."""
     if set(deps.inspections) != set(deps.assays):
         raise error
-    policies: list[FeatureSelectionPolicy] = []
-    for assay_name in deps.assays:
-        inspection = deps.inspections[assay_name]
-        species = "unknown"
-        species_confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
-        species_rationale = (
-            inspection.speciesReason
-            or "Deterministic feature inspection did not resolve a species."
-        )
-        policy_evidence = [f"assay:{assay_name}:species"]
-        if inspection.species in _SUPPORTED_SPECIES:
-            species = inspection.species
-            species_confidence = (
-                "high" if inspection.speciesMethod == "ensemblPrefix" else "medium"
-            )
-        else:
-            organism_hint = deps.context.organismHint.strip().casefold()
-            for key, specification in _SUPPORTED_SPECIES.items():
-                if organism_hint in {key.casefold(), specification.label.casefold()}:
-                    species = key
-                    species_confidence = "medium"
-                    species_rationale = (
-                        "Exact caller organism hint resolved an otherwise unknown "
-                        "feature-based species."
-                    )
-                    policy_evidence.append("context:organism")
-                    break
-        excluded_families = [
-            family
-            for family in inspection.families
-            if family.defaultExclude is True and family.count > 0
-        ]
-        protected_families = [
-            family for family in inspection.families if family.defaultExclude is False
-        ]
-        policy_evidence.extend(
-            family.evidenceId for family in [*excluded_families, *protected_families]
-        )
-        policies.append(
-            FeatureSelectionPolicy(
-                assay=assay_name,
-                species=species,
-                speciesConfidence=species_confidence,
-                speciesRationale=species_rationale,
-                excludeFamilies=[family.family for family in excluded_families],
-                protectFamilies=[family.family for family in protected_families],
-                rationale=(
-                    "Retained only deterministic family defaults after structured "
-                    "model output was unavailable."
-                ),
-                evidenceIds=list(dict.fromkeys(policy_evidence)),
-            )
-        )
     error_detail = str(error).replace("\n", " ").strip()[:500]
     report = DataEnrichmentReport(
-        status="done",
-        policies=policies,
+        status="needsInput",
         studyContextSummary=StudyContextSummary.get_blank(),
+        unresolvedQuestions=[
+            "The Data Enrichment agent did not produce a validated feature policy. "
+            "Provide explicit organism and representation-feature intent."
+        ],
         limitations=[
-            "Structured enrichment output was unavailable; the fallback omitted "
-            "all model-selected individual and artificial features.",
-            "Free-text context extraction may be incomplete because only exact "
-            "caller fields and deterministic organism mentions were retained.",
+            "No scientific feature policy was selected after model failure.",
             error_detail,
         ],
         runInfo=AgentRunInfo(
-            agentName="data_enrichment_fallback",
+            agentName="data_enrichment_needs_input",
             modelName=model_name,
         ),
     )
     validated = validate_data_enrichment_report(deps, report)
     logger.warning(
-        "Data Enrichment used its conservative fallback: "
-        f"assays={len(validated.policies)}, evidence={len(validated.evidenceIds)}, "
+        "Data Enrichment paused without a scientific selection: "
+        f"assays={len(validated.inspections)}, evidence={len(validated.evidenceIds)}, "
         f"reason={error_detail}"
     )
     return validated
@@ -1607,6 +1570,8 @@ class DataEnrichmentAgent:
         evidence_ids: set[str] = set()
         if enrichment_context.studyContext:
             evidence_ids.add("context:study")
+        if enrichment_context.studyObjective:
+            evidence_ids.add("context:objective")
         if enrichment_context.organismHint:
             evidence_ids.add("context:organism")
         evidence_ids.update(
@@ -1635,6 +1600,7 @@ class DataEnrichmentAgent:
                 """
                 Enrich the feature policy for assays: {assays}.
                 Study context: {study_context}
+                Study objective: {study_objective}
                 Organism hint: {organism_hint}
                 Tissue references: {tissue_references}
                 Cell-type references: {cell_type_references}
@@ -1667,6 +1633,7 @@ class DataEnrichmentAgent:
             .format(
                 assays=", ".join(selected_assays),
                 study_context=enrichment_context.studyContext or "not provided",
+                study_objective=enrichment_context.studyObjective or "not provided",
                 organism_hint=enrichment_context.organismHint or "not provided",
                 tissue_references=", ".join(enrichment_context.tissueReferences)
                 or "not provided",
@@ -1711,7 +1678,7 @@ class DataEnrichmentAgent:
             if set(deps.inspections) != set(deps.assays):
                 raise
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            return fallback_data_enrichment_report(
+            return pending_data_enrichment_report(
                 deps,
                 error=exc,
                 model_name=str(model_name),

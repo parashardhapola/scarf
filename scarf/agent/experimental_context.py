@@ -27,6 +27,12 @@ from .characterize_covariates import (
 from .config import AgentRunConfig
 from .config._deps import AGENT_INSTALL_HINT
 from .config.agent_exec import run_agent_sync
+from .qc_profiles import (
+    RegisteredCellQcProfile,
+    RegisteredQcProjection,
+    offered_registered_qc_profiles,
+    registered_qc_metric_role,
+)
 from .tools import artifact_reference, core_artifact_reference
 from .types import (
     AgentDataModel,
@@ -63,6 +69,7 @@ __all__ = [
     "InferenceUnit",
     "NamedArtifactSource",
     "RepresentationEvaluation",
+    "RegisteredCellQcProfile",
     "analyze_experimental_design",
     "inspect_cell_covariates",
     "score_current_representation",
@@ -76,7 +83,13 @@ type IntegrationMetric = Literal[
     "graphConnectivity",
     "proportionalBatchMixing",
 ]
-type CellQcAction = Literal["skip", "globalGaussian", "sampleMad"]
+type CellQcAction = Literal[
+    "skip",
+    "globalGaussian",
+    "sampleMad",
+    "registeredMad",
+]
+type LegacyCellQcAction = Literal["skip", "globalGaussian", "sampleMad"]
 type CellQcDriverType = Literal["RNA", "ATAC"]
 
 _CONTEXT_LIMIT = 1200
@@ -173,6 +186,7 @@ def _validate_qc_sources(
     artifact_metrics: list[NamedArtifactSource],
     sample_column: str | None,
     sample_artifact: NamedArtifactSource | None,
+    registered_profile: RegisteredCellQcProfile | None = None,
 ) -> None:
     if len(attributes) != len(set(attributes)):
         raise ValueError("Cell-QC metadata attributes must be unique")
@@ -211,6 +225,36 @@ def _validate_qc_sources(
         )
     if sample_artifact is not None and sample_artifact.name in artifact_names:
         raise ValueError("Cell-QC sample and metric artifact names must be distinct")
+    if registered_profile is not None:
+        if registered_profile == "retainWithFlags":
+            if action != "skip":
+                raise ValueError(
+                    "retainWithFlags must use the non-filtering skip action"
+                )
+            if sample_column is not None or sample_artifact is not None:
+                raise ValueError("retainWithFlags cannot include a capture source")
+            return
+        if action != "registeredMad":
+            raise ValueError(f"{registered_profile} must use the registeredMad action")
+        capture_profile = registered_profile in {
+            "captureMad5",
+            "captureMad3Sensitivity",
+            "pooledReferenceMad5",
+        }
+        has_one_capture_source = (sample_column is None) != (sample_artifact is None)
+        if capture_profile and not has_one_capture_source:
+            raise ValueError(
+                f"{registered_profile} requires exactly one proven capture source"
+            )
+        if not capture_profile and (
+            sample_column is not None or sample_artifact is not None
+        ):
+            raise ValueError(f"{registered_profile} cannot include a capture source")
+        if not attributes and not artifact_metrics:
+            raise ValueError("Registered MAD filtering requires at least one metric")
+        return
+    if action == "registeredMad":
+        raise ValueError("registeredMad requires a registeredProfile")
     if action == "skip" and (attributes or artifact_metrics):
         raise ValueError("skip cannot include Cell-QC metrics")
     if action != "skip" and not attributes and not artifact_metrics:
@@ -226,10 +270,11 @@ def _validate_qc_sources(
 
 
 class CellQcProfileEvidence(AgentDataModel):
-    """Projected retention for one executor-supported cell-QC profile."""
+    """Projected retention for one registered or legacy cell-QC profile."""
 
     profileId: str = ""
     action: CellQcAction = "skip"
+    registeredProfile: RegisteredCellQcProfile | None = None
     driverAssay: str | None = None
     driverAssayType: CellQcDriverType | None = None
     sampleColumn: str | None = None
@@ -241,6 +286,10 @@ class CellQcProfileEvidence(AgentDataModel):
     retainedCells: int = 0
     retainedFraction: float = 0.0
     sampleRetainedCells: dict[str, int] = Field(default_factory=dict)
+    retainedCellsByColumn: dict[str, dict[str, int]] = Field(default_factory=dict)
+    unsafeRetentionGroups: list[str] = Field(default_factory=list)
+    flaggedCells: dict[str, int] = Field(default_factory=dict)
+    failedCaptureCandidates: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     evidenceId: str = ""
 
@@ -252,6 +301,7 @@ class CellQcProfileEvidence(AgentDataModel):
             artifact_metrics=self.artifactMetrics,
             sample_column=self.sampleColumn,
             sample_artifact=self.sampleArtifact,
+            registered_profile=self.registeredProfile,
         )
         return self
 
@@ -262,17 +312,18 @@ class CellQcProfileEvidence(AgentDataModel):
     @classmethod
     def get_example(cls) -> "CellQcProfileEvidence":
         return cls(
-            profileId="cellQc:RNA:RNA:globalGaussian:0.01:0.99",
-            action="globalGaussian",
+            profileId="cellQc:RNA:globalMad5",
+            action="registeredMad",
+            registeredProfile="globalMad5",
             driverAssay="RNA",
             driverAssayType="RNA",
             attributes=["RNA_nCounts", "RNA_nFeatures"],
             artifactMetrics=[NamedArtifactSource.get_example()],
-            parameters={"minP": 0.01, "maxP": 0.99},
+            parameters={"nMads": 5.0},
             activeCells=100,
             retainedCells=96,
             retainedFraction=0.96,
-            evidenceId=("qcProfile:cellQc:RNA:RNA:globalGaussian:0.01:0.99"),
+            evidenceId="qcProfile:cellQc:RNA:globalMad5",
         )
 
 
@@ -280,6 +331,7 @@ class CellQcPlan(AgentDataModel):
     """A validated selection from the bounded cell-QC profiles."""
 
     action: CellQcAction = "skip"
+    registeredProfile: RegisteredCellQcProfile | None = None
     profileId: str = ""
     driverAssay: str | None = None
     driverAssayType: CellQcDriverType | None = None
@@ -298,6 +350,7 @@ class CellQcPlan(AgentDataModel):
             artifact_metrics=self.artifactMetrics,
             sample_column=self.sampleColumn,
             sample_artifact=self.sampleArtifact,
+            registered_profile=self.registeredProfile,
         )
         return self
 
@@ -310,6 +363,7 @@ class CellQcPlan(AgentDataModel):
         evidence = CellQcProfileEvidence.get_example()
         return cls(
             action=evidence.action,
+            registeredProfile=evidence.registeredProfile,
             profileId=evidence.profileId,
             driverAssay=evidence.driverAssay,
             driverAssayType=evidence.driverAssayType,
@@ -352,7 +406,6 @@ class ExperimentalContextDecision(AgentDataModel):
             coefficientsOfInterest=["treatment"],
             unitsOfInference={"treatment": InferenceUnit.get_example()},
             batchCorrection=BatchCorrectionPlan.get_example(),
-            cellQc=CellQcPlan.get_example(),
             rationale="Treatment is the primary between-sample contrast.",
             evidenceIds=[
                 "column:batch",
@@ -485,7 +538,6 @@ class ExperimentalContextResult(AgentDataModel):
                 notes=["Example deterministic design characterization"],
             ),
             cellSelection=representation.cellSelection,
-            cellQc=CellQcPlan.get_example(),
             qcProfiles=[CellQcProfileEvidence.get_example()],
             qualityMetricArtifacts=[NamedArtifactSource.get_example()],
             htoIdentityColumns=["sample_id"],
@@ -625,6 +677,7 @@ class ExperimentalContextDependencies(AgentDataModel):
     connectivityMap: Any = Field(default=None, exclude=True)
     cellSelection: Any = Field(default=None, exclude=True)
     studyContext: str = ""
+    studyObjective: str = ""
     directions: dict[str, Any] = Field(default_factory=dict)
     evidenceIds: set[str] = Field(default_factory=set)
     characterization: CovariateCharacterization | None = None
@@ -646,6 +699,9 @@ class ExperimentalContextDependencies(AgentDataModel):
     def get_example(cls) -> "ExperimentalContextDependencies":
         return cls(
             studyContext="Case-control study with samples nested in donors.",
+            studyObjective=(
+                "Discover populations while preserving the case-control contrast."
+            ),
             directions={"columnDomains": {"batch": "technical"}},
         )
 
@@ -851,7 +907,7 @@ def _qc_sample_columns(
 
 
 def _qc_profile_id(
-    action: CellQcAction,
+    action: LegacyCellQcAction,
     *,
     driver: tuple[str, CellQcDriverType] | None,
     sample_column: str | None = None,
@@ -871,6 +927,263 @@ def _qc_profile_id(
         ),
     }[action]
     return f"cellQc:{assay_type}:{assay_name}:{suffix}"
+
+
+def _registered_qc_profile_id(
+    profile: RegisteredCellQcProfile,
+    *,
+    driver: tuple[str, CellQcDriverType],
+    sample_column: str | None,
+    sample_artifact: NamedArtifactSource | None,
+) -> str:
+    if sample_column is not None:
+        source = f"metadata:{sample_column}"
+    elif sample_artifact is not None:
+        source = (
+            f"artifact:{sample_artifact.name}:{sample_artifact.artifact.artifactId}"
+        )
+    else:
+        source = "global"
+    return f"cellQc:{driver[1]}:{driver[0]}:registered:{profile}:{source}"
+
+
+def _directed_capture_source(
+    deps: ExperimentalContextDependencies,
+) -> tuple[str | None, NamedArtifactSource | None, np.ndarray] | None:
+    directed_qc = deps.directions.get("cellQc")
+    qc_directions = dict(directed_qc) if isinstance(directed_qc, Mapping) else {}
+    candidates = [
+        deps.directions.get("physicalCaptureColumn"),
+        qc_directions.get("physicalCaptureColumn"),
+        qc_directions.get("captureColumn"),
+    ]
+    specified = [value for value in candidates if value is not None]
+    if not specified:
+        return None
+    if any(not isinstance(value, str) or not value.strip() for value in specified):
+        raise ValueError("physicalCaptureColumn must be a non-empty string")
+    names = list(dict.fromkeys(str(value) for value in specified))
+    if len(names) != 1:
+        raise ValueError("Conflicting physical capture columns were supplied")
+    name = names[0]
+    matching_artifacts = [
+        source for source in deps.htoIdentityArtifacts if source.name == name
+    ]
+    if len(matching_artifacts) > 1:
+        raise ValueError(f"Physical capture artifact {name!r} is not unique")
+    if matching_artifacts:
+        source = matching_artifacts[0]
+        labels = _resolved_artifact_values(
+            deps,
+            source,
+            expected_kind="hto_identity",
+        )
+        return None, source, np.asarray(labels)
+    if name not in deps.cells.columns:
+        raise ValueError(
+            f"physicalCaptureColumn {name!r} is not observed metadata or an "
+            "exact HTO identity artifact"
+        )
+    return name, None, np.asarray(deps.cells.fetch(name))
+
+
+def _directed_pooled_reference_captures(
+    deps: ExperimentalContextDependencies,
+) -> tuple[str, ...] | None:
+    directed_qc = deps.directions.get("cellQc")
+    qc_directions = dict(directed_qc) if isinstance(directed_qc, Mapping) else {}
+    raw = qc_directions.get(
+        "pooledReferenceCaptures",
+        deps.directions.get("pooledReferenceCaptures"),
+    )
+    if raw is None:
+        return None
+    if not isinstance(raw, list | tuple) or any(
+        not isinstance(value, str) or not value.strip() for value in raw
+    ):
+        raise ValueError("pooledReferenceCaptures must contain non-empty strings")
+    references = tuple(str(value) for value in raw)
+    if len(references) < 2 or len(references) != len(set(references)):
+        raise ValueError(
+            "pooledReferenceCaptures must contain at least two unique captures"
+        )
+    return references
+
+
+def _registered_profile_evidence(
+    projection: RegisteredQcProjection,
+    *,
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization | None,
+    driver: tuple[str, CellQcDriverType],
+    active: np.ndarray,
+    values_by_attr: dict[str, np.ndarray],
+    metadata_attributes: list[str],
+    artifact_metrics: list[NamedArtifactSource],
+    sample_column: str | None,
+    sample_artifact: NamedArtifactSource | None,
+    pooled_reference_captures: tuple[str, ...] | None,
+    active_cells: int,
+    comparison_source: str | None,
+) -> CellQcProfileEvidence:
+    supported_names = {
+        name
+        for name in values_by_attr
+        if registered_qc_metric_role(name) != "diagnostic"
+    }
+    attributes = [name for name in metadata_attributes if name in supported_names]
+    metric_artifacts = [
+        source for source in artifact_metrics if source.name in supported_names
+    ]
+    profile_id = _registered_qc_profile_id(
+        projection.profile,
+        driver=driver,
+        sample_column=sample_column,
+        sample_artifact=sample_artifact,
+    )
+    n_mads = 3.0 if projection.profile == "captureMad3Sensitivity" else 5.0
+    action: CellQcAction = (
+        "skip" if projection.profile == "retainWithFlags" else "registeredMad"
+    )
+    parameters: dict[str, Any] = {
+        "policyVersion": 1,
+        "profile": projection.profile,
+        "nMads": n_mads,
+        "boundPolicy": {
+            "count": {"remove": "lower", "flag": "upper"},
+            "feature": {"remove": "lower", "flag": "upper"},
+            "mitochondrial": {"remove": "upper", "fixedCutoff": None},
+            "diagnostic": {"remove": "none"},
+        },
+        "resolvedBounds": [threshold.to_dict() for threshold in projection.thresholds],
+        "captureSizes": projection.captureSizes,
+        "captureComparisons": [
+            comparison.to_dict() for comparison in projection.captureComparisons
+        ],
+        "captureComparisonSource": comparison_source,
+        "pooledReferenceCaptures": list(pooled_reference_captures or ()),
+    }
+    cells = deps.cells if deps.cells is not None else deps.store.cells
+    retention_columns: list[str] = []
+    if characterization is not None:
+        for coefficient in characterization.coefficients:
+            for value in (
+                coefficient.get("name"),
+                coefficient.get("observationUnit"),
+                coefficient.get("independentUnit"),
+            ):
+                if isinstance(value, str) and value in cells.columns:
+                    retention_columns.append(value)
+    retained_by_column: dict[str, dict[str, int]] = {}
+    unsafe_groups: list[str] = []
+    retained = np.asarray(projection.keep, dtype=bool) & np.asarray(active, dtype=bool)
+    for column in dict.fromkeys(retention_columns):
+        labels = np.asarray(cells.fetch(column))
+        if labels.shape != retained.shape:
+            raise ValueError(
+                f"QC retention column {column!r} does not align with cellSelection"
+            )
+        counts: dict[str, int] = {}
+        for raw_label in np.unique(labels[np.asarray(active, dtype=bool)]):
+            label = raw_label.item() if isinstance(raw_label, np.generic) else raw_label
+            key = label.decode("utf-8") if isinstance(label, bytes) else str(label)
+            count = int((retained & (labels == raw_label)).sum())
+            counts[key] = count
+            if count == 0:
+                unsafe_groups.append(f"{column}={key}")
+        retained_by_column[column] = counts
+    return CellQcProfileEvidence(
+        profileId=profile_id,
+        action=action,
+        registeredProfile=projection.profile,
+        driverAssay=driver[0],
+        driverAssayType=driver[1],
+        sampleColumn=sample_column,
+        sampleArtifact=sample_artifact,
+        attributes=attributes,
+        artifactMetrics=metric_artifacts,
+        parameters=parameters,
+        activeCells=active_cells,
+        retainedCells=projection.retainedCells,
+        retainedFraction=(
+            projection.retainedCells / active_cells if active_cells else 0.0
+        ),
+        sampleRetainedCells=projection.retainedByCapture,
+        retainedCellsByColumn=retained_by_column,
+        unsafeRetentionGroups=sorted(unsafe_groups),
+        flaggedCells=projection.flagCounts,
+        failedCaptureCandidates=list(projection.failedCaptureCandidates),
+        notes=list(projection.warnings),
+        evidenceId=f"qcProfile:{profile_id}",
+    )
+
+
+def _registered_qc_profiles(
+    deps: ExperimentalContextDependencies,
+    *,
+    characterization: CovariateCharacterization | None,
+    driver: tuple[str, CellQcDriverType],
+    active: np.ndarray,
+    values_by_attr: dict[str, np.ndarray],
+    metadata_attributes: list[str],
+    artifact_metrics: list[NamedArtifactSource],
+) -> list[CellQcProfileEvidence]:
+    capture = _directed_capture_source(deps)
+    sample_column: str | None = None
+    sample_artifact: NamedArtifactSource | None = None
+    capture_labels: np.ndarray | None = None
+    if capture is not None:
+        sample_column, sample_artifact, capture_labels = capture
+    if sample_column is not None:
+        comparison_source = f"metadata:{sample_column}"
+    elif sample_artifact is not None:
+        comparison_source = (
+            f"artifact:{sample_artifact.name}:{sample_artifact.artifact.artifactId}"
+        )
+    else:
+        comparison_source = None
+    pooled_references = _directed_pooled_reference_captures(deps)
+    if pooled_references is not None and capture is None:
+        raise ValueError(
+            "pooledReferenceCaptures requires an explicit physicalCaptureColumn"
+        )
+    projections = offered_registered_qc_profiles(
+        values_by_metric=values_by_attr,
+        active=active,
+        capture_labels=capture_labels,
+        grouping_proven=capture is not None,
+        min_cells_per_capture=20,
+        pooled_reference_captures=pooled_references,
+    )
+    profiles: list[CellQcProfileEvidence] = []
+    for projection in projections:
+        uses_capture = projection.profile in {
+            "captureMad5",
+            "captureMad3Sensitivity",
+            "pooledReferenceMad5",
+        }
+        profiles.append(
+            _registered_profile_evidence(
+                projection,
+                deps=deps,
+                characterization=characterization,
+                driver=driver,
+                active=active,
+                values_by_attr=values_by_attr,
+                metadata_attributes=metadata_attributes,
+                artifact_metrics=artifact_metrics,
+                sample_column=sample_column if uses_capture else None,
+                sample_artifact=sample_artifact if uses_capture else None,
+                pooled_reference_captures=(
+                    pooled_references
+                    if projection.profile == "pooledReferenceMad5"
+                    else None
+                ),
+                active_cells=int(active.sum()),
+                comparison_source=comparison_source,
+            )
+        )
+    return profiles
 
 
 def _global_qc_profile(
@@ -1051,20 +1364,39 @@ def _offered_qc_profiles(
         if driver is not None
         else ["No RNA or ATAC assay is eligible to drive automatic cell QC"]
     )
-    profiles = [
-        CellQcProfileEvidence(
-            profileId=skip_id,
-            action="skip",
-            driverAssay=driver_assay,
-            driverAssayType=driver_type,
-            activeCells=active_cells,
-            retainedCells=active_cells,
-            retainedFraction=1.0 if active_cells else 0.0,
-            notes=skip_notes,
-            evidenceId=f"qcProfile:{skip_id}",
-        )
-    ]
+    registered_only = deps.directions.get("registeredQcOnly") is True
+    profiles = (
+        []
+        if registered_only
+        else [
+            CellQcProfileEvidence(
+                profileId=skip_id,
+                action="skip",
+                driverAssay=driver_assay,
+                driverAssayType=driver_type,
+                activeCells=active_cells,
+                retainedCells=active_cells,
+                retainedFraction=1.0 if active_cells else 0.0,
+                notes=skip_notes,
+                evidenceId=f"qcProfile:{skip_id}",
+            )
+        ]
+    )
     if driver is None or active_cells == 0:
+        if registered_only:
+            profiles.append(
+                CellQcProfileEvidence(
+                    profileId=skip_id,
+                    action="skip",
+                    driverAssay=driver_assay,
+                    driverAssayType=driver_type,
+                    activeCells=active_cells,
+                    retainedCells=active_cells,
+                    retainedFraction=1.0 if active_cells else 0.0,
+                    notes=skip_notes,
+                    evidenceId=f"qcProfile:{skip_id}",
+                )
+            )
         deps.qcProfiles = {profile.profileId: profile for profile in profiles}
         return profiles
 
@@ -1117,28 +1449,40 @@ def _offered_qc_profiles(
         values_by_attr[source.name] = values
         artifact_metrics.append(source)
 
-    global_profile = _global_qc_profile(
-        deps,
-        driver,
-        active,
-        active_cells,
-        values_by_attr,
-        valid_metadata_attributes,
-        artifact_metrics,
-        attribute_notes,
-    )
-    if global_profile is not None:
-        profiles.append(global_profile)
-    profiles.extend(
-        _sample_qc_profiles(
+    if not registered_only:
+        global_profile = _global_qc_profile(
             deps,
-            characterization,
             driver,
             active,
             active_cells,
             values_by_attr,
             valid_metadata_attributes,
             artifact_metrics,
+            attribute_notes,
+        )
+        if global_profile is not None:
+            profiles.append(global_profile)
+        profiles.extend(
+            _sample_qc_profiles(
+                deps,
+                characterization,
+                driver,
+                active,
+                active_cells,
+                values_by_attr,
+                valid_metadata_attributes,
+                artifact_metrics,
+            )
+        )
+    profiles.extend(
+        _registered_qc_profiles(
+            deps,
+            characterization=characterization,
+            driver=driver,
+            active=active,
+            values_by_attr=values_by_attr,
+            metadata_attributes=valid_metadata_attributes,
+            artifact_metrics=artifact_metrics,
         )
     )
 
@@ -1158,7 +1502,9 @@ async def inspect_cell_covariates(
     characterization = characterize_covariates(
         ctx.deps.store,
         cellSelection=ctx.deps.cellSelection,
-        studyContext=ctx.deps.studyContext,
+        studyContext=(
+            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
+        ),
         model=None,
         directions=ctx.deps.directions,
         groupingArtifacts=_hto_artifact_map(ctx.deps),
@@ -1294,7 +1640,9 @@ async def analyze_experimental_design(
     characterization = characterize_covariates(
         ctx.deps.store,
         cellSelection=ctx.deps.cellSelection,
-        studyContext=ctx.deps.studyContext,
+        studyContext=(
+            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
+        ),
         model=None,
         directions=directions,
         groupingArtifacts=_hto_artifact_map(ctx.deps),
@@ -1311,8 +1659,8 @@ async def analyze_experimental_design(
         raise ModelRetry("; ".join(characterization.notes))
 
     # Retain the validated deterministic work even when the proposed Harmony
-    # columns below are rejected. A bounded fallback can then continue without
-    # rescanning the metadata or accepting an unsafe model choice.
+    # columns below are rejected. A bounded retry or resumed decision can reuse
+    # the evidence without rescanning metadata or accepting an unsafe choice.
     ctx.deps.characterization = characterization
     if not ctx.deps.htoIdentityColumns:
         ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
@@ -1662,13 +2010,20 @@ def _canonical_cell_qc_plan(
 
     has_directed_selector = any(
         key in direction_map
-        for key in ("profileId", "action", "sampleColumn", "sampleArtifactName")
+        for key in (
+            "profileId",
+            "registeredProfile",
+            "action",
+            "sampleColumn",
+            "sampleArtifactName",
+        )
     )
     selected_id = directed_profile_id or (
         "" if has_directed_selector else plan.profileId
     )
     if not selected_id:
         requested_action = direction_map.get("action")
+        requested_registered_profile = direction_map.get("registeredProfile")
         requested_sample = direction_map.get("sampleColumn")
         requested_sample_artifact = direction_map.get("sampleArtifactName")
         if requested_sample is not None and requested_sample_artifact is not None:
@@ -1684,12 +2039,35 @@ def _canonical_cell_qc_plan(
             "skip",
             "globalGaussian",
             "sampleMad",
+            "registeredMad",
         }:
             raise ModelRetry(f"Unsupported cellQc.action {requested_action!r}")
+        if requested_registered_profile is not None and not isinstance(
+            requested_registered_profile, str
+        ):
+            raise ModelRetry("cellQc.registeredProfile must be a string")
+        if (
+            requested_registered_profile is not None
+            and requested_registered_profile
+            not in {
+                "retainWithFlags",
+                "globalMad5",
+                "captureMad5",
+                "captureMad3Sensitivity",
+                "pooledReferenceMad5",
+            }
+        ):
+            raise ModelRetry(
+                f"Unsupported cellQc.registeredProfile {requested_registered_profile!r}"
+            )
         matches = [
             profile
             for profile in deps.qcProfiles.values()
             if (requested_action is None or profile.action == requested_action)
+            and (
+                requested_registered_profile is None
+                or profile.registeredProfile == requested_registered_profile
+            )
             and (requested_sample is None or profile.sampleColumn == requested_sample)
             and (
                 requested_sample_artifact is None
@@ -1699,7 +2077,7 @@ def _canonical_cell_qc_plan(
                 )
             )
         ]
-        if requested_action is not None:
+        if requested_action is not None or requested_registered_profile is not None:
             if len(matches) != 1:
                 raise ModelRetry(
                     "cellQc directions must identify exactly one offered profile"
@@ -1729,6 +2107,7 @@ def _canonical_cell_qc_plan(
     if model_selected:
         expected_fields = {
             "action": profile.action,
+            "registeredProfile": profile.registeredProfile,
             "driverAssay": profile.driverAssay,
             "driverAssayType": profile.driverAssayType,
             "sampleColumn": profile.sampleColumn,
@@ -1760,6 +2139,7 @@ def _canonical_cell_qc_plan(
     cited_evidence = plan.evidenceIds if model_selected else []
     return CellQcPlan(
         action=profile.action,
+        registeredProfile=profile.registeredProfile,
         profileId=profile.profileId,
         driverAssay=profile.driverAssay,
         driverAssayType=profile.driverAssayType,
@@ -1778,7 +2158,6 @@ def _validate_batch_correction_plan(
     characterization: CovariateCharacterization,
     requested_coefficients: set[str],
     units_of_inference: dict[str, dict[str, Any]],
-    cell_qc_plan: CellQcPlan,
     records: dict[str, dict[str, Any]],
     coefficient_records: dict[str, dict[str, Any]],
 ) -> None:
@@ -1943,7 +2322,6 @@ def _validate_batch_correction_plan(
     cited_ids = [
         *decision.evidenceIds,
         *plan.evidenceIds,
-        *cell_qc_plan.evidenceIds,
     ]
     unknown_evidence = sorted(set(cited_ids) - deps.evidenceIds)
     if unknown_evidence:
@@ -1972,7 +2350,6 @@ def validate_experimental_context(
     narrative_fields = {
         "rationale": decision.rationale,
         "batchCorrection.rationale": decision.batchCorrection.rationale,
-        "cellQc.rationale": decision.cellQc.rationale,
         **{
             f"needsInput[{index}]": question
             for index, question in enumerate(decision.needsInput)
@@ -2019,7 +2396,7 @@ def validate_experimental_context(
     characterization = characterize_covariates(
         deps.store,
         cellSelection=deps.cellSelection,
-        studyContext=deps.studyContext,
+        studyContext=f"{deps.studyContext}\nStudy objective: {deps.studyObjective}",
         model=None,
         directions=directions,
         groupingArtifacts=_hto_artifact_map(deps),
@@ -2034,11 +2411,13 @@ def validate_experimental_context(
     if "analyze_experimental_design" not in deps.toolCalls:
         raise ModelRetry("Call analyze_experimental_design before returning a decision")
 
-    cell_qc_plan = _canonical_cell_qc_plan(
-        decision.cellQc,
-        deps,
-        characterization,
-    )
+    if decision.cellQc != CellQcPlan.get_blank():
+        raise ModelRetry(
+            "Experimental Context must leave cellQc blank; the audited filtering "
+            "checkpoint selects from qcProfiles"
+        )
+    if not deps.qcProfiles:
+        _offered_qc_profiles(deps, characterization)
     deps.evidenceIds.update(profile.evidenceId for profile in deps.qcProfiles.values())
 
     requested_coefficients = set(directions["coefficientsOfInterest"])
@@ -2072,7 +2451,6 @@ def validate_experimental_context(
         characterization,
         requested_coefficients,
         units_of_inference,
-        cell_qc_plan,
         records,
         coefficient_records,
     )
@@ -2102,33 +2480,35 @@ def validate_experimental_context(
             "columnDomains": canonical_domains,
             "coefficientsOfInterest": list(directions["coefficientsOfInterest"]),
             "unitsOfInference": canonical_units,
-            "cellQc": cell_qc_plan,
+            "cellQc": CellQcPlan.get_blank(),
         }
     )
     logger.debug(
         "Experimental Context decision validated: "
         f"domains={len(validated.columnDomains)}, "
         f"coefficients={len(validated.coefficientsOfInterest)}, "
-        f"cellQc={validated.cellQc.action}, "
+        f"qcProfiles={len(deps.qcProfiles)}, "
         f"batchCorrection={validated.batchCorrection.action}, "
         f"needsInput={len(validated.needsInput)}"
     )
     return validated
 
 
-def fallback_experimental_context_result(
+def pending_experimental_context_result(
     deps: ExperimentalContextDependencies,
     *,
     error: UnexpectedModelBehavior,
     model_name: str,
 ) -> ExperimentalContextResult:
-    """Continue conservatively when the model exhausts its correction budget."""
+    """Pause when the model exhausts its bounded decision budget."""
     characterization = deps.characterization
     if characterization is None:
         characterization = characterize_covariates(
             deps.store,
             cellSelection=deps.cellSelection,
-            studyContext=deps.studyContext,
+            studyContext=(
+                f"{deps.studyContext}\nStudy objective: {deps.studyObjective}"
+            ),
             model=None,
             directions=deps.directions,
             groupingArtifacts=_hto_artifact_map(deps),
@@ -2139,11 +2519,6 @@ def fallback_experimental_context_result(
     qc_profiles = list(deps.qcProfiles.values())
     if not qc_profiles:
         qc_profiles = _offered_qc_profiles(deps, characterization)
-    cell_qc = _canonical_cell_qc_plan(
-        CellQcPlan.get_blank(),
-        deps,
-        characterization,
-    )
     evidence_ids = characterization_evidence(characterization)
     evidence_ids.update(profile.evidenceId for profile in qc_profiles)
     evidence_ids.update(f"htoIdentity:{column}" for column in deps.htoIdentityColumns)
@@ -2151,83 +2526,38 @@ def fallback_experimental_context_result(
         _artifact_evidence_id(source) for source in deps.htoIdentityArtifacts
     )
     deps.evidenceIds.update(evidence_ids)
-    column_domains = {
-        str(record["name"]): record["domain"]
-        for record in characterization.columns
-        if isinstance(record.get("name"), str)
-        and record.get("domain")
-        in {"biological", "technical", "design", "ignore", "unknown"}
-    }
-    coefficient_records = {
-        str(record["name"]): record
-        for record in characterization.coefficients
-        if isinstance(record.get("name"), str)
-    }
-    coefficients = list(coefficient_records)
-    units = {
-        coefficient: InferenceUnit(
-            observationUnit=record.get("observationUnit"),
-            independentUnit=record.get("independentUnit"),
-        )
-        for coefficient, record in coefficient_records.items()
-    }
-    batch_evidence = sorted(
-        f"column:{name}"
-        for name, domain in column_domains.items()
-        if domain == "technical"
-    )
-    if not batch_evidence:
-        batch_evidence = sorted(
-            evidence_id
-            for evidence_id in evidence_ids
-            if evidence_id.startswith("column:")
-        )[:1]
-    limitation = (
-        "The model exhausted its bounded correction budget while proposing the "
-        "experimental design. Harmony was skipped because no model proposal was "
-        "accepted as a categorical technical batch design."
+    question = (
+        "The Experimental Context agent could not produce a validated scientific "
+        "decision. Provide explicit metadata roles, units of inference, cell-QC "
+        "profile, and batch-correction intent before continuing."
     )
     decision = ExperimentalContextDecision(
-        columnDomains=column_domains,
-        coefficientsOfInterest=coefficients,
-        unitsOfInference=units,
-        batchCorrection=BatchCorrectionPlan(
-            action="skip",
-            rationale=(
-                "Use the native representation because bounded validation did not "
-                "authorize a safe Harmony batch column."
-            ),
-            evidenceIds=batch_evidence,
-        ),
-        cellQc=cell_qc,
-        rationale=(
-            "Retained deterministic metadata characterization and the exact bounded "
-            "cell-QC profile, while declining an unvalidated batch-correction choice."
-        ),
+        batchCorrection=BatchCorrectionPlan(action="needsInput"),
+        cellQc=CellQcPlan.get_blank(),
+        rationale="No scientific decision was selected.",
         evidenceIds=sorted(evidence_ids),
+        needsInput=[question],
     )
     error_detail = str(error).replace("\n", " ").strip()[:500]
-    status: StageStatus = "failed" if characterization.status == "failed" else "done"
     logger.warning(
-        "Experimental Context used its conservative fallback: "
-        f"status={status}, cellQc={cell_qc.action}, coefficients={len(coefficients)}, "
+        "Experimental Context paused without a scientific decision: "
         f"reason={error_detail}"
     )
     return ExperimentalContextResult(
-        status=status,
+        status=("failed" if characterization.status == "failed" else "needsInput"),
         decision=decision,
         characterization=characterization,
         cellSelection=artifact_reference(deps.cellSelection),
-        cellQc=cell_qc,
+        cellQc=CellQcPlan.get_blank(),
         qcProfiles=qc_profiles,
         qualityMetricArtifacts=deps.qualityMetricArtifacts,
         htoIdentityColumns=deps.htoIdentityColumns,
         htoIdentityArtifacts=deps.htoIdentityArtifacts,
         batchSafety=list(deps.batchSafety.values()),
         currentRepresentation=deps.currentRepresentation,
-        notes=[*characterization.notes, limitation, error_detail],
+        notes=[*characterization.notes, question, error_detail],
         runInfo=AgentRunInfo(
-            agentName="experimental_context_fallback",
+            agentName="experimental_context_needs_input",
             modelName=model_name,
         ),
     )
@@ -2267,13 +2597,12 @@ class ExperimentalContextAgent:
             its single call.
 
             The tools return bounded cell-QC profiles projected against the exact
-            shared cell selection. Select one returned profileId, copy its action,
-            driver assay name and type, metadata attributes, artifact metrics, and
-            sample source exactly, and cite its evidenceId. RNA is the preferred
-            QC driver and ATAC is the fallback. ADT and HTO never drive automatic
-            cell filtering. An exact HTO identity artifact may be used as sample
-            or grouping evidence. It is not a live metadata column and does not
-            make HTO a QC driver.
+            shared cell selection. Do not choose a profile and leave cellQc blank.
+            A later audited checkpoint selects one registered profile. Never author
+            or alter numeric quality bounds. RNA is the preferred QC driver and
+            ATAC is the fallback. ADT and HTO never drive automatic cell filtering.
+            An exact HTO identity artifact may be used as grouping evidence. It is
+            not a live metadata column and does not make HTO a QC driver.
 
             A batch column must be categorical and technical. Never use donor,
             sample, observation-unit, independent-unit, biological, cluster, or
@@ -2289,7 +2618,10 @@ class ExperimentalContextAgent:
             Parameter Tuning must compare exact uncorrected and corrected artifacts.
 
             Cite only evidenceIds returned by tools. Ask for input when study
-            design cannot be resolved. Never propose Python, shell commands,
+            design cannot be resolved. The study objective is authoritative: use
+            it to identify protected biological variables and the intended unit
+            of inference, but do not broaden it or claim to test a hypothesis.
+            Never propose Python, shell commands,
             direct Zarr access, or any datastore mutation. Every rationale and
             question must be plain prose. Never place serialized JSON, schema
             field names, or sibling output fields inside a narrative string.
@@ -2305,6 +2637,7 @@ class ExperimentalContextAgent:
         store: Any,
         *,
         study_context: str | None = None,
+        study_objective: str | None = None,
         cell_selection: ArtifactRef | None = None,
         directions: Mapping[str, Any] | None = None,
         run: "PipelineRun | None" = None,
@@ -2315,8 +2648,11 @@ class ExperimentalContextAgent:
     ) -> ExperimentalContextResult:
         """Inspect one datastore and return a validated experimental-context report."""
         study_context = (study_context or "").strip()
+        study_objective = (study_objective or "").strip()
         if len(study_context) > _CONTEXT_LIMIT:
             study_context = study_context[: _CONTEXT_LIMIT - 3] + "..."
+        if len(study_objective) > _CONTEXT_LIMIT:
+            study_objective = study_objective[: _CONTEXT_LIMIT - 3] + "..."
         direction_map = dict(directions or {})
         if run is not None:
             if (
@@ -2397,7 +2733,8 @@ class ExperimentalContextAgent:
             f"directions={len(direction_map)}, "
             f"qualityMetrics={len(quality_sources)}, "
             f"htoIdentities={len(hto_sources)}, "
-            f"studyContextProvided={bool(study_context)}"
+            f"studyContextProvided={bool(study_context)}, "
+            f"studyObjectiveProvided={bool(study_objective)}"
         )
         deps = ExperimentalContextDependencies(
             store=store,
@@ -2417,6 +2754,7 @@ class ExperimentalContextAgent:
             connectivityMap=connectivity_map,
             cellSelection=cell_selection,
             studyContext=study_context,
+            studyObjective=study_objective,
             directions=direction_map,
             qualityMetricArtifacts=quality_sources,
             htoIdentityArtifacts=hto_sources,
@@ -2424,10 +2762,12 @@ class ExperimentalContextAgent:
         user_prompt = (
             dedent(
                 """
-                Characterize this experiment's metadata, select one offered cell-QC
-                profile, and decide whether Harmony should be evaluated.
+                Characterize this experiment's metadata and decide whether Harmony
+                should be evaluated. Return cell-QC candidates as tool evidence;
+                leave cellQc blank for the later audited filtering checkpoint.
 
                 Study context: {study_context}
+                Study objective: {study_objective}
                 Exact cell-selection artifact: {cell_selection}
                 Exact quality-metric artifacts: {quality_metrics}
                 Exact HTO identity artifacts: {hto_identities}
@@ -2437,6 +2777,7 @@ class ExperimentalContextAgent:
             .strip()
             .format(
                 study_context=study_context or "not provided",
+                study_objective=study_objective or "not provided",
                 cell_selection=cell_selection.artifact_id,
                 quality_metrics=json.dumps(
                     [source.model_dump(mode="json") for source in quality_sources],
@@ -2487,7 +2828,7 @@ class ExperimentalContextAgent:
             )
         except UnexpectedModelBehavior as exc:
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            return fallback_experimental_context_result(
+            return pending_experimental_context_result(
                 deps,
                 error=exc,
                 model_name=str(model_name),
@@ -2498,7 +2839,7 @@ class ExperimentalContextAgent:
             characterization = characterize_covariates(
                 store,
                 cellSelection=cell_selection,
-                studyContext=study_context,
+                studyContext=(f"{study_context}\nStudy objective: {study_objective}"),
                 model=None,
                 directions=direction_map,
                 groupingArtifacts=_hto_artifact_map(deps),
@@ -2511,7 +2852,7 @@ class ExperimentalContextAgent:
             status = "done"
         logger.info(
             "Experimental Context Agent completed: "
-            f"status={status}, cellQc={decision.cellQc.action}, "
+            f"status={status}, qcProfiles={len(deps.qcProfiles)}, "
             f"batchCorrection={decision.batchCorrection.action}, "
             f"coefficients={len(decision.coefficientsOfInterest)}, "
             f"toolCalls={len(deps.toolCalls)}, evidence={len(deps.evidenceIds)}"
@@ -2521,7 +2862,7 @@ class ExperimentalContextAgent:
             decision=decision,
             characterization=characterization,
             cellSelection=artifact_reference(cell_selection),
-            cellQc=decision.cellQc,
+            cellQc=CellQcPlan.get_blank(),
             qcProfiles=list(deps.qcProfiles.values()),
             qualityMetricArtifacts=deps.qualityMetricArtifacts,
             htoIdentityColumns=deps.htoIdentityColumns,

@@ -1,18 +1,31 @@
 """Public data models for resumable automated agent workflows."""
 
+import hashlib
 import re
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from ...storage.refs import ArtifactRef
+from .. import record_io
 from ..config import AgentRunConfig
 from ..experimental_context import CellQcPlan
+from ..ingest.manifest import DatasetManifest
 from ..persistence import AgentReportReference, AgentWorkflowRun
+from ..rna_decisions import CellQualityExecutorPayload
+from ..study_contract import AuthorLabelPolicy, StudyContract
 from ..types import AgentDataModel, ArtifactReferenceModel
 
-type AutomatedWorkflowStatus = Literal["completed", "needsInput", "failed", "abandoned"]
-type WorkflowStageStatus = Literal["started", "done", "needsInput", "failed"]
+type AutomatedWorkflowStatus = Literal[
+    "completed",
+    "needsInput",
+    "abstained",
+    "failed",
+    "abandoned",
+]
+type WorkflowStageStatus = Literal[
+    "started", "done", "needsInput", "abstained", "failed"
+]
 type WorkflowStageName = Literal[
     "ingest",
     "data_enrichment",
@@ -21,6 +34,9 @@ type WorkflowStageName = Literal[
     "preprocessing_plan",
     "preprocessing",
     "parameter_tuning",
+    "feature_policy_review",
+    "feature_policy_preprocessing",
+    "feature_policy_tuning",
     "analysis_finalization",
     "biological_interpretation",
 ]
@@ -30,7 +46,7 @@ type ReductionMethod = Literal["pca", "lsi", "identity", "none"]
 _RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _ORCHESTRATION_FORMAT = "scarf_agent_orchestrations"
-_ORCHESTRATION_VERSION = 1
+_ORCHESTRATION_VERSION = 2
 _STAGE_ORDER: tuple[WorkflowStageName, ...] = (
     "ingest",
     "data_enrichment",
@@ -39,8 +55,10 @@ _STAGE_ORDER: tuple[WorkflowStageName, ...] = (
     "preprocessing_plan",
     "preprocessing",
     "parameter_tuning",
+    "feature_policy_review",
+    "feature_policy_preprocessing",
+    "feature_policy_tuning",
     "analysis_finalization",
-    "biological_interpretation",
 )
 
 
@@ -48,6 +66,7 @@ class WorkflowQuestion(AgentDataModel):
     """One stable question that can be answered by a resume request."""
 
     questionId: str = ""
+    decisionId: str | None = None
     question: str = ""
     options: list[str] = Field(default_factory=list)
     evidenceIds: list[str] = Field(default_factory=list)
@@ -205,10 +224,22 @@ class AutomatedPreprocessingPlan(AgentDataModel):
     markerAssay: str = ""
     cellSelection: ArtifactReferenceModel | None = None
     cellQc: CellQcPlan = Field(default_factory=CellQcPlan.get_blank)
+    cellQualityPayload: CellQualityExecutorPayload | None = None
     assays: list[AssayPreprocessingPlan] = Field(default_factory=list)
     pairedAssays: list[str] = Field(default_factory=list)
     planChecksum: str = ""
     limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_cell_quality_payload(self) -> "AutomatedPreprocessingPlan":
+        if (
+            self.cellQualityPayload is not None
+            and self.cellQc.registeredProfile != self.cellQualityPayload.profile
+        ):
+            raise ValueError(
+                "cellQualityPayload must match the selected registered QC profile"
+            )
+        return self
 
     @classmethod
     def get_blank(cls) -> "AutomatedPreprocessingPlan":
@@ -296,6 +327,7 @@ class NativeAnalysisHandoff(AgentDataModel):
 class FinalAnalysisHandoff(AgentDataModel):
     """Replayable final analysis used by Biological Interpretation."""
 
+    handoffId: str = ""
     workflowRunId: str = ""
     primaryAssay: str = ""
     markerAssay: str = ""
@@ -308,8 +340,31 @@ class FinalAnalysisHandoff(AgentDataModel):
     umap: ArtifactReferenceModel | None = None
     markerFeatures: ArtifactReferenceModel | None = None
     markers: ArtifactReferenceModel | None = None
+    doubletScores: list[ArtifactReferenceModel] = Field(default_factory=list)
     parameterReport: AgentReportReference | None = None
     limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_handoff_id(self) -> "FinalAnalysisHandoff":
+        if not self.handoffId:
+            return self
+        expected = self._content_handoff_id()
+        if self.handoffId != expected:
+            raise ValueError("handoffId does not match the final artifact handoff")
+        return self
+
+    def _content_handoff_id(self) -> str:
+        digest = hashlib.sha256(
+            record_io.canonical_json_bytes(
+                self.model_dump(mode="json", exclude={"handoffId"})
+            )
+        ).hexdigest()
+        return f"handoff:{digest}"
+
+    def with_handoff_id(self) -> "FinalAnalysisHandoff":
+        values = self.model_dump(mode="json")
+        values["handoffId"] = self._content_handoff_id()
+        return FinalAnalysisHandoff.model_validate(values)
 
     @classmethod
     def get_blank(cls) -> "FinalAnalysisHandoff":
@@ -338,24 +393,66 @@ class FinalAnalysisHandoff(AgentDataModel):
             clusters=ArtifactReferenceModel(
                 assay="RNA", kind="cluster_labels", artifactId="3" * 64
             ),
-        )
+        ).with_handoff_id()
 
 
 class AutomatedWorkflowConfig(AgentDataModel):
     """Bounded execution policy for automated workflows."""
 
-    primaryInitialCandidates: int = Field(default=5, ge=1)
+    primaryInitialCandidates: int = Field(default=11, ge=1)
     secondaryInitialCandidates: int = Field(default=3, ge=1)
-    maxRefinedCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
+    maxRefinedCandidatesPerAssay: int = Field(default=0, ge=0, le=0)
     maxHarmonyCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
     integrationResolutionCandidates: int = Field(default=3, ge=1)
     maxCandidateBranches: int = Field(default=24, ge=1)
     minClusterCells: int = Field(default=20, ge=1)
     maxIdentityFeatures: int = Field(default=64, ge=2)
     maxGraphAssays: int = Field(default=3, ge=1)
+    hvgCandidateCounts: tuple[int, ...] = (1000, 2000, 4000)
+    pcaCandidateDimensions: tuple[int, ...] = (10, 20, 30, 50)
+    graphNeighborCandidates: tuple[int, ...] = (11, 21, 41)
+    leidenResolutionCandidates: tuple[float, ...] = (
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+        1.25,
+        1.5,
+    )
+    leidenSeeds: tuple[int, ...] = (0, 1, 2)
+    clusterSubsamples: int = Field(default=2, ge=0, le=5)
+    clusterSubsampleFraction: float = Field(default=0.8, gt=0.0, lt=1.0)
+    maxRevisions: int = Field(default=2, ge=0, le=2)
     allowDownloads: bool = False
     cacheDir: str | None = None
     agentRunConfig: AgentRunConfig = Field(default_factory=AgentRunConfig)
+
+    @model_validator(mode="after")
+    def validate_candidate_registry(self) -> "AutomatedWorkflowConfig":
+        integer_fields = (
+            "hvgCandidateCounts",
+            "pcaCandidateDimensions",
+            "graphNeighborCandidates",
+        )
+        for field_name in integer_fields:
+            values = getattr(self, field_name)
+            if not values or any(value < 1 for value in values):
+                raise ValueError(f"{field_name} must contain positive integers")
+            if len(values) != len(set(values)) or tuple(sorted(values)) != values:
+                raise ValueError(f"{field_name} must be sorted and unique")
+        resolutions = self.leidenResolutionCandidates
+        if (
+            not resolutions
+            or any(value <= 0 for value in resolutions)
+            or len(resolutions) != len(set(resolutions))
+            or tuple(sorted(resolutions)) != resolutions
+        ):
+            raise ValueError(
+                "leidenResolutionCandidates must be positive, sorted, and unique"
+            )
+        if not self.leidenSeeds or len(self.leidenSeeds) != len(set(self.leidenSeeds)):
+            raise ValueError("leidenSeeds must be non-empty and unique")
+        return self
 
     @classmethod
     def get_blank(cls) -> "AutomatedWorkflowConfig":
@@ -372,8 +469,9 @@ class AutomatedWorkflowRequest(AgentDataModel):
     sourcePath: str = ""
     zarrPath: str | None = None
     studyContext: str = ""
+    studyObjective: str = ""
+    authorLabelPolicy: AuthorLabelPolicy = "holdout"
     workspace: str | None = None
-    allowAssumptions: bool = False
     primaryAssay: str | None = None
     markerAssay: str | None = None
     analysisAssays: list[str] = Field(default_factory=list)
@@ -387,6 +485,8 @@ class AutomatedWorkflowRequest(AgentDataModel):
             raise ValueError("sourcePath must be non-empty")
         if not self.studyContext.strip():
             raise ValueError("studyContext must be non-empty")
+        if not self.studyObjective.strip():
+            raise ValueError("studyObjective must be non-empty")
         if len(set(self.analysisAssays)) != len(self.analysisAssays):
             raise ValueError("analysisAssays must be unique")
         if len(set(self.pairedAssays)) != len(self.pairedAssays):
@@ -397,7 +497,11 @@ class AutomatedWorkflowRequest(AgentDataModel):
 
     @classmethod
     def get_blank(cls) -> "AutomatedWorkflowRequest":
-        return cls(sourcePath="dataset.h5", studyContext="Study context")
+        return cls(
+            sourcePath="dataset.h5",
+            studyContext="Study context",
+            studyObjective="Discover stable population structure.",
+        )
 
     @classmethod
     def get_example(cls) -> "AutomatedWorkflowRequest":
@@ -405,6 +509,9 @@ class AutomatedWorkflowRequest(AgentDataModel):
             sourcePath="dataset.h5ad",
             zarrPath="dataset.zarr",
             studyContext="Single-cell profiling of treated human blood.",
+            studyObjective=(
+                "Discover stable populations while preserving treatment structure."
+            ),
         )
 
 
@@ -445,11 +552,35 @@ class AutomatedWorkflowResult(AgentDataModel):
     zarrPath: str | None = None
     workflowRun: AgentWorkflowRun | None = None
     reportReferences: list[AgentReportReference] = Field(default_factory=list)
+    datasetManifest: DatasetManifest | None = None
     preprocessingPlan: AutomatedPreprocessingPlan | None = None
+    studyContract: StudyContract | None = None
     finalAnalysis: FinalAnalysisHandoff | None = None
+    finalHandoffId: str | None = None
+    decisionRunId: str | None = None
+    verificationSummary: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    unresolvedClaims: list[str] = Field(default_factory=list)
     needsInput: WorkflowNeedsInput | None = None
     notes: list[str] = Field(default_factory=list)
     contentSha256: str = ""
+
+    @model_validator(mode="after")
+    def validate_terminal_handoff(self) -> "AutomatedWorkflowResult":
+        if self.status != "completed":
+            return self
+        if self.finalAnalysis is None or not self.finalAnalysis.handoffId:
+            raise ValueError("Completed workflow results require a final handoff")
+        if self.finalHandoffId != self.finalAnalysis.handoffId:
+            raise ValueError("Result and final analysis handoff IDs must agree")
+        if (
+            self.workflowRun is None
+            or self.decisionRunId != self.workflowRun.workflowRunId
+        ):
+            raise ValueError(
+                "Completed results require the matching decision workflow ID"
+            )
+        return self
 
     @classmethod
     def get_blank(cls) -> "AutomatedWorkflowResult":
@@ -457,12 +588,17 @@ class AutomatedWorkflowResult(AgentDataModel):
 
     @classmethod
     def get_example(cls) -> "AutomatedWorkflowResult":
+        workflow = AgentWorkflowRun.get_example()
+        final_analysis = FinalAnalysisHandoff.get_example()
         return cls(
             status="completed",
-            currentStage="biological_interpretation",
+            currentStage="analysis_finalization",
             zarrPath="dataset.zarr",
-            workflowRun=AgentWorkflowRun.get_example(),
-            finalAnalysis=FinalAnalysisHandoff.get_example(),
+            workflowRun=workflow,
+            studyContract=StudyContract.get_example(),
+            finalAnalysis=final_analysis,
+            finalHandoffId=final_analysis.handoffId,
+            decisionRunId=workflow.workflowRunId,
         )
 
 
@@ -470,7 +606,7 @@ class OrchestrationRequestRecord(AgentDataModel):
     """Stored immutable request and effective configuration."""
 
     recordType: Literal["automatedWorkflowRequest"] = "automatedWorkflowRequest"
-    formatVersion: Literal[1] = 1
+    formatVersion: Literal[2] = 2
     workflowRunId: str = ""
     createdAtNs: int = Field(default=0, ge=0)
     request: AutomatedWorkflowRequest = Field(
