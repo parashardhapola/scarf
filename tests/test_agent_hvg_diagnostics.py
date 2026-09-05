@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from scarf.agent.hvg_diagnostics import (
+from scarf.agent.parameter_tuning.hvg import (
     HvgGroupVariability,
     aggregate_hvg_rankings,
     effective_hvg_candidate_counts,

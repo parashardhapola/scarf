@@ -9,15 +9,15 @@ import h5py
 import numpy as np
 
 from ...readers._h5ad_inspect import (
-    _MatrixCandidate,
     _as_text,
     _column_names,
     _matrix_candidates,
+    _MatrixCandidate,
     _node_length,
     _select_matrix,
     inspect_h5ad,
 )
-from ..config._deps import AGENT_INSTALL_HINT
+from .._deps import AGENT_INSTALL_HINT
 from ..types import AgentDataModel
 
 try:

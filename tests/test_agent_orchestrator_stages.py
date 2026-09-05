@@ -13,7 +13,7 @@ import pytest
 import scarf.agent.orchestrator.context as context_module
 import scarf.agent.orchestrator.journal as journal_module
 import scarf.agent.orchestrator.tuning as tuning_module
-import scarf.agent.parameter_tuning as parameter_tuning_module
+import scarf.agent.parameter_tuning.agent as parameter_tuning_agent
 from scarf.agent.orchestrator.preprocessing import PreprocessingStagesMixin
 from scarf.agent.config import AgentRunConfig
 from scarf.agent.config.agent_exec import (
@@ -63,14 +63,14 @@ from scarf.agent.parameter_tuning import (
     finalize_parameter_tuning_selection,
     select_final_parameter_graph,
 )
-from scarf.agent.qc_profiles import RegisteredCellQcProfile
+from scarf.agent.cell_quality.profiles import RegisteredCellQcProfile
 from scarf.agent.types import (
     AgentRunInfo,
     ArtifactReferenceModel,
     BatchSafetyEvidence,
     ExperimentalTuningHandoff,
 )
-from scarf.agent.tuning_diagnostics import (
+from scarf.agent.parameter_tuning.diagnostics import (
     _select_capture_cells,
     resolve_native_doublet_inputs,
 )
@@ -1591,7 +1591,7 @@ def test_final_selection_pause_exposes_exact_options_and_resumes_without_screen(
             ),
         )
 
-    monkeypatch.setattr(parameter_tuning_module, "run_agent_sync", selection_execution)
+    monkeypatch.setattr(parameter_tuning_agent, "run_agent_sync", selection_execution)
 
     class CountingAgent:
         config = AgentRunConfig()

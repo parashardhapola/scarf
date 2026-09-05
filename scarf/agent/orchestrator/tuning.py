@@ -24,56 +24,8 @@ from ..config.agent_exec import (
     build_visual_evidence_prompt,
     run_agent_sync,
 )
-from ..decision_kernel import DecisionEvidence, DecisionSelection, EvidenceBundle
-from ..experimental_context import ExperimentalContextResult
-from ..parameter_tuning import (
-    ArtifactRecord,
-    FinalGraphComparison,
-    FinalGraphSelection,
-    IntegrationCandidateEvaluation,
-    IntegrationMetrics,
-    ParameterCandidate,
-    ParameterCandidateEvaluation,
-    ParameterSearchPlan,
-    ParameterTuningDependencies,
-    ParameterTuningAgent,
-    ParameterTuningAssayInput,
-    ParameterTuningReport,
-    final_graph_options,
-    finalize_parameter_tuning_selection,
-    parameter_search_prompt,
-    parameter_search_system_prompt,
-    parameter_tuning_prompt,
-    parameter_tuning_system_prompt,
-    pending_parameter_tuning_report,
-    validate_parameter_tuning_report,
-    validate_final_graph_selection,
-)
-from ..persistence import (
-    AgentInvocation,
-    AgentReportLink,
-    AgentReportReference,
-    AgentWorkflowRun,
-    list_agent_reports,
-    load_agent_record,
-    load_agent_report,
-    save_agent_report,
-)
-from ..sequential_tuning import (
-    CorrectionNeedSelection,
-    ParameterPhaseEvidence,
-    ParameterPhasePlan,
-    ParameterPhaseSelection,
-    SequentialAssayTuningEvidence,
-    SequentialRnaTuningPlanner,
-    execute_parameter_phase,
-    execute_sequential_refinement,
-    prepare_sequential_refinement_dependencies,
-    sequential_evidence_to_report,
-    validate_sequential_refinement_plan,
-    validate_parameter_phase_selection,
-)
-from ..rna_decisions import (
+from ..decisions.kernel import DecisionEvidence, DecisionSelection, EvidenceBundle
+from ..decisions.rna import (
     ClusterExecutorPayload,
     ConditionalGeneFamily,
     CorrectionLicensePayload,
@@ -91,12 +43,66 @@ from ..rna_decisions import (
     build_pca_prefix_decision,
     require_option_evidence,
 )
-from ..study_contract import StudyContract
-from ..tuning_diagnostics import (
+from ..experimental_context.contracts import ExperimentalContextResult
+from ..experimental_context.study import StudyContract
+from ..parameter_tuning.agent import ParameterTuningAgent
+from ..parameter_tuning.contracts import (
+    ArtifactRecord,
+    FinalGraphComparison,
+    FinalGraphSelection,
+    IntegrationCandidateEvaluation,
+    IntegrationMetrics,
+    ParameterCandidate,
+    ParameterCandidateEvaluation,
+    ParameterSearchPlan,
+    ParameterTuningAssayInput,
+    ParameterTuningDependencies,
+    ParameterTuningReport,
+)
+from ..parameter_tuning.diagnostics import (
     SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
     augment_cluster_evaluations,
     augment_pca_evaluations,
     score_advisory_doublets,
+)
+from ..parameter_tuning.prompts import (
+    parameter_search_prompt,
+    parameter_search_system_prompt,
+    parameter_tuning_prompt,
+    parameter_tuning_system_prompt,
+)
+from ..parameter_tuning.selection import (
+    final_graph_options,
+    finalize_parameter_tuning_selection,
+    pending_parameter_tuning_report,
+    validate_final_graph_selection,
+    validate_parameter_tuning_report,
+)
+from ..parameter_tuning.sequential import (
+    CorrectionNeedSelection,
+    ParameterPhaseEvidence,
+    ParameterPhasePlan,
+    ParameterPhaseSelection,
+    SequentialAssayTuningEvidence,
+    SequentialRnaTuningPlanner,
+    execute_parameter_phase,
+    execute_sequential_refinement,
+    prepare_sequential_refinement_dependencies,
+    sequential_evidence_to_report,
+    validate_parameter_phase_selection,
+    validate_sequential_refinement_plan,
+)
+from ..persistence.contracts import (
+    AgentInvocation,
+    AgentReportLink,
+    AgentReportReference,
+    AgentWorkflowRun,
+)
+from ..persistence.reports import (
+    list_agent_reports,
+    load_agent_record,
+    load_agent_report,
+    save_agent_report,
 )
 from ..types import AgentDataModel, ArtifactReferenceModel, ExperimentalTuningHandoff
 from . import journal

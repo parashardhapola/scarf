@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from .config._deps import AGENT_INSTALL_HINT
+from ._deps import AGENT_INSTALL_HINT
 
 try:
     from pydantic import BaseModel, ConfigDict, Field

@@ -3,8 +3,8 @@
 from collections.abc import Sequence
 from typing import Any
 
-from ..config._deps import AGENT_INSTALL_HINT
-from ..persistence import AgentWorkflowRun
+from .._deps import AGENT_INSTALL_HINT
+from ..persistence.contracts import AgentWorkflowRun
 from ..types import AgentDataModel, Decision, NeedsInput, StageStatus
 
 try:

@@ -14,11 +14,20 @@ import zarr
 from pydantic_ai import ModelRetry, UnexpectedModelBehavior
 
 import scarf.agent as agent_api
-import scarf.agent.biological_interpretation as biological_module
+import scarf.agent.biological_interpretation.tools as biological_tools
+import scarf.agent.biological_interpretation.validation as biological_validation
 import scarf.agent.config.agent_exec as agent_exec_module
-import scarf.agent.data_enrichment as enrichment_module
-import scarf.agent.experimental_context as experimental_module
-import scarf.agent.report as report_module
+import scarf.agent.data_enrichment.agent as enrichment_agent
+import scarf.agent.data_enrichment.tools as enrichment_tools
+import scarf.agent.data_enrichment.validation as enrichment_validation
+import scarf.agent.experimental_context.tools as experimental_tools
+import scarf.agent.experimental_context.validation as experimental_validation
+import scarf.agent.report.artifacts as report_artifacts
+import scarf.agent.report.contracts as report_contracts
+import scarf.agent.report.decision_tree as report_decision_tree
+import scarf.agent.report.generator as report_generator
+import scarf.agent.report.plots as report_plots
+import scarf.agent.report.rendering as report_rendering
 import scarf.agent.orchestrator.journal as journal_module
 import scarf.agent.orchestrator.main as orchestrator_main
 from scarf.agent import (
@@ -33,13 +42,15 @@ from scarf.agent import (
     load_agent_workflow,
 )
 from scarf.agent.biological_interpretation import (
-    BiologicalInterpretationDependencies,
     BiologicalInterpretationNeedsInput,
     BiologicalInterpretationReport,
     ClusterCompositionEvidence,
     ClusterMarkerEvidence,
 )
-from scarf.agent.characterize_covariates import CovariateCharacterization
+from scarf.agent.biological_interpretation.contracts import (
+    BiologicalInterpretationDependencies,
+)
+from scarf.agent.experimental_context.contracts import CovariateCharacterization
 from scarf.agent.data_enrichment import (
     AssayFeatureInspection,
     DataEnrichmentAgent,
@@ -454,23 +465,23 @@ def _patch_completed_workflow(
     )
 
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "load_agent_workflow",
         lambda *_a, **_k: workflow,
     )
-    monkeypatch.setattr(report_module, "_open_datastore", lambda *_a, **_k: object())
+    monkeypatch.setattr(report_generator, "_open_datastore", lambda *_a, **_k: object())
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_load_completed_result",
         lambda *_a, **_k: ("agents/orchestrations", result, request_record),
     )
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_collect_reports",
         lambda *_a, **_k: _reports(study_context),
     )
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_collect_history",
         lambda *_a, **_k: (
             [
@@ -498,9 +509,9 @@ def _patch_completed_workflow(
             [],
         ),
     )
-    monkeypatch.setattr(report_module, "_collect_active_decisions", lambda *_a: {})
+    monkeypatch.setattr(report_generator, "_collect_active_decisions", lambda *_a: {})
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_collect_default_feature_inventories",
         lambda *_a: [
             {
@@ -555,7 +566,7 @@ def _patch_completed_workflow(
             [],
         )
 
-    monkeypatch.setattr(report_module, "_collect_final_artifacts", collect_artifacts)
+    monkeypatch.setattr(report_generator, "_collect_final_artifacts", collect_artifacts)
 
     def collect_hvg_plots(
         _store: object,
@@ -572,9 +583,9 @@ def _patch_completed_workflow(
         )
         return {"hvgGlobal": "plots/hvg_global.png"}, []
 
-    monkeypatch.setattr(report_module, "_collect_hvg_plots", collect_hvg_plots)
+    monkeypatch.setattr(report_generator, "_collect_hvg_plots", collect_hvg_plots)
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_collect_hvg_evidence",
         lambda *_a, **_k: {
             "assay": "RNA",
@@ -820,21 +831,21 @@ def test_harmony_diagnostic_reports_execution_metrics_and_rejection_reason() -> 
         "correctionOutcome": {"rationale": rejection},
     }
 
-    evidence_markup = report_module._render_batch_evidence(
+    evidence_markup = report_rendering._render_batch_evidence(
         experimental,
         parameter,
         final,
         decisions,
     )
-    stage = report_module._batch_tree_stage(
+    stage = report_decision_tree._batch_tree_stage(
         experimental,
         parameter,
         final,
         decisions,
     )
     assert stage is not None
-    tree_markup = report_module._render_decision_tree([stage])
-    technical_markup = report_module._render_harmony_technical_audit(
+    tree_markup = report_decision_tree._render_decision_tree([stage])
+    technical_markup = report_rendering._render_harmony_technical_audit(
         experimental,
         parameter,
         final,
@@ -876,7 +887,7 @@ def test_report_uses_workspace_path_and_can_be_regenerated(
     first.with_name("technical.html").write_text("stale technical", encoding="utf-8")
 
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "_collect_reports",
         lambda *_a, **_k: _reports("Regenerated context"),
     )
@@ -926,11 +937,11 @@ def test_report_rejects_remote_and_non_completed_workflows(
     zarr.open_group(str(root), mode="w", zarr_format=3)
     running = _workflow(status="running")
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "load_agent_workflow",
         lambda *_a, **_k: running,
     )
-    monkeypatch.setattr(report_module, "_open_datastore", lambda *_a, **_k: object())
+    monkeypatch.setattr(report_generator, "_open_datastore", lambda *_a, **_k: object())
 
     with pytest.raises(RuntimeError, match="completed workflows"):
         generate_agent_report(root, running.workflowRunId)
@@ -951,7 +962,7 @@ def test_orchestrator_generates_only_completed_local_reports_non_fatally(
         lambda _store: tmp_path / "data.zarr",
     )
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "generate_agent_report",
         lambda target, workflow_run_id: (
             generated.append((target, workflow_run_id))
@@ -978,7 +989,7 @@ def test_orchestrator_generates_only_completed_local_reports_non_fatally(
         lambda _store: tmp_path / "data.zarr",
     )
     monkeypatch.setattr(
-        report_module,
+        report_generator,
         "generate_agent_report",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("plot failed")),
     )
@@ -1021,31 +1032,32 @@ def test_report_store_request_and_result_validation_edges(
             self.workspace = kwargs.get("workspace")
             self.z = object()
 
-    monkeypatch.setattr(report_module, "DataStore", LocalDataStore)
-    monkeypatch.setattr(report_module, "zarr_root_path", lambda _store: None)
+    monkeypatch.setattr(report_artifacts, "DataStore", LocalDataStore)
+    monkeypatch.setattr(report_generator, "DataStore", LocalDataStore)
+    monkeypatch.setattr(report_artifacts, "zarr_root_path", lambda _store: None)
     with pytest.raises(ValueError, match="local filesystem"):
-        report_module._local_root(LocalDataStore())
+        report_artifacts._local_root(LocalDataStore())
 
     monkeypatch.setattr(
-        report_module,
+        report_artifacts,
         "zarr_root_path",
         lambda _store: local_root,
     )
-    assert report_module._local_root(f"file://{local_root}") == local_root.resolve()
-    assert report_module._local_root(str(local_root)) == local_root.resolve()
+    assert report_artifacts._local_root(f"file://{local_root}") == local_root.resolve()
+    assert report_artifacts._local_root(str(local_root)) == local_root.resolve()
     with pytest.raises(TypeError, match="local filesystem"):
-        report_module._local_root(object())
+        report_artifacts._local_root(object())
     with pytest.raises(FileNotFoundError):
-        report_module._local_root(tmp_path / "missing.zarr")
+        report_artifacts._local_root(tmp_path / "missing.zarr")
 
     workflow = _workflow()
     with pytest.raises(ValueError, match="workspace"):
-        report_module._open_datastore(
+        report_artifacts._open_datastore(
             LocalDataStore(workspace="other"),
             local_root,
             workflow,
         )
-    opened = report_module._open_datastore(local_root, local_root, workflow)
+    opened = report_artifacts._open_datastore(local_root, local_root, workflow)
     assert opened.args == (str(local_root),)
     assert opened.kwargs["default_assay"] == "RNA"
     assert opened.kwargs["zarr_mode"] == "r"
@@ -1067,7 +1079,7 @@ def test_report_store_request_and_result_validation_edges(
         lambda *_args, **_kwargs: current_record,
     )
     store = SimpleNamespace(z=object(), zw=object())
-    assert report_module._load_request(store, "agents", "workflow-1") == valid_record
+    assert report_artifacts._load_request(store, "agents", "workflow-1") == valid_record
 
     invalid_records = (
         (
@@ -1089,7 +1101,7 @@ def test_report_store_request_and_result_validation_edges(
     )
     for current_record, message in invalid_records:
         with pytest.raises(ValueError, match=message):
-            report_module._load_request(store, "agents", "workflow-1")
+            report_artifacts._load_request(store, "agents", "workflow-1")
 
     monkeypatch.setattr(
         journal_module,
@@ -1103,22 +1115,22 @@ def test_report_store_request_and_result_validation_edges(
         lambda *_args, **_kwargs: terminal_result,
     )
     with pytest.raises(FileNotFoundError, match="no terminal result"):
-        report_module._load_completed_result(store, workflow)
+        report_artifacts._load_completed_result(store, workflow)
 
     terminal_result = SimpleNamespace(status="failed", finalAnalysis=object())
     with pytest.raises(ValueError, match="final analysis"):
-        report_module._load_completed_result(store, workflow)
+        report_artifacts._load_completed_result(store, workflow)
 
     terminal_result = SimpleNamespace(status="completed", finalAnalysis=object())
     monkeypatch.setattr(
-        report_module,
+        report_artifacts,
         "_load_request",
         lambda *_args, **_kwargs: SimpleNamespace(
             request=SimpleNamespace(workspace="other")
         ),
     )
     with pytest.raises(ValueError, match="request workspace"):
-        report_module._load_completed_result(store, workflow)
+        report_artifacts._load_completed_result(store, workflow)
 
     invalid_attempt = WorkflowStageAttempt(
         status="failed",
@@ -1126,7 +1138,7 @@ def test_report_store_request_and_result_validation_edges(
         completedAtNs=2,
         error="not a valid error type!?: details",
     )
-    assert report_module._stage_summary(invalid_attempt)["errorType"] == (
+    assert report_artifacts._stage_summary(invalid_attempt)["errorType"] == (
         "WorkflowStageError"
     )
 
@@ -1188,7 +1200,7 @@ def test_hvg_report_evidence_uses_persisted_diagnostic_values(
         def load_artifact(self, ref: Any) -> Any:
             return groups[ref.artifact_id]
 
-    evidence = report_module._collect_hvg_evidence(
+    evidence = report_artifacts._collect_hvg_evidence(
         HvgStore(),
         [
             {
@@ -1235,39 +1247,39 @@ def test_hvg_report_evidence_uses_persisted_diagnostic_values(
 
 
 def test_report_renderer_edge_branches() -> None:
-    assert report_module._safe_assay_name("RNA / strange assay", "fallback") == (
+    assert report_plots._safe_assay_name("RNA / strange assay", "fallback") == (
         "rna_strange_assay"
     )
-    assert report_module._safe_assay_name("***", "fallback") == "fallback"
-    assert report_module._scalar(None) == "Not provided"
-    assert "Nothing" in report_module._chips(None, empty="Nothing")
-    assert "value" in report_module._chips("value")
-    public_text = report_module._brief_text(
+    assert report_plots._safe_assay_name("***", "fallback") == "fallback"
+    assert report_contracts._scalar(None) == "Not provided"
+    assert "Nothing" in report_rendering._chips(None, empty="Nothing")
+    assert "value" in report_rendering._chips("value")
+    public_text = report_contracts._brief_text(
         f"Preserve donor_id from {'a' * 64} and 12345678-1234-1234-1234-123456789abc."
     )
     assert "donor_id" not in public_text
     assert "a" * 64 not in public_text
     assert "12345678-1234-1234-1234-123456789abc" not in public_text
-    assert report_module._latest({"agent": {"status": "done"}}, "agent") == {
+    assert report_contracts._latest({"agent": {"status": "done"}}, "agent") == {
         "status": "done"
     }
-    assert report_module._latest({}, "agent") == {}
+    assert report_contracts._latest({}, "agent") == {}
 
-    native_plot = report_module._render_plots(
+    native_plot = report_plots._render_plots(
         {"nativeUmapRna": "plots/native.png"},
         [],
     )
     assert "Rna native UMAP" in native_plot
     assert "finalized native Rna" in native_plot
-    assert "No final cluster counts" in report_module._render_clusters({})
+    assert "No final cluster counts" in report_rendering._render_clusters({})
 
     legacy_parameter = {
         "fromAssay": "RNA",
         "evaluations": [{"candidateId": "native"}],
     }
-    assert report_module._parameter_rows(legacy_parameter)[0]["assay"] == "RNA"
-    assert "No Parameter Tuning report" in report_module._render_parameter_tuning({})
-    rendered_parameter = report_module._render_parameter_tuning(
+    assert report_rendering._parameter_rows(legacy_parameter)[0]["assay"] == "RNA"
+    assert "No Parameter Tuning report" in report_rendering._render_parameter_tuning({})
+    rendered_parameter = report_rendering._render_parameter_tuning(
         {
             "fromAssay": "RNA",
             "searchPlan": {"status": "refine"},
@@ -1277,13 +1289,13 @@ def test_report_renderer_edge_branches() -> None:
     )
     assert "RNA" in rendered_parameter
     assert "final graph" in rendered_parameter
-    assert "No provider execution metadata" in report_module._render_executions({})
+    assert "No provider execution metadata" in report_rendering._render_executions({})
 
 
 def test_wide_technical_records_use_readable_card_layout() -> None:
     wide_row = {f"field_{index}": f"value {index}" for index in range(8)}
     wide_row["_selected"] = True
-    wide_markup = report_module._table([wide_row])
+    wide_markup = report_rendering._table([wide_row])
 
     assert "<table" not in wide_markup
     assert 'class="record-fields"' in wide_markup
@@ -1291,7 +1303,7 @@ def test_wide_technical_records_use_readable_card_layout() -> None:
     assert "Field 7" in wide_markup
     assert "value 7" in wide_markup
 
-    compact_markup = report_module._table([{"name": "candidate", "score": 0.5}])
+    compact_markup = report_rendering._table([{"name": "candidate", "score": 0.5}])
     assert "<table" in compact_markup
     assert "<th>Name</th>" in compact_markup
 
@@ -1398,13 +1410,13 @@ def test_report_collects_bounded_artifact_branches(
                 }
             )
 
-    monkeypatch.setattr(report_module, "MAX_EMBEDDING_PLOT_CELLS", 0)
-    monkeypatch.setattr(report_module, "MAX_COMPOSITION_PLOT_CELLS", 0)
-    monkeypatch.setattr(report_module, "MAX_DOTPLOT_CELLS", 0)
-    monkeypatch.setattr(report_module, "MAX_CONNECTIVITY_PLOT_CELLS", 0)
+    monkeypatch.setattr(report_plots, "MAX_EMBEDDING_PLOT_CELLS", 0)
+    monkeypatch.setattr(report_plots, "MAX_COMPOSITION_PLOT_CELLS", 0)
+    monkeypatch.setattr(report_plots, "MAX_DOTPLOT_CELLS", 0)
+    monkeypatch.setattr(report_plots, "MAX_CONNECTIVITY_PLOT_CELLS", 0)
 
     store = ArtifactStore()
-    counts, markers, plots, notes = report_module._collect_final_artifacts(
+    counts, markers, plots, notes = report_plots._collect_final_artifacts(
         store,
         result,
         tmp_path / "plots",
@@ -1417,17 +1429,15 @@ def test_report_collects_bounded_artifact_branches(
     assert any("markerDotplot: skipped" in note for note in notes)
     assert any("clusterConnectivity: skipped" in note for note in notes)
 
-    monkeypatch.setattr(report_module, "MAX_MARKER_DOTPLOT_FEATURES", 1)
-    _counts, _markers, _plots, one_marker_notes = (
-        report_module._collect_final_artifacts(store, result, tmp_path / "plots-one")
+    monkeypatch.setattr(report_plots, "MAX_MARKER_DOTPLOT_FEATURES", 1)
+    _counts, _markers, _plots, one_marker_notes = report_plots._collect_final_artifacts(
+        store, result, tmp_path / "plots-one"
     )
     assert any("markerDotplot: skipped" in note for note in one_marker_notes)
 
-    monkeypatch.setattr(report_module, "MAX_MARKER_DOTPLOT_FEATURES", object())
+    monkeypatch.setattr(report_plots, "MAX_MARKER_DOTPLOT_FEATURES", object())
     _counts, _markers, _plots, invalid_limit_notes = (
-        report_module._collect_final_artifacts(
-            store, result, tmp_path / "plots-invalid"
-        )
+        report_plots._collect_final_artifacts(store, result, tmp_path / "plots-invalid")
     )
     assert any("markerDotplot: TypeError" in note for note in invalid_limit_notes)
 
@@ -1435,7 +1445,7 @@ def test_report_collects_bounded_artifact_branches(
         update={"finalAnalysis": FinalAnalysisHandoff.get_blank()}
     )
     with pytest.raises(ValueError, match="lacks its selection"):
-        report_module._collect_final_artifacts(
+        report_plots._collect_final_artifacts(
             store,
             incomplete,
             tmp_path / "plots-incomplete",
@@ -1461,7 +1471,7 @@ def test_data_enrichment_cache_rollback_and_pending_branches(
 
     assert (
         asyncio.run(
-            enrichment_module.inspect_assay_features(
+            enrichment_tools.inspect_assay_features(
                 completed_context,
                 assay_name="RNA",
             )
@@ -1469,7 +1479,7 @@ def test_data_enrichment_cache_rollback_and_pending_branches(
         == inspection
     )
     cached_batch = asyncio.run(
-        enrichment_module.inspect_assay_features_batch(completed_context)
+        enrichment_tools.inspect_assay_features_batch(completed_context)
     )
     assert cached_batch.inspections == [inspection]
     assert cached_batch.evidenceIds == inspection.evidenceIds
@@ -1480,7 +1490,7 @@ def test_data_enrichment_cache_rollback_and_pending_branches(
     )
     with pytest.raises(ModelRetry, match="datastore"):
         asyncio.run(
-            enrichment_module.inspect_assay_features_batch(
+            enrichment_tools.inspect_assay_features_batch(
                 SimpleNamespace(deps=incomplete)
             )
         )
@@ -1488,12 +1498,12 @@ def test_data_enrichment_cache_rollback_and_pending_branches(
 
     provider_error = UnexpectedModelBehavior("provider output failed")
     with pytest.raises(UnexpectedModelBehavior, match="provider output failed"):
-        enrichment_module.pending_data_enrichment_report(
+        enrichment_validation.pending_data_enrichment_report(
             DataEnrichmentDependencies(assays=["RNA"]),
             error=provider_error,
             model_name="test-model",
         )
-    pending = enrichment_module.pending_data_enrichment_report(
+    pending = enrichment_validation.pending_data_enrichment_report(
         DataEnrichmentDependencies(
             assays=["RNA"],
             inspections={"RNA": inspection},
@@ -1509,7 +1519,7 @@ def test_data_enrichment_cache_rollback_and_pending_branches(
     def fail_before_inspection(**_kwargs: object) -> object:
         raise UnexpectedModelBehavior("no inspection completed")
 
-    monkeypatch.setattr(enrichment_module, "run_agent_sync", fail_before_inspection)
+    monkeypatch.setattr(enrichment_agent, "run_agent_sync", fail_before_inspection)
     store = SimpleNamespace(assay_names=["RNA"])
     with pytest.raises(UnexpectedModelBehavior, match="no inspection completed"):
         DataEnrichmentAgent(object()).run(store)
@@ -1522,7 +1532,7 @@ def test_biological_interpretation_cache_and_fallback_branches() -> None:
     )
     assert (
         asyncio.run(
-            biological_module.inspect_cluster_composition(
+            biological_tools.inspect_cluster_composition(
                 SimpleNamespace(deps=composition_deps)
             )
         )
@@ -1536,7 +1546,7 @@ def test_biological_interpretation_cache_and_fallback_branches() -> None:
     )
     assert (
         asyncio.run(
-            biological_module.inspect_cluster_markers(
+            biological_tools.inspect_cluster_markers(
                 SimpleNamespace(deps=marker_deps),
                 cluster_id=marker.clusterId,
             )
@@ -1549,19 +1559,19 @@ def test_biological_interpretation_cache_and_fallback_branches() -> None:
         needsInput=BiologicalInterpretationNeedsInput(question="More context?"),
     )
     with pytest.raises(ModelRetry, match="Only a needsInput"):
-        biological_module.validate_biological_interpretation_report(
+        biological_validation.validate_biological_interpretation_report(
             invalid_report,
             BiologicalInterpretationDependencies(clusterValues={"0": 0}),
         )
 
     provider_error = UnexpectedModelBehavior("structured output failed")
     with pytest.raises(UnexpectedModelBehavior, match="structured output failed"):
-        biological_module.fallback_biological_interpretation_report(
+        biological_validation.fallback_biological_interpretation_report(
             BiologicalInterpretationDependencies(),
             error=provider_error,
             model_name="test-model",
         )
-    needs_markers = biological_module.fallback_biological_interpretation_report(
+    needs_markers = biological_validation.fallback_biological_interpretation_report(
         BiologicalInterpretationDependencies(
             clusterValues={"0": 0},
             evidenceIds={"composition:clusters"},
@@ -1603,7 +1613,7 @@ def test_experimental_context_rejects_invalid_batches_and_builds_pending_result(
         )
         with pytest.raises(ModelRetry, match=message):
             asyncio.run(
-                experimental_module.analyze_experimental_design(
+                experimental_tools.analyze_experimental_design(
                     SimpleNamespace(deps=deps),
                     column_domains={},
                     coefficients_of_interest=[],
@@ -1617,7 +1627,7 @@ def test_experimental_context_rejects_invalid_batches_and_builds_pending_result(
         columns=[{"name": "condition", "domain": "biological", "kind": "categorical"}],
     )
     monkeypatch.setattr(
-        experimental_module,
+        experimental_validation,
         "characterize_covariates",
         lambda *_args, **_kwargs: characterization,
     )
@@ -1630,7 +1640,11 @@ def test_experimental_context_rejects_invalid_batches_and_builds_pending_result(
         deps.qcProfiles[profile.profileId] = profile
         return [profile]
 
-    monkeypatch.setattr(experimental_module, "_offered_qc_profiles", offer_profile)
+    monkeypatch.setattr(
+        experimental_validation,
+        "_offered_qc_profiles",
+        offer_profile,
+    )
     pending_deps = ExperimentalContextDependencies(
         cellSelection=ArtifactReferenceModel(
             scope="datastore",
@@ -1639,7 +1653,7 @@ def test_experimental_context_rejects_invalid_batches_and_builds_pending_result(
         ),
         htoIdentityColumns=["hto_identity"],
     )
-    pending = experimental_module.pending_experimental_context_result(
+    pending = experimental_validation.pending_experimental_context_result(
         pending_deps,
         error=UnexpectedModelBehavior("design output failed"),
         model_name="test-model",

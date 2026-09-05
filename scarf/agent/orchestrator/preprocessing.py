@@ -24,31 +24,14 @@ from ...storage.selections import read_stored_selection_mask
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
 from .. import record_io
-from ..data_enrichment import (
+from ..cell_quality.execution import execute_registered_cell_qc
+from ..data_enrichment.contracts import (
     AssayFeatureInspection,
     DataEnrichmentReport,
     FeatureSelectionPolicy,
 )
-from ..decision_kernel import DecisionEvidence, DecisionSelection, EvidenceBundle
-from ..experimental_context import (
-    CellQcPlan,
-    CellQcProfileEvidence,
-    ExperimentalContextResult,
-)
-from ..hvg_diagnostics import (
-    HvgRanking,
-    compare_hvg_ranking_to_default,
-    run_hvg_diagnostic_artifacts,
-)
-from ..persistence import AgentWorkflowRun
-from ..parameter_tuning import (
-    ParameterCandidate,
-    ParameterCandidateEvaluation,
-    execute_parameter_candidate,
-    prepare_parameter_tuning_dependencies,
-)
-from ..qc_execution import execute_registered_cell_qc
-from ..rna_decisions import (
+from ..decisions.kernel import DecisionEvidence, DecisionSelection, EvidenceBundle
+from ..decisions.rna import (
     CellQualityExecutorPayload,
     CellQualityProfile,
     FeaturePolicyExecutorPayload,
@@ -62,12 +45,29 @@ from ..rna_decisions import (
     build_qc_grouping_decision,
     require_option_evidence,
 )
-from ..study_contract import StudyContract
-from ..tuning_diagnostics import (
+from ..experimental_context.contracts import (
+    CellQcPlan,
+    CellQcProfileEvidence,
+    ExperimentalContextResult,
+)
+from ..experimental_context.study import StudyContract
+from ..parameter_tuning.agent import prepare_parameter_tuning_dependencies
+from ..parameter_tuning.contracts import (
+    ParameterCandidate,
+    ParameterCandidateEvaluation,
+)
+from ..parameter_tuning.diagnostics import (
     SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
     augment_cluster_evaluations,
     augment_pca_evaluations,
 )
+from ..parameter_tuning.execution import execute_parameter_candidate
+from ..parameter_tuning.hvg import (
+    HvgRanking,
+    compare_hvg_ranking_to_default,
+    run_hvg_diagnostic_artifacts,
+)
+from ..persistence.contracts import AgentWorkflowRun
 from ..types import ArtifactReferenceModel
 from . import journal
 from .decisions import DecisionStagesMixin

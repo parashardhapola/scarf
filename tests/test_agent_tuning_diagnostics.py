@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.sparse import block_diag, csr_matrix
 
-from scarf.agent.tuning_diagnostics import (
+from scarf.agent.parameter_tuning.diagnostics import (
     _cross_unit_support,
     _subsample_partition_stability,
 )

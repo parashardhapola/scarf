@@ -8,24 +8,24 @@ import numpy as np
 
 from ...datastore.datastore import DataStore
 from ...utils.logging import logger
-from ..data_enrichment import (
-    DataEnrichmentAgent,
+from ..data_enrichment.agent import DataEnrichmentAgent
+from ..data_enrichment.contracts import (
     DataEnrichmentContext,
     DataEnrichmentReport,
 )
-from ..experimental_context import (
-    ExperimentalContextAgent,
+from ..experimental_context.agent import ExperimentalContextAgent
+from ..experimental_context.contracts import (
     ExperimentalContextResult,
     NamedArtifactSource,
 )
+from ..experimental_context.study import build_study_contract
 from ..ingest import IngestResult
 from ..ingest.manifest import DatasetManifest, is_author_label_column
-from ..persistence import (
+from ..persistence.contracts import (
     AgentInvocation,
     AgentReportReference,
     AgentWorkflowRun,
 )
-from ..study_contract import build_study_contract
 from ..types import AgentRunInfo, ArtifactReferenceModel
 from . import journal
 from .models import (

@@ -14,14 +14,17 @@ from zarr.core.sync import sync
 from ...datastore.datastore import DataStore
 from ...utils.logging import logger
 from .. import record_io
+from ..experimental_context.study import StudyContract
 from ..ingest.manifest import DatasetManifest
-from ..persistence import (
+from ..persistence.contracts import (
     AgentInvocation,
     AgentName,
-    AgentReport,
     AgentReportLink,
     AgentReportReference,
     AgentWorkflowRun,
+)
+from ..persistence.reports import (
+    AgentReport,
     finalize_agent_workflow,
     list_agent_reports,
     load_agent_record,
@@ -30,7 +33,6 @@ from ..persistence import (
     save_agent_report,
 )
 from ..types import AgentDataModel, ArtifactReferenceModel
-from ..study_contract import StudyContract
 from .models import (
     _ORCHESTRATION_FORMAT,
     _ORCHESTRATION_VERSION,

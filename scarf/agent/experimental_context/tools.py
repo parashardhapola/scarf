@@ -1,0 +1,758 @@
+"""Read-only Pydantic AI tools for experimental context."""
+
+import math
+from collections.abc import Sequence
+from typing import Any
+
+from ...metadata.queries import reduce_observation_units
+from ...metrics.association import coefficient_estimability
+from ...storage.refs import ArtifactRef
+from ...utils.logging import logger
+from .._deps import AGENT_INSTALL_HINT
+from ..tools import artifact_reference, core_artifact_reference
+from ..types import BatchSafetyEvidence, BatchSafetyStatus
+from .characterization import characterize_covariates
+from .contracts import (
+    ColumnDomain,
+    ContrastPlan,
+    ContrastStatus,
+    ContrastTest,
+    CovariateCharacterization,
+    CovariateEvidence,
+    ExperimentalContextDependencies,
+    InferenceUnit,
+    RepresentationEvaluation,
+    characterization_evidence,
+)
+from .qc_evidence import (
+    _artifact_evidence_id,
+    _hto_artifact_map,
+    _hto_identity_columns,
+    _offered_qc_profiles,
+)
+
+try:
+    from pydantic_ai import ModelRetry, RunContext
+    from pydantic_ai.tools import ToolDefinition
+except ImportError as exc:
+    raise ImportError(AGENT_INSTALL_HINT) from exc
+
+
+def _prepare_experimental_context_tool(
+    ctx: RunContext[ExperimentalContextDependencies],
+    tool_definition: ToolDefinition,
+) -> ToolDefinition | None:
+    """Expose each context tool once and in its required dependency order."""
+    completed_calls = set(ctx.deps.toolCalls)
+    if tool_definition.name == "inspect_cell_covariates":
+        return None if tool_definition.name in completed_calls else tool_definition
+    if tool_definition.name == "analyze_experimental_design":
+        if (
+            "inspect_cell_covariates" not in completed_calls
+            or tool_definition.name in completed_calls
+        ):
+            return None
+        return tool_definition
+    if tool_definition.name == "score_current_representation":
+        if (
+            "analyze_experimental_design" not in completed_calls
+            or tool_definition.name in completed_calls
+        ):
+            return None
+        characterization = ctx.deps.characterization
+        if characterization is not None and not any(
+            record.get("domain") == "technical" and record.get("kind") == "categorical"
+            for record in characterization.columns
+        ):
+            return None
+        return tool_definition
+    return tool_definition
+
+
+def contrast_plans_from_characterization(
+    characterization: CovariateCharacterization,
+) -> list[ContrastPlan]:
+    """Build deterministic test licenses from bounded coefficient evidence."""
+    reports = {
+        report.get("coefficient"): report
+        for report in characterization.confounding
+        if isinstance(report.get("coefficient"), str)
+    }
+    plans: list[ContrastPlan] = []
+    for record in characterization.coefficients:
+        coefficient = record.get("name")
+        if not isinstance(coefficient, str):
+            continue
+        report = reports.get(coefficient, {})
+        raw_groups = record.get("groupOrder")
+        group_order = (
+            list(raw_groups)
+            if isinstance(raw_groups, list)
+            and all(
+                isinstance(value, str | int | float | bool)
+                and not (isinstance(value, float) and not math.isfinite(value))
+                for value in raw_groups
+            )
+            else []
+        )
+        sample_by = record.get("observationUnit")
+        sample_by = sample_by if isinstance(sample_by, str) else None
+        independent_unit = record.get("independentUnit")
+        independent_unit = (
+            independent_unit if isinstance(independent_unit, str) else None
+        )
+        between_unit = record.get("scope") == "betweenUnit"
+        replication = dict(record.get("replication") or {})
+        replication_passed = replication.get("sufficient") is True
+        estimability = dict(
+            record.get("estimability") or report.get("estimability") or {}
+        )
+        estimability_passed = (
+            estimability.get("status") == "ok"
+            and estimability.get("coefficientEstimable") is True
+            and estimability.get("rankDeficient") is not True
+        )
+        paired_coverage = dict(record.get("pairedCoverage") or {})
+        pair_by: str | None = None
+        paired_passed: bool | None = None
+        mixed_independent_design = False
+        if independent_unit is not None:
+            if paired_coverage.get("complete") is True:
+                pair_by = independent_unit
+                paired_passed = True
+            elif paired_coverage.get("betweenIndependentUnits") is True:
+                sample_by = independent_unit
+            else:
+                pair_by = independent_unit
+                paired_passed = False
+                mixed_independent_design = True
+
+        reasons: list[str] = []
+        needs_input = False
+        if record.get("kind") != "categorical":
+            reasons.append("coefficientRequiresExplicitCategoricalGroups")
+            needs_input = True
+        if not between_unit:
+            reasons.append("coefficientIsNotBetweenUnit")
+        if sample_by is None:
+            reasons.append("sampleByIsUnresolved")
+            needs_input = True
+        if len(group_order) < 2:
+            reasons.append("fewerThanTwoObservedGroups")
+            needs_input = True
+        if record.get("groupCountsTruncated") is True:
+            reasons.append("groupOrderIsTruncated")
+            needs_input = True
+        if not replication_passed:
+            reasons.append("insufficientIndependentReplication")
+        if not estimability_passed:
+            reasons.append("coefficientIsNotEstimable")
+
+        test: ContrastTest | None = None
+        if pair_by is not None:
+            if len(group_order) != 2:
+                reasons.append("pairedTestsRequireExactlyTwoGroups")
+            else:
+                test = "wilcoxon"
+            if paired_passed is not True:
+                reasons.append("pairedCoverageIsIncomplete")
+        elif mixed_independent_design:
+            reasons.append("independentUnitStructureIsMixed")
+        elif len(group_order) == 2:
+            test = "mann_whitney"
+        elif len(group_order) >= 3:
+            test = "kruskal_wallis"
+
+        reasons = list(dict.fromkeys(reasons))
+        status: ContrastStatus = (
+            "licensed" if not reasons else "needsInput" if needs_input else "blocked"
+        )
+        evidence_ids = [
+            f"column:{coefficient}",
+            f"coefficient:{coefficient}",
+            f"estimability:{coefficient}",
+        ]
+        plans.append(
+            ContrastPlan(
+                coefficient=coefficient,
+                groupOrder=group_order,
+                sampleBy=sample_by,
+                pairBy=pair_by,
+                test=test,
+                status=status,
+                betweenUnitDesign=between_unit,
+                replicationPassed=replication_passed,
+                estimabilityPassed=estimability_passed,
+                pairedCoveragePassed=paired_passed,
+                replication=replication,
+                estimability=estimability,
+                pairedCoverage=paired_coverage,
+                blockedReasons=reasons,
+                evidenceId=f"contrastPlan:{coefficient}:{status}",
+                evidenceIds=evidence_ids,
+            )
+        )
+    return plans
+
+
+async def inspect_cell_covariates(
+    ctx: RunContext[ExperimentalContextDependencies],
+) -> CovariateEvidence:
+    """Inspect cell metadata without making model-driven choices or writing data."""
+    logger.info(
+        "Experimental Context covariate inspection started: "
+        f"cellSelection={ctx.deps.cellSelection.artifact_id}"
+    )
+    ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
+    characterization = characterize_covariates(
+        ctx.deps.store,
+        cellSelection=ctx.deps.cellSelection,
+        studyContext=(
+            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
+        ),
+        model=None,
+        directions=ctx.deps.directions,
+        groupingArtifacts=_hto_artifact_map(ctx.deps),
+    )
+    ctx.deps.characterization = characterization
+    qc_profiles = _offered_qc_profiles(ctx.deps)
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    ctx.deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
+    evidence_ids = characterization_evidence(characterization)
+    evidence_ids.update(profile.evidenceId for profile in qc_profiles)
+    evidence_ids.update(source.sourceId for source in ctx.deps.qcMetricSources)
+    evidence_ids.update(item.evidenceId for item in ctx.deps.qcSourceConcordance)
+    evidence_ids.update(plan.evidenceId for plan in contrast_plans)
+    evidence_ids.update(
+        failure.evidenceId
+        for profile in qc_profiles
+        for failure in profile.captureFailureEvidence
+    )
+    evidence_ids.update(
+        f"htoIdentity:{column}" for column in ctx.deps.htoIdentityColumns
+    )
+    evidence_ids.update(
+        _artifact_evidence_id(source) for source in ctx.deps.htoIdentityArtifacts
+    )
+    ctx.deps.evidenceIds.update(evidence_ids)
+    ctx.deps.toolCalls.append("inspect_cell_covariates")
+    logger.info(
+        "Experimental Context covariate inspection completed: "
+        f"status={characterization.status}, "
+        f"columns={len(characterization.columns)}, "
+        f"coefficients={len(characterization.coefficients)}, "
+        f"qcProfiles={len(qc_profiles)}, "
+        f"htoIdentities={len(ctx.deps.htoIdentityColumns)}, "
+        f"evidence={len(evidence_ids)}"
+    )
+    return CovariateEvidence(
+        characterization=characterization,
+        qcProfiles=qc_profiles,
+        qcMetricSources=ctx.deps.qcMetricSources,
+        qcSourceConcordance=ctx.deps.qcSourceConcordance,
+        contrastPlans=contrast_plans,
+        htoIdentityColumns=ctx.deps.htoIdentityColumns,
+        htoIdentityArtifacts=ctx.deps.htoIdentityArtifacts,
+        evidenceIds=sorted(evidence_ids),
+    )
+
+
+def _batch_safety_evidence(
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization,
+    *,
+    coefficients: Sequence[str],
+    batch_columns: Sequence[str],
+) -> list[BatchSafetyEvidence]:
+    column_records = {
+        record.get("name"): record
+        for record in characterization.columns
+        if isinstance(record.get("name"), str)
+    }
+    coefficient_records = {
+        record.get("name"): record
+        for record in characterization.coefficients
+        if isinstance(record.get("name"), str)
+    }
+    confounding_reports = {
+        report.get("coefficient"): report
+        for report in characterization.confounding
+        if isinstance(report.get("coefficient"), str)
+    }
+    canonical_batch_columns = sorted(batch_columns)
+    batch_safety: list[BatchSafetyEvidence] = []
+    for coefficient in coefficients:
+        if not canonical_batch_columns:
+            break
+        coefficient_record = coefficient_records.get(coefficient)
+        report = confounding_reports.get(coefficient)
+        coefficient_kind = (
+            coefficient_record.get("kind") if coefficient_record is not None else None
+        )
+        if coefficient_kind not in {"categorical", "continuous"}:
+            coefficient_kind = None
+        observation_unit = (
+            report.get("observationUnit")
+            if report is not None
+            else (
+                coefficient_record.get("observationUnit")
+                if coefficient_record is not None
+                else None
+            )
+        )
+        unit_constant = {
+            pair.get("technical")
+            for pair in (report.get("pairs", []) if report is not None else [])
+            if isinstance(pair.get("technical"), str)
+        }
+        effective_batch_columns = [
+            name for name in canonical_batch_columns if name in unit_constant
+        ]
+        estimability: dict[str, Any]
+        if (
+            coefficient_record is None
+            or coefficient_record.get("scope") != "betweenUnit"
+            or report is None
+            or not isinstance(observation_unit, str)
+            or coefficient_kind is None
+        ):
+            estimability = {
+                "status": "notComputed",
+                "reason": "unresolvedCoefficientDesign",
+            }
+        else:
+            try:
+                design = reduce_observation_units(
+                    deps.cells,
+                    observation_unit,
+                    [coefficient, *effective_batch_columns],
+                    cell_key="I",
+                )
+                estimability = coefficient_estimability(
+                    design[coefficient].to_numpy(),
+                    coefficientKind=coefficient_kind,
+                    technicals={
+                        name: design[name].to_numpy()
+                        for name in effective_batch_columns
+                    },
+                    technicalKinds={
+                        name: column_records[name]["kind"]
+                        for name in effective_batch_columns
+                    },
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.debug(
+                    "Experimental Context batch estimability was not computed: "
+                    f"errorType={type(exc).__name__}"
+                )
+                estimability = {
+                    "status": "notComputed",
+                    "reason": type(exc).__name__,
+                }
+        if estimability.get("status") != "ok":
+            safety_status: BatchSafetyStatus = "notComputed"
+        elif estimability.get("coefficientEstimable") is True and not bool(
+            estimability.get("rankDeficient")
+        ):
+            safety_status = "safe"
+        else:
+            safety_status = "unsafe"
+        batch_token = ",".join(canonical_batch_columns)
+        safety = BatchSafetyEvidence(
+            coefficient=coefficient,
+            coefficientKind=coefficient_kind,
+            observationUnit=(
+                observation_unit if isinstance(observation_unit, str) else None
+            ),
+            batchColumns=canonical_batch_columns,
+            unitConstantBatchColumns=effective_batch_columns,
+            status=safety_status,
+            estimability=estimability,
+            evidenceId=f"batchEstimability:{coefficient}:{batch_token}",
+        )
+        batch_safety.append(safety)
+        deps.batchSafety[safety.evidenceId] = safety
+    return batch_safety
+
+
+async def analyze_experimental_design(
+    ctx: RunContext[ExperimentalContextDependencies],
+    column_domains: dict[str, ColumnDomain],
+    coefficients_of_interest: list[str],
+    units_of_inference: dict[str, InferenceUnit],
+    batch_columns: list[str],
+) -> CovariateEvidence:
+    """Validate proposed domains and inference units and compute confounding.
+
+    Args:
+        ctx: Pydantic AI run context containing the existing datastore.
+        column_domains: Domain assignment for each metadata column under review.
+        coefficients_of_interest: Biological columns representing study contrasts.
+        units_of_inference: Observation and independent units for each coefficient.
+        batch_columns: Exact technical columns proposed for Harmony evaluation.
+    """
+    logger.info(
+        "Experimental Context design analysis started: "
+        f"domains={len(column_domains)}, "
+        f"coefficients={len(coefficients_of_interest)}, "
+        f"inferenceUnits={len(units_of_inference)}, "
+        f"batchColumns={len(batch_columns)}"
+    )
+    directions = dict(ctx.deps.directions)
+    directed_domains = dict(column_domains)
+    directed_domains.update(dict(directions.get("columnDomains") or {}))
+    directions["columnDomains"] = directed_domains
+    directed_coefficients = list(
+        dict.fromkeys(
+            [
+                *coefficients_of_interest,
+                *(directions.get("coefficientsOfInterest") or []),
+            ]
+        )
+    )
+    directions["coefficientsOfInterest"] = directed_coefficients
+    directed_units = {
+        name: unit.model_dump(exclude_none=True)
+        for name, unit in units_of_inference.items()
+    }
+    directed_units.update(dict(directions.get("unitsOfInference") or {}))
+    directions["unitsOfInference"] = directed_units
+
+    proposed_batch_columns = list(batch_columns)
+    directed_batch_columns = directions.get("batchColumns")
+    if directed_batch_columns is not None:
+        if not isinstance(directed_batch_columns, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in directed_batch_columns
+        ):
+            raise ModelRetry(
+                "directions.batchColumns must be a list of exact metadata columns"
+            )
+        if len(set(directed_batch_columns)) != len(directed_batch_columns):
+            raise ModelRetry("directions.batchColumns must be unique")
+        if proposed_batch_columns != directed_batch_columns:
+            logger.info(
+                "Experimental Context replaced model-proposed batch columns with "
+                "the exact directed columns"
+            )
+        proposed_batch_columns = list(directed_batch_columns)
+    canonical_batch_columns = sorted(set(proposed_batch_columns))
+    if len(canonical_batch_columns) != len(proposed_batch_columns):
+        logger.warning(
+            "Experimental Context rejected duplicate proposed batch columns: "
+            f"{proposed_batch_columns[:20]}"
+        )
+        raise ModelRetry("Proposed batch columns must be unique")
+    inspected_records = {
+        record.get("name"): record
+        for record in (
+            ctx.deps.characterization.columns
+            if ctx.deps.characterization is not None
+            else []
+        )
+        if isinstance(record.get("name"), str)
+    }
+    if ctx.deps.characterization is not None:
+        for batch_column in canonical_batch_columns:
+            inspected = inspected_records.get(batch_column)
+            if inspected is None:
+                logger.warning(
+                    "Experimental Context rejected unknown proposed batch column "
+                    f"before design recomputation: {batch_column!r}"
+                )
+                raise ModelRetry(f"Unknown batch column {batch_column!r}")
+            proposed_domain = directed_domains.get(
+                batch_column,
+                inspected.get("domain"),
+            )
+            if proposed_domain != "technical":
+                logger.warning(
+                    "Experimental Context rejected proposed batch column before "
+                    f"design recomputation: {batch_column!r}, "
+                    f"domain={proposed_domain!r}, required='technical'"
+                )
+                raise ModelRetry(
+                    f"Batch column {batch_column!r} must be classified as technical"
+                )
+            if inspected.get("kind") != "categorical":
+                logger.warning(
+                    "Experimental Context rejected proposed batch column before "
+                    f"design recomputation: {batch_column!r}, "
+                    f"kind={inspected.get('kind')!r}, required='categorical'"
+                )
+                raise ModelRetry(
+                    f"Batch column {batch_column!r} must be categorical for Harmony"
+                )
+
+    characterization = characterize_covariates(
+        ctx.deps.store,
+        cellSelection=ctx.deps.cellSelection,
+        studyContext=(
+            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
+        ),
+        model=None,
+        directions=directions,
+        groupingArtifacts=_hto_artifact_map(ctx.deps),
+    )
+    if characterization.status == "failed":
+        rejection = "; ".join(characterization.notes).strip()
+        logger.warning(
+            "Experimental Context design characterization rejected the proposed "
+            f"directions: {rejection[:1000]}; "
+            f"domainColumns={sorted(column_domains)[:50]}, "
+            f"coefficients={coefficients_of_interest[:50]}, "
+            f"inferenceUnits={sorted(units_of_inference)[:50]}"
+        )
+        raise ModelRetry("; ".join(characterization.notes))
+
+    # Retain the validated deterministic work even when the proposed Harmony
+    # columns below are rejected. A bounded retry or resumed decision can reuse
+    # the evidence without rescanning metadata or accepting an unsafe choice.
+    ctx.deps.characterization = characterization
+    if not ctx.deps.htoIdentityColumns:
+        ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
+    qc_profiles = _offered_qc_profiles(ctx.deps, characterization)
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    ctx.deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
+    evidence_ids = characterization_evidence(characterization)
+    evidence_ids.update(profile.evidenceId for profile in qc_profiles)
+    evidence_ids.update(source.sourceId for source in ctx.deps.qcMetricSources)
+    evidence_ids.update(item.evidenceId for item in ctx.deps.qcSourceConcordance)
+    evidence_ids.update(plan.evidenceId for plan in contrast_plans)
+    evidence_ids.update(
+        failure.evidenceId
+        for profile in qc_profiles
+        for failure in profile.captureFailureEvidence
+    )
+    evidence_ids.update(
+        f"htoIdentity:{column}" for column in ctx.deps.htoIdentityColumns
+    )
+    evidence_ids.update(
+        _artifact_evidence_id(source) for source in ctx.deps.htoIdentityArtifacts
+    )
+    ctx.deps.evidenceIds.update(evidence_ids)
+
+    column_records = {
+        record.get("name"): record
+        for record in characterization.columns
+        if isinstance(record.get("name"), str)
+    }
+    for batch_column in canonical_batch_columns:
+        record = column_records.get(batch_column)
+        if record is None:
+            logger.warning(
+                "Experimental Context rejected unknown proposed batch column: "
+                f"{batch_column!r}"
+            )
+            raise ModelRetry(f"Unknown batch column {batch_column!r}")
+        if record.get("domain") != "technical":
+            logger.warning(
+                "Experimental Context rejected proposed batch column "
+                f"{batch_column!r}: domain={record.get('domain')!r}, "
+                "required='technical'"
+            )
+            raise ModelRetry(
+                f"Batch column {batch_column!r} must be classified as technical"
+            )
+        if record.get("kind") != "categorical":
+            logger.warning(
+                "Experimental Context rejected proposed batch column "
+                f"{batch_column!r}: kind={record.get('kind')!r}, "
+                "required='categorical'"
+            )
+            raise ModelRetry(
+                f"Batch column {batch_column!r} must be categorical for Harmony"
+            )
+
+    batch_safety = _batch_safety_evidence(
+        ctx.deps,
+        characterization,
+        coefficients=directed_coefficients,
+        batch_columns=canonical_batch_columns,
+    )
+
+    evidence_ids.update(item.evidenceId for item in batch_safety)
+    ctx.deps.evidenceIds.update(evidence_ids)
+    ctx.deps.toolCalls.append("analyze_experimental_design")
+    safety_counts = {
+        status: sum(item.status == status for item in batch_safety)
+        for status in ("safe", "unsafe", "notComputed")
+    }
+    logger.info(
+        "Experimental Context design analysis completed: "
+        f"status={characterization.status}, "
+        f"batchSafetySafe={safety_counts['safe']}, "
+        f"batchSafetyUnsafe={safety_counts['unsafe']}, "
+        f"batchSafetyNotComputed={safety_counts['notComputed']}, "
+        f"qcProfiles={len(qc_profiles)}, evidence={len(evidence_ids)}"
+    )
+    return CovariateEvidence(
+        characterization=characterization,
+        batchSafety=batch_safety,
+        qcProfiles=qc_profiles,
+        qcMetricSources=ctx.deps.qcMetricSources,
+        qcSourceConcordance=ctx.deps.qcSourceConcordance,
+        contrastPlans=contrast_plans,
+        htoIdentityColumns=ctx.deps.htoIdentityColumns,
+        htoIdentityArtifacts=ctx.deps.htoIdentityArtifacts,
+        evidenceIds=sorted(evidence_ids),
+    )
+
+
+async def score_current_representation(
+    ctx: RunContext[ExperimentalContextDependencies],
+    batch_column: str,
+    biological_column: str | None = None,
+) -> RepresentationEvaluation:
+    """Score one explicitly supplied graph without changing datastore state.
+
+    Args:
+        ctx: Pydantic AI run context containing the existing datastore.
+        batch_column: Categorical technical column used to assess batch mixing.
+        biological_column: Optional biological label used to assess preservation.
+    """
+    logger.info(
+        "Experimental Context representation scoring started: "
+        f"graphSupplied={ctx.deps.neighbors is not None}, "
+        f"biologicalLabelSpecified={biological_column is not None}"
+    )
+    store = ctx.deps.store
+    available_columns = set(store.cells.columns)
+    if batch_column not in available_columns:
+        raise ModelRetry(f"Unknown batch column {batch_column!r}")
+    if biological_column is not None and biological_column not in available_columns:
+        raise ModelRetry(f"Unknown biological column {biological_column!r}")
+    characterization = ctx.deps.characterization
+    if characterization is not None:
+        batch_record = next(
+            (
+                record
+                for record in characterization.columns
+                if record.get("name") == batch_column
+            ),
+            None,
+        )
+        if (
+            batch_record is None
+            or batch_record.get("domain") != "technical"
+            or batch_record.get("kind") != "categorical"
+        ):
+            raise ModelRetry(
+                "Representation scoring requires a characterized categorical "
+                "technical batch column"
+            )
+
+    neighbors = core_artifact_reference(ctx.deps.neighbors)
+    connectivity = core_artifact_reference(ctx.deps.connectivityMap)
+    if neighbors is None:
+        evaluation = RepresentationEvaluation(
+            cellSelection=(
+                artifact_reference(ctx.deps.cellSelection)
+                if ctx.deps.cellSelection is not None
+                else None
+            ),
+            notes=["No exact neighbors artifact was supplied"],
+        )
+        ctx.deps.currentRepresentation = evaluation
+        ctx.deps.toolCalls.append("score_current_representation")
+        logger.info(
+            "Experimental Context representation scoring skipped: "
+            "no current neighbors artifact"
+        )
+        return evaluation
+    if not isinstance(neighbors, ArtifactRef) or neighbors.kind != "neighbors":
+        raise ModelRetry("neighbors must identify an exact neighbors artifact")
+    if connectivity is not None and (
+        not isinstance(connectivity, ArtifactRef)
+        or connectivity.kind not in {"connectivity_map", "integrated_graph"}
+    ):
+        raise ModelRetry(
+            "connectivity_map must identify an exact connectivity graph artifact"
+        )
+
+    metrics: dict[str, float] = {}
+    notes: list[str] = []
+    evidence_ids: list[str] = []
+    neighbor_route = f"assay:{neighbors.assay}:neighbors:{neighbors.artifact_id}"
+    try:
+        value = float(store.metric_ilisi(batch_column, neighbors))
+        if math.isfinite(value):
+            metrics[f"iLISI:{batch_column}"] = value
+            evidence_ids.append(f"metric:iLISI:{batch_column}:{neighbor_route}")
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        logger.debug(
+            "Experimental Context iLISI scoring was unavailable: "
+            f"errorType={type(exc).__name__}"
+        )
+        notes.append(f"iLISI could not be scored: {exc}")
+    try:
+        value = float(store.metric_proportional_batch_mixing(batch_column, neighbors))
+        if math.isfinite(value):
+            metrics[f"proportionalBatchMixing:{batch_column}"] = value
+            evidence_ids.append(
+                f"metric:proportionalBatchMixing:{batch_column}:{neighbor_route}"
+            )
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        logger.debug(
+            "Experimental Context batch-mixing scoring was unavailable: "
+            f"errorType={type(exc).__name__}"
+        )
+        notes.append(f"Proportional batch mixing could not be scored: {exc}")
+    if biological_column is not None:
+        try:
+            value = float(store.metric_clisi(biological_column, neighbors))
+            if math.isfinite(value):
+                metrics[f"cLISI:{biological_column}"] = value
+                evidence_ids.append(
+                    f"metric:cLISI:{biological_column}:{neighbor_route}"
+                )
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+            logger.debug(
+                "Experimental Context cLISI scoring was unavailable: "
+                f"errorType={type(exc).__name__}"
+            )
+            notes.append(f"cLISI could not be scored: {exc}")
+        if connectivity is not None:
+            try:
+                value = float(
+                    store.metric_graph_connectivity(biological_column, connectivity)
+                )
+                if math.isfinite(value):
+                    metrics[f"graphConnectivity:{biological_column}"] = value
+                    evidence_ids.append(
+                        "metric:graphConnectivity:"
+                        f"{biological_column}:assay:{connectivity.assay}:connectivity:"
+                        f"{connectivity.artifact_id}"
+                    )
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                logger.debug(
+                    "Experimental Context connectivity scoring was unavailable: "
+                    f"errorType={type(exc).__name__}"
+                )
+                notes.append(f"Graph connectivity could not be scored: {exc}")
+
+    evaluation = RepresentationEvaluation(
+        available=bool(metrics),
+        assay=neighbors.assay,
+        cellSelection=(
+            artifact_reference(ctx.deps.cellSelection)
+            if ctx.deps.cellSelection is not None
+            else None
+        ),
+        neighbors=artifact_reference(neighbors),
+        connectivityMap=(
+            artifact_reference(connectivity) if connectivity is not None else None
+        ),
+        metrics=metrics,
+        notes=notes,
+        evidenceIds=evidence_ids,
+    )
+    ctx.deps.currentRepresentation = evaluation
+    ctx.deps.evidenceIds.update(evidence_ids)
+    ctx.deps.toolCalls.append("score_current_representation")
+    logger.info(
+        "Experimental Context representation scoring completed: "
+        f"available={evaluation.available}, metrics={len(metrics)}, "
+        f"notes={len(notes)}, evidence={len(evidence_ids)}"
+    )
+    return evaluation

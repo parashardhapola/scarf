@@ -27,8 +27,8 @@ from scarf.agent.data_enrichment import (
     FeatureSelectionPolicy,
     StudyContextSummary,
 )
-from scarf.agent.decision_kernel import DecisionSelection
-from scarf.agent.decision_persistence import (
+from scarf.agent.decisions.kernel import DecisionSelection
+from scarf.agent.persistence.decisions import (
     load_latest_decision_workflow_snapshot,
 )
 from scarf.agent.experimental_context import (
@@ -76,12 +76,15 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
     }
 
     def prompt_text(messages: list[ModelMessage]) -> str:
-        return "\n".join(
-            part.content
-            for message in messages
-            for part in message.parts
-            if isinstance(getattr(part, "content", None), str)
-        )
+        values: list[str] = []
+        for message in messages:
+            for part in message.parts:
+                content = getattr(part, "content", None)
+                if isinstance(content, str):
+                    values.append(content)
+                elif isinstance(content, tuple):
+                    values.extend(item for item in content if isinstance(item, str))
+        return "\n".join(values)
 
     def tool_result(
         messages: list[ModelMessage],
@@ -278,6 +281,26 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
             )
 
         prompt = prompt_text(messages)
+        if any(
+            tool.parameters_json_schema.get("title") == "AnalysisVisualAdjudication"
+            for tool in info.output_tools
+        ):
+            payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={
+                            "status": "acceptable",
+                            "selectedCandidateId": payload["selectedCandidateId"],
+                            "rationale": (
+                                "The bounded diagnostic board agrees with the "
+                                "registered numeric evidence."
+                            ),
+                        },
+                    )
+                ]
+            )
         payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
         decision = payload
         decision_id = decision["decisionId"]

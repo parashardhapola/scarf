@@ -8,7 +8,7 @@ from scarf.agent.parameter_tuning import (
     ParameterCandidate,
     ParameterCandidateEvaluation,
 )
-from scarf.agent.sequential_tuning import (
+from scarf.agent.parameter_tuning.sequential import (
     CorrectionNeedSelection,
     ParameterPhaseEvidence,
     ParameterPhasePlan,
@@ -334,11 +334,11 @@ def test_phase_executor_adapter_preserves_registered_order(
         return _evaluation(by_id[candidate_id])
 
     monkeypatch.setattr(
-        "scarf.agent.sequential_tuning.prepare_parameter_tuning_dependencies",
+        "scarf.agent.parameter_tuning.sequential.prepare_parameter_tuning_dependencies",
         prepare,
     )
     monkeypatch.setattr(
-        "scarf.agent.sequential_tuning.execute_parameter_candidate",
+        "scarf.agent.parameter_tuning.sequential.execute_parameter_candidate",
         execute,
     )
 

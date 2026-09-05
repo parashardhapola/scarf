@@ -1,6 +1,5 @@
 """Configuration shared by the four Scarf domain agents."""
 
-import re
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -12,60 +11,7 @@ __all__ = [
     "AgentRunConfig",
     "get_model_settings",
     "get_usage_limits",
-    "CONFIG",
 ]
-
-
-class Config:
-    """Shared configuration for the four Scarf domain agents."""
-
-    # BiologicalInterpretation
-    _MAX_CLUSTERS: int = 20
-    _MAX_CONDITIONS: int = 30
-    _MAX_MARKERS: int = 25
-    # CharacterizeFeatures
-    _MAX_EXOGENOUS: int = 25
-    _CONTEXT_LIMIT: int = 1200
-    _AUTO_DOWNLOAD_SPECIES: frozenset[str] = frozenset({"homo_sapiens", "mus_musculus"})
-    # DataEnrichment
-    _MAX_FEATURE_QUERIES: int = 50
-    # ParameterTuning
-    _MAX_CANDIDATES_OFFERED: int = 25
-    _CANDIDATE_ID: re.Pattern[str] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]{0,63}$")
-    _RANDOM_SEED: int = 4444
-    _PCA_RANDOM_SEED: int = 4466
-    # CharacterizeCovariates
-    _CATEGORICAL_MAX_LEVELS: int = 50
-    _EMBEDDING_TOKENS: tuple[str, ...] = (
-        "umap",
-        "pca",
-        "tsne",
-        "scvi",
-        "latent",
-        "phate",
-        "forceatlas",
-        "diffmap",
-        "diffusionmap",
-        "diffusion",
-    )
-    _DOMAINS: frozenset[str] = frozenset(
-        {"biological", "technical", "design", "ignore", "unknown"}
-    )  # Only these domains reach the design table, so only they are worth collapsing.
-    _ANALYSED: frozenset[str] = frozenset({"biological", "technical", "design"})
-    _KINDS: frozenset[str] = frozenset({"categorical", "continuous"})
-    _RESERVED_COLUMNS = frozenset({"I", "ids", "names"})
-
-    _SHORT_EMBEDDING_PARTS: frozenset[str] = frozenset({"fa", "dm", "pc"})
-    _INDEXED_NAME: re.Pattern[str] = re.compile(r"(?P<stem>.+?)[-_]?(?P<index>\d+)")
-    _ONTOLOGY_SUFFIX: str = "_ontology_term_id"
-    _SAMPLE_LEVELS: int = 8
-    _ASSOCIATION_FLOOR: float = 0.1
-    _DROP_REASONS: dict[str, str] = {
-        "dropAssayStat": "Scarf assay statistic column",
-        "dropProvenance": "analysis-linked column",
-        "dropEmbedding": "embedding-style column",
-        "dropConstant": "single-level column",
-    }
 
 
 class AgentRunConfig(AgentDataModel):
@@ -202,6 +148,3 @@ def get_usage_limits(config: AgentRunConfig | None = None) -> Any:
         output_tokens_limit=output_tokens_limit,
         total_tokens_limit=run_config.totalTokenLimit,
     )
-
-
-CONFIG = Config()

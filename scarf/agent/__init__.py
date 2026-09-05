@@ -5,16 +5,14 @@ from .biological_interpretation import (
     BiologicalInterpretationAgent,
     BiologicalInterpretationReport,
 )
-from .characterize_covariates import (
-    CovariateCharacterization,
-    characterize_covariates,
-)
-from .characterize_features import (
+from .experimental_context.characterization import characterize_covariates
+from .experimental_context.contracts import CovariateCharacterization
+from .data_enrichment.characterization import (
     FeatureCharacterization,
     characterize_features,
 )
 from .config import AgentRunConfig
-from .config import _deps as _deps
+from . import _deps as _deps
 from .config.agent_exec import run_agent, run_agent_sync
 from .data_enrichment import (
     DataEnrichmentAgent,
@@ -22,8 +20,8 @@ from .data_enrichment import (
     DataEnrichmentReport,
     StudyContextSummary,
 )
-from .decide import DecisionValidationError, decide
-from .decision_kernel import (
+from .decisions.selection import DecisionValidationError, decide
+from .decisions.kernel import (
     DecisionEvidence,
     DecisionOption,
     DecisionRecord,
@@ -103,7 +101,7 @@ from .persistence import (
 )
 from .report import generate_agent_report
 from .runtime import check_runtime, load_env
-from .study_contract import StudyContract
+from .experimental_context.study import StudyContract
 from .types import (
     BatchSafetyEvidence,
     Decision,

@@ -9,7 +9,8 @@ from pydantic_ai import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from scarf.agent.characterize_features import FeatureCharacterization
+import scarf.agent.data_enrichment.agent as data_enrichment_agent_module
+from scarf.agent.data_enrichment.characterization import FeatureCharacterization
 from scarf.agent.data_enrichment import (
     AdtControlEvidence,
     AssayFeatureInspection,
@@ -136,7 +137,7 @@ def test_data_enrichment_models_have_factories_and_camelcase_fields() -> None:
 def test_data_enrichment_agent_uses_only_read_tools_and_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scarf.agent import data_enrichment as module
+    from scarf.agent.data_enrichment import tools as module
 
     store = ReadOnlyStore()
     tool_names: set[str] = set()
@@ -256,7 +257,7 @@ def test_data_enrichment_agent_uses_only_read_tools_and_context(
 def test_data_enrichment_batches_grounded_multimodal_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scarf.agent import data_enrichment as module
+    from scarf.agent.data_enrichment import tools as module
 
     assay_features = {
         "RNA": (
@@ -410,7 +411,7 @@ def test_data_enrichment_batches_grounded_multimodal_evidence(
 def test_data_enrichment_retries_hallucinated_features(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scarf.agent import data_enrichment as module
+    from scarf.agent.data_enrichment import tools as module
 
     store = ReadOnlyStore()
     monkeypatch.setattr(
@@ -489,7 +490,7 @@ def test_data_enrichment_retries_hallucinated_features(
 def test_data_enrichment_pauses_after_completed_inspection_without_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scarf.agent import data_enrichment as module
+    from scarf.agent.data_enrichment import tools as module
 
     store = ReadOnlyStore()
     monkeypatch.setattr(
@@ -507,7 +508,11 @@ def test_data_enrichment_pauses_after_completed_inspection_without_selection(
         asyncio.run(module.inspect_assay_features_batch(SimpleNamespace(deps=deps)))
         raise UnexpectedModelBehavior("structured output unavailable")
 
-    monkeypatch.setattr(module, "run_agent_sync", unavailable_structured_output)
+    monkeypatch.setattr(
+        data_enrichment_agent_module,
+        "run_agent_sync",
+        unavailable_structured_output,
+    )
     result = DataEnrichmentAgent(object()).run(
         store,
         context=DataEnrichmentContext(organismHint="human"),
@@ -528,7 +533,7 @@ def test_data_enrichment_pauses_after_completed_inspection_without_selection(
 def test_unattended_data_enrichment_uses_inspected_policy_after_model_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scarf.agent import data_enrichment as module
+    from scarf.agent.data_enrichment import tools as module
 
     store = ReadOnlyStore()
     monkeypatch.setattr(
@@ -543,7 +548,11 @@ def test_unattended_data_enrichment_uses_inspected_policy_after_model_failure(
         asyncio.run(module.inspect_assay_features_batch(SimpleNamespace(deps=deps)))
         raise UnexpectedModelBehavior("structured output unavailable")
 
-    monkeypatch.setattr(module, "run_agent_sync", unavailable_structured_output)
+    monkeypatch.setattr(
+        data_enrichment_agent_module,
+        "run_agent_sync",
+        unavailable_structured_output,
+    )
     result = DataEnrichmentAgent(object(), unattended=True).run(
         store,
         context=DataEnrichmentContext(organismHint="human"),

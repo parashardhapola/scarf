@@ -10,7 +10,7 @@ import zarr
 from pydantic import ValidationError
 from zarr.storage import MemoryStore
 
-import scarf.agent.experimental_context as experimental_context_module
+import scarf.agent.experimental_context.validation as experimental_context_validation
 import scarf.agent.orchestrator.preprocessing as preprocessing_module
 from scarf.agent.experimental_context import (
     CellQcPlan,
@@ -19,8 +19,8 @@ from scarf.agent.experimental_context import (
     inspect_cell_covariates,
 )
 from scarf.agent.orchestrator.main import AgentOrchestrator
-from scarf.agent.qc_execution import execute_registered_cell_qc
-from scarf.agent.qc_profiles import (
+from scarf.agent.cell_quality.execution import execute_registered_cell_qc
+from scarf.agent.cell_quality.profiles import (
     RegisteredQcProjection,
     offered_registered_qc_profiles,
     project_registered_qc_profile,
@@ -336,7 +336,7 @@ def test_experimental_context_offers_and_validates_registered_global_profile() -
         "fixedCutoff": None,
     }
 
-    selected = experimental_context_module._canonical_cell_qc_plan(
+    selected = experimental_context_validation._canonical_cell_qc_plan(
         CellQcPlan(),
         context.deps,
         inspected.characterization,

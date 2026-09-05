@@ -86,7 +86,7 @@ def _patch_ingest_summary(
     import importlib
 
     ingest_common = importlib.import_module("scarf.agent.ingest.common")
-    persistence = importlib.import_module("scarf.agent.persistence")
+    persistence = importlib.import_module("scarf.agent.persistence.reports")
 
     def summarize(
         _zarr_path: str,

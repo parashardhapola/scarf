@@ -3,12 +3,12 @@
 import pytest
 from pydantic import ValidationError
 
-from scarf.agent.decision_kernel import (
+from scarf.agent.decisions.kernel import (
     DecisionEvidence,
     DecisionRecord,
     EvidenceBundle,
 )
-from scarf.agent.rna_decisions import (
+from scarf.agent.decisions.rna import (
     ClusterExecutorPayload,
     CorrectionOutcomeExecutorPayload,
     GraphExecutorPayload,

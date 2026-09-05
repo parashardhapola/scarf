@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import threading
 
 import httpx
@@ -104,6 +105,119 @@ def test_four_agent_objects_are_public() -> None:
         agent_package.BiologicalInterpretationAgent.__name__
         == "BiologicalInterpretationAgent"
     )
+
+
+def test_agent_facade_exports_remain_stable() -> None:
+    import scarf.agent as agent_package
+
+    expected = {
+        "AgentInvocation",
+        "AgentName",
+        "AgentOrchestrator",
+        "AgentPersistenceTarget",
+        "AgentReport",
+        "AgentReportLink",
+        "AgentReportRecord",
+        "AgentReportReference",
+        "AgentReportType",
+        "AgentRunConfig",
+        "AgentTerminalStatus",
+        "AgentWorkflowRun",
+        "AgentWorkflowStatus",
+        "AssayPreprocessingPlan",
+        "AutomatedPreprocessingPlan",
+        "AutomatedWorkflowConfig",
+        "AutomatedWorkflowRequest",
+        "AutomatedWorkflowResult",
+        "AutomatedWorkflowResumeRequest",
+        "BatchSafetyEvidence",
+        "BiologicalContext",
+        "BiologicalInterpretationAgent",
+        "BiologicalInterpretationReport",
+        "CellQcPlan",
+        "CovariateCharacterization",
+        "DataEnrichmentAgent",
+        "DataEnrichmentContext",
+        "DataEnrichmentReport",
+        "Decision",
+        "DecisionEvidence",
+        "DecisionOption",
+        "DecisionRecord",
+        "DecisionSelection",
+        "DecisionSpec",
+        "DecisionValidationError",
+        "DecisionWorkflowRun",
+        "DeterministicDecisionAuditor",
+        "DatasetManifest",
+        "DatasetManifestDecision",
+        "EvidenceBundle",
+        "EvidenceItem",
+        "ExperimentalBiologyHandoff",
+        "ExperimentalContextAgent",
+        "ExperimentalContextResult",
+        "ExperimentalTuningHandoff",
+        "FeatureCharacterization",
+        "FinalAnalysisHandoff",
+        "FinalGraphSelection",
+        "IngestResult",
+        "IntegrationCandidateEvaluation",
+        "IntegrationMetrics",
+        "NamedArtifactSource",
+        "NativeAnalysisHandoff",
+        "NeedsInput",
+        "ParameterCandidate",
+        "ParameterSearchPlan",
+        "ParameterTuningAgent",
+        "ParameterTuningAssayInput",
+        "ParameterTuningReport",
+        "PendingDecision",
+        "PreprocessedAssayHandoff",
+        "ProtectedVariableEffect",
+        "RevisionRequest",
+        "StageResult",
+        "StageStatus",
+        "StudyContextSummary",
+        "StudyContract",
+        "TuningBiologyHandoff",
+        "VerificationCheck",
+        "VerificationRecord",
+        "WorkflowNeedsInput",
+        "WorkflowQuestion",
+        "WorkflowStageAttempt",
+        "WorkflowStageLink",
+        "characterize_covariates",
+        "characterize_features",
+        "check_runtime",
+        "create_agent_workflow",
+        "decide",
+        "detect_format",
+        "finalize_agent_workflow",
+        "generate_agent_report",
+        "get_default_parameter_candidates",
+        "ingest",
+        "inspect_h5ad_manifest",
+        "list_agent_reports",
+        "list_agent_workflows",
+        "load_agent_record",
+        "load_agent_report",
+        "load_agent_workflow",
+        "load_env",
+        "run_agent",
+        "run_agent_sync",
+        "save_agent_report",
+        "tune_parameters",
+    }
+
+    assert set(agent_package.__all__) == expected
+    assert agent_package._deps is not None
+    assert {
+        "scarf.agent.biological_interpretation",
+        "scarf.agent.data_enrichment",
+        "scarf.agent.experimental_context",
+        "scarf.agent.parameter_tuning",
+        "scarf.agent.persistence",
+        "scarf.agent.report",
+    } <= sys.modules.keys()
 
 
 def test_model_settings_disable_thinking_across_provider_shapes() -> None:

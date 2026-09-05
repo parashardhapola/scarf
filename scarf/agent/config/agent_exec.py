@@ -10,6 +10,7 @@ from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Literal
 
 from ...utils.logging import logger
+from .._deps import require_pydantic_ai
 from ..types import (
     AgentExecutionResult,
     AgentRunInfo,
@@ -17,7 +18,6 @@ from ..types import (
     ToolCallInfo,
 )
 from . import AgentRunConfig, get_model_settings, get_usage_limits
-from ._deps import require_pydantic_ai
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import UserContent

@@ -13,17 +13,17 @@ from ...datastore.datastore import DataStore
 from ...storage.stores import zarr_root_path
 from ...utils.logging import logger
 from .. import record_io
-from ..decision_persistence import load_latest_decision_workflow_snapshot
+from ..experimental_context.study import StudyContract
 from ..ingest import IngestResult, detect_format, ingest
 from ..ingest.manifest import DatasetManifest, inspect_h5ad_manifest
-from ..persistence import (
-    AgentWorkflowRun,
+from ..persistence.contracts import AgentWorkflowRun
+from ..persistence.decisions import load_latest_decision_workflow_snapshot
+from ..persistence.reports import (
     create_agent_workflow,
     finalize_agent_workflow,
     load_agent_report,
     load_agent_workflow,
 )
-from ..study_contract import StudyContract
 from . import journal
 from .context import ContextStagesMixin
 from .finalization import FinalizationStagesMixin
@@ -58,7 +58,7 @@ def _generate_completed_report(
     try:
         if zarr_root_path(store.z) is None:
             return
-        from ..report import generate_agent_report
+        from ..report.generator import generate_agent_report
 
         report_path = generate_agent_report(store, workflow.workflowRunId)
         relative_path = os.path.relpath(report_path, start=Path.cwd())

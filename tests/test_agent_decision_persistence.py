@@ -11,10 +11,10 @@ from pydantic_ai.exceptions import AgentRunError
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
 
-import scarf.agent.decision_persistence as persistence_module
+import scarf.agent.persistence.decisions as persistence_module
 import scarf.agent.orchestrator.decisions as decisions_module
 from scarf.agent import record_io
-from scarf.agent.decision_kernel import (
+from scarf.agent.decisions.kernel import (
     DecisionEvidence,
     DecisionRecord,
     DecisionSelection,
@@ -23,7 +23,7 @@ from scarf.agent.decision_kernel import (
     VerificationCheck,
     VerificationRecord,
 )
-from scarf.agent.decision_persistence import (
+from scarf.agent.persistence.decisions import (
     DecisionPersistenceFormatError,
     DecisionWorkflowSnapshot,
     attach_audited_rna_decision,
@@ -41,7 +41,7 @@ from scarf.agent.orchestrator.models import (
     OrchestrationRequestRecord,
 )
 from scarf.agent.orchestrator.decisions import DecisionStagesMixin
-from scarf.agent.rna_decisions import (
+from scarf.agent.decisions.rna import (
     build_cell_quality_decision,
     build_feature_policy_decision,
     build_pca_prefix_decision,
