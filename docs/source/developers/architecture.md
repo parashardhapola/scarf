@@ -134,6 +134,14 @@ ledger under `pipeline/runs`; it does not write live metadata. DataStore-owned p
 loading, and export consume narrow frozen-run views. Completed runs can be reopened by their
 immutable label or exact run ID.
 
+`agent/` owns the evidence-bounded automated workflow. Its four public agent facades are
+`data_enrichment`, `experimental_context`, `parameter_tuning`, and
+`biological_interpretation`. Each package keeps contracts independent of its deterministic tools,
+validation, and agent runner. Supporting responsibilities live in `decisions/`, `cell_quality/`,
+`hypotheses/`, `persistence/`, and `report/`. `ingest/` and `orchestrator/` remain workflow owners.
+Internal modules import these concrete owners rather than the broad `scarf.agent` facade, and
+`agent/tools/` contains only infrastructure shared by more than one agent.
+
 ### Presentation
 
 `plotting/` is the only plotting package.

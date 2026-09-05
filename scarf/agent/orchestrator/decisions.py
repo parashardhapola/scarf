@@ -223,6 +223,10 @@ def _validate_selection(
                 "A metric override requires two independent non-geometric "
                 "evidence classes"
             )
+    elif selection.overrideOfOptionId is not None or selection.overrideEvidenceIds:
+        raise ValueError(
+            "Override fields require an eligible metric-preferred override"
+        )
     return selection
 
 

@@ -28,6 +28,7 @@ from ...storage.feature_selection import read_feature_selection_indices
 from ...storage.refs import ArtifactRef
 from ...storage.selections import read_stored_selection_indices
 from ...storage.types import as_zarr_array
+from ...utils.logging import logger
 from .contracts import ArtifactRecord, ParameterCandidateEvaluation
 from .selection import annotate_candidate_dominance
 
@@ -40,7 +41,7 @@ _PCA_DIAGNOSTIC_ARRAYS = (
     "covariate_association",
     "adjacent_neighbor_overlap",
 )
-_MAX_DOUBLET_CAPTURES = 256
+_MAX_DOUBLET_CAPTURES = 512
 SCARF_DEFAULT_DIAGNOSTIC_FAMILIES = (
     "mitochondrial",
     "ribosomal",
@@ -1051,6 +1052,26 @@ def score_advisory_doublets(
         selected,
         evaluations,
     )
+    feature_ids = np.asarray(store.get_assay(assay).feats.fetch_all("ids")).astype(str)
+    unique_ids, id_counts = np.unique(feature_ids, return_counts=True)
+    duplicate_ids = unique_ids[id_counts > 1]
+    if duplicate_ids.size:
+        examples = duplicate_ids[:5].tolist()
+        limitation = (
+            f"Advisory doublet scoring was not run for assay {assay!r} because "
+            f"{duplicate_ids.size} feature identifiers are duplicated. "
+            "Simulated-to-observed mapping requires unique identifiers. "
+            f"Examples: {examples}."
+        )
+        logger.warning(limitation)
+        return AdvisoryDoubletScores(
+            scores=(),
+            cell_selections=(),
+            native_graph=native_graph,
+            native_clusters=native_clusters,
+            capture_column=capture_column,
+            limitations=(limitation,),
+        )
     limitations: list[str] = []
     if capture_column is None or capture_column not in store.cells.columns:
         score = store.run_doublet_detection(
@@ -1496,7 +1517,7 @@ def augment_cluster_evaluations(
                 selection_ref,
                 doublet_evidence,
             )
-            if doublet_evidence is not None
+            if doublet_evidence is not None and doublet_evidence.scores
             else None
         )
         unit_scores = [
@@ -1587,7 +1608,7 @@ def augment_cluster_evaluations(
                     f"candidate:{evaluation.candidateId}:doubletScoreTails",
                     f"candidate:{evaluation.candidateId}:doubletCaptureCoverage",
                 ]
-                if doublet_evidence is not None
+                if doublet_evidence is not None and doublet_evidence.scores
                 else []
             ),
         ]
@@ -1620,7 +1641,7 @@ def augment_cluster_evaluations(
                         doublet_evidence.native_clusters
                     ),
                 }
-                if doublet_evidence is not None
+                if doublet_evidence is not None and doublet_evidence.scores
                 else {}
             ),
         }

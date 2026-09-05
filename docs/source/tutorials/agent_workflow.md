@@ -17,10 +17,14 @@ kernelspec:
 
 # Run the automated agent workflow
 
-This tutorial sends a 10x H5 dataset and one study-context paragraph to
-`AgentOrchestrator`. The orchestrator runs Scarf's four bounded agents, owns the exact operation
-order, persists every handoff, and returns exact final artifact references. The agents select from
-executor-authorized operations and parameters. They do not write exploratory code.
+This tutorial sends a 10x H5 dataset, one study-context paragraph, and one study objective to
+`AgentOrchestrator`. The orchestrator owns the exact operation order, persists every handoff, and
+returns exact final artifact references. Its agents select from executor-authorized operations and
+parameters. They do not write exploratory code.
+
+Repository developers can also run `notebook/agent_workflow_new.ipynb` on the full abdominal
+adipose cohort or `notebook/agent_workflow_new_short.ipynb` on its reproducible 2,000-cell smoke
+sample. Both use unattended input policy and keep runtime files beside the notebooks.
 
 ```{mermaid}
 flowchart LR
@@ -31,15 +35,18 @@ flowchart LR
     E --> F[Preprocessing plan]
     F --> G[Modality preprocessing]
     G --> H[Parameter Tuning]
-    H --> I[UMAP, clusters, and markers]
-    I --> J[Biological Interpretation]
-    J --> K[Persisted reports and local HTML]
+    H --> I[Feature-policy review]
+    I --> J[Optional revised preprocessing and tuning]
+    J --> K[Analysis review]
+    K --> L[UMAP, clusters, and markers]
+    L --> M[Persisted reports and local HTML]
 ```
 
 The committed documentation build uses one scripted Pydantic AI `FunctionModel`. It exercises the
-real tools, validators, preprocessing, candidate execution, finalization, persistence, and resume
-path without an API key. Its biological labels remain low-confidence marker-linked hypotheses. A
-live-provider configuration is shown at the end.
+real tools, validators, preprocessing, candidate execution, finalization, persistence, and report
+generation without an API key. It does not assign biological identities; that remains a separate
+`BiologicalInterpretationAgent` call after finalization. A live-provider configuration is shown at
+the end.
 
 ## 1. Download the raw teaching dataset
 
@@ -66,9 +73,10 @@ from scarf.agent import (
     AgentRunConfig,
     AutomatedWorkflowConfig,
     AutomatedWorkflowRequest,
-    AutomatedWorkflowResumeRequest,
+    DecisionSelection,
     generate_agent_report,
     load_agent_report,
+    load_agent_workflow,
 )
 from scarf.agent.orchestrator import artifact_model_to_ref
 
@@ -99,7 +107,7 @@ or evidence identifier still fails the production validator.
 ```{code-cell} ipython3
 :tags: [remove-cell]
 
-import re
+import json
 from typing import Any
 
 from pydantic_ai.messages import (
@@ -124,23 +132,20 @@ from scarf.agent.data_enrichment import (
 )
 from scarf.agent.experimental_context import (
     BatchCorrectionPlan,
-    CellQcPlan,
     CovariateEvidence,
     ExperimentalContextDecision,
 )
-from scarf.agent.parameter_tuning import (
-    FinalGraphSelection,
-    ParameterTuningReport,
-)
-
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
-    return "\n".join(
-        part.content
-        for message in messages
-        for part in message.parts
-        if isinstance(getattr(part, "content", None), str)
-    )
+    values = []
+    for message in messages:
+        for part in message.parts:
+            content = getattr(part, "content", None)
+            if isinstance(content, str):
+                values.append(content)
+            elif isinstance(content, tuple):
+                values.extend(item for item in content if isinstance(item, str))
+    return "\n".join(values)
 
 
 def _tool_result(
@@ -280,7 +285,7 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
             profile = next(
                 value
                 for value in design.qcProfiles
-                if value.action == "globalGaussian"
+                if value.action == "skip"
             )
             evidence_id = profile.evidenceId
             state["context"] = 3
@@ -290,16 +295,6 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
                     batchCorrection=BatchCorrectionPlan(
                         action="skip",
                         rationale="No trusted technical batch column was supplied.",
-                        evidenceIds=[evidence_id],
-                    ),
-                    cellQc=CellQcPlan(
-                        action=profile.action,
-                        profileId=profile.profileId,
-                        driverAssay=profile.driverAssay,
-                        driverAssayType=profile.driverAssayType,
-                        attributes=profile.attributes,
-                        artifactMetrics=profile.artifactMetrics,
-                        rationale="Apply the bounded global RNA QC profile.",
                         evidenceIds=[evidence_id],
                     ),
                     rationale="No experimental covariates were supplied.",
@@ -366,56 +361,62 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
             )
 
         prompt = _prompt_text(messages)
-        if state["parameter"] == 0:
-            match = re.search(
-                r'"candidateId"\s*:\s*"([A-Za-z0-9_]+)"',
-                prompt,
-            )
-            if match is None:
-                raise AssertionError("The parameter prompt lacks a candidate ID")
-            candidate_id = match.group(1)
-            evidence_id = f"candidate:{candidate_id}:clusters"
-            assay_report = ParameterTuningReport(
-                status="done",
-                recommendedCandidateId=candidate_id,
-                confidence="high",
-                rationale="The only authorized native branch is eligible.",
-                evidenceIds=[evidence_id],
-                stopReason="The bounded one-candidate screen completed.",
-            )
-            state["parameter"] = 1
+        if any(
+            tool.parameters_json_schema.get("title")
+            == "AnalysisVisualAdjudication"
+            for tool in info.output_tools
+        ):
+            payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
             return _structured_output(
                 info,
-                ParameterTuningReport(
-                    status="done",
-                    assayReports={"RNA": assay_report},
-                    rationale="The RNA native screen completed.",
-                    evidenceIds=[evidence_id],
-                    stopReason="Native selection completed.",
-                ),
+                {
+                    "status": "acceptable",
+                    "selectedCandidateId": payload["selectedCandidateId"],
+                    "rationale": (
+                        "The bounded diagnostic board agrees with the registered "
+                        "numeric evidence."
+                    ),
+                },
             )
 
-        match = re.search(
-            r'"optionId"\s*:\s*"(native:RNA:([A-Za-z0-9_]+))"',
-            prompt,
+        decision, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        evidence_by_class = {}
+        evidence_class_by_id = {}
+        for item in decision["evidence"]:
+            evidence_by_class.setdefault(
+                item["evidenceClass"],
+                item["evidenceId"],
+            )
+            evidence_class_by_id[item["evidenceId"]] = item["evidenceClass"]
+        preferred = decision.get("metricPreferredOptionId")
+        selected = (
+            next(
+                option
+                for option in decision["options"]
+                if option["optionId"] == preferred
+            )
+            if preferred is not None
+            else next(
+                option
+                for option in decision["options"]
+                if option["status"] in {"apply", "skip"}
+            )
         )
-        if match is None:
-            raise AssertionError("The final-selection prompt lacks a native option")
-        option_id, candidate_id = match.groups()
-        evidence_id = f"native:RNA:candidate:{candidate_id}:clusters"
-        state["parameter"] = 2
+        evidence_ids = list(selected.get("requiredEvidenceIds", []))
+        cited_classes = {
+            evidence_class_by_id[evidence_id] for evidence_id in evidence_ids
+        }
+        for evidence_class in selected["requiredEvidenceClasses"]:
+            if evidence_class not in cited_classes:
+                evidence_ids.append(evidence_by_class[evidence_class])
+        state["parameter"] += 1
         return _structured_output(
             info,
-            FinalGraphSelection(
-                status="done",
-                selectedOptionId=option_id,
-                graphMethod="native",
-                nativeAssay="RNA",
-                nativeCandidateId=candidate_id,
-                markerAssay="RNA",
+            DecisionSelection(
+                selectedOptionId=selected["optionId"],
+                evidenceIds=evidence_ids,
+                rationale="Select the registered metric-preferred option.",
                 confidence="high",
-                rationale="The sole eligible native graph is selected.",
-                evidenceIds=[evidence_id],
             ),
         )
 
@@ -425,7 +426,7 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
 
 ## 2. Configure one bounded teaching branch
 
-The production defaults screen five candidates for the primary assay and may request one
+The production defaults screen eleven candidates for the primary assay and may request one
 refinement. This documentation run uses one native RNA candidate, no refinement, and no Harmony.
 The smaller search exercises the same executor and persistence path while keeping the build
 bounded. Harmony would be eligible only if Experimental Context returned exact safe batch evidence.
@@ -433,6 +434,7 @@ bounded. Harmony would be eligible only if Experimental Context returned exact s
 ```{code-cell} ipython3
 model, model_state = _scripted_workflow_model()
 config = AutomatedWorkflowConfig(
+    inputPolicy="unattended",
     primaryInitialCandidates=1,
     secondaryInitialCandidates=1,
     maxRefinedCandidatesPerAssay=0,
@@ -450,7 +452,7 @@ request = AutomatedWorkflowRequest(
     sourcePath=str(source_path),
     zarrPath=str(zarr_path),
     studyContext=study_context,
-    allowAssumptions=False,
+    studyObjective="Discover stable major immune-cell populations.",
     primaryAssay="RNA",
     markerAssay="RNA",
     analysisAssays=["RNA"],
@@ -461,36 +463,33 @@ request = AutomatedWorkflowRequest(
     "initial_candidates": config.primaryInitialCandidates,
     "refinement_candidates": config.maxRefinedCandidatesPerAssay,
     "harmony_candidates": config.maxHarmonyCandidatesPerAssay,
-    "allow_assumptions": request.allowAssumptions,
+    "input_policy": config.inputPolicy,
 }
 ```
 
-## 3. Run to the persisted approval checkpoint
+## 3. Run without an interactive checkpoint
 
-With `allowAssumptions=False`, the orchestrator persists the exact proposed plan before asking the
-caller to approve it. Data Enrichment and Experimental Context have already completed at this
-point. The documentation captures the normal report-path printout so its output does not contain a
-random workflow identifier.
+The unattended policy lets registered rules resolve model deferrals. Genuine unresolved evidence
+becomes an explicit abstention or failure rather than a pause. The documentation captures the
+normal report-path printout so its output does not contain a random workflow identifier.
 
 ```{code-cell} ipython3
 with redirect_stdout(StringIO()):
     result = orchestrator.run(request)
 
 if (
-    result.status != "needsInput"
-    or result.currentStage != "preprocessing_plan"
+    result.status != "completed"
+    or result.finalAnalysis is None
     or result.preprocessingPlan is None
     or result.workflowRun is None
     or result.zarrPath is None
 ):
     raise RuntimeError(f"Unexpected workflow result: {result.status}, {result.notes}")
 
-question = result.needsInput.questions[0]
 plan = result.preprocessingPlan
 {
     "status": result.status,
     "stage": result.currentStage,
-    "question_id": question.questionId,
     "primary_assay": plan.primaryAssay,
     "marker_assay": plan.markerAssay,
     "cell_qc": plan.cellQc.action,
@@ -505,30 +504,23 @@ plan = result.preprocessingPlan
 }
 ```
 
-The plan checksum binds the approval to this exact plan. A different value is rejected rather than
-approving whichever plan happens to be current.
+The workflow persists the exact preprocessing plan, decisions, report handoffs, and final artifact
+references before returning.
 
-## 4. Resume the same workflow
+## 4. Inspect the persisted workflow
 
-Only a running persisted workflow can resume. The answer uses the question identifier and checksum
-returned above. Completed stages and artifacts are validated and reused rather than executed again.
+The returned workflow identity resolves the durable record. Reopening it does not execute an
+analysis stage.
 
 ```{code-cell} ipython3
-with redirect_stdout(StringIO()):
-    result = orchestrator.resume(
-        AutomatedWorkflowResumeRequest(
-            zarrPath=result.zarrPath,
-            workflowRunId=result.workflowRun.workflowRunId,
-            workspace=result.workflowRun.workspace,
-            answers={"approvePlanChecksum": plan.planChecksum},
-        )
-    )
-
-if result.status != "completed" or result.finalAnalysis is None:
-    raise RuntimeError(f"Workflow stopped at {result.currentStage}: {result.notes}")
+persisted_workflow = load_agent_workflow(
+    result.zarrPath,
+    result.workflowRun.workflowRunId,
+    workspace=result.workflowRun.workspace,
+)
 
 {
-    "status": result.status,
+    "status": persisted_workflow.status,
     "stage": result.currentStage,
     "agent_reports": [ref.agentName for ref in result.reportReferences],
     "model_requests": model_state["requests"],
@@ -537,9 +529,9 @@ if result.status != "completed" or result.finalAnalysis is None:
 }
 ```
 
-The single scripted provider is called by all four agents. Deterministic operations, such as HTO
-routing, preprocessing, candidate execution, promotion, UMAP, clustering, marker search, and
-persistence, do not require separate model requests.
+The single scripted provider handles every model-driven orchestrator stage. Deterministic
+operations, such as HTO routing, preprocessing, candidate execution, promotion, UMAP, clustering,
+marker search, and persistence, do not require separate model requests.
 
 ## 5. Review parameter evidence and agent reports
 
@@ -589,9 +581,9 @@ comparison.
 ## 6. Plot the exact final UMAP and inspect markers
 
 `FinalAnalysisHandoff` separates graph ownership from marker-assay ownership and contains the exact
-selection, graph, clusters, UMAP, and marker references used by Biological Interpretation. The
-plotting call consumes those references directly; no coordinates or labels are copied into live
-metadata columns.
+selection, graph, clusters, UMAP, and marker references that can be passed to Biological
+Interpretation. The plotting call consumes those references directly; no coordinates or labels are
+copied into live metadata columns.
 
 ```{code-cell} ipython3
 final = result.finalAnalysis
@@ -679,10 +671,12 @@ display_path = str(report_path.relative_to(Path(result.zarrPath).parent)).replac
 
 ## Pauses, failures, and other input formats
 
-`needsInput` keeps the workflow running. Inspect every returned question and supply only grounded
-answers. `failed` and `abandoned` are terminal. An ingest question can occur before a persisted
-workflow exists; update `ingestDirections` and call `run()` again in that case. A running workflow
-can also be finalized as abandoned with `orchestrator.cancel()`.
+With `inputPolicy="pause"`, `needsInput` keeps the workflow running. Inspect every returned
+question and supply only grounded answers through `AutomatedWorkflowResumeRequest`.
+`inputPolicy="unattended"` returns an explicit abstention or failure when evidence cannot be
+resolved safely. `failed` and `abandoned` are terminal. An ingest ambiguity can occur before a
+persisted workflow exists; update `ingestDirections` and call `run()` again in that case. A running
+workflow can also be finalized as abandoned with `orchestrator.cancel()`.
 
 For another new local H5 or H5AD input, provide a destination that does not yet exist:
 
@@ -691,9 +685,12 @@ request = AutomatedWorkflowRequest(
     sourcePath="study.h5ad",
     zarrPath="study.zarr",
     studyContext="One paragraph describing the study, design, and analysis intent.",
-    allowAssumptions=False,
+    studyObjective="Discover stable populations relevant to the study.",
 )
-result = AgentOrchestrator(model).run(request)
+result = AgentOrchestrator(
+    model,
+    config=AutomatedWorkflowConfig(inputPolicy="unattended"),
+).run(request)
 ```
 
 For an existing Zarr input, omit `zarrPath` or set it to the same location. Its current `I`
@@ -719,7 +716,13 @@ model = OpenAIChatModel(
     ),
 )
 
-orchestrator = AgentOrchestrator(model)
+orchestrator = AgentOrchestrator(
+    model,
+    config=AutomatedWorkflowConfig(
+        inputPolicy="unattended",
+        runConfoundedHarmonyDiagnostic=True,
+    ),
+)
 result = orchestrator.run(
     AutomatedWorkflowRequest(
         sourcePath="study.h5ad",
@@ -728,7 +731,9 @@ result = orchestrator.run(
             "Human single-cell study with three biological replicates per "
             "condition; donor is the unit of inference and library is technical."
         ),
-        allowAssumptions=False,
+        studyObjective=(
+            "Discover stable populations while preserving the condition structure."
+        ),
     )
 )
 ```

@@ -345,6 +345,16 @@ def test_clustering_uses_fixed_resolutions_and_requires_override_evidence() -> N
     assert compiled.verification.status == "passed"
 
 
+def test_clustering_baseline_uses_nearest_registered_resolution() -> None:
+    definition = build_cluster_partition_decision(
+        evidence_bundle_id="bundle:cluster",
+        metric_preferred_option_id="clusterResolution:coarse",
+        resolution_candidates=(0.5,),
+    )
+
+    assert definition.spec.baselineOptionId == "clusterResolution:coarse"
+
+
 def test_clustering_can_abstain_without_inventing_a_resolution() -> None:
     definition = build_cluster_partition_decision(
         evidence_bundle_id="bundle:cluster",

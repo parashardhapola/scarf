@@ -576,6 +576,39 @@ def test_snapshot_storage_does_not_overwrite_existing_content(tmp_path: Any) -> 
     )
 
 
+def test_selection_validator_rejects_ineligible_override_fields() -> None:
+    definition = build_feature_policy_decision(
+        evidence_bundle_id="bundle:features",
+        proposed_exclusion_families=["ribosomal"],
+        dominant_families=["ribosomal"],
+        protected_families=[],
+    )
+    evidence = EvidenceBundle(
+        bundleId="bundle:features",
+        decisionId="featurePolicy",
+        evidence=[
+            DecisionEvidence(
+                evidenceId="evidence:technical",
+                evidenceClass="technical",
+                summary="Ribosomal features dominate the representation.",
+            )
+        ],
+    )
+    selection = DecisionSelection(
+        selectedOptionId="featurePolicy:excludeEligibleBundle",
+        evidenceIds=["evidence:technical"],
+        rationale="Exclude the eligible family.",
+        overrideOfOptionId="featurePolicy:keepAll",
+        overrideEvidenceIds=["evidence:technical"],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Override fields require an eligible metric-preferred override",
+    ):
+        decisions_module._validate_selection(definition, evidence, selection)
+
+
 def test_resolver_replays_an_exact_audited_decision_without_provider(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,

@@ -8,8 +8,8 @@ description: Use Scarf safely in an autonomous or AI-assisted single-cell analys
 This page is a routing and reasoning guide for an AI agent that uses Scarf to analyse data.
 It does not replace the workflow tutorials or define one correct analysis.
 The study question, experimental design, and user instructions remain authoritative.
-For an executable ingest-to-interpretation example with persisted checkpoints and resume, see
-{doc}`tutorials/agent_workflow`.
+For an executable ingest-to-finalization example with persisted decisions and report generation,
+see {doc}`tutorials/agent_workflow`.
 
 ## Scope and authority
 
@@ -104,26 +104,37 @@ unit of inference.
 ### When to use the automated agent workflow
 
 Use `AgentOrchestrator` when the input is a supported dataset path and the caller can supply one
-study-context paragraph. The orchestrator owns a fixed stage order: ingest, Data Enrichment,
-optional HTO demultiplexing, Experimental Context, preprocessing-plan approval, preprocessing,
-Parameter Tuning, analysis finalization, and Biological Interpretation. The model does not write
-exploratory code or choose arbitrary `DataStore` calls. It selects only validated policies and
-candidate identifiers from bounded evidence; executor-owned public operations create and pass exact
-immutable artifact references.
+study-context paragraph and one study objective. The orchestrator owns a fixed stage order: ingest,
+Data Enrichment, optional HTO demultiplexing, Experimental Context, preprocessing planning and
+execution, Parameter Tuning, feature-policy review with optional revised preprocessing and tuning,
+analysis review, and analysis finalization. The model does not write exploratory code or choose
+arbitrary `DataStore` calls. It selects only validated policies and candidate identifiers from
+bounded evidence; executor-owned public operations create and pass exact immutable artifact
+references.
+
+`BiologicalInterpretationAgent` is a separate bounded facade for interpreting finalized cluster
+and marker artifacts. It is not an automatic stage of `AgentOrchestrator`.
 
 ```python
 from scarf.agent import (
     AgentOrchestrator,
+    AutomatedWorkflowConfig,
     AutomatedWorkflowRequest,
-    AutomatedWorkflowResumeRequest,
 )
 
-orchestrator = AgentOrchestrator(model)
+orchestrator = AgentOrchestrator(
+    model,
+    config=AutomatedWorkflowConfig(
+        inputPolicy="unattended",
+        runConfoundedHarmonyDiagnostic=True,
+    ),
+)
 result = orchestrator.run(
     AutomatedWorkflowRequest(
         sourcePath="study.h5ad",
         zarrPath="study.zarr",
         studyContext="One paragraph describing the study and analysis intent.",
+        studyObjective="Discover stable populations relevant to the study.",
     )
 )
 ```
@@ -133,14 +144,20 @@ invoking `ds.pipeline.run()` for every candidate. This keeps normalization, redu
 graph, clustering, metrics, promotion, UMAP, and marker artifacts explicit and enforces their order
 through lineage. `ds.pipeline.run()` remains the fixed baseline recipe described below.
 
-With `allowAssumptions=False`, `run()` can persist a complete preprocessing plan and return
-`needsInput` for approval. Resume only that running workflow with
-`AutomatedWorkflowResumeRequest` and the persisted question identifiers.
-`allowAssumptions=True` automatically approves the evidence-bounded preprocessing plan, but it does
-not authorize invented metadata or unsafe batch correction. Any agent can still pause for genuine
-ambiguity. A completed local workflow persists its terminal result and then creates a replaceable
-HTML report. `generate_agent_report()` can regenerate that derived view without training new
-analysis artifacts.
+`studyObjective` is required. `inputPolicy="pause"` permits a running workflow to return
+`needsInput`; resume only that exact workflow with `AutomatedWorkflowResumeRequest` and its
+persisted question identifiers. `inputPolicy="unattended"` resolves bounded model deferrals through
+registered policy and turns genuinely unresolved evidence into an explicit abstention or failure
+instead of waiting for a person. It does not authorize invented metadata or unsafe batch
+correction. `runConfoundedHarmonyDiagnostic=True` permits a matched diagnostic branch, but Harmony
+still cannot be selected unless the design and preservation gates accept it.
+
+The repository notebooks `notebook/agent_workflow_new.ipynb` and
+`notebook/agent_workflow_new_short.ipynb` demonstrate the unattended full-cohort and sampled smoke
+test configurations. The short notebook creates a deterministic library-stratified H5AD beside
+the source data and labels its result as a smoke test. A completed local workflow persists its
+terminal result and then creates a replaceable HTML report. `generate_agent_report()` can
+regenerate that derived view without training new analysis artifacts.
 
 ### When to use the pipeline
 

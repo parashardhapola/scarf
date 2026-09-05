@@ -1434,6 +1434,10 @@ def build_cluster_partition_decision(
         raise RnaDecisionGateError(
             "metric_preferred_option_id must be a registered resolution option"
         )
+    baseline_option_id = min(
+        rows,
+        key=lambda item: (abs(item[2] - 0.75), item[2]),
+    )[0]
     visible = [
         DecisionOption(
             optionId=option_id,
@@ -1479,7 +1483,7 @@ def build_cluster_partition_decision(
         question="Which registered partition is scientifically defensible?",
         visible_options=visible,
         executor_options=executor,
-        baseline_option_id="clusterResolution:balanced",
+        baseline_option_id=baseline_option_id,
         metric_preferred_option_id=metric_preferred_option_id,
         require_override_evidence=True,
     )

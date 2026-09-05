@@ -258,39 +258,52 @@ class FinalizationStagesMixin:
                 for name, artifact in sorted(selected.artifacts.items())
                 if name.startswith("doubletCellSelection:")
             ]
-            if not doublet_scores:
-                raise ValueError(
-                    "Selected cluster evidence lacks advisory doublet scores"
-                )
             if len(doublet_scores) != len(doublet_score_selections):
                 raise ValueError(
                     "Advisory doublet scores lack exact cell-selection lineage"
                 )
-            for index, doublet_model in enumerate(doublet_scores):
-                store.load_artifact(artifact_model_to_ref(doublet_model))
-                artifacts[f"doubletScore{index}"] = doublet_model
-                doublet_selection = doublet_score_selections[index]
-                store.load_artifact(artifact_model_to_ref(doublet_selection))
-                artifacts[f"doubletScoreSelection{index}"] = doublet_selection
-            limitations.extend(
+            doublet_limitations = [
                 warning
                 for warning in selected.warnings
                 if "doublet" in warning.lower()
                 or "physical capture identity" in warning.lower()
-            )
-            actions.append("reuse_advisory_doublet_scores")
-            operations.append(
-                {
-                    "operation": "reuse_advisory_doublet_scores",
-                    "artifacts": [
-                        value.model_dump(mode="json") for value in doublet_scores
-                    ],
-                    "cellSelections": [
-                        value.model_dump(mode="json")
-                        for value in doublet_score_selections
-                    ],
-                }
-            )
+            ]
+            limitations.extend(doublet_limitations)
+            if doublet_scores:
+                for index, doublet_model in enumerate(doublet_scores):
+                    store.load_artifact(artifact_model_to_ref(doublet_model))
+                    artifacts[f"doubletScore{index}"] = doublet_model
+                    doublet_selection = doublet_score_selections[index]
+                    store.load_artifact(artifact_model_to_ref(doublet_selection))
+                    artifacts[f"doubletScoreSelection{index}"] = doublet_selection
+                actions.append("reuse_advisory_doublet_scores")
+                operations.append(
+                    {
+                        "operation": "reuse_advisory_doublet_scores",
+                        "artifacts": [
+                            value.model_dump(mode="json") for value in doublet_scores
+                        ],
+                        "cellSelections": [
+                            value.model_dump(mode="json")
+                            for value in doublet_score_selections
+                        ],
+                    }
+                )
+            elif any(
+                warning.startswith("Advisory doublet scoring was not run for assay ")
+                for warning in doublet_limitations
+            ):
+                actions.append("record_unavailable_advisory_doublet_scores")
+                operations.append(
+                    {
+                        "operation": "record_unavailable_advisory_doublet_scores",
+                        "limitations": doublet_limitations,
+                    }
+                )
+            else:
+                raise ValueError(
+                    "Selected cluster evidence lacks advisory doublet scores"
+                )
 
             hypothesis_directions = request_record.request.experimentalDirections.get(
                 "hypothesisTesting",
@@ -560,7 +573,12 @@ class FinalizationStagesMixin:
                     "maximumClusterConcentration": (
                         selected.metrics.doubletHighScoreConcentration
                     ),
-                    "policy": "scoreAndFlagWithoutRemoval",
+                    "policy": (
+                        "scoreAndFlagWithoutRemoval"
+                        if doublet_scores
+                        else "unavailable"
+                    ),
+                    "limitations": doublet_limitations,
                 },
                 markerEvidence={
                     "coherence": selected.metrics.markerCoherence,
