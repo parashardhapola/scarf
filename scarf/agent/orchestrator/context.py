@@ -276,6 +276,7 @@ class ContextStagesMixin:
                 agent = DataEnrichmentAgent(
                     self.model,
                     config=request_record.config.agentRunConfig,
+                    unattended=request_record.config.inputPolicy == "unattended",
                 )
                 report = agent.run(
                     store,
@@ -309,6 +310,22 @@ class ContextStagesMixin:
                 f"inspections={len(report.inspections)}"
             )
             if report.status == "needsInput":
+                if request_record.config.inputPolicy == "unattended":
+                    outcome = journal._complete_attempt(
+                        started,
+                        status="failed",
+                        report_references=[reference],
+                        artifacts={"cellSelection": cell_selection},
+                        actions=actions,
+                        outputs={"operations": operations},
+                        error=(
+                            "The unattended Data Enrichment stage returned an "
+                            "unresolved decision"
+                        ),
+                        notes=report.limitations,
+                    )
+                    journal._save_outcome(store.zw, prefix, outcome)
+                    return outcome, report
                 questions = [
                     WorkflowQuestion(
                         questionId="dataEnrichmentContext",
@@ -889,6 +906,7 @@ class ContextStagesMixin:
                     agent = ExperimentalContextAgent(
                         self.model,
                         config=request_record.config.agentRunConfig,
+                        unattended=request_record.config.inputPolicy == "unattended",
                     )
                     report = agent.run(
                         store,
@@ -949,6 +967,20 @@ class ContextStagesMixin:
                 f"{report.decision.batchCorrection.action!r}"
             )
             if report.status == "needsInput":
+                if request_record.config.inputPolicy == "unattended":
+                    outcome = journal._complete_attempt(
+                        started,
+                        status="failed",
+                        report_references=[reference],
+                        artifacts=context_artifacts,
+                        error=(
+                            "The unattended Experimental Context stage returned an "
+                            "unresolved decision"
+                        ),
+                        notes=report.notes,
+                    )
+                    journal._save_outcome(store.zw, prefix, outcome)
+                    return outcome, report
                 questions = [
                     WorkflowQuestion(
                         questionId="experimentalDirections",
@@ -975,7 +1007,11 @@ class ContextStagesMixin:
                     artifacts=context_artifacts,
                     error="; ".join(report.notes) or "Experimental Context failed",
                 )
-            elif report.decision.batchCorrection.action == "unsafe":
+            elif (
+                report.decision.batchCorrection.action == "unsafe"
+                and not request_record.config.runConfoundedHarmonyDiagnostic
+                and request_record.config.inputPolicy != "unattended"
+            ):
                 batch_plan = report.decision.batchCorrection
                 outcome = journal._complete_attempt(
                     started,
@@ -1003,6 +1039,8 @@ class ContextStagesMixin:
                     notes=report.notes,
                 )
             else:
+                if report.decision.batchCorrection.action == "unsafe":
+                    actions.append("evaluate_unsafe_harmony_for_diagnosis")
                 physical_capture = directions.get("physicalCaptureColumn")
                 if not isinstance(physical_capture, str) or not physical_capture:
                     physical_capture = None

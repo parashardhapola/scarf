@@ -16,12 +16,19 @@ from pydantic import ConfigDict, Field, model_validator
 from .parameter_tuning import (
     ParameterCandidate,
     ParameterCandidateEvaluation,
+    ParameterSearchPlan,
+    ParameterTuningDependencies,
     ParameterTuningNeedsInput,
     ParameterTuningReport,
+    annotate_candidate_dominance,
     execute_parameter_candidate,
+    execute_parameter_search_plan,
     finalize_parameter_tuning_selection,
     prepare_parameter_tuning_dependencies,
+    require_dominated_candidate_evidence,
+    validate_parameter_search_plan,
 )
+from .tools import core_artifact_reference
 from .types import AgentDataModel, ExperimentalTuningHandoff
 
 
@@ -203,6 +210,16 @@ class ParameterPhaseEvidence(SequentialTuningModel):
                 raise ValueError(
                     "A selected phase must cite evidence from its selected candidate"
                 )
+            if self.plan.phase in {"graphK", "clusteringResolution"}:
+                dominance_evaluations = {
+                    evaluation.candidateId: evaluation
+                    for evaluation in annotate_candidate_dominance(self.evaluations)
+                }
+                require_dominated_candidate_evidence(
+                    dominance_evaluations[selected.candidateId],
+                    self.selection.evidenceIds,
+                    context=f"The {self.plan.phase} selection",
+                )
         if self.selection.status == "abstained" and self.plan.phase != (
             "clusteringResolution"
         ):
@@ -368,6 +385,64 @@ class SequentialAssayTuningEvidence(SequentialTuningModel):
         )
         if self.finalCandidateId != expected_final:
             raise ValueError("finalCandidateId requires four selected causal phases")
+        return self
+
+
+class SequentialRefinementResult(SequentialTuningModel):
+    """One validated post-grid refinement disposition and optional execution."""
+
+    plan: ParameterSearchPlan
+    evaluation: ParameterCandidateEvaluation | None = None
+
+    @model_validator(mode="after")
+    def validate_refinement_result(self) -> "SequentialRefinementResult":
+        if (
+            not self.plan.basedOnCandidateIds
+            or not self.plan.evidenceIds
+            or not self.plan.rationale.strip()
+            or not self.plan.stoppingCriteria
+        ):
+            raise ValueError(
+                "Sequential refinement results require parents, evidence, "
+                "rationale, and stopping criteria"
+            )
+        if self.plan.status == "complete":
+            if self.plan.candidates or self.evaluation is not None:
+                raise ValueError(
+                    "A complete refinement review cannot contain an execution"
+                )
+            return self
+        if len(self.plan.candidates) != 1 or self.evaluation is None:
+            raise ValueError(
+                "A refinement review must contain exactly one candidate execution"
+            )
+        candidate = self.plan.candidates[0]
+        if (
+            self.evaluation.candidateId != candidate.candidateId
+            or self.evaluation.parameters != candidate
+            or self.evaluation.phase != "refined"
+        ):
+            raise ValueError("Refinement execution does not match its validated plan")
+        return self
+
+
+class SequentialRefinementSelection(SequentialTuningModel):
+    """Explicit final choice after an optional refinement execution."""
+
+    selectedCandidateId: str
+    evidenceIds: list[str] = Field(min_length=1)
+    rationale: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "SequentialRefinementSelection":
+        if _CANDIDATE_ID.fullmatch(self.selectedCandidateId) is None:
+            raise ValueError("selectedCandidateId is not a stable candidate ID")
+        if len(self.evidenceIds) != len(set(self.evidenceIds)):
+            raise ValueError("evidenceIds must not contain duplicates")
+        if any(not value for value in self.evidenceIds):
+            raise ValueError("evidenceIds must contain non-empty values")
+        if self.rationale != self.rationale.strip():
+            raise ValueError("rationale must not contain surrounding whitespace")
         return self
 
 
@@ -574,7 +649,7 @@ def validate_parameter_phase_selection(
     """Validate an ID-only selection against complete executor evidence."""
     return ParameterPhaseEvidence(
         plan=plan,
-        evaluations=list(evaluations),
+        evaluations=list(annotate_candidate_dominance(evaluations)),
         selection=selection,
     )
 
@@ -606,16 +681,242 @@ def execute_parameter_phase(
     expected_ids = tuple(candidate.candidateId for candidate in plan.candidates)
     if tuple(candidate_ids) != expected_ids:
         raise ValueError("Prepared executor candidate inventory changed the phase plan")
-    return tuple(execute_parameter_candidate(deps, value) for value in candidate_ids)
+    return annotate_candidate_dominance(
+        tuple(execute_parameter_candidate(deps, value) for value in candidate_ids)
+    )
+
+
+def _sequential_candidate_evaluations(
+    evidence: SequentialAssayTuningEvidence,
+) -> tuple[ParameterCandidateEvaluation, ...]:
+    if evidence.finalCandidateId is None:
+        raise ValueError("Sequential refinement requires complete grid evidence")
+    evaluations = tuple(
+        evaluation for phase in evidence.phases for evaluation in phase.evaluations
+    )
+    if not evaluations:
+        raise ValueError("Sequential refinement requires executed grid candidates")
+    candidate_ids = [evaluation.candidateId for evaluation in evaluations]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError("Sequential grid candidate IDs must be unique")
+    if evidence.finalCandidateId not in set(candidate_ids):
+        raise ValueError("Sequential final candidate is not present in grid evidence")
+    return evaluations
+
+
+def prepare_sequential_refinement_dependencies(
+    store: Any,
+    *,
+    normalized: Any,
+    evidence: SequentialAssayTuningEvidence,
+    batch_columns: Sequence[str] = (),
+    preservation_columns: Sequence[str] = (),
+    experimental_handoff: ExperimentalTuningHandoff | None = None,
+    min_cluster_cells: int = 20,
+    identity_feature_limit: int = 64,
+) -> tuple[ParameterTuningDependencies, list[str]]:
+    """Prepare one refinement executor from already executed sequential candidates."""
+
+    evaluations = _sequential_candidate_evaluations(evidence)
+    candidates = [evaluation.parameters for evaluation in evaluations]
+    deps, candidate_ids = prepare_parameter_tuning_dependencies(
+        store,
+        normalized=normalized,
+        candidates=candidates,
+        batch_columns=batch_columns,
+        preservation_columns=preservation_columns,
+        experimental_handoff=experimental_handoff,
+        max_candidates=len(candidates),
+        max_refined_candidates=1,
+        min_cluster_cells=min_cluster_cells,
+        identity_feature_limit=identity_feature_limit,
+        pair_harmony_candidates=False,
+    )
+    expected_ids = [candidate.candidateId for candidate in candidates]
+    if candidate_ids != expected_ids:
+        raise ValueError("Prepared refinement inventory changed the grid candidates")
+    for evaluation in evaluations:
+        if (
+            evaluation.status == "done"
+            and core_artifact_reference(evaluation.cellSelection) != deps.cellSelection
+        ):
+            raise ValueError(
+                "Sequential grid evaluation does not match the normalized cell axis"
+            )
+    deps.evaluations = {
+        evaluation.candidateId: evaluation for evaluation in evaluations
+    }
+    deps.executionOrder = list(candidate_ids)
+    return deps, candidate_ids
+
+
+def _changed_refinement_parameters(
+    candidate: ParameterCandidate,
+    parent: ParameterCandidate,
+) -> tuple[str, ...]:
+    tunable_fields = (
+        "reductionMethod",
+        "dimensions",
+        "neighborsK",
+        "leidenResolution",
+        "useHarmony",
+    )
+    return tuple(
+        field_name
+        for field_name in tunable_fields
+        if getattr(candidate, field_name) != getattr(parent, field_name)
+    )
+
+
+def validate_sequential_refinement_plan(
+    plan: ParameterSearchPlan,
+    deps: ParameterTuningDependencies,
+    initial_candidate_ids: Sequence[str],
+) -> ParameterSearchPlan:
+    """Validate a no-refinement decision or one bounded sequential candidate."""
+
+    initial_ids = tuple(initial_candidate_ids)
+    if not initial_ids or len(initial_ids) != len(set(initial_ids)):
+        raise ValueError("Sequential refinement requires unique grid candidate IDs")
+    if set(deps.evaluations) != set(initial_ids):
+        raise ValueError("Refinement dependencies do not match the executed grid")
+    eligible_ids = {
+        candidate_id
+        for candidate_id in initial_ids
+        if deps.evaluations[candidate_id].status == "done"
+        and deps.evaluations[candidate_id].eligible
+    }
+    if not eligible_ids:
+        raise ValueError("Sequential refinement requires an eligible successful parent")
+
+    validated = validate_parameter_search_plan(
+        plan,
+        deps,
+        initial_candidate_ids=initial_ids,
+        max_refined_candidates=1,
+    )
+    parent_ids = tuple(validated.basedOnCandidateIds)
+    if not parent_ids:
+        raise ValueError("Sequential refinement must name its successful parent")
+    if len(parent_ids) != len(set(parent_ids)):
+        raise ValueError("Sequential refinement parent IDs must be unique")
+    if any(parent_id not in eligible_ids for parent_id in parent_ids):
+        raise ValueError(
+            "Sequential refinement parents must be eligible successful grid candidates"
+        )
+    if any(
+        not any(
+            evidence_id.startswith(f"candidate:{parent_id}:")
+            for evidence_id in validated.evidenceIds
+        )
+        for parent_id in parent_ids
+    ):
+        raise ValueError("Sequential refinement must cite each parent candidate")
+
+    if validated.status == "complete":
+        if not validated.evidenceIds:
+            raise ValueError("A no-refinement decision requires observed evidence")
+        if not validated.rationale.strip():
+            raise ValueError("A no-refinement decision requires a rationale")
+        if not validated.stoppingCriteria:
+            raise ValueError("A no-refinement decision requires a stopping criterion")
+        return validated
+
+    candidate = validated.candidates[0]
+    if candidate.useHarmony:
+        raise ValueError(
+            "One-candidate sequential refinement cannot evaluate Harmony because "
+            "acceptance requires a newly parameter-matched native control"
+        )
+    parent_changes = {
+        parent_id: _changed_refinement_parameters(
+            candidate,
+            deps.evaluations[parent_id].parameters,
+        )
+        for parent_id in parent_ids
+    }
+    if not any(
+        len(changes) == 1
+        and changes[0] in {"dimensions", "neighborsK", "leidenResolution"}
+        for changes in parent_changes.values()
+    ):
+        raise ValueError(
+            "The refinement candidate must vary one numeric parameter from a "
+            "cited parent"
+        )
+    matched_mode = [
+        deps.evaluations[candidate_id].parameters
+        for candidate_id in initial_ids
+        if (
+            deps.evaluations[candidate_id].parameters.reductionMethod
+            == candidate.reductionMethod
+            and deps.evaluations[candidate_id].parameters.useHarmony
+            == candidate.useHarmony
+        )
+    ]
+    for field_name in ("dimensions", "neighborsK", "leidenResolution"):
+        observed = [getattr(value, field_name) for value in matched_mode]
+        if not min(observed) <= getattr(candidate, field_name) <= max(observed):
+            raise ValueError(
+                f"Refined {field_name} must remain inside its observed "
+                "correction-mode envelope"
+            )
+    if not validated.objectives:
+        raise ValueError("A refinement candidate requires an evidence-based objective")
+    return validated
+
+
+def execute_sequential_refinement(
+    deps: ParameterTuningDependencies,
+    plan: ParameterSearchPlan,
+    initial_candidate_ids: Sequence[str],
+) -> SequentialRefinementResult:
+    """Execute at most one validated post-grid sequential candidate."""
+
+    validated = validate_sequential_refinement_plan(
+        plan,
+        deps,
+        initial_candidate_ids,
+    )
+    validated, evaluations = execute_parameter_search_plan(
+        deps,
+        validated,
+        initial_candidate_ids=initial_candidate_ids,
+        max_refined_candidates=1,
+    )
+    return SequentialRefinementResult(
+        plan=validated,
+        evaluation=evaluations[0] if evaluations else None,
+    )
+
+
+def sequential_refinement_selection_candidates(
+    evidence: SequentialAssayTuningEvidence,
+    refinement: SequentialRefinementResult,
+) -> tuple[ParameterCandidateEvaluation, ...]:
+    """Return the grid and optional refinement as one final-selection inventory."""
+
+    evaluations = list(_sequential_candidate_evaluations(evidence))
+    if refinement.evaluation is not None:
+        if refinement.evaluation.candidateId in {
+            evaluation.candidateId for evaluation in evaluations
+        }:
+            raise ValueError("Refinement candidate duplicates a grid candidate ID")
+        evaluations.append(refinement.evaluation)
+    return annotate_candidate_dominance(evaluations)
 
 
 def sequential_evidence_to_report(
     evidence: SequentialAssayTuningEvidence,
     *,
     marker_assay: str | None = None,
+    refinement: SequentialRefinementResult | None = None,
+    refinement_selection: SequentialRefinementSelection | None = None,
 ) -> ParameterTuningReport:
     """Adapt four selected phases to the report consumed by finalization."""
     if evidence.finalCandidateId is None:
+        if refinement is not None or refinement_selection is not None:
+            raise ValueError("Post-grid refinement requires four selected phases")
         final_phase = evidence.phases[-1]
         cell_selection = next(
             (
@@ -666,9 +967,94 @@ def sequential_evidence_to_report(
     final_phase = evidence.phases[-1]
     selected = final_phase.selected_evaluation()
     assert selected is not None
-    evaluations = [
-        evaluation for phase in evidence.phases for evaluation in phase.evaluations
-    ]
+    phase_selected = selected
+    phase_evidence_ids = list(
+        dict.fromkeys(
+            evidence_id
+            for value in evidence.phases
+            for evidence_id in value.selection.evidenceIds
+        )
+    )
+    evaluations = list(_sequential_candidate_evaluations(evidence))
+    search_plan: ParameterSearchPlan | None = None
+    rationale = " ".join(value.selection.rationale for value in evidence.phases)
+    stop_reason = "Four causal RNA parameter phases were selected."
+    evidence_ids = phase_evidence_ids
+    if refinement is not None:
+        search_plan = refinement.plan
+        evaluations = list(
+            sequential_refinement_selection_candidates(evidence, refinement)
+        )
+        evidence_ids = list(
+            dict.fromkeys([*phase_evidence_ids, *refinement.plan.evidenceIds])
+        )
+        rationale = f"{rationale} {refinement.plan.rationale}"
+        if refinement.evaluation is None:
+            if refinement_selection is not None:
+                raise ValueError(
+                    "A no-refinement result cannot have a refinement selection"
+                )
+            stop_reason = "The bounded post-grid review found no justified refinement."
+        else:
+            if refinement_selection is None:
+                raise ValueError(
+                    "Executed refinement requires an explicit final selection"
+                )
+            by_id = {evaluation.candidateId: evaluation for evaluation in evaluations}
+            selected = by_id.get(refinement_selection.selectedCandidateId)
+            if selected is None:
+                raise ValueError("Refinement selection references an unknown candidate")
+            if selected.status != "done" or not selected.eligible:
+                raise ValueError(
+                    "Refinement selection must choose an eligible execution"
+                )
+            if core_artifact_reference(
+                selected.cellSelection
+            ) != core_artifact_reference(phase_selected.cellSelection):
+                raise ValueError("Refinement selection changed the exact cell axis")
+            known_evidence = {
+                evidence_id
+                for evaluation in evaluations
+                for evidence_id in evaluation.evidenceIds
+            }
+            unknown_evidence = sorted(
+                set(refinement_selection.evidenceIds) - known_evidence
+            )
+            if unknown_evidence:
+                raise ValueError(
+                    f"Refinement selection cites unknown evidence {unknown_evidence}"
+                )
+            prefix = f"candidate:{selected.candidateId}:"
+            if not any(
+                evidence_id.startswith(prefix)
+                for evidence_id in refinement_selection.evidenceIds
+            ):
+                raise ValueError(
+                    "Refinement selection must cite its selected candidate"
+                )
+            graph_partition_dominators = [
+                candidate_id
+                for candidate_id in selected.metrics.dominatedByCandidateIds
+                if candidate_id in by_id
+                and _changed_refinement_parameters(
+                    selected.parameters,
+                    by_id[candidate_id].parameters,
+                )
+                in {("neighborsK",), ("leidenResolution",)}
+            ]
+            if graph_partition_dominators:
+                require_dominated_candidate_evidence(
+                    selected,
+                    refinement_selection.evidenceIds,
+                    context="The post-grid selection",
+                )
+            evidence_ids = list(
+                dict.fromkeys([*evidence_ids, *refinement_selection.evidenceIds])
+            )
+            rationale = f"{rationale} {refinement_selection.rationale}"
+            stop_reason = "One bounded post-grid refinement was adjudicated."
+    elif refinement_selection is not None:
+        raise ValueError("Refinement selection requires a refinement result")
     assay_report = ParameterTuningReport(
         status="done",
         fromAssay=evidence.assay,
@@ -677,16 +1063,11 @@ def sequential_evidence_to_report(
         recommendedCandidateId=selected.candidateId,
         selectedArtifacts=dict(selected.artifacts),
         confidence="medium",
-        rationale=" ".join(value.selection.rationale for value in evidence.phases),
-        evidenceIds=list(
-            dict.fromkeys(
-                evidence_id
-                for value in evidence.phases
-                for evidence_id in value.selection.evidenceIds
-            )
-        ),
+        rationale=rationale,
+        evidenceIds=evidence_ids,
         limitations=[],
-        stopReason="Four causal RNA parameter phases were selected.",
+        stopReason=stop_reason,
+        searchPlan=search_plan,
         recommendedByAssay={evidence.assay: selected.candidateId},
         totalCandidates=len(evaluations),
     )
@@ -703,11 +1084,17 @@ def sequential_evidence_to_report(
 __all__ = [
     "CorrectionNeedSelection",
     "execute_parameter_phase",
+    "execute_sequential_refinement",
     "ParameterPhaseEvidence",
     "ParameterPhasePlan",
     "ParameterPhaseSelection",
+    "prepare_sequential_refinement_dependencies",
     "SequentialAssayTuningEvidence",
+    "SequentialRefinementResult",
+    "SequentialRefinementSelection",
     "SequentialRnaTuningPlanner",
     "sequential_evidence_to_report",
+    "sequential_refinement_selection_candidates",
     "validate_parameter_phase_selection",
+    "validate_sequential_refinement_plan",
 ]

@@ -142,8 +142,55 @@ class AgentOrchestrator(
                     currentStage="ingest",
                     notes=[f"CELLxGENE manifest inspection failed: {exc}"],
                 )
+            if dataset_manifest.declaredBatchColumns:
+                experimental_directions = dict(request.experimentalDirections)
+                raw_batch_columns = experimental_directions.get("batchColumns")
+                if raw_batch_columns is None:
+                    experimental_directions["batchColumns"] = list(
+                        dataset_manifest.declaredBatchColumns
+                    )
+                elif not isinstance(raw_batch_columns, list) or any(
+                    not isinstance(value, str) or not value.strip()
+                    for value in raw_batch_columns
+                ):
+                    return AutomatedWorkflowResult(
+                        status="failed",
+                        currentStage="ingest",
+                        datasetManifest=dataset_manifest,
+                        notes=[
+                            "experimentalDirections.batchColumns must be a list "
+                            "of exact observation-column names"
+                        ],
+                    )
+                elif not set(dataset_manifest.declaredBatchColumns).issubset(
+                    raw_batch_columns
+                ):
+                    return AutomatedWorkflowResult(
+                        status="failed",
+                        currentStage="ingest",
+                        datasetManifest=dataset_manifest,
+                        notes=[
+                            "experimentalDirections.batchColumns must include the "
+                            "CELLxGENE uns/batch_condition columns"
+                        ],
+                    )
+                request = request.model_copy(
+                    update={"experimentalDirections": experimental_directions}
+                )
             manifest_decision = dataset_manifest.decision
             if manifest_decision.status == "needsInput":
+                if self.config.inputPolicy == "unattended":
+                    return AutomatedWorkflowResult(
+                        status="abstained",
+                        currentStage="ingest",
+                        datasetManifest=dataset_manifest,
+                        limitations=list(dataset_manifest.priorFiltering.limitations),
+                        unresolvedClaims=[manifest_decision.summary],
+                        notes=[
+                            "The unattended workflow abstained because the count "
+                            "matrix was ambiguous."
+                        ],
+                    )
                 return AutomatedWorkflowResult(
                     status="needsInput",
                     currentStage="ingest",
@@ -238,6 +285,20 @@ class AgentOrchestrator(
                             evidenceIds=list(ingest_result.needsInput.evidenceIds),
                         )
                     ]
+                )
+            if needs_input is not None and self.config.inputPolicy == "unattended":
+                return AutomatedWorkflowResult(
+                    status="abstained",
+                    currentStage="ingest",
+                    zarrPath=ingest_result.zarrPath,
+                    unresolvedClaims=[
+                        question.question for question in needs_input.questions
+                    ],
+                    notes=[
+                        *ingest_result.notes,
+                        "The unattended workflow abstained instead of waiting for "
+                        "an ingest decision.",
+                    ],
                 )
             return AutomatedWorkflowResult(
                 status=("needsInput" if needs_input is not None else "failed"),
@@ -1149,6 +1210,34 @@ class AgentOrchestrator(
             )
         parents = [journal._parent_link(tuning_outcome)]
 
+        (
+            analysis_review_outcome,
+            tuning_report,
+            tuning_reference,
+        ) = self.analysis_review_stage(
+            store,
+            workflow,
+            request_record,
+            parents,
+            preprocessing_plan,
+            tuning_report,
+            tuning_reference,
+            study_contract,
+            answers,
+            resume_record=resume_record,
+        )
+        if analysis_review_outcome.status != "done":
+            return journal.paused_or_failed_result(
+                store,
+                workflow,
+                request_record,
+                analysis_review_outcome,
+                dataset_manifest=dataset_manifest,
+                preprocessing_plan=preprocessing_plan,
+                study_contract=study_contract,
+            )
+        parents = [journal._parent_link(analysis_review_outcome)]
+
         finalization_outcome, final_analysis = self.analysis_finalization_stage(
             store,
             workflow,
@@ -1159,6 +1248,9 @@ class AgentOrchestrator(
             tuning_report,
             tuning_reference,
             study_contract,
+            experimental=experimental,
+            analysis_review_evidence=analysis_review_outcome.outputs,
+            answers=answers,
             resume_record=resume_record,
         )
         if finalization_outcome.status != "done":

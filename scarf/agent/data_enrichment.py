@@ -7,6 +7,7 @@ from textwrap import dedent
 from typing import Any, Literal
 
 from ..features.gene_reference import species_registry
+from ..features.variability import DEFAULT_HVG_BLACKLIST
 from ..utils.logging import logger
 from .characterize_features import characterize_features
 from .config import CONFIG, AgentRunConfig
@@ -39,6 +40,7 @@ __all__ = [
     "DataEnrichmentDependencies",
     "DataEnrichmentReport",
     "DataEnrichmentToolCall",
+    "DefaultHvgFamilyEvidence",
     "ExogenousFeatureEvidence",
     "FeatureFamilyEvidence",
     "FeatureLookupResult",
@@ -47,6 +49,7 @@ __all__ = [
     "FeatureReference",
     "FeatureSelectionPolicy",
     "HtoTagEvidence",
+    "RnaFeatureInventoryEvidence",
     "StudyContextSummary",
     "find_present_features",
     "find_present_features_batch",
@@ -76,6 +79,10 @@ _SYSTEM_PROMPT = (
         representation-sensitivity bundle from observed families with
         defaultExclude=true. It is not an instruction to remove those families.
         Never nominate a family with defaultExclude=false.
+        The defaultFeatureInventory is separate deterministic evidence for Scarf's
+        exact default HVG blacklist. It is evidence only, not an automatic
+        exclusion or a source of policy nominations. Keep marker eligibility
+        broader than any graph-feature exclusion.
 
         Persisted assay types determine modality routes; never infer a route from
         an assay label. The validator fills assay type, modality eligibility, ADT
@@ -315,6 +322,64 @@ class FeatureFamilyEvidence(AgentDataModel):
         )
 
 
+class DefaultHvgFamilyEvidence(AgentDataModel):
+    """One case-insensitive family within Scarf's default HVG blacklist."""
+
+    family: str = ""
+    pattern: str = ""
+    caseInsensitive: Literal[True] = True
+    count: int = 0
+    examples: list[str] = Field(default_factory=list)
+    evidenceId: str = ""
+
+    @classmethod
+    def get_blank(cls) -> "DefaultHvgFamilyEvidence":
+        return cls()
+
+    @classmethod
+    def get_example(cls) -> "DefaultHvgFamilyEvidence":
+        return cls(
+            family="mitochondrial",
+            pattern="^MT-",
+            count=2,
+            examples=["MT-CO1", "MT-CYB"],
+            evidenceId="assay:RNA:scarfDefaultHvg:family:mitochondrial",
+        )
+
+
+class RnaFeatureInventoryEvidence(AgentDataModel):
+    """Exact name-column matches for Scarf's default HVG blacklist."""
+
+    source: Literal["scarfDefaultHvgBlacklist"] = "scarfDefaultHvgBlacklist"
+    policyEffect: Literal["evidenceOnly"] = "evidenceOnly"
+    featureColumn: Literal["names"] = "names"
+    totalFeatures: int = 0
+    blacklist: str = ""
+    matchCount: int = 0
+    examples: list[str] = Field(default_factory=list)
+    families: list[DefaultHvgFamilyEvidence] = Field(default_factory=list)
+    evidenceId: str = ""
+    evidenceIds: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def get_blank(cls) -> "RnaFeatureInventoryEvidence":
+        return cls()
+
+    @classmethod
+    def get_example(cls) -> "RnaFeatureInventoryEvidence":
+        family = DefaultHvgFamilyEvidence.get_example()
+        evidence_id = "assay:RNA:scarfDefaultHvg:combined"
+        return cls(
+            totalFeatures=20_000,
+            blacklist=DEFAULT_HVG_BLACKLIST,
+            matchCount=2,
+            examples=["MT-CO1", "MT-CYB"],
+            families=[family],
+            evidenceId=evidence_id,
+            evidenceIds=[evidence_id, family.evidenceId],
+        )
+
+
 class ExogenousFeatureEvidence(AgentDataModel):
     """One bounded candidate for an artificial or exogenous feature."""
 
@@ -349,6 +414,7 @@ class AssayFeatureInspection(AgentDataModel):
     speciesMethod: str | None = None
     speciesReason: str = ""
     families: list[FeatureFamilyEvidence] = Field(default_factory=list)
+    defaultFeatureInventory: RnaFeatureInventoryEvidence | None = None
     exogenous: list[ExogenousFeatureEvidence] = Field(default_factory=list)
     modalityEvidence: AssayModalityEvidence = Field(
         default_factory=AssayModalityEvidence.get_blank
@@ -363,6 +429,7 @@ class AssayFeatureInspection(AgentDataModel):
     @classmethod
     def get_example(cls) -> "AssayFeatureInspection":
         family = FeatureFamilyEvidence.get_example()
+        default_inventory = RnaFeatureInventoryEvidence.get_example()
         modality = AssayModalityEvidence(
             assayType="RNA",
             modality="RNA",
@@ -380,11 +447,13 @@ class AssayFeatureInspection(AgentDataModel):
             speciesMethod="ensemblPrefix",
             speciesReason="Most feature IDs carry the ENSG prefix",
             families=[family],
+            defaultFeatureInventory=default_inventory,
             modalityEvidence=modality,
             evidenceIds=[
                 "assay:RNA:identity",
                 "assay:RNA:species",
                 family.evidenceId,
+                *default_inventory.evidenceIds,
                 *modality.evidenceIds,
             ],
         )
@@ -917,6 +986,25 @@ async def inspect_assay_features(
     record = characterization.assays[0]
     family_evidence: list[FeatureFamilyEvidence] = []
     evidence_ids = [f"assay:{assay_name}:identity", f"assay:{assay_name}:species"]
+    raw_default_inventory = record.get("defaultFeatureInventory")
+    default_inventory: RnaFeatureInventoryEvidence | None = None
+    if raw_default_inventory is not None:
+        default_inventory = RnaFeatureInventoryEvidence.model_validate(
+            raw_default_inventory
+        )
+        if default_inventory.blacklist != DEFAULT_HVG_BLACKLIST:
+            raise ModelRetry(
+                "RNA feature inventory does not use Scarf's exact default HVG blacklist"
+            )
+        evidence_prefix = f"assay:{assay_name}:scarfDefaultHvg"
+        default_inventory.evidenceId = f"{evidence_prefix}:combined"
+        for family in default_inventory.families:
+            family.evidenceId = f"{evidence_prefix}:family:{family.family}"
+        default_inventory.evidenceIds = [
+            default_inventory.evidenceId,
+            *(family.evidenceId for family in default_inventory.families),
+        ]
+        evidence_ids.extend(default_inventory.evidenceIds)
     for family in record.get("families", []):
         family_name = str(family.get("family", ""))
         evidence_id = f"assay:{assay_name}:family:{family_name}"
@@ -972,6 +1060,7 @@ async def inspect_assay_features(
         speciesMethod=record.get("speciesMethod"),
         speciesReason=str(resolution.get("reason", "")),
         families=family_evidence,
+        defaultFeatureInventory=default_inventory,
         exogenous=exogenous_evidence,
         modalityEvidence=modality_evidence,
         notes=[str(value) for value in record.get("notes", [])],
@@ -990,6 +1079,8 @@ async def inspect_assay_features(
         "Data Enrichment inspected "
         f"assay={assay_name!r}, modality={modality_evidence.modality}, "
         f"species={inspection.species}, families={len(family_evidence)}, "
+        f"defaultHvgMatches="
+        f"{default_inventory.matchCount if default_inventory is not None else 0}, "
         f"exogenous={len(exogenous_evidence)}, evidence={len(evidence_ids)}"
     )
     return inspection
@@ -1524,6 +1615,79 @@ def pending_data_enrichment_report(
     return validated
 
 
+def deterministic_data_enrichment_report(
+    deps: DataEnrichmentDependencies,
+    *,
+    error: Exception,
+    model_name: str,
+) -> DataEnrichmentReport:
+    """Use inspected feature evidence when an unattended model run is invalid."""
+    if set(deps.inspections) != set(deps.assays):
+        raise error
+    policies = []
+    for assay in deps.assays:
+        inspection = deps.inspections[assay]
+        evidence_ids = list(inspection.evidenceIds)
+        if not evidence_ids:
+            raise ValueError(f"Assay {assay!r} has no deterministic feature evidence")
+        policies.append(
+            FeatureSelectionPolicy(
+                assay=assay,
+                species=(
+                    inspection.species
+                    if inspection.species in {*_SUPPORTED_SPECIES, "unknown"}
+                    else "unknown"
+                ),
+                speciesConfidence=(
+                    "high" if inspection.species in _SUPPORTED_SPECIES else "unknown"
+                ),
+                speciesRationale=(
+                    inspection.speciesReason
+                    or "Feature inspection did not resolve a supported species."
+                ),
+                excludeFamilies=[
+                    item.family
+                    for item in inspection.families
+                    if item.defaultExclude is True
+                ],
+                protectFamilies=[
+                    item.family
+                    for item in inspection.families
+                    if item.defaultExclude is False
+                ],
+                rationale=(
+                    "Use the exact observed default-exclusion families as the "
+                    "initial representation-sensitivity policy."
+                ),
+                evidenceIds=evidence_ids,
+            )
+        )
+    summary = StudyContextSummary(
+        organismReferences=(
+            [deps.context.organismHint] if deps.context.organismHint else []
+        ),
+        tissueReferences=list(deps.context.tissueReferences),
+        cellTypeReferences=list(deps.context.cellTypeReferences),
+        experimentalReferences=list(deps.context.experimentalDetails),
+    )
+    error_detail = str(error).replace("\n", " ").strip()[:500]
+    report = DataEnrichmentReport(
+        status="done",
+        policies=policies,
+        studyContextSummary=summary,
+        limitations=[
+            "The model feature-policy output was invalid; the workflow used only "
+            "deterministic assay inspection evidence.",
+            error_detail,
+        ],
+        runInfo=AgentRunInfo(
+            agentName="data_enrichment_deterministic",
+            modelName=model_name,
+        ),
+    )
+    return validate_data_enrichment_report(deps, report)
+
+
 class DataEnrichmentAgent:
     """A small read-only tool agent for feature and organism enrichment."""
 
@@ -1532,8 +1696,10 @@ class DataEnrichmentAgent:
         model: Any,
         *,
         config: AgentRunConfig | None = None,
+        unattended: bool = False,
     ) -> None:
         self.model = model
+        self.unattended = unattended
         self.config = (config or AgentRunConfig()).with_limits(
             request_limit=8,
             tool_call_limit=5,
@@ -1678,6 +1844,12 @@ class DataEnrichmentAgent:
             if set(deps.inspections) != set(deps.assays):
                 raise
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
+            if self.unattended:
+                return deterministic_data_enrichment_report(
+                    deps,
+                    error=exc,
+                    model_name=str(model_name),
+                )
             return pending_data_enrichment_report(
                 deps,
                 error=exc,
@@ -1685,6 +1857,15 @@ class DataEnrichmentAgent:
             )
         report = DataEnrichmentReport.model_validate(execution.output)
         report = validate_data_enrichment_report(deps, report)
+        if self.unattended and report.status == "needsInput":
+            model_name = getattr(self.model, "model_name", type(self.model).__name__)
+            return deterministic_data_enrichment_report(
+                deps,
+                error=RuntimeError(
+                    "The model returned an unresolved data-enrichment policy"
+                ),
+                model_name=str(model_name),
+            )
         report.runInfo = execution.runInfo
         logger.info(
             "Data Enrichment Agent completed: "

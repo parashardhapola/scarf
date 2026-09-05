@@ -1,7 +1,7 @@
 """Deterministic representation and partition evidence for RNA decisions."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import numpy as np
@@ -9,6 +9,12 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from ..clustering.leiden import leiden_membership
 from ..metadata.rows import read_metadata_rows_chunkwise
+from ..quality_control.cell_cycle_genes import (
+    g2m_phase_genes,
+    g2m_phase_genes_mouse,
+    s_phase_genes,
+    s_phase_genes_mouse,
+)
 from ..storage.arrays import create_zarr_dataset
 from ..storage.artifact_writer import (
     ArrayRequirement,
@@ -25,15 +31,28 @@ from ..storage.types import as_zarr_array
 from .parameter_tuning import (
     ArtifactRecord,
     ParameterCandidateEvaluation,
+    annotate_candidate_dominance,
 )
 
 _PCA_DIAGNOSTIC_ARRAYS = (
     "component_variance",
+    "explained_variance_ratio",
     "top_loading_feature_indices",
     "top_loading_values",
     "family_enrichment",
     "covariate_association",
     "adjacent_neighbor_overlap",
+)
+_MAX_DOUBLET_CAPTURES = 256
+SCARF_DEFAULT_DIAGNOSTIC_FAMILIES = (
+    "mitochondrial",
+    "ribosomal",
+    "mitoribosomal",
+    "cellCycleCcn",
+    "hla",
+    "h2",
+    "histone",
+    "sexLinked",
 )
 
 
@@ -45,6 +64,11 @@ class AdvisoryDoubletScores:
     cell_selections: tuple[ArtifactRef, ...]
     native_graph: ArtifactRef
     native_clusters: ArtifactRef
+    capture_values: tuple[str, ...] = ()
+    score_summaries: tuple[dict[str, float], ...] = ()
+    score_quantiles: Mapping[str, float] = field(default_factory=dict)
+    capture_coverage: float | None = None
+    capture_column: str | None = None
     limitations: tuple[str, ...] = ()
 
 
@@ -95,18 +119,56 @@ def _family_mask(names: np.ndarray, family: str) -> np.ndarray | None:
     upper = np.char.upper(names.astype(str))
     if family == "mitochondrial":
         return np.char.startswith(upper, "MT-")
-    if family == "ribosomal":
+    if family in {"ribosomal", "ribosomalProtein"}:
         return np.asarray(
             np.logical_or.reduce(
-                [
-                    np.char.startswith(upper, prefix)
-                    for prefix in ("RPS", "RPL", "MRPS", "MRPL")
-                ]
+                [np.char.startswith(upper, prefix) for prefix in ("RPS", "RPL")]
             ),
             dtype=bool,
         )
+    if family == "mitoribosomal":
+        return np.asarray(
+            np.logical_or.reduce(
+                [np.char.startswith(upper, prefix) for prefix in ("MRPS", "MRPL")]
+            ),
+            dtype=bool,
+        )
+    if family == "cellCycleCcn":
+        return np.char.startswith(upper, "CCN")
+    if family == "cellCycle":
+        cycle_genes = {
+            *s_phase_genes,
+            *g2m_phase_genes,
+            *s_phase_genes_mouse,
+            *g2m_phase_genes_mouse,
+        }
+        return np.asarray(
+            np.char.startswith(upper, "CCN")
+            | np.isin(upper, [value.upper() for value in cycle_genes]),
+            dtype=bool,
+        )
+    if family in {"hla", "HLA"}:
+        return np.char.startswith(upper, "HLA-")
+    if family in {"h2", "H2"}:
+        return np.char.startswith(upper, "H2-")
     if family == "histone":
         return np.char.startswith(upper, "HIST")
+    if family in {"sex", "sexLinked"}:
+        return np.isin(
+            upper,
+            [
+                "XIST",
+                "DDX3Y",
+                "USP9Y",
+                "EIF1AY",
+                "KDM5D",
+                "SRY",
+                "ZFY",
+                "UTY",
+                "TMSB4Y",
+                "NLGN4Y",
+            ],
+        )
     if family == "hemoglobin":
         return np.char.startswith(upper, "HB")
     if family == "immuneReceptor":
@@ -118,6 +180,34 @@ def _family_mask(names: np.ndarray, family: str) -> np.ndarray | None:
                 ]
             ),
             dtype=bool,
+        )
+    if family == "stress":
+        return np.asarray(
+            np.logical_or.reduce(
+                [
+                    np.char.startswith(upper, prefix)
+                    for prefix in ("FOS", "JUN", "HSP", "DUSP", "EGR")
+                ]
+            ),
+            dtype=bool,
+        )
+    if family == "dissociation":
+        return np.isin(
+            upper,
+            [
+                "ATF3",
+                "BTG1",
+                "BTG2",
+                "DUSP1",
+                "EGR1",
+                "FOS",
+                "FOSB",
+                "IER2",
+                "JUN",
+                "JUNB",
+                "JUND",
+                "ZFP36",
+            ],
         )
     return None
 
@@ -132,35 +222,137 @@ def _component_variance(values: Any) -> np.ndarray:
     totals_squared = np.zeros(n_components, dtype=np.float64)
     for start in range(0, n_rows, 65_536):
         block = np.asarray(values[start : start + 65_536], dtype=np.float64)
+        if not np.isfinite(block).all():
+            raise ValueError("PCA coordinates must be finite")
         totals += block.sum(axis=0)
         totals_squared += np.square(block).sum(axis=0)
     variance = totals_squared / n_rows - np.square(totals / n_rows)
     return np.asarray(np.maximum(variance, 0.0), dtype=np.float64)
 
 
+def _scaled_total_variance(
+    store: Any,
+    reduction_status: Any,
+    *,
+    n_rows: int,
+    n_features: int,
+    feature_selection: ArtifactRef,
+) -> float:
+    def input_ref(value: Any, label: str) -> ArtifactRef:
+        if isinstance(value, ArtifactRef):
+            return value
+        if isinstance(value, Mapping):
+            return ArtifactRef.from_dict(dict(value))
+        raise ValueError(f"Candidate PCA lacks its {label} input")
+
+    inputs = getattr(reduction_status, "inputs", None) or {}
+    normalized_ref = input_ref(inputs.get("normalized"), "normalized matrix")
+    pca_cell_selection = input_ref(
+        inputs.get("pca_cell_selection"),
+        "PCA cell-selection",
+    )
+    normalized_status = store.inspect_artifact(normalized_ref)
+    normalized_inputs = getattr(normalized_status, "inputs", None) or {}
+    normalized_cell_selection = input_ref(
+        normalized_inputs.get("cell_selection"),
+        "normalized cell-selection",
+    )
+    normalized_feature_selection = input_ref(
+        normalized_inputs.get("feature_selection"),
+        "normalized feature-selection",
+    )
+    if pca_cell_selection != normalized_cell_selection:
+        raise ValueError(
+            "Explained-variance ratios require PCA fitted on all normalized cells"
+        )
+    if normalized_feature_selection != feature_selection:
+        raise ValueError("PCA loading genes do not match the normalized features")
+    normalized_group = store.load_artifact(normalized_ref)
+    normalized = as_zarr_array(normalized_group["data"], name="data")
+    if normalized.shape != (n_rows, n_features):
+        raise ValueError("Candidate PCA and normalized matrix shapes do not align")
+    if "feature_sum" in normalized_group and "feature_squared_sum" in normalized_group:
+        totals = np.asarray(
+            as_zarr_array(normalized_group["feature_sum"], name="feature_sum")[:],
+            dtype=np.float64,
+        )
+        totals_squared = np.asarray(
+            as_zarr_array(
+                normalized_group["feature_squared_sum"],
+                name="feature_squared_sum",
+            )[:],
+            dtype=np.float64,
+        )
+    else:
+        totals = np.zeros(n_features, dtype=np.float64)
+        totals_squared = np.zeros(n_features, dtype=np.float64)
+        for start in range(0, n_rows, 8192):
+            block = np.asarray(
+                normalized[start : start + 8192],
+                dtype=np.float64,
+            )
+            if not np.isfinite(block).all():
+                raise ValueError("Normalized PCA input must be finite")
+            totals += block.sum(axis=0)
+            totals_squared += np.square(block).sum(axis=0)
+    if totals.shape != (n_features,) or totals_squared.shape != (n_features,):
+        raise ValueError("Normalized PCA feature summaries do not align")
+    variance = np.maximum(
+        totals_squared / n_rows - np.square(totals / n_rows),
+        0.0,
+    )
+    total_scaled_variance = float(np.count_nonzero(variance))
+    if total_scaled_variance <= 0:
+        raise ValueError("Feature-scaled PCA input has no non-constant features")
+    return total_scaled_variance
+
+
 def _top_loadings(
-    loadings: np.ndarray,
+    loadings: Any,
     selected_indices: np.ndarray,
     family_masks: Mapping[str, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if loadings.ndim != 2 or loadings.shape[0] != len(selected_indices):
+    if len(loadings.shape) != 2 or loadings.shape[0] != len(selected_indices):
         raise ValueError("PCA loadings do not align with selected features")
+    if loadings.shape[0] < 1 or loadings.shape[1] < 1:
+        raise ValueError("PCA loadings cannot be empty")
+    if any(mask.shape != selected_indices.shape for mask in family_masks.values()):
+        raise ValueError("PCA family masks must align with selected features")
     top_n = min(20, loadings.shape[0])
-    top_indices = np.zeros((loadings.shape[1], top_n), dtype=np.int64)
-    top_values = np.zeros((loadings.shape[1], top_n), dtype=np.float64)
+    top_rows = np.empty((loadings.shape[1], 0), dtype=np.int64)
+    top_values = np.empty((loadings.shape[1], 0), dtype=np.float64)
+    for start in range(0, loadings.shape[0], 8192):
+        block = np.abs(np.asarray(loadings[start : start + 8192], dtype=np.float64))
+        if not np.isfinite(block).all():
+            raise ValueError("PCA loadings must be finite")
+        block_rows = np.arange(start, start + len(block), dtype=np.int64)
+        retained_rows = np.empty(
+            (loadings.shape[1], min(top_n, top_rows.shape[1] + len(block))),
+            dtype=np.int64,
+        )
+        retained_values = np.empty(retained_rows.shape, dtype=np.float64)
+        for component in range(loadings.shape[1]):
+            candidate_rows = np.concatenate((top_rows[component], block_rows))
+            candidate_values = np.concatenate(
+                (top_values[component], block[:, component])
+            )
+            order = np.lexsort((candidate_rows, -candidate_values))[:top_n]
+            retained_rows[component] = candidate_rows[order]
+            retained_values[component] = candidate_values[order]
+        top_rows = retained_rows
+        top_values = retained_values
+    top_indices = selected_indices[top_rows]
     enrichment = np.zeros(
         (len(family_masks), loadings.shape[1]),
         dtype=np.float64,
     )
-    for component in range(loadings.shape[1]):
-        absolute = np.abs(loadings[:, component])
-        order = np.lexsort((np.arange(len(absolute)), -absolute))[:top_n]
-        top_indices[component] = selected_indices[order]
-        top_values[component] = absolute[order]
-        for family_index, mask in enumerate(family_masks.values()):
+    for family_index, mask in enumerate(family_masks.values()):
+        for component in range(loadings.shape[1]):
             background = float(mask.mean())
             enrichment[family_index, component] = (
-                float(mask[order].mean()) / background if background > 0 else 0.0
+                float(mask[top_rows[component]].mean()) / background
+                if background > 0
+                else 0.0
             )
     return top_indices, top_values, enrichment
 
@@ -259,11 +451,18 @@ def _covariate_associations(
     cell_selection: ArtifactRef,
     coordinates: Any,
     columns: Sequence[str],
+    roles: Sequence[str],
 ) -> np.ndarray:
+    if len(columns) != len(roles):
+        raise ValueError("PCA covariate columns and roles must align")
     associations = np.zeros((len(columns), coordinates.shape[1]), dtype=np.float64)
-    for index, column in enumerate(columns):
+    for index, (column, role) in enumerate(zip(columns, roles, strict=True)):
         values = _aligned_metadata_values(store, cell_selection, column)
-        if values.dtype.kind in {"i", "u", "f"} and len(np.unique(values)) > 10:
+        if (
+            role == "qc"
+            and values.dtype.kind in {"i", "u", "f"}
+            and len(np.unique(values)) > 10
+        ):
             associations[index] = _numeric_association(coordinates, values)
         else:
             associations[index] = _categorical_association(coordinates, values)
@@ -298,16 +497,39 @@ def _write_pca_diagnostic(
     covariate_columns: Sequence[str],
     covariate_roles: Sequence[str],
     adjacent_overlap: float | None,
-) -> tuple[ArtifactRef, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[
+    ArtifactRef,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     reduction = _artifact_ref(evaluation, "pca")
     neighbors = _artifact_ref(evaluation, "neighbors")
+    reduction_status = store.inspect_artifact(reduction)
+    reduction_parameters = getattr(reduction_status, "parameters", None) or {}
+    if reduction_parameters.get("feat_scaling") is not True:
+        raise ValueError(
+            "Explained-variance ratios require the feature-scaled candidate PCA"
+        )
     reduction_group = store.load_artifact(reduction)
     coordinates = as_zarr_array(reduction_group["data"], name="data")
-    loadings = np.asarray(
-        as_zarr_array(reduction_group["loadings"], name="loadings")[:],
-        dtype=np.float64,
-    )
+    loadings = as_zarr_array(reduction_group["loadings"], name="loadings")
     component_variance = _component_variance(coordinates)
+    total_scaled_variance = _scaled_total_variance(
+        store,
+        reduction_status,
+        n_rows=int(coordinates.shape[0]),
+        n_features=len(selected_indices),
+        feature_selection=feature_selection,
+    )
+    explained_variance_ratio = np.clip(
+        component_variance / total_scaled_variance,
+        0.0,
+        1.0,
+    )
     top_indices, top_values, family_enrichment = _top_loadings(
         loadings,
         selected_indices,
@@ -324,6 +546,7 @@ def _write_pca_diagnostic(
             ),
             coordinates,
             covariate_columns,
+            covariate_roles,
         )
         if evaluation.cellSelection is not None
         else np.zeros((len(covariate_columns), coordinates.shape[1]), dtype=np.float64)
@@ -334,6 +557,7 @@ def _write_pca_diagnostic(
     )
     payload = {
         "component_variance": component_variance,
+        "explained_variance_ratio": explained_variance_ratio,
         "top_loading_feature_indices": top_indices,
         "top_loading_values": top_values,
         "family_enrichment": family_enrichment,
@@ -352,6 +576,7 @@ def _write_pca_diagnostic(
             "covariate_roles": list(covariate_roles),
             "top_loading_count": top_indices.shape[1],
             "adjacent_neighbor_overlap": adjacent_overlap,
+            "explained_variance_basis": "scaled_nonconstant_features",
         },
         inputs={
             "reduction": reduction,
@@ -391,7 +616,15 @@ def _write_pca_diagnostic(
             _PCA_DIAGNOSTIC_ARRAYS,
         )
         finish_artifact(group, planned)
-    return planned.ref, component_variance, family_enrichment, associations
+    return (
+        planned.ref,
+        component_variance,
+        explained_variance_ratio,
+        top_indices,
+        top_values,
+        family_enrichment,
+        associations,
+    )
 
 
 def augment_pca_evaluations(
@@ -404,6 +637,7 @@ def augment_pca_evaluations(
     technical_columns: Sequence[str],
     protected_columns: Sequence[str],
     qc_columns: Sequence[str],
+    batch_columns: Sequence[str] = (),
 ) -> tuple[ParameterCandidateEvaluation, ...]:
     """Attach persisted PCA loading, variance, topology, and covariate evidence."""
     selected_indices, selected_names = _selected_feature_names(
@@ -416,10 +650,17 @@ def augment_pca_evaluations(
         for mask in [_family_mask(selected_names, family)]
         if mask is not None and bool(mask.any())
     }
+    requested_role_columns = {
+        "technical": tuple(technical_columns),
+        "batch": tuple(batch_columns or technical_columns),
+        "protected": tuple(protected_columns),
+        "qc": tuple(qc_columns),
+    }
     columns: list[str] = []
     roles: list[str] = []
     for role, values in (
         ("technical", technical_columns),
+        ("batch", batch_columns),
         ("protected", protected_columns),
         ("qc", qc_columns),
     ):
@@ -459,7 +700,15 @@ def augment_pca_evaluations(
         if evaluation.candidateId not in previous_by_id:
             augmented.append(evaluation)
             continue
-        diagnostic, variance, family_enrichment, associations = _write_pca_diagnostic(
+        (
+            diagnostic,
+            variance,
+            explained_variance_ratio,
+            top_indices,
+            _top_values,
+            family_enrichment,
+            associations,
+        ) = _write_pca_diagnostic(
             store,
             evaluation,
             feature_selection=feature_selection,
@@ -473,20 +722,54 @@ def augment_pca_evaluations(
             family: float(family_enrichment[index].max(initial=0.0))
             for index, family in enumerate(family_masks)
         }
+        family_by_component = {
+            f"PC{component + 1}": {
+                family: float(family_enrichment[family_index, component])
+                for family_index, family in enumerate(family_masks)
+            }
+            for component in range(family_enrichment.shape[1])
+        }
+        feature_name_by_index = dict(
+            zip(selected_indices.tolist(), selected_names.tolist(), strict=True)
+        )
+        top_loading_genes = {
+            f"PC{component + 1}": [
+                str(feature_name_by_index[int(index)])
+                for index in top_indices[component]
+            ]
+            for component in range(top_indices.shape[0])
+        }
+        column_index = {column: index for index, column in enumerate(columns)}
+        component_associations = {
+            role: {
+                column: associations[column_index[column]].tolist()
+                for column in role_columns
+                if column in column_index
+            }
+            for role, role_columns in requested_role_columns.items()
+        }
         role_associations = {
             role: {
-                column: float(associations[index].max(initial=0.0))
-                for index, (column, column_role) in enumerate(
-                    zip(columns, roles, strict=True)
-                )
-                if column_role == role
+                column: float(associations[column_index[column]].max(initial=0.0))
+                for column in role_columns
+                if column in column_index
             }
-            for role in ("technical", "protected", "qc")
+            for role, role_columns in requested_role_columns.items()
         }
         metrics = evaluation.metrics.model_copy(
             update={
                 "componentVariance": variance.tolist(),
+                "pcaExplainedVarianceRatio": explained_variance_ratio.tolist(),
+                "pcaCumulativeExplainedVarianceRatio": np.cumsum(
+                    explained_variance_ratio
+                )
+                .clip(max=1.0)
+                .tolist(),
+                "topLoadingGenes": top_loading_genes,
                 "loadingFamilyEnrichment": family_maxima,
+                "loadingFamilyEnrichmentByComponent": family_by_component,
+                "pcaComponentAssociations": component_associations,
+                "batchPcaAssociation": role_associations["batch"],
                 "technicalPcaAssociation": role_associations["technical"],
                 "protectedPcaAssociation": role_associations["protected"],
                 "qcPcaAssociation": role_associations["qc"],
@@ -507,6 +790,10 @@ def augment_pca_evaluations(
                             [
                                 *evaluation.evidenceIds,
                                 f"candidate:{evaluation.candidateId}:pcaVariance",
+                                (
+                                    f"candidate:{evaluation.candidateId}:"
+                                    "pcaExplainedVariance"
+                                ),
                                 f"candidate:{evaluation.candidateId}:pcaLoadings",
                                 f"candidate:{evaluation.candidateId}:pcaCovariates",
                                 *(
@@ -523,7 +810,131 @@ def augment_pca_evaluations(
                 }
             )
         )
-    return tuple(augmented)
+    return annotate_candidate_dominance(augmented)
+
+
+def _bounded_score_summary(
+    values: Any,
+    *,
+    maximum_sample_size: int,
+) -> tuple[dict[str, float], np.ndarray]:
+    if maximum_sample_size < 1:
+        raise ValueError("maximum_sample_size must be positive")
+    if len(values.shape) != 1 or values.shape[0] < 1:
+        raise ValueError("Doublet scores must be one non-empty vector")
+    n_values = int(values.shape[0])
+    stride = max(1, (n_values + maximum_sample_size - 1) // maximum_sample_size)
+    sampled: list[np.ndarray] = []
+    minimum = float("inf")
+    maximum = float("-inf")
+    for start in range(0, n_values, 65_536):
+        block = np.asarray(values[start : start + 65_536], dtype=np.float64)
+        if not np.isfinite(block).all():
+            raise ValueError("Doublet scores must be finite")
+        minimum = min(minimum, float(block.min()))
+        maximum = max(maximum, float(block.max()))
+        offset = (-start) % stride
+        sampled.append(block[offset::stride])
+    sample = np.concatenate(sampled)
+    return (
+        {
+            "nCells": float(n_values),
+            "sampleSize": float(len(sample)),
+            "minimum": minimum,
+            "p50": float(np.quantile(sample, 0.5)),
+            "p90": float(np.quantile(sample, 0.9)),
+            "p95": float(np.quantile(sample, 0.95)),
+            "p99": float(np.quantile(sample, 0.99)),
+            "maximum": maximum,
+        },
+        sample,
+    )
+
+
+def _build_advisory_doublet_scores(
+    store: Any,
+    *,
+    scores: Sequence[ArtifactRef],
+    cell_selections: Sequence[ArtifactRef],
+    native_graph: ArtifactRef,
+    native_clusters: ArtifactRef,
+    parent_selection: ArtifactRef,
+    capture_values: Sequence[str],
+    capture_column: str | None,
+    limitations: Sequence[str],
+) -> AdvisoryDoubletScores:
+    score_refs = tuple(scores)
+    selections = tuple(cell_selections)
+    captures = tuple(capture_values)
+    if not score_refs or not (len(score_refs) == len(selections) == len(captures)):
+        raise ValueError("Doublet score artifacts require aligned capture summaries")
+    parent_indices = read_stored_selection_indices(
+        store.zw,
+        parent_selection,
+        kind="cell_selection",
+        scope="datastore",
+        assay=None,
+        table_path="cellData",
+    )
+    if len(parent_indices) < 1:
+        raise ValueError("Doublet evidence parent selection cannot be empty")
+    score_arrays = tuple(
+        as_zarr_array(store.load_artifact(score_ref)["values"], name="values")
+        for score_ref in score_refs
+    )
+    total_score_cells = sum(int(values.shape[0]) for values in score_arrays)
+    if total_score_cells < 1:
+        raise ValueError("Doublet score artifacts cannot all be empty")
+    summaries: list[dict[str, float]] = []
+    samples: list[np.ndarray] = []
+    covered_cells = 0
+    for values, selection_ref in zip(score_arrays, selections, strict=True):
+        selection_indices = read_stored_selection_indices(
+            store.zw,
+            selection_ref,
+            kind="cell_selection",
+            scope="datastore",
+            assay=None,
+            table_path="cellData",
+        )
+        if values.shape != selection_indices.shape:
+            raise ValueError("Doublet scores do not align with their cell selection")
+        summary, sample = _bounded_score_summary(
+            values,
+            maximum_sample_size=max(
+                1,
+                int(65_536 * int(values.shape[0]) / total_score_cells),
+            ),
+        )
+        summaries.append(summary)
+        samples.append(sample)
+        covered_cells += len(selection_indices)
+    combined = np.concatenate(samples)
+    aggregate = {
+        "p50": float(np.quantile(combined, 0.5)),
+        "p90": float(np.quantile(combined, 0.9)),
+        "p95": float(np.quantile(combined, 0.95)),
+        "p99": float(np.quantile(combined, 0.99)),
+        "maximum": max(summary["maximum"] for summary in summaries),
+    }
+    reported_limitations = list(limitations)
+    if total_score_cells > 65_536:
+        reported_limitations.append(
+            "Doublet score quantiles use deterministic bounded samples above "
+            "65,536 scored cells."
+        )
+    return AdvisoryDoubletScores(
+        scores=score_refs,
+        cell_selections=selections,
+        native_graph=native_graph,
+        native_clusters=native_clusters,
+        capture_values=captures,
+        score_summaries=tuple(summaries),
+        score_quantiles=aggregate,
+        capture_coverage=min(1.0, covered_cells / len(parent_indices)),
+        capture_column=capture_column,
+        limitations=tuple(reported_limitations),
+    )
 
 
 def _select_capture_cells(
@@ -531,14 +942,14 @@ def _select_capture_cells(
     parent: ArtifactRef,
     *,
     column: str,
-    value: str,
+    value: Any,
     active_indices: np.ndarray,
     active_values: np.ndarray,
 ) -> tuple[ArtifactRef, int]:
     if active_indices.shape != active_values.shape:
         raise ValueError("Capture values must align with the selected cells")
     labels = active_values.astype(str)
-    selected = labels == value
+    selected = labels == str(value)
     expected = np.zeros(store.cells.N, dtype=bool)
     expected[active_indices] = selected
     reference = store.filter_cells(
@@ -655,12 +1066,16 @@ def score_advisory_doublets(
             "Physical capture identity was unavailable, so advisory doublet "
             "scores were computed across the selected dataset."
         )
-        return AdvisoryDoubletScores(
+        return _build_advisory_doublet_scores(
+            store,
             scores=(score,),
             cell_selections=(parent_selection,),
             native_graph=native_graph,
             native_clusters=native_clusters,
-            limitations=tuple(limitations),
+            parent_selection=parent_selection,
+            capture_values=("allSelectedCells",),
+            capture_column=None,
+            limitations=limitations,
         )
 
     active_indices = read_stored_selection_indices(
@@ -676,7 +1091,25 @@ def score_advisory_doublets(
         capture_column,
         active_indices,
     )
-    capture_groups = sorted(set(capture_values.astype(str).tolist()))
+    capture_labels = capture_values.astype(str)
+    unique_capture_labels, first_capture_indices = np.unique(
+        capture_labels,
+        return_index=True,
+    )
+    capture_groups = unique_capture_labels.tolist()
+    raw_capture_values = {
+        str(label): capture_values[int(index)]
+        for label, index in zip(
+            unique_capture_labels,
+            first_capture_indices,
+            strict=True,
+        )
+    }
+    if len(capture_groups) > _MAX_DOUBLET_CAPTURES:
+        raise ValueError(
+            "Physical capture column exceeds the advisory doublet limit of "
+            f"{_MAX_DOUBLET_CAPTURES} values"
+        )
     if len(capture_groups) == 1:
         score = store.run_doublet_detection(
             native_clusters,
@@ -684,22 +1117,28 @@ def score_advisory_doublets(
             from_assay=assay,
             invalidate_cache=False,
         )
-        return AdvisoryDoubletScores(
+        return _build_advisory_doublet_scores(
+            store,
             scores=(score,),
             cell_selections=(parent_selection,),
             native_graph=native_graph,
             native_clusters=native_clusters,
+            parent_selection=parent_selection,
+            capture_values=(capture_groups[0],),
+            capture_column=capture_column,
+            limitations=limitations,
         )
 
     n_features = len(read_feature_selection_indices(store.zw, assay, feature_selection))
     scores: list[ArtifactRef] = []
     selections: list[ArtifactRef] = []
+    scored_captures: list[str] = []
     for capture_value in capture_groups:
         capture_selection, capture_cells = _select_capture_cells(
             store,
             parent_selection,
             column=capture_column,
-            value=capture_value,
+            value=raw_capture_values[capture_value],
             active_indices=active_indices,
             active_values=capture_values,
         )
@@ -766,14 +1205,19 @@ def score_advisory_doublets(
             )
         )
         selections.append(capture_selection)
+        scored_captures.append(capture_value)
     if not scores:
         raise ValueError("No physical capture had enough cells for doublet scoring")
-    return AdvisoryDoubletScores(
-        scores=tuple(scores),
-        cell_selections=tuple(selections),
+    return _build_advisory_doublet_scores(
+        store,
+        scores=scores,
+        cell_selections=selections,
         native_graph=native_graph,
         native_clusters=native_clusters,
-        limitations=tuple(limitations),
+        parent_selection=parent_selection,
+        capture_values=scored_captures,
+        capture_column=capture_column,
+        limitations=limitations,
     )
 
 
@@ -793,17 +1237,24 @@ def _doublet_concentration(
     ).astype(np.int64, copy=False)
     if labels.shape != parent_indices.shape:
         raise ValueError("Cluster labels do not align with advisory doublet evidence")
-    positions = {int(value): index for index, value in enumerate(parent_indices)}
+    if len(parent_indices) > 1 and np.any(parent_indices[1:] <= parent_indices[:-1]):
+        raise ValueError("Doublet parent selection indices must be strictly increasing")
     high_score = np.zeros(len(parent_indices), dtype=bool)
     covered = np.zeros(len(parent_indices), dtype=bool)
-    for score_ref, selection_ref in zip(
-        evidence.scores,
-        evidence.cell_selections,
-        strict=True,
+    if evidence.score_summaries and len(evidence.score_summaries) != len(
+        evidence.scores
     ):
-        score_values = np.asarray(
-            as_zarr_array(store.load_artifact(score_ref)["values"], name="values")[:],
-            dtype=np.float64,
+        raise ValueError("Doublet score summaries do not align with score artifacts")
+    for score_index, (score_ref, selection_ref) in enumerate(
+        zip(
+            evidence.scores,
+            evidence.cell_selections,
+            strict=True,
+        )
+    ):
+        score_values = as_zarr_array(
+            store.load_artifact(score_ref)["values"],
+            name="values",
         )
         selection_indices = read_stored_selection_indices(
             store.zw,
@@ -815,13 +1266,35 @@ def _doublet_concentration(
         ).astype(np.int64, copy=False)
         if score_values.shape != selection_indices.shape:
             raise ValueError("Doublet scores do not align with their cell selection")
-        local_positions = np.asarray(
-            [positions[int(value)] for value in selection_indices],
-            dtype=np.int64,
+        summary = (
+            evidence.score_summaries[score_index]
+            if evidence.score_summaries
+            else _bounded_score_summary(
+                score_values,
+                maximum_sample_size=65_536,
+            )[0]
         )
-        threshold = float(np.quantile(score_values, 0.9))
-        covered[local_positions] = True
-        high_score[local_positions] = score_values >= threshold
+        threshold = float(summary["p90"])
+        for start in range(0, len(selection_indices), 65_536):
+            local_indices = selection_indices[start : start + 65_536]
+            local_positions = np.searchsorted(parent_indices, local_indices)
+            if np.any(local_positions >= len(parent_indices)) or not np.array_equal(
+                parent_indices[local_positions],
+                local_indices,
+            ):
+                raise ValueError(
+                    "Doublet score selection is outside its parent selection"
+                )
+            if covered[local_positions].any():
+                raise ValueError("Doublet score selections must not overlap")
+            local_scores = np.asarray(
+                score_values[start : start + len(local_indices)],
+                dtype=np.float64,
+            )
+            if not np.isfinite(local_scores).all():
+                raise ValueError("Doublet scores must be finite")
+            covered[local_positions] = True
+            high_score[local_positions] = local_scores >= threshold
     if not covered.any() or not high_score[covered].any():
         return None
     baseline = float(high_score[covered].mean())
@@ -957,6 +1430,46 @@ def augment_cluster_evaluations(
             if "feature_name" in markers.columns
             else np.asarray([], dtype=str)
         )
+        marker_specificity: dict[str, float] = {}
+        marker_auc: dict[str, float] = {}
+        top_marker_genes: dict[str, list[str]] = {}
+        marker_group_values = (
+            markers["group_id"].astype(str) if "group_id" in markers.columns else None
+        )
+        for cluster in np.unique(labels):
+            cluster_id = str(cluster)
+            cluster_markers = (
+                markers.loc[marker_group_values == cluster_id]
+                if marker_group_values is not None
+                else markers.iloc[0:0]
+            )
+            if "score" in cluster_markers:
+                cluster_markers = cluster_markers.sort_values(
+                    "score",
+                    ascending=False,
+                    kind="stable",
+                )
+                top_scores = cluster_markers["score"].to_numpy(
+                    dtype=np.float64,
+                )[:10]
+                top_scores = top_scores[np.isfinite(top_scores)]
+                if len(top_scores):
+                    marker_specificity[cluster_id] = float(np.median(top_scores))
+            if "auc" in cluster_markers:
+                top_auc = cluster_markers["auc"].to_numpy(dtype=np.float64)[:10]
+                top_auc = top_auc[np.isfinite(top_auc)]
+                if len(top_auc):
+                    marker_auc[cluster_id] = float(np.median(top_auc))
+            top_marker_genes[cluster_id] = (
+                cluster_markers["feature_name"].astype(str).head(10).tolist()
+                if "feature_name" in cluster_markers
+                else []
+            )
+        marker_specificity_median = (
+            float(np.median(list(marker_specificity.values())))
+            if marker_specificity
+            else None
+        )
         marker_family_enrichment: dict[str, float] = {}
         protected_marker_families: list[str] = []
         for family, mask in family_masks.items():
@@ -1018,11 +1531,37 @@ def augment_cluster_evaluations(
                 "seedStability": seed_stability,
                 "subsampleStability": subsample_stability,
                 "markerCoherence": marker_coherence,
+                "markerSpecificityMedian": marker_specificity_median,
+                "markerSpecificityByCluster": marker_specificity,
+                "markerAucByCluster": marker_auc,
+                "topMarkerGenes": top_marker_genes,
                 "crossUnitSupport": cross_unit_support,
                 "technicalAssociation": technical_association,
                 "markerFamilyEnrichment": marker_family_enrichment,
                 "protectedMarkerFamilies": protected_marker_families,
                 "doubletHighScoreConcentration": doublet_concentration,
+                "doubletScoreQuantiles": (
+                    dict(doublet_evidence.score_quantiles)
+                    if doublet_evidence is not None
+                    else {}
+                ),
+                "doubletScoreByCapture": (
+                    {
+                        capture: dict(summary)
+                        for capture, summary in zip(
+                            doublet_evidence.capture_values,
+                            doublet_evidence.score_summaries,
+                            strict=True,
+                        )
+                    }
+                    if doublet_evidence is not None
+                    else {}
+                ),
+                "doubletCaptureCoverage": (
+                    doublet_evidence.capture_coverage
+                    if doublet_evidence is not None
+                    else None
+                ),
             }
         )
         evidence_ids = [
@@ -1030,6 +1569,7 @@ def augment_cluster_evaluations(
             f"candidate:{evaluation.candidateId}:seedStability",
             f"candidate:{evaluation.candidateId}:subsampleStability",
             f"candidate:{evaluation.candidateId}:markerCoherence",
+            f"candidate:{evaluation.candidateId}:markerSpecificity",
             f"candidate:{evaluation.candidateId}:markerFamilies",
             *(
                 [f"candidate:{evaluation.candidateId}:crossUnitSupport"]
@@ -1045,6 +1585,14 @@ def augment_cluster_evaluations(
                 if doublet_concentration is not None
                 else []
             ),
+            *(
+                [
+                    f"candidate:{evaluation.candidateId}:doubletScoreTails",
+                    f"candidate:{evaluation.candidateId}:doubletCaptureCoverage",
+                ]
+                if doublet_evidence is not None
+                else []
+            ),
         ]
         artifacts = {
             **evaluation.artifacts,
@@ -1054,6 +1602,14 @@ def augment_cluster_evaluations(
                 {
                     f"doubletScore:{index}": ArtifactRecord.from_ref(score)
                     for index, score in enumerate(doublet_evidence.scores)
+                }
+                if doublet_evidence is not None
+                else {}
+            ),
+            **(
+                {
+                    f"doubletCellSelection:{index}": ArtifactRecord.from_ref(selection)
+                    for index, selection in enumerate(doublet_evidence.cell_selections)
                 }
                 if doublet_evidence is not None
                 else {}
@@ -1092,7 +1648,7 @@ def augment_cluster_evaluations(
                 }
             )
         )
-    return tuple(augmented)
+    return annotate_candidate_dominance(augmented)
 
 
 __all__ = [

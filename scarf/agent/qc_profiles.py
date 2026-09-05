@@ -1,16 +1,20 @@
-"""Registered one-sided cell-quality profiles and bounded projections."""
+"""Registered and core-parity cell-quality profile projections."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 
 from ..quality_control.filtering import (
+    _apply_bounds,
     _clamp_metric_bound,
     _from_work_scale,
     _mad_bounds,
+    _sample_aware_mad_mask,
     _validated_sample_labels,
     _validated_work_scale,
+    gaussian_quantile_bounds,
 )
 
 type RegisteredCellQcProfile = Literal[
@@ -20,7 +24,14 @@ type RegisteredCellQcProfile = Literal[
     "captureMad3Sensitivity",
     "pooledReferenceMad5",
 ]
-type QcMetricRole = Literal["count", "feature", "mitochondrial", "diagnostic"]
+type AutoFilterAction = Literal["globalGaussian", "sampleMad"]
+type QcMetricRole = Literal[
+    "count",
+    "feature",
+    "mitochondrial",
+    "ribosomal",
+    "diagnostic",
+]
 type QcRemovalDirection = Literal["lower", "upper", "none"]
 
 REGISTERED_CELL_QC_PROFILES: tuple[RegisteredCellQcProfile, ...] = (
@@ -30,6 +41,22 @@ REGISTERED_CELL_QC_PROFILES: tuple[RegisteredCellQcProfile, ...] = (
     "captureMad3Sensitivity",
     "pooledReferenceMad5",
 )
+
+
+def qc_metric_execution_name(
+    name: str,
+    *,
+    artifact_id: str | None = None,
+    collides_with_metadata: bool = False,
+) -> str:
+    """Return the deterministic metric name passed to core filtering helpers."""
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        raise ValueError("QC metric names must be non-empty trimmed strings")
+    if not collides_with_metadata:
+        return name
+    if not isinstance(artifact_id, str) or not artifact_id:
+        raise ValueError("A colliding artifact metric requires an artifact id")
+    return f"artifact_{artifact_id[:16]}_{name}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +101,11 @@ class CaptureQcComparison:
     capture: str
     cells: int
     adverseGlobalOutlier: bool
+    adverseAxes: tuple[QcMetricRole, ...] = ()
+    independentAdverseAxes: int = 0
+    wholeCaptureFailure: bool = False
+    retainedCells: int | None = None
+    retainedFraction: float | None = None
     reasons: tuple[str, ...] = ()
     metricComparisons: dict[str, dict[str, float | str | None]] = field(
         default_factory=dict
@@ -85,6 +117,11 @@ class CaptureQcComparison:
             "capture": self.capture,
             "cells": self.cells,
             "adverseGlobalOutlier": self.adverseGlobalOutlier,
+            "adverseAxes": list(self.adverseAxes),
+            "independentAdverseAxes": self.independentAdverseAxes,
+            "wholeCaptureFailure": self.wholeCaptureFailure,
+            "retainedCells": self.retainedCells,
+            "retainedFraction": self.retainedFraction,
             "reasons": list(self.reasons),
             "metricComparisons": self.metricComparisons,
         }
@@ -114,6 +151,49 @@ class RegisteredQcProjection:
         """Counts for each non-removal diagnostic flag."""
         return {name: int(mask.sum()) for name, mask in self.flags.items()}
 
+    @property
+    def metricFlagCounts(self) -> dict[str, dict[str, int]]:
+        """Counts grouped by exact metric and flag name."""
+        grouped: dict[str, dict[str, int]] = {}
+        for name, mask in self.flags.items():
+            metric, flag = name.rsplit(":", 1)
+            grouped.setdefault(metric, {})[flag] = int(mask.sum())
+        return grouped
+
+
+@dataclass(frozen=True, slots=True)
+class AutoFilterProjection:
+    """Exact in-memory projection of one core ``auto_filter_cells`` path."""
+
+    action: AutoFilterAction
+    keep: np.ndarray
+    flags: dict[str, np.ndarray]
+    parameters: dict[str, object]
+    captureSizes: dict[str, int] = field(default_factory=dict)
+    retainedByCapture: dict[str, int] = field(default_factory=dict)
+    captureComparisons: tuple[CaptureQcComparison, ...] = ()
+    failedCaptureCandidates: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def retainedCells(self) -> int:
+        """Number of active cells retained by the projection."""
+        return int(self.keep.sum())
+
+    @property
+    def flagCounts(self) -> dict[str, int]:
+        """Counts for each exact metric-bound flag."""
+        return {name: int(mask.sum()) for name, mask in self.flags.items()}
+
+    @property
+    def metricFlagCounts(self) -> dict[str, dict[str, int]]:
+        """Counts grouped by exact metric and bound side."""
+        grouped: dict[str, dict[str, int]] = {}
+        for name, mask in self.flags.items():
+            metric, flag = name.rsplit(":", 1)
+            grouped.setdefault(metric, {})[flag] = int(mask.sum())
+        return grouped
+
 
 def registered_qc_metric_role(metric: str) -> QcMetricRole:
     """Classify one conventional cell-quality metric without gene inspection."""
@@ -128,6 +208,12 @@ def registered_qc_metric_role(metric: str) -> QcMetricRole:
         or normalized.endswith("mitochondrialpercent")
     ):
         return "mitochondrial"
+    if (
+        normalized.endswith("percentribo")
+        or normalized.endswith("pctcountsribo")
+        or normalized.endswith("ribosomalpercent")
+    ):
+        return "ribosomal"
     return "diagnostic"
 
 
@@ -136,7 +222,7 @@ def _metric_policy(
 ) -> tuple[Literal["identity", "log1p"], QcRemovalDirection]:
     if role in {"count", "feature"}:
         return "log1p", "lower"
-    if role == "mitochondrial":
+    if role in {"mitochondrial", "ribosomal"}:
         return "identity", "upper"
     return "identity", "none"
 
@@ -184,7 +270,7 @@ def _threshold(
         median = _clamp_metric_bound(
             _from_work_scale(median_work, transform),
             transform=transform,
-            is_percent=role == "mitochondrial",
+            is_percent=role in {"mitochondrial", "ribosomal"},
         )
         return RegisteredQcThreshold(
             metric=metric,
@@ -204,17 +290,17 @@ def _threshold(
     median = _clamp_metric_bound(
         _from_work_scale(median_work, transform),
         transform=transform,
-        is_percent=role == "mitochondrial",
+        is_percent=role in {"mitochondrial", "ribosomal"},
     )
     low = _clamp_metric_bound(
         _from_work_scale(low_work, transform),
         transform=transform,
-        is_percent=role == "mitochondrial",
+        is_percent=role in {"mitochondrial", "ribosomal"},
     )
     high = _clamp_metric_bound(
         _from_work_scale(high_work, transform),
         transform=transform,
-        is_percent=role == "mitochondrial",
+        is_percent=role in {"mitochondrial", "ribosomal"},
     )
     return RegisteredQcThreshold(
         metric=metric,
@@ -311,6 +397,7 @@ def _global_capture_comparisons(
     for capture, mask in captures:
         metric_comparisons: dict[str, dict[str, float | str | None]] = {}
         reasons: list[str] = []
+        adverse_axes: set[QcMetricRole] = set()
         for metric, threshold in global_thresholds.items():
             role = threshold.role
             transform, _ = _metric_policy(role)
@@ -323,7 +410,7 @@ def _global_capture_comparisons(
             capture_median = _clamp_metric_bound(
                 _from_work_scale(capture_median_work, transform),
                 transform=transform,
-                is_percent=role == "mitochondrial",
+                is_percent=role in {"mitochondrial", "ribosomal"},
             )
             global_mad = threshold.scaledMad
             standardized_shift = (
@@ -342,6 +429,7 @@ def _global_capture_comparisons(
             )
             if adverse:
                 reasons.append(f"{metric}:{role}:adverseGlobalMedian")
+                adverse_axes.add(role)
             metric_comparisons[metric] = {
                 "role": role,
                 "captureMedian": capture_median,
@@ -355,11 +443,42 @@ def _global_capture_comparisons(
                 capture=capture,
                 cells=int(mask.sum()),
                 adverseGlobalOutlier=bool(reasons),
+                adverseAxes=tuple(sorted(adverse_axes)),
+                independentAdverseAxes=len(adverse_axes),
+                wholeCaptureFailure=len(adverse_axes) >= 2,
                 reasons=tuple(reasons),
                 metricComparisons=metric_comparisons,
             )
         )
     return tuple(comparisons)
+
+
+def _with_capture_retention(
+    comparisons: tuple[CaptureQcComparison, ...],
+    captures: list[tuple[str, np.ndarray]],
+    keep: np.ndarray,
+) -> tuple[CaptureQcComparison, ...]:
+    masks = dict(captures)
+    output: list[CaptureQcComparison] = []
+    for comparison in comparisons:
+        mask = masks[comparison.capture]
+        retained = int((mask & keep).sum())
+        fraction = retained / comparison.cells if comparison.cells else 0.0
+        output.append(
+            CaptureQcComparison(
+                capture=comparison.capture,
+                cells=comparison.cells,
+                adverseGlobalOutlier=comparison.adverseGlobalOutlier,
+                adverseAxes=comparison.adverseAxes,
+                independentAdverseAxes=comparison.independentAdverseAxes,
+                wholeCaptureFailure=comparison.wholeCaptureFailure,
+                retainedCells=retained,
+                retainedFraction=fraction,
+                reasons=comparison.reasons,
+                metricComparisons=comparison.metricComparisons,
+            )
+        )
+    return tuple(output)
 
 
 def project_registered_qc_profile(
@@ -381,7 +500,7 @@ def project_registered_qc_profile(
     filtering_values = {
         metric: metric_values
         for metric, metric_values in values.items()
-        if registered_qc_metric_role(metric) != "diagnostic"
+        if registered_qc_metric_role(metric) in {"count", "feature", "mitochondrial"}
     }
     if not filtering_values:
         if profile != "retainWithFlags":
@@ -476,19 +595,32 @@ def project_registered_qc_profile(
                 apply_removal=profile != "retainWithFlags",
             )
 
+    comparison_values = {
+        metric: metric_values
+        for metric, metric_values in values.items()
+        if registered_qc_metric_role(metric) != "diagnostic"
+    }
     comparisons = (
-        _global_capture_comparisons(filtering_values, active_mask, captures)
+        _with_capture_retention(
+            _global_capture_comparisons(
+                comparison_values,
+                active_mask,
+                captures,
+            ),
+            captures,
+            keep,
+        )
         if captures
         else ()
     )
     failed = tuple(
         comparison.capture
         for comparison in comparisons
-        if comparison.adverseGlobalOutlier
+        if comparison.wholeCaptureFailure
     )
     if failed:
         warnings.append(
-            "Capture medians outside adverse global MAD bounds require review: "
+            "Captures failed at least two independent global QC axes: "
             + ", ".join(failed)
         )
     retained_by_capture = {name: int((mask & keep).sum()) for name, mask in captures}
@@ -497,6 +629,180 @@ def project_registered_qc_profile(
         keep=keep,
         flags=flags,
         thresholds=tuple(thresholds),
+        captureSizes=capture_sizes,
+        retainedByCapture=retained_by_capture,
+        captureComparisons=comparisons,
+        failedCaptureCandidates=failed,
+        warnings=tuple(warnings),
+    )
+
+
+def _auto_bound_flags(
+    *,
+    metric: str,
+    values: np.ndarray,
+    target: np.ndarray,
+    low: float | None,
+    high: float | None,
+    flags: dict[str, np.ndarray],
+) -> None:
+    if low is not None:
+        flags.setdefault(
+            f"{metric}:low",
+            np.zeros(target.shape[0], dtype=bool),
+        )[target & (values <= low)] = True
+    if high is not None:
+        flags.setdefault(
+            f"{metric}:high",
+            np.zeros(target.shape[0], dtype=bool),
+        )[target & (values >= high)] = True
+
+
+def project_auto_filter_profile(
+    action: AutoFilterAction,
+    *,
+    values_by_metric: dict[str, np.ndarray],
+    active: np.ndarray,
+    sample_labels: np.ndarray | None = None,
+    grouping_proven: bool = False,
+    min_p: float = 0.01,
+    max_p: float = 0.99,
+    n_mads: float = 3.0,
+    min_cells_per_sample: int = 20,
+) -> AutoFilterProjection:
+    """Project one existing core auto-filter path without writing data.
+
+    The projection calls the same filtering helpers as
+    :meth:`DataStore.auto_filter_cells`. It rejects any input for which the
+    core operation would not produce finite bounds.
+    """
+    if action not in {"globalGaussian", "sampleMad"}:
+        raise ValueError(f"Unknown automatic cell-QC action {action!r}")
+    values, active_mask = _validated_inputs(values_by_metric, active)
+    if not values:
+        raise ValueError("Automatic cell-QC profiles require at least one metric")
+
+    flags: dict[str, np.ndarray] = {}
+    warnings: list[str] = []
+    captures: list[tuple[str, np.ndarray]] = []
+    parameters: dict[str, object]
+    if action == "globalGaussian":
+        keep = active_mask.copy()
+        resolved_bounds: dict[str, dict[str, float]] = {}
+        for metric, metric_values in values.items():
+            low, high = gaussian_quantile_bounds(
+                metric_values[active_mask],
+                min_p,
+                max_p,
+            )
+            if not np.isfinite([low, high]).all():
+                raise ValueError(
+                    f"QC metric {metric!r} produced non-finite Gaussian bounds"
+                )
+            resolved_bounds[metric] = {"low": low, "high": high}
+            keep &= _apply_bounds(metric_values, low, high)
+            _auto_bound_flags(
+                metric=metric,
+                values=metric_values,
+                target=active_mask,
+                low=low,
+                high=high,
+                flags=flags,
+            )
+        parameters = {
+            "minP": float(min_p),
+            "maxP": float(max_p),
+            "resolvedBounds": resolved_bounds,
+        }
+        if sample_labels is not None and grouping_proven:
+            captures = _ordered_capture_masks(
+                np.asarray(sample_labels),
+                active_mask,
+            )
+    else:
+        if sample_labels is None or not grouping_proven:
+            raise ValueError(
+                "sampleMad requires an explicitly proven physical capture grouping"
+            )
+        if min_p != 0.01 or max_p != 0.99:
+            raise ValueError(
+                "sampleMad requires the core Gaussian probabilities to remain "
+                "at 0.01 and 0.99"
+            )
+        keep_from_core, provenance = _sample_aware_mad_mask(
+            values_by_attr=values,
+            sample_labels=np.asarray(sample_labels),
+            active=active_mask,
+            n_mads=n_mads,
+            min_cells_per_sample=min_cells_per_sample,
+            attrs=list(values),
+        )
+        keep = active_mask & keep_from_core
+        captures = _ordered_capture_masks(
+            np.asarray(sample_labels),
+            active_mask,
+        )
+        capture_masks = dict(captures)
+        raw_bounds = provenance["resolved_bounds"]
+        for capture, bounds_by_metric in raw_bounds.items():
+            target = capture_masks[capture]
+            for metric, raw_bound in bounds_by_metric.items():
+                bound = cast(Mapping[str, object], raw_bound)
+                low_value = bound.get("low")
+                high_value = bound.get("high")
+                sample_low = (
+                    float(cast(float, low_value)) if low_value is not None else None
+                )
+                sample_high = (
+                    float(cast(float, high_value)) if high_value is not None else None
+                )
+                _auto_bound_flags(
+                    metric=metric,
+                    values=values[metric],
+                    target=target,
+                    low=sample_low,
+                    high=sample_high,
+                    flags=flags,
+                )
+        warnings.extend(provenance["warnings"])
+        parameters = {
+            "minP": 0.01,
+            "maxP": 0.99,
+            "nMads": float(n_mads),
+            "minCellsPerSample": int(min_cells_per_sample),
+            "madScale": float(provenance["mad_scale"]),
+            "metricPolicies": provenance["metric_policies"],
+            "sampleSizes": provenance["sample_sizes"],
+            "skipReasons": provenance["skip_reasons"],
+            "resolvedBounds": provenance["resolved_bounds"],
+        }
+
+    capture_sizes = {name: int(mask.sum()) for name, mask in captures}
+    retained_by_capture = {name: int((mask & keep).sum()) for name, mask in captures}
+    comparisons = (
+        _with_capture_retention(
+            _global_capture_comparisons(values, active_mask, captures),
+            captures,
+            keep,
+        )
+        if captures
+        else ()
+    )
+    failed = tuple(
+        comparison.capture
+        for comparison in comparisons
+        if comparison.wholeCaptureFailure
+    )
+    if failed:
+        warnings.append(
+            "Captures failed at least two independent global QC axes: "
+            + ", ".join(failed)
+        )
+    return AutoFilterProjection(
+        action=action,
+        keep=keep,
+        flags=flags,
+        parameters=parameters,
         captureSizes=capture_sizes,
         retainedByCapture=retained_by_capture,
         captureComparisons=comparisons,
@@ -570,12 +876,16 @@ def offered_registered_qc_profiles(
 
 __all__ = [
     "REGISTERED_CELL_QC_PROFILES",
+    "AutoFilterAction",
+    "AutoFilterProjection",
     "CaptureQcComparison",
     "QcMetricRole",
     "RegisteredCellQcProfile",
     "RegisteredQcProjection",
     "RegisteredQcThreshold",
     "offered_registered_qc_profiles",
+    "project_auto_filter_profile",
     "project_registered_qc_profile",
+    "qc_metric_execution_name",
     "registered_qc_metric_role",
 ]

@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -6,7 +7,7 @@ import numpy as np
 import zarr
 
 from ..assay import RNAassay
-from ..features.variability import fit_lowess
+from ..features.variability import DEFAULT_HVG_BLACKLIST, fit_lowess
 from ..storage.arrays import create_zarr_dataset
 from ..storage.artifact_writer import (
     ArrayRequirement,
@@ -36,6 +37,7 @@ from ..storage.selections import (
 from ..storage.types import as_zarr_array
 
 HVG_CANDIDATE_TARGETS = (1000, 2000, 4000)
+_HVG_COMPARISON_EXAMPLE_LIMIT = 8
 _HVG_DIAGNOSTIC_ARRAYS = (
     "eligible",
     "global_corrected_variance",
@@ -85,6 +87,39 @@ class HvgRanking:
 
 
 @dataclass(frozen=True, slots=True)
+class HvgDefaultFamilyLeakage:
+    """Default-family representation within one agent-ranked HVG candidate."""
+
+    family: str
+    pattern: str
+    inventory_count: int
+    scarf_default_selected_count: int
+    agent_selected_count: int
+    agent_only_count: int
+    agent_selected_fraction: float
+    examples: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HvgSelectionComparison:
+    """Overlap between one Scarf-default selection and one agent candidate."""
+
+    ranking_mode: Literal["global", "batchAware"]
+    top_n: int
+    scarf_default_blacklist: str
+    scarf_default_count: int
+    agent_count: int
+    overlap_count: int
+    union_count: int
+    scarf_default_only_count: int
+    agent_only_count: int
+    scarf_default_overlap_fraction: float
+    agent_overlap_fraction: float
+    jaccard: float
+    default_family_leakage: tuple[HvgDefaultFamilyLeakage, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class HvgCandidateArtifact:
     """One persisted candidate with its effective capped feature count."""
 
@@ -130,6 +165,109 @@ def effective_hvg_candidate_counts(
     if not resolved:
         raise ValueError("At least one HVG candidate target is required")
     return tuple(resolved)
+
+
+def compare_hvg_ranking_to_default(
+    scarf_default_selection: np.ndarray,
+    ranking: HvgRanking,
+    *,
+    feature_names: Sequence[Any],
+    default_family_patterns: Mapping[str, str],
+    max_examples: int = _HVG_COMPARISON_EXAMPLE_LIMIT,
+) -> tuple[HvgSelectionComparison, ...]:
+    """Compare registered agent candidates with an exact Scarf-default selection."""
+    scarf_default = np.asarray(scarf_default_selection, dtype=bool)
+    if scarf_default.ndim != 1:
+        raise ValueError("scarf_default_selection must be a one-dimensional mask")
+    if ranking.eligible.shape != scarf_default.shape:
+        raise ValueError("Scarf-default and agent feature axes must align")
+    if isinstance(feature_names, str | bytes):
+        raise TypeError("feature_names must be a sequence")
+    names = np.asarray(
+        ["" if value is None else str(value) for value in feature_names],
+        dtype=object,
+    )
+    if names.shape != scarf_default.shape:
+        raise ValueError("feature_names must align with the feature-selection masks")
+    if isinstance(max_examples, bool) or not isinstance(max_examples, int):
+        raise TypeError("max_examples must be an integer")
+    if not 0 <= max_examples <= _HVG_COMPARISON_EXAMPLE_LIMIT:
+        raise ValueError(
+            f"max_examples must be between 0 and {_HVG_COMPARISON_EXAMPLE_LIMIT}"
+        )
+
+    family_masks: list[tuple[str, str, np.ndarray]] = []
+    for family, pattern in sorted(default_family_patterns.items()):
+        if not isinstance(family, str) or not family:
+            raise ValueError("Default-family names must be non-empty strings")
+        if not isinstance(pattern, str) or not pattern:
+            raise ValueError("Default-family patterns must be non-empty strings")
+        compiled = re.compile(pattern.upper())
+        mask = np.fromiter(
+            (compiled.match(name.upper()) is not None for name in names),
+            dtype=bool,
+            count=len(names),
+        )
+        family_masks.append((family, pattern, mask))
+
+    scarf_default_count = int(scarf_default.sum())
+    comparisons: list[HvgSelectionComparison] = []
+    for top_n in ranking.candidate_counts:
+        agent = ranking.candidate_mask(top_n)
+        agent_count = int(agent.sum())
+        if agent_count != top_n:
+            raise ValueError(
+                "Agent rankings must contain distinct indices for every candidate"
+            )
+        overlap = scarf_default & agent
+        union = scarf_default | agent
+        overlap_count = int(overlap.sum())
+        union_count = int(union.sum())
+        leakage: list[HvgDefaultFamilyLeakage] = []
+        for family, pattern, family_mask in family_masks:
+            selected = agent & family_mask
+            selected_names = sorted(
+                set(names[selected].tolist()),
+                key=lambda value: (value.casefold(), value),
+            )
+            leakage.append(
+                HvgDefaultFamilyLeakage(
+                    family=family,
+                    pattern=pattern,
+                    inventory_count=int(family_mask.sum()),
+                    scarf_default_selected_count=int(
+                        (scarf_default & family_mask).sum()
+                    ),
+                    agent_selected_count=int(selected.sum()),
+                    agent_only_count=int((selected & ~scarf_default).sum()),
+                    agent_selected_fraction=(
+                        float(selected.sum()) / agent_count if agent_count else 0.0
+                    ),
+                    examples=tuple(selected_names[:max_examples]),
+                )
+            )
+        comparisons.append(
+            HvgSelectionComparison(
+                ranking_mode=ranking.ranking_mode,
+                top_n=top_n,
+                scarf_default_blacklist=DEFAULT_HVG_BLACKLIST,
+                scarf_default_count=scarf_default_count,
+                agent_count=agent_count,
+                overlap_count=overlap_count,
+                union_count=union_count,
+                scarf_default_only_count=int((scarf_default & ~agent).sum()),
+                agent_only_count=int((agent & ~scarf_default).sum()),
+                scarf_default_overlap_fraction=(
+                    overlap_count / scarf_default_count if scarf_default_count else 0.0
+                ),
+                agent_overlap_fraction=(
+                    overlap_count / agent_count if agent_count else 0.0
+                ),
+                jaccard=overlap_count / union_count if union_count else 1.0,
+                default_family_leakage=tuple(leakage),
+            )
+        )
+    return tuple(comparisons)
 
 
 def corrected_variance_from_summary(
@@ -722,10 +860,13 @@ def run_hvg_diagnostic_artifacts(
 __all__ = [
     "HVG_CANDIDATE_TARGETS",
     "HvgCandidateArtifact",
+    "HvgDefaultFamilyLeakage",
     "HvgDiagnosticArtifacts",
     "HvgGroupVariability",
     "HvgRanking",
+    "HvgSelectionComparison",
     "aggregate_hvg_rankings",
+    "compare_hvg_ranking_to_default",
     "corrected_variance_from_summary",
     "effective_hvg_candidate_counts",
     "run_hvg_diagnostic_artifacts",

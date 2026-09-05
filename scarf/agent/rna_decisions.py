@@ -56,7 +56,10 @@ type CellQualityProfile = Literal[
 type ConditionalGeneFamily = Literal[
     "mitochondrial",
     "ribosomal",
+    "mitoribosomal",
     "histone",
+    "hla",
+    "h2",
     "hemoglobin",
     "immuneReceptor",
     "cellCycle",
@@ -162,17 +165,33 @@ class FeaturePolicyExecutorPayload(RnaRegistryModel):
     """Exact conditional family policy for representation features."""
 
     operation: Literal["featurePolicy"] = "featurePolicy"
-    policy: Literal["keepAll", "excludeEligibleBundle"]
+    policy: Literal[
+        "keepAll",
+        "excludeScarfDefaults",
+        "excludeEligibleBundle",
+    ]
     excludedFamilies: list[ConditionalGeneFamily] = Field(default_factory=list)
+    useScarfDefaultBlacklist: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def validate_policy(self) -> "FeaturePolicyExecutorPayload":
         if len(self.excludedFamilies) != len(set(self.excludedFamilies)):
             raise ValueError("excludedFamilies must not contain duplicates")
-        if self.policy == "keepAll" and self.excludedFamilies:
+        if self.policy == "keepAll" and (
+            self.excludedFamilies or self.useScarfDefaultBlacklist
+        ):
             raise ValueError("keepAll cannot exclude gene families")
+        if self.policy == "excludeScarfDefaults":
+            if self.excludedFamilies or not self.useScarfDefaultBlacklist:
+                raise ValueError(
+                    "excludeScarfDefaults requires only the Scarf default blacklist"
+                )
         if self.policy == "excludeEligibleBundle" and not self.excludedFamilies:
             raise ValueError("excludeEligibleBundle requires gene families")
+        if self.policy == "excludeEligibleBundle" and self.useScarfDefaultBlacklist:
+            raise ValueError(
+                "excludeEligibleBundle cannot silently add the Scarf defaults"
+            )
         return self
 
 
@@ -919,8 +938,9 @@ def build_feature_policy_decision(
     proposed_exclusion_families: list[ConditionalGeneFamily],
     dominant_families: list[ConditionalGeneFamily],
     protected_families: list[ConditionalGeneFamily],
+    scarf_default_eligible: bool = False,
 ) -> RnaDecisionDefinition:
-    """Build keep-all plus at most one licensed conditional exclusion bundle."""
+    """Build exact representation-only feature-policy alternatives."""
     for field_name, values in (
         ("proposed_exclusion_families", proposed_exclusion_families),
         ("dominant_families", dominant_families),
@@ -956,6 +976,29 @@ def build_feature_policy_decision(
             payload=FeaturePolicyExecutorPayload(policy="keepAll", excludedFamilies=[]),
         )
     ]
+    if scarf_default_eligible:
+        visible.append(
+            DecisionOption(
+                optionId="featurePolicy:excludeScarfDefaults",
+                status="apply",
+                label="Use the Scarf default blacklist",
+                description=(
+                    "Exclude the exact core Scarf default blacklist from "
+                    "representation only."
+                ),
+                requiredEvidenceClasses=["technical"],
+            )
+        )
+        executor.append(
+            RnaExecutorOption(
+                checkpoint="featurePolicy",
+                optionId="featurePolicy:excludeScarfDefaults",
+                payload=FeaturePolicyExecutorPayload(
+                    policy="excludeScarfDefaults",
+                    useScarfDefaultBlacklist=True,
+                ),
+            )
+        )
     if proposed_exclusion_families:
         visible.append(
             DecisionOption(

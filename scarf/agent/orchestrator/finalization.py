@@ -1,5 +1,6 @@
 """Final analysis and biological interpretation workflow stages."""
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
@@ -18,6 +19,13 @@ from ..decision_persistence import (
     save_decision_workflow_snapshot,
 )
 from ..experimental_context import ExperimentalContextResult
+from ..hypothesis_testing import (
+    ClusterSelectionContract,
+    HypothesisContract,
+    HypothesisFeaturePanel,
+    HypothesisTestExecution,
+    execute_hypothesis_contract,
+)
 from ..parameter_tuning import (
     ParameterTuningAgent,
     ParameterTuningReport,
@@ -63,6 +71,9 @@ class FinalizationStagesMixin:
         tuning_reference: AgentReportReference,
         study_contract: StudyContract,
         *,
+        experimental: ExperimentalContextResult | None = None,
+        analysis_review_evidence: Mapping[str, Any] | None = None,
+        answers: Mapping[str, Any] | None = None,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, FinalAnalysisHandoff]:
         prefix = journal._ensure_orchestration_store(store)
@@ -115,6 +126,12 @@ class FinalizationStagesMixin:
                     if tuning_report.finalClusterArtifact is not None
                     else None
                 ),
+                "analysisReviewEvidence": dict(analysis_review_evidence or {}),
+                "hypothesisTestingPolicy": {
+                    "contract": "licensedSampleAwareNormalizedExpression",
+                    "adjustment": "fdr_bh",
+                    "exploratoryMarkers": "selectedFeatureLevelMarkers",
+                },
             },
             resume_record=resume_record,
         )
@@ -238,13 +255,25 @@ class FinalizationStagesMixin:
                 for name, artifact in sorted(selected.artifacts.items())
                 if name.startswith("doubletScore:")
             ]
+            doublet_score_selections = [
+                ArtifactReferenceModel.model_validate(artifact.model_dump())
+                for name, artifact in sorted(selected.artifacts.items())
+                if name.startswith("doubletCellSelection:")
+            ]
             if not doublet_scores:
                 raise ValueError(
                     "Selected cluster evidence lacks advisory doublet scores"
                 )
+            if len(doublet_scores) != len(doublet_score_selections):
+                raise ValueError(
+                    "Advisory doublet scores lack exact cell-selection lineage"
+                )
             for index, doublet_model in enumerate(doublet_scores):
                 store.load_artifact(artifact_model_to_ref(doublet_model))
                 artifacts[f"doubletScore{index}"] = doublet_model
+                doublet_selection = doublet_score_selections[index]
+                store.load_artifact(artifact_model_to_ref(doublet_selection))
+                artifacts[f"doubletScoreSelection{index}"] = doublet_selection
             limitations.extend(
                 warning
                 for warning in selected.warnings
@@ -258,8 +287,252 @@ class FinalizationStagesMixin:
                     "artifacts": [
                         value.model_dump(mode="json") for value in doublet_scores
                     ],
+                    "cellSelections": [
+                        value.model_dump(mode="json")
+                        for value in doublet_score_selections
+                    ],
                 }
             )
+
+            hypothesis_directions = request_record.request.experimentalDirections.get(
+                "hypothesisTesting",
+                {},
+            )
+            if not isinstance(hypothesis_directions, Mapping):
+                raise ValueError(
+                    "experimentalDirections.hypothesisTesting must be a mapping"
+                )
+            raw_explicit_features = hypothesis_directions.get(
+                "explicitFeatures",
+                {},
+            )
+            raw_cluster_scopes = hypothesis_directions.get("clusters", {})
+            if not isinstance(raw_explicit_features, Mapping):
+                raise ValueError(
+                    "hypothesisTesting.explicitFeatures must map coefficients "
+                    "to feature lists"
+                )
+            if not isinstance(raw_cluster_scopes, Mapping):
+                raise ValueError(
+                    "hypothesisTesting.clusters must map coefficients "
+                    "to cluster-label lists"
+                )
+
+            exploratory_features = list(
+                dict.fromkeys(
+                    feature
+                    for features in selected.metrics.topMarkerGenes.values()
+                    for feature in features
+                )
+            )[: request_record.config.maxIdentityFeatures]
+            hypothesis_executions: list[HypothesisTestExecution] = []
+            hypothesis_questions: list[WorkflowQuestion] = []
+            answer_values = answers or {}
+            for contrast in (
+                experimental.contrastPlans if experimental is not None else []
+            ):
+                panels: list[HypothesisFeaturePanel] = []
+                directed_features = raw_explicit_features.get(
+                    contrast.coefficient,
+                    raw_explicit_features.get("*", []),
+                )
+                if not isinstance(directed_features, list | tuple) or any(
+                    not isinstance(value, str) for value in directed_features
+                ):
+                    raise ValueError(
+                        "Each hypothesisTesting.explicitFeatures value must be "
+                        "a list of feature names"
+                    )
+                explicit_features = list(
+                    dict.fromkeys(
+                        feature.strip()
+                        for feature in directed_features
+                        if feature.strip()
+                    )
+                )
+                if explicit_features:
+                    panels.append(
+                        HypothesisFeaturePanel(
+                            panelId=f"explicit:{contrast.coefficient}",
+                            purpose="explicit",
+                            features=explicit_features,
+                            evidenceIds=[
+                                f"request:hypothesisFeatures:{contrast.coefficient}"
+                            ],
+                        )
+                    )
+                if exploratory_features:
+                    panels.append(
+                        HypothesisFeaturePanel(
+                            panelId=f"exploratoryMarkers:{contrast.coefficient}",
+                            purpose="exploratoryMarkers",
+                            features=exploratory_features,
+                            sourceArtifact=marker_model,
+                            evidenceIds=[f"artifact:markers:{marker_model.artifactId}"],
+                        )
+                    )
+
+                cluster_selection = None
+                directed_clusters = raw_cluster_scopes.get(contrast.coefficient)
+                if directed_clusters is not None:
+                    if not isinstance(directed_clusters, list | tuple):
+                        raise ValueError(
+                            "Each hypothesisTesting.clusters value must be a "
+                            "cluster-label list"
+                        )
+                    cluster_selection = ClusterSelectionContract(
+                        clusterArtifact=final_clusters,
+                        include=list(directed_clusters),
+                    )
+                grouping_artifact = next(
+                    (
+                        source.artifact
+                        for source in (
+                            experimental.htoIdentityArtifacts
+                            if experimental is not None
+                            else []
+                        )
+                        if source.name == contrast.coefficient
+                    ),
+                    None,
+                )
+                identity_payload = {
+                    "workflowRunId": workflow.workflowRunId,
+                    "contrast": contrast.model_dump(mode="json"),
+                    "panels": [panel.model_dump(mode="json") for panel in panels],
+                    "clusterSelection": (
+                        cluster_selection.model_dump(mode="json")
+                        if cluster_selection is not None
+                        else None
+                    ),
+                    "cellSelection": cell_selection.model_dump(mode="json"),
+                    "assay": plan.markerAssay,
+                }
+                identity = hashlib.sha256(
+                    json.dumps(
+                        identity_payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()[:24]
+                contract = HypothesisContract(
+                    contractId=f"hypothesis:{identity}",
+                    familyId=f"contrast:{identity}",
+                    contrast=contrast,
+                    cellSelection=cell_selection,
+                    groupingArtifact=grouping_artifact,
+                    clusterSelection=cluster_selection,
+                    featurePanels=panels,
+                    fromAssay=plan.markerAssay,
+                    evidenceIds=[
+                        contrast.evidenceId,
+                        *contrast.evidenceIds,
+                        f"artifact:clusters:{final_clusters.artifactId}",
+                    ],
+                )
+                execution = execute_hypothesis_contract(store, contract)
+                question_id = f"analysisContrast:{identity}"
+                if execution.status == "needsInput":
+                    disposition = answer_values.get(question_id)
+                    if disposition == "skip":
+                        execution = execution.model_copy(
+                            update={
+                                "status": "blocked",
+                                "blockedReasons": list(
+                                    dict.fromkeys(
+                                        [
+                                            *execution.blockedReasons,
+                                            "callerSkippedUnresolvedContrast",
+                                        ]
+                                    )
+                                ),
+                            }
+                        )
+                    elif disposition is not None:
+                        raise ValueError(f"{question_id} must be answered with 'skip'")
+                    elif request_record.config.inputPolicy == "unattended":
+                        execution = execution.model_copy(
+                            update={
+                                "status": "blocked",
+                                "blockedReasons": list(
+                                    dict.fromkeys(
+                                        [
+                                            *execution.blockedReasons,
+                                            "unattendedSkippedUnresolvedContrast",
+                                        ]
+                                    )
+                                ),
+                            }
+                        )
+                    else:
+                        hypothesis_questions.append(
+                            WorkflowQuestion(
+                                questionId=question_id,
+                                question=(
+                                    f"The contrast for {contrast.coefficient!r} "
+                                    "does not have a complete licensed design or "
+                                    "feature family. Stop to revise the immutable "
+                                    "request, or explicitly skip this unsupported "
+                                    "contrast."
+                                ),
+                                options=["skip"],
+                                evidenceIds=list(execution.evidenceIds),
+                            )
+                        )
+                hypothesis_executions.append(execution)
+                if execution.statisticalTestArtifact is not None:
+                    statistical_artifact = execution.statisticalTestArtifact
+                    artifacts[f"statisticalTest{len(artifacts)}"] = statistical_artifact
+                    actions.append("run_licensed_statistical_testing")
+                operations.append(
+                    {
+                        "operation": "execute_hypothesis_contract",
+                        "contract": contract.model_dump(mode="json"),
+                        "execution": execution.model_dump(mode="json"),
+                    }
+                )
+
+            if hypothesis_questions:
+                outcome = journal._complete_attempt(
+                    started,
+                    status="needsInput",
+                    artifacts=artifacts,
+                    outputs={
+                        "hypothesisExecutions": [
+                            value.model_dump(mode="json")
+                            for value in hypothesis_executions
+                        ],
+                        "operations": operations,
+                    },
+                    actions=[*actions, "pause_unresolved_hypothesis"],
+                    needs_input=WorkflowNeedsInput(questions=hypothesis_questions),
+                    notes=[
+                        "At least one requested contrast lacks a licensed, "
+                        "estimable sample-aware test."
+                    ],
+                )
+                journal._save_outcome(store.zw, prefix, outcome)
+                return outcome, FinalAnalysisHandoff.get_blank()
+
+            statistical_tests = [
+                value.statisticalTestArtifact
+                for value in hypothesis_executions
+                if value.statisticalTestArtifact is not None
+            ]
+            limitations.extend(
+                (
+                    f"Contrast {value.contrast.coefficient!r} produced no p-value: "
+                    f"{'; '.join(value.blockedReasons)}."
+                )
+                for value in hypothesis_executions
+                if value.status != "executed"
+            )
+            if statistical_tests:
+                limitations.append(
+                    "Statistical results are sample-level normalized-expression "
+                    "distribution tests, not raw-count pseudobulk differential-"
+                    "expression models."
+                )
 
             final_analysis = FinalAnalysisHandoff(
                 workflowRunId=workflow.workflowRunId,
@@ -274,7 +547,61 @@ class FinalizationStagesMixin:
                 umap=final_umap,
                 markerFeatures=preprocessed_assay.markerFeatures,
                 markers=marker_model,
+                statisticalTests=statistical_tests,
                 doubletScores=doublet_scores,
+                doubletScoreSelections=doublet_score_selections,
+                doubletEvidence={
+                    "scoreQuantiles": dict(selected.metrics.doubletScoreQuantiles),
+                    "scoreByCapture": {
+                        capture: dict(summary)
+                        for capture, summary in (
+                            selected.metrics.doubletScoreByCapture.items()
+                        )
+                    },
+                    "captureCoverage": (selected.metrics.doubletCaptureCoverage),
+                    "maximumClusterConcentration": (
+                        selected.metrics.doubletHighScoreConcentration
+                    ),
+                    "policy": "scoreAndFlagWithoutRemoval",
+                },
+                markerEvidence={
+                    "coherence": selected.metrics.markerCoherence,
+                    "specificityMedian": (selected.metrics.markerSpecificityMedian),
+                    "specificityByCluster": dict(
+                        selected.metrics.markerSpecificityByCluster
+                    ),
+                    "aucByCluster": dict(selected.metrics.markerAucByCluster),
+                    "topFeaturesByCluster": {
+                        cluster: list(features)
+                        for cluster, features in (
+                            selected.metrics.topMarkerGenes.items()
+                        )
+                    },
+                    "defaultAndContextFamilyEnrichment": dict(
+                        selected.metrics.markerFamilyEnrichment
+                    ),
+                    "protectedFamilies": list(selected.metrics.protectedMarkerFamilies),
+                },
+                analysisEvidence={
+                    "analysisReview": dict(analysis_review_evidence or {}),
+                    "hypothesisTests": [
+                        value.model_dump(mode="json") for value in hypothesis_executions
+                    ],
+                    **(
+                        {
+                            "contrastPlans": [
+                                value.model_dump(mode="json")
+                                for value in getattr(
+                                    experimental,
+                                    "contrastPlans",
+                                    [],
+                                )
+                            ]
+                        }
+                        if experimental is not None
+                        else {}
+                    ),
+                },
                 parameterReport=tuning_reference,
                 limitations=list(dict.fromkeys(limitations)),
             ).with_handoff_id()

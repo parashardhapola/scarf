@@ -5,8 +5,9 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from inspect import isawaitable, iscoroutinefunction
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ...utils.logging import logger
 from ..types import (
@@ -18,7 +19,127 @@ from ..types import (
 from . import AgentRunConfig, get_model_settings, get_usage_limits
 from ._deps import require_pydantic_ai
 
-__all__ = ["run_agent", "run_agent_sync"]
+if TYPE_CHECKING:
+    from pydantic_ai.messages import UserContent
+else:
+    UserContent = Any
+
+type AgentUserPrompt = str | Sequence[UserContent]
+type ImageMediaType = Literal["image/png", "image/jpeg", "image/webp"]
+
+_MAX_VISUAL_EVIDENCE_ITEMS = 8
+_MAX_VISUAL_EVIDENCE_ITEM_BYTES = 4 * 1024 * 1024
+_MAX_VISUAL_EVIDENCE_TOTAL_BYTES = 16 * 1024 * 1024
+
+__all__ = [
+    "AgentUserPrompt",
+    "build_visual_evidence_prompt",
+    "ImageEvidence",
+    "ImageInputUnsupportedError",
+    "ImageMediaType",
+    "run_agent",
+    "run_agent_async",
+    "run_agent_sync",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ImageEvidence:
+    """One in-memory image supplied to a bounded agent comparison."""
+
+    identifier: str
+    data: bytes
+    media_type: ImageMediaType = "image/png"
+
+
+class ImageInputUnsupportedError(RuntimeError):
+    """The configured model or provider rejected image input."""
+
+
+def _image_input_is_unsupported(exc: Exception) -> bool:
+    from pydantic_ai.exceptions import ModelHTTPError, UserError
+
+    if isinstance(exc, UserError):
+        detail = str(exc).casefold()
+    elif isinstance(exc, ModelHTTPError) and exc.status_code in {400, 415, 422}:
+        detail = str(exc.body).casefold()
+    else:
+        return False
+    return any(
+        marker in detail
+        for marker in (
+            "binary content is not supported",
+            "binary input is not supported",
+            "does not support binary content",
+            "does not support multimodal",
+            "doesn't support multimodal",
+            "image content is not supported",
+            "multimodal input is not supported",
+            "image input is not supported",
+            "image inputs are not supported",
+            "images are not supported",
+            "does not support image",
+            "unsupported image input",
+            "only text input",
+        )
+    )
+
+
+def build_visual_evidence_prompt(
+    prompt: str,
+    images: Sequence[ImageEvidence],
+) -> tuple[UserContent, ...]:
+    """Build bounded Pydantic AI image content without creating report files."""
+
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("Visual evidence prompt must be a non-empty string")
+    values = tuple(images)
+    if not values:
+        raise ValueError("Visual evidence requires at least one image")
+    if len(values) > _MAX_VISUAL_EVIDENCE_ITEMS:
+        raise ValueError(
+            "Visual evidence exceeds the maximum of "
+            f"{_MAX_VISUAL_EVIDENCE_ITEMS} images"
+        )
+    identifiers = [value.identifier for value in values]
+    if any(not value or value != value.strip() for value in identifiers):
+        raise ValueError("Visual evidence identifiers must be non-empty and trimmed")
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Visual evidence identifiers must be unique")
+    total_bytes = 0
+    for value in values:
+        if value.media_type not in {"image/png", "image/jpeg", "image/webp"}:
+            raise ValueError(
+                f"Visual evidence image {value.identifier!r} has unsupported media type"
+            )
+        if not isinstance(value.data, bytes) or not value.data:
+            raise ValueError("Visual evidence images must contain non-empty bytes")
+        if len(value.data) > _MAX_VISUAL_EVIDENCE_ITEM_BYTES:
+            raise ValueError(
+                f"Visual evidence image {value.identifier!r} exceeds "
+                f"{_MAX_VISUAL_EVIDENCE_ITEM_BYTES} bytes"
+            )
+        total_bytes += len(value.data)
+    if total_bytes > _MAX_VISUAL_EVIDENCE_TOTAL_BYTES:
+        raise ValueError(
+            "Visual evidence exceeds the total byte limit of "
+            f"{_MAX_VISUAL_EVIDENCE_TOTAL_BYTES}"
+        )
+
+    require_pydantic_ai()
+    from pydantic_ai.messages import BinaryContent
+
+    return (
+        prompt,
+        *(
+            BinaryContent(
+                data=value.data,
+                media_type=value.media_type,
+                identifier=value.identifier,
+            )
+            for value in values
+        ),
+    )
 
 
 def _tool_definitions(
@@ -224,7 +345,7 @@ def run_agent_sync(
     model: Any,
     output_type: Any,
     system_prompt: str,
-    user_prompt: str,
+    user_prompt: AgentUserPrompt,
     tools: Sequence[Callable[..., Any] | Any] = (),
     deps_type: type[Any] | None = None,
     deps: Any = None,
@@ -266,12 +387,21 @@ def run_agent_sync(
         started = time.monotonic()
         try:
             async with agent:
-                result = await agent.run(
-                    user_prompt,
-                    deps=deps,
-                    message_history=message_history,
-                    usage_limits=usage_limits,
-                )
+                try:
+                    result = await agent.run(
+                        user_prompt,
+                        deps=deps,
+                        message_history=message_history,
+                        usage_limits=usage_limits,
+                    )
+                except Exception as exc:
+                    if not isinstance(user_prompt, str) and _image_input_is_unsupported(
+                        exc
+                    ):
+                        raise ImageInputUnsupportedError(
+                            "The configured model does not accept image input"
+                        ) from exc
+                    raise
         except Exception as exc:
             error_detail = str(exc).replace("\n", " ").strip()[:500]
             cause = exc.__cause__
@@ -302,12 +432,12 @@ def run_agent_sync(
         return pool.submit(asyncio.run, execute()).result()
 
 
-async def run_agent(
+async def run_agent_async(
     *,
     model: Any,
     output_type: Any,
     system_prompt: str,
-    user_prompt: str,
+    user_prompt: AgentUserPrompt,
     tools: Sequence[Callable[..., Any] | Any] = (),
     deps_type: type[Any] | None = None,
     deps: Any = None,
@@ -341,12 +471,21 @@ async def run_agent(
     started = time.monotonic()
     try:
         async with agent:
-            result = await agent.run(
-                user_prompt,
-                deps=deps,
-                message_history=message_history,
-                usage_limits=usage_limits,
-            )
+            try:
+                result = await agent.run(
+                    user_prompt,
+                    deps=deps,
+                    message_history=message_history,
+                    usage_limits=usage_limits,
+                )
+            except Exception as exc:
+                if not isinstance(user_prompt, str) and _image_input_is_unsupported(
+                    exc
+                ):
+                    raise ImageInputUnsupportedError(
+                        "The configured model does not accept image input"
+                    ) from exc
+                raise
     except Exception as exc:
         error_detail = str(exc).replace("\n", " ").strip()[:500]
         cause = exc.__cause__
@@ -367,3 +506,6 @@ async def run_agent(
         started=started,
         tools=tools,
     )
+
+
+run_agent = run_agent_async

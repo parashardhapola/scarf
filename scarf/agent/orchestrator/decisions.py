@@ -3,7 +3,7 @@
 import hashlib
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,6 +85,85 @@ def _selection_evidence_for_human(
         if not required or item.evidenceClass in required
     ]
     return list(dict.fromkeys([*option.requiredEvidenceIds, *evidence_ids]))
+
+
+def _selection_for_option(
+    definition: RnaDecisionDefinition,
+    evidence: EvidenceBundle,
+    option_id: str,
+    *,
+    rationale: str,
+) -> DecisionSelection:
+    evidence_ids = _selection_evidence_for_human(definition, evidence, option_id)
+    override_of: str | None = None
+    override_evidence_ids: list[str] = []
+    selected = definition.spec.option_by_id()[option_id]
+    if (
+        definition.spec.requireIndependentOverrideEvidence
+        and definition.spec.metricPreferredOptionId is not None
+        and option_id != definition.spec.metricPreferredOptionId
+        and selected.status in {"apply", "skip"}
+    ):
+        override_of = definition.spec.metricPreferredOptionId
+        required_ids = set(selected.requiredEvidenceIds)
+        override_evidence_ids = [
+            item.evidenceId
+            for item in evidence.evidence
+            if item.evidenceClass
+            in {
+                "markerCoherence",
+                "resamplingStability",
+                "crossUnitSupport",
+                "protectedVariablePreservation",
+            }
+            and (not required_ids or item.evidenceId in required_ids)
+        ]
+        evidence_ids = list(dict.fromkeys([*evidence_ids, *override_evidence_ids]))
+    return _validate_selection(
+        definition,
+        evidence,
+        DecisionSelection(
+            selectedOptionId=option_id,
+            evidenceIds=evidence_ids,
+            rationale=rationale,
+            confidence="notApplicable",
+            overrideOfOptionId=override_of,
+            overrideEvidenceIds=override_evidence_ids,
+        ),
+    )
+
+
+def _unattended_option_id(definition: RnaDecisionDefinition) -> str:
+    options = definition.spec.option_by_id()
+    ordered = [
+        definition.spec.metricPreferredOptionId,
+        definition.spec.baselineOptionId,
+        *(option.optionId for option in definition.spec.options),
+    ]
+    for option_id in ordered:
+        if option_id is not None and options[option_id].status != "defer":
+            return option_id
+    raise ValueError("The registered decision has no non-deferred option")
+
+
+def _unattended_selection(
+    definition: RnaDecisionDefinition,
+    evidence: EvidenceBundle,
+    *,
+    option_id: str | None = None,
+    reason: str,
+) -> DecisionSelection:
+    if "rule" not in definition.spec.allowedSources:
+        raise ValueError(
+            "The registered decision does not allow deterministic resolution"
+        )
+    selected_option_id = option_id or _unattended_option_id(definition)
+    return _selection_for_option(
+        definition,
+        evidence,
+        selected_option_id,
+        rationale=reason,
+    )
 
 
 def _validate_selection(
@@ -254,6 +333,11 @@ class DecisionStagesMixin:
         definition: RnaDecisionDefinition,
         evidence: EvidenceBundle,
         answers: Mapping[str, Any],
+        *,
+        review_instructions: str | None = None,
+        visual_content: Sequence[Any] = (),
+        agent_selection: DecisionSelection | None = None,
+        agent_model_name: str | None = None,
     ) -> DecisionReconsideration:
         """Select from new evidence, then create a revision only when it changes."""
         evidence = (
@@ -272,6 +356,10 @@ class DecisionStagesMixin:
             raise ValueError("Reconsideration requires an active target decision")
         question_id = f"decision:{definition.spec.decisionId}Review"
         raw_answer = answers.get(question_id)
+        if raw_answer is not None and agent_selection is not None:
+            raise ValueError(
+                "Decision reconsideration cannot combine human and agent selections"
+            )
         source: DecisionSource
         model_name: str | None = None
         if raw_answer is not None:
@@ -303,6 +391,14 @@ class DecisionStagesMixin:
                 ),
             )
             source = "human"
+        elif agent_selection is not None:
+            selection = _validate_selection(
+                definition,
+                evidence,
+                agent_selection,
+            )
+            source = "agent"
+            model_name = agent_model_name
         else:
             payload = {
                 "decisionId": definition.spec.decisionId,
@@ -316,20 +412,28 @@ class DecisionStagesMixin:
                     item.model_dump(mode="json") for item in evidence.evidence
                 ],
             }
-            user_prompt = json.dumps(payload, indent=2, sort_keys=True)
+            text_prompt = json.dumps(payload, indent=2, sort_keys=True)
+            user_prompt: Any = (
+                [text_prompt, *visual_content] if visual_content else text_prompt
+            )
             try:
                 execution = run_agent_sync(
                     model=self.model,
                     output_type=DecisionSelection,
                     system_prompt=(
-                        "Select whether the active feature policy should remain "
-                        "unchanged or use the one newly licensed exclusion bundle. "
-                        "Cite every required evidence ID and class. The exclusion "
-                        "affects representation only, never marker testing."
+                        review_instructions
+                        or (
+                            "Reconsider the active decision using only the "
+                            "new evidence and registered options. Cite every "
+                            "required evidence ID and class. Keep the active option "
+                            "unless the evidence supports a specific replacement. "
+                            "Do not invent operations, parameters, artifacts, or "
+                            "evidence."
+                        )
                     ),
                     user_prompt=user_prompt,
                     config=request_record.config.agentRunConfig,
-                    name=f"rna_{definition.spec.decisionId}_review",
+                    name=f"decision_{definition.spec.decisionId}_review",
                     output_validator=lambda value: _validate_selection(
                         definition,
                         evidence,
@@ -337,8 +441,63 @@ class DecisionStagesMixin:
                     ),
                 )
             except AgentRunError:
+                if request_record.config.inputPolicy == "unattended":
+                    selection = _unattended_selection(
+                        definition,
+                        evidence,
+                        option_id=target.selectedOptionId,
+                        reason=(
+                            "The reconsideration model failed, so the unattended "
+                            "workflow retained the active registered option."
+                        ),
+                    )
+                    source = "rule"
+                else:
+                    return DecisionReconsideration(
+                        selection=None,
+                        resolution=None,
+                        revised=False,
+                        snapshotSha256=snapshot_sha256,
+                        question=WorkflowQuestion(
+                            questionId=question_id,
+                            decisionId=definition.spec.decisionId,
+                            question=definition.spec.question,
+                            options=[
+                                option.optionId for option in definition.spec.options
+                            ],
+                            evidenceIds=[item.evidenceId for item in evidence.evidence],
+                        ),
+                    )
+            else:
+                if not isinstance(execution.output, DecisionSelection):
+                    raise TypeError(
+                        "Decision reconsideration returned an unexpected output type"
+                    )
+                selection = _validate_selection(definition, evidence, execution.output)
+                source = "agent"
+                model_name = execution.runInfo.modelName
+
+        selected_status = definition.spec.option_by_id()[
+            selection.selectedOptionId
+        ].status
+        if selected_status == "defer":
+            if request_record.config.inputPolicy == "unattended":
+                selection = _unattended_selection(
+                    definition,
+                    evidence,
+                    option_id=target.selectedOptionId,
+                    reason=(
+                        "The reconsideration model deferred, so the unattended "
+                        "workflow retained the active registered option."
+                    ),
+                )
+                source = "rule"
+                selected_status = definition.spec.option_by_id()[
+                    selection.selectedOptionId
+                ].status
+            else:
                 return DecisionReconsideration(
-                    selection=None,
+                    selection=selection,
                     resolution=None,
                     revised=False,
                     snapshotSha256=snapshot_sha256,
@@ -350,18 +509,30 @@ class DecisionStagesMixin:
                         evidenceIds=[item.evidenceId for item in evidence.evidence],
                     ),
                 )
-            if not isinstance(execution.output, DecisionSelection):
-                raise TypeError(
-                    "RNA reconsideration model returned an unexpected output type"
+        if selection.selectedOptionId == target.selectedOptionId:
+            return DecisionReconsideration(
+                selection=selection,
+                resolution=None,
+                revised=False,
+                snapshotSha256=snapshot_sha256,
+            )
+        if len(workflow.revisionRequests) >= workflow.maxRevisions:
+            if request_record.config.inputPolicy == "unattended":
+                retained = _unattended_selection(
+                    definition,
+                    evidence,
+                    option_id=target.selectedOptionId,
+                    reason=(
+                        "The revision budget is exhausted, so the unattended "
+                        "workflow retained the active registered option."
+                    ),
                 )
-            selection = _validate_selection(definition, evidence, execution.output)
-            source = "agent"
-            model_name = execution.runInfo.modelName
-
-        selected_status = definition.spec.option_by_id()[
-            selection.selectedOptionId
-        ].status
-        if selected_status == "defer":
+                return DecisionReconsideration(
+                    selection=retained,
+                    resolution=None,
+                    revised=False,
+                    snapshotSha256=snapshot_sha256,
+                )
             return DecisionReconsideration(
                 selection=selection,
                 resolution=None,
@@ -370,17 +541,14 @@ class DecisionStagesMixin:
                 question=WorkflowQuestion(
                     questionId=question_id,
                     decisionId=definition.spec.decisionId,
-                    question=definition.spec.question,
-                    options=[option.optionId for option in definition.spec.options],
+                    question=(
+                        "The observed evidence supports changing this decision, "
+                        "but the bounded revision budget is exhausted. Retain the "
+                        "active option explicitly or stop the workflow."
+                    ),
+                    options=[target.selectedOptionId],
                     evidenceIds=[item.evidenceId for item in evidence.evidence],
                 ),
-            )
-        if selection.selectedOptionId == target.selectedOptionId:
-            return DecisionReconsideration(
-                selection=selection,
-                resolution=None,
-                revised=False,
-                snapshotSha256=snapshot_sha256,
             )
 
         target_position = workflow.decisionRecords.index(target)
@@ -623,12 +791,23 @@ class DecisionStagesMixin:
                 raise ValueError(
                     "Decision workflow is paused at another exact checkpoint"
                 )
-            return DecisionResolution(
-                workflow=workflow,
-                record=None,
-                compiled=None,
-                snapshotSha256=snapshot_sha256,
-            )
+            if request_record.config.inputPolicy == "unattended":
+                selection = _unattended_selection(
+                    definition,
+                    evidence,
+                    reason=(
+                        "The unattended workflow resolved the persisted checkpoint "
+                        "with the registered metric-preferred or baseline option."
+                    ),
+                )
+                source = "rule"
+            else:
+                return DecisionResolution(
+                    workflow=workflow,
+                    record=None,
+                    compiled=None,
+                    snapshotSha256=snapshot_sha256,
+                )
         else:
             payload = {
                 "decisionId": definition.spec.decisionId,
@@ -670,6 +849,99 @@ class DecisionStagesMixin:
                     ),
                 )
             except AgentRunError as exc:
+                if request_record.config.inputPolicy == "unattended":
+                    selection = _unattended_selection(
+                        definition,
+                        evidence,
+                        reason=(
+                            "The bounded model run failed, so the unattended "
+                            "workflow selected the registered metric-preferred or "
+                            "baseline option."
+                        ),
+                    )
+                    source = "rule"
+                    prompt_sha256 = None
+                    model_name = None
+                else:
+                    pending = PendingDecision(
+                        questionId=question_id,
+                        decisionId=definition.spec.decisionId,
+                        definitionVersion=definition.spec.definitionVersion,
+                        evidenceBundleId=evidence.bundleId,
+                        evidenceBundleSha256=evidence_sha256,
+                        offeredOptionIds=[
+                            option.optionId for option in definition.spec.options
+                        ],
+                        availableEvidenceIds=[
+                            item.evidenceId for item in evidence.evidence
+                        ],
+                        reason=(
+                            "The bounded model run did not return a valid registered "
+                            f"selection ({type(exc).__name__})."
+                        ),
+                        createdAtNs=time.time_ns(),
+                    )
+                    paused = pause_decision_workflow(workflow, pending)
+                    snapshot = save_decision_workflow_snapshot(
+                        store,
+                        paused,
+                        workspace=request_record.request.workspace,
+                    )
+                    return DecisionResolution(
+                        workflow=snapshot.workflow,
+                        record=None,
+                        compiled=None,
+                        snapshotSha256=snapshot.contentSha256,
+                    )
+            else:
+                if not isinstance(execution.output, DecisionSelection):
+                    raise TypeError(
+                        "RNA decision model returned an unexpected output type"
+                    )
+                selection = _validate_selection(definition, evidence, execution.output)
+                source = "agent"
+                model_name = execution.runInfo.modelName
+
+        selected_option = definition.spec.option_by_id()[selection.selectedOptionId]
+        if selected_option.status == "defer":
+            if request_record.config.inputPolicy == "unattended":
+                selection = _unattended_selection(
+                    definition,
+                    evidence,
+                    reason=(
+                        "The model deferred, so the unattended workflow selected "
+                        "the registered metric-preferred or baseline option."
+                    ),
+                )
+                selected_option = definition.spec.option_by_id()[
+                    selection.selectedOptionId
+                ]
+                source = "rule"
+                prompt_sha256 = None
+                model_name = None
+            else:
+                if workflow.status == "needsInput":
+                    active_pending = workflow.pendingDecision
+                    if active_pending is None or (
+                        active_pending.decisionId != definition.spec.decisionId
+                        or active_pending.definitionVersion
+                        != definition.spec.definitionVersion
+                        or active_pending.evidenceBundleId != evidence.bundleId
+                        or active_pending.evidenceBundleSha256 != evidence_sha256
+                        or active_pending.offeredOptionIds
+                        != [option.optionId for option in definition.spec.options]
+                        or active_pending.availableEvidenceIds
+                        != [item.evidenceId for item in evidence.evidence]
+                    ):
+                        raise ValueError(
+                            "Deferred answer does not match the exact pending checkpoint"
+                        )
+                    return DecisionResolution(
+                        workflow=workflow,
+                        record=None,
+                        compiled=None,
+                        snapshotSha256=snapshot_sha256,
+                    )
                 pending = PendingDecision(
                     questionId=question_id,
                     decisionId=definition.spec.decisionId,
@@ -682,10 +954,7 @@ class DecisionStagesMixin:
                     availableEvidenceIds=[
                         item.evidenceId for item in evidence.evidence
                     ],
-                    reason=(
-                        "The bounded model run did not return a valid registered "
-                        f"selection ({type(exc).__name__})."
-                    ),
+                    reason=selection.rationale,
                     createdAtNs=time.time_ns(),
                 )
                 paused = pause_decision_workflow(workflow, pending)
@@ -700,61 +969,6 @@ class DecisionStagesMixin:
                     compiled=None,
                     snapshotSha256=snapshot.contentSha256,
                 )
-            if not isinstance(execution.output, DecisionSelection):
-                raise TypeError("RNA decision model returned an unexpected output type")
-            selection = _validate_selection(definition, evidence, execution.output)
-            source = "agent"
-            model_name = execution.runInfo.modelName
-
-        selected_option = definition.spec.option_by_id()[selection.selectedOptionId]
-        if selected_option.status == "defer":
-            if workflow.status == "needsInput":
-                active_pending = workflow.pendingDecision
-                if active_pending is None or (
-                    active_pending.decisionId != definition.spec.decisionId
-                    or active_pending.definitionVersion
-                    != definition.spec.definitionVersion
-                    or active_pending.evidenceBundleId != evidence.bundleId
-                    or active_pending.evidenceBundleSha256 != evidence_sha256
-                    or active_pending.offeredOptionIds
-                    != [option.optionId for option in definition.spec.options]
-                    or active_pending.availableEvidenceIds
-                    != [item.evidenceId for item in evidence.evidence]
-                ):
-                    raise ValueError(
-                        "Deferred answer does not match the exact pending checkpoint"
-                    )
-                return DecisionResolution(
-                    workflow=workflow,
-                    record=None,
-                    compiled=None,
-                    snapshotSha256=snapshot_sha256,
-                )
-            pending = PendingDecision(
-                questionId=question_id,
-                decisionId=definition.spec.decisionId,
-                definitionVersion=definition.spec.definitionVersion,
-                evidenceBundleId=evidence.bundleId,
-                evidenceBundleSha256=evidence_sha256,
-                offeredOptionIds=[
-                    option.optionId for option in definition.spec.options
-                ],
-                availableEvidenceIds=[item.evidenceId for item in evidence.evidence],
-                reason=selection.rationale,
-                createdAtNs=time.time_ns(),
-            )
-            paused = pause_decision_workflow(workflow, pending)
-            snapshot = save_decision_workflow_snapshot(
-                store,
-                paused,
-                workspace=request_record.request.workspace,
-            )
-            return DecisionResolution(
-                workflow=snapshot.workflow,
-                record=None,
-                compiled=None,
-                snapshotSha256=snapshot.contentSha256,
-            )
 
         created_at_ns = time.time_ns()
         record = _record_from_selection(

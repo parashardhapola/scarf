@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 import numpy as np
 
+from ..metrics import graph_connectivity
 from ..storage.refs import ArtifactRef
+from ..storage.types import as_zarr_array
 from .config import CONFIG, AgentRunConfig
 from .config._deps import AGENT_INSTALL_HINT
 from .config.agent_exec import run_agent_sync
@@ -107,13 +109,33 @@ class ParameterMetrics(AgentDataModel):
     pcaSilhouette: float | None = None
     macroF1: float | None = None
     weightedF1: float | None = None
+    membershipStrengthMean: float | None = None
+    membershipStrengthMedian: float | None = None
+    membershipStrengthP10: float | None = None
+    membershipStrengthByCluster: dict[str, float] = Field(default_factory=dict)
+    membershipStrengthSampleSize: int | None = None
+    clusterConnectivity: float | None = None
     seedStability: float | None = None
     subsampleStability: float | None = None
     markerCoherence: float | None = None
+    markerSpecificityMedian: float | None = None
+    markerSpecificityByCluster: dict[str, float] = Field(default_factory=dict)
+    markerAucByCluster: dict[str, float] = Field(default_factory=dict)
+    topMarkerGenes: dict[str, list[str]] = Field(default_factory=dict)
     crossUnitSupport: float | None = None
     technicalAssociation: dict[str, float] = Field(default_factory=dict)
     componentVariance: list[float] = Field(default_factory=list)
+    pcaExplainedVarianceRatio: list[float] = Field(default_factory=list)
+    pcaCumulativeExplainedVarianceRatio: list[float] = Field(default_factory=list)
+    topLoadingGenes: dict[str, list[str]] = Field(default_factory=dict)
     loadingFamilyEnrichment: dict[str, float] = Field(default_factory=dict)
+    loadingFamilyEnrichmentByComponent: dict[str, dict[str, float]] = Field(
+        default_factory=dict
+    )
+    pcaComponentAssociations: dict[str, dict[str, list[float]]] = Field(
+        default_factory=dict
+    )
+    batchPcaAssociation: dict[str, float] = Field(default_factory=dict)
     technicalPcaAssociation: dict[str, float] = Field(default_factory=dict)
     protectedPcaAssociation: dict[str, float] = Field(default_factory=dict)
     qcPcaAssociation: dict[str, float] = Field(default_factory=dict)
@@ -121,8 +143,15 @@ class ParameterMetrics(AgentDataModel):
     markerFamilyEnrichment: dict[str, float] = Field(default_factory=dict)
     protectedMarkerFamilies: list[str] = Field(default_factory=list)
     doubletHighScoreConcentration: float | None = None
+    doubletScoreQuantiles: dict[str, float] = Field(default_factory=dict)
+    doubletScoreByCapture: dict[str, dict[str, float]] = Field(default_factory=dict)
+    doubletCaptureCoverage: float | None = None
     batchMixing: dict[str, float] = Field(default_factory=dict)
     biologicalPreservation: dict[str, dict[str, float]] = Field(default_factory=dict)
+    paretoOptimal: bool | None = None
+    dominatedByCandidateIds: list[str] = Field(default_factory=list)
+    dominatesCandidateIds: list[str] = Field(default_factory=list)
+    dominanceMetrics: dict[str, list[str]] = Field(default_factory=dict)
 
     @classmethod
     def get_blank(cls) -> "ParameterMetrics":
@@ -801,6 +830,19 @@ def parameter_evaluation_payload(
     evaluation: ParameterCandidateEvaluation,
 ) -> dict[str, Any]:
     """Return only candidate evidence needed for planning and selection."""
+    metrics = evaluation.metrics.model_dump(mode="json")
+    loading_items = list(evaluation.metrics.topLoadingGenes.items())
+    bounded_loading_items = [
+        *loading_items[:10],
+        *(loading_items[-3:] if len(loading_items) > 13 else loading_items[10:]),
+    ]
+    metrics["topLoadingGenes"] = {
+        component: genes[:10] for component, genes in bounded_loading_items
+    }
+    metrics["topMarkerGenes"] = {
+        cluster: genes[:10]
+        for cluster, genes in list(evaluation.metrics.topMarkerGenes.items())[:30]
+    }
     return {
         "candidateId": evaluation.candidateId,
         "phase": evaluation.phase,
@@ -809,7 +851,7 @@ def parameter_evaluation_payload(
         "eligible": evaluation.eligible,
         "parameters": evaluation.parameters.model_dump(mode="json"),
         "effectiveDimensions": evaluation.effectiveDimensions,
-        "metrics": evaluation.metrics.model_dump(mode="json"),
+        "metrics": metrics,
         "evidenceIds": evaluation.evidenceIds,
         "eligibilityReasons": evaluation.eligibilityReasons,
         "warnings": [warning[:500] for warning in evaluation.warnings[:10]],
@@ -890,7 +932,10 @@ def parameter_tuning_system_prompt(min_cluster_cells: int) -> str:
         evidence for parameter quality. Treat pcaSilhouette, macroF1, and
         weightedF1 only as PCA cluster-separability metrics. Biological
         preservation evidence exists only in a non-empty biologicalPreservation
-        map. Do not call any metric highest, lowest, improved, degraded, or
+        map. A candidate with non-empty dominatedByCandidateIds is Pareto
+        dominated. Selecting a dominated graph or resolution requires at least
+        two independent non-geometric evidence classes that explain the
+        tradeoff. Do not call any metric highest, lowest, improved, degraded, or
         monotonic without checking its exact value across every relevant
         candidate. Narrative fields contain plain prose only and must not contain
         serialized JSON keys or objects. When multiple candidates complete,
@@ -1351,6 +1396,96 @@ def run_candidate_reduction(
     return ref, "identity", effective_dimensions
 
 
+def _bounded_membership_summary(
+    values: Any,
+    labels: np.ndarray,
+    *,
+    maximum_sample_size: int = 65_536,
+) -> tuple[float, float, float, dict[str, float], int]:
+    if len(values.shape) != 1 or values.shape != labels.shape:
+        raise ValueError("Membership strengths must align with cluster labels")
+    n_values = int(values.shape[0])
+    if n_values < 1:
+        raise ValueError("Membership strengths cannot be empty")
+    stride = max(1, (n_values + maximum_sample_size - 1) // maximum_sample_size)
+    total = 0.0
+    sampled_values: list[np.ndarray] = []
+    sampled_labels: list[np.ndarray] = []
+    for start in range(0, n_values, 65_536):
+        block = np.asarray(values[start : start + 65_536], dtype=np.float64)
+        if not np.isfinite(block).all():
+            raise ValueError("Membership strengths must be finite")
+        total += float(block.sum())
+        offset = (-start) % stride
+        sampled_values.append(block[offset::stride])
+        sampled_labels.append(labels[start + offset : start + len(block) : stride])
+    sample = np.concatenate(sampled_values)
+    sample_labels = np.concatenate(sampled_labels)
+    by_cluster = {
+        str(cluster): float(np.median(sample[sample_labels == cluster]))
+        for cluster in np.unique(sample_labels)
+    }
+    return (
+        total / n_values,
+        float(np.median(sample)),
+        float(np.quantile(sample, 0.1)),
+        by_cluster,
+        int(len(sample)),
+    )
+
+
+def _collect_cluster_structure_metrics(
+    store: Any,
+    *,
+    cluster_ref: Any,
+    graph_ref: Any,
+    cluster_values: np.ndarray,
+    candidate_id: str,
+    metrics: ParameterMetrics,
+    evidence_ids: list[str],
+    warnings: list[str],
+) -> ArtifactRef | None:
+    calculate_membership = getattr(store, "calc_membership_strength", None)
+    if not callable(calculate_membership):
+        return None
+    membership_ref: ArtifactRef | None = None
+    try:
+        membership_ref = calculate_membership(
+            cluster_ref,
+            graph_ref,
+            invalidate_cache=False,
+        )
+        membership_group = store.load_artifact(membership_ref)
+        membership_values = as_zarr_array(
+            membership_group["values"],
+            name="values",
+        )
+        mean, median, p10, by_cluster, sample_size = _bounded_membership_summary(
+            membership_values,
+            cluster_values,
+        )
+        metrics.membershipStrengthMean = mean
+        metrics.membershipStrengthMedian = median
+        metrics.membershipStrengthP10 = p10
+        metrics.membershipStrengthByCluster = by_cluster
+        metrics.membershipStrengthSampleSize = sample_size
+        evidence_ids.append(f"candidate:{candidate_id}:membershipStrength")
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        warnings.append(f"Cluster membership strength unavailable: {exc}")
+        membership_ref = None
+
+    try:
+        graph_group = store.load_artifact(graph_ref)
+        graph_edges = as_zarr_array(graph_group["edges"], name="edges")
+        connectivity = float(graph_connectivity(graph_edges, cluster_values))
+        if np.isfinite(connectivity):
+            metrics.clusterConnectivity = connectivity
+            evidence_ids.append(f"candidate:{candidate_id}:clusterConnectivity")
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        warnings.append(f"Cluster connectivity unavailable: {exc}")
+    return membership_ref
+
+
 def _collect_parameter_candidate_metrics(
     deps: ParameterTuningDependencies,
     *,
@@ -1363,7 +1498,7 @@ def _collect_parameter_candidate_metrics(
     cluster_column: str,
     evidence_ids: list[str],
     warnings: list[str],
-) -> tuple[ParameterMetrics, list[str]]:
+) -> tuple[ParameterMetrics, list[str], ArtifactRef | None]:
     store = deps.store
     cluster_group = store.load_artifact(cluster_ref)
     cluster_data = cluster_group["values"]
@@ -1382,6 +1517,16 @@ def _collect_parameter_candidate_metrics(
         minClusterFraction=min_cluster_fraction,
     )
     evidence_ids.append(f"candidate:{candidate_id}:clusters")
+    membership_ref = _collect_cluster_structure_metrics(
+        store,
+        cluster_ref=cluster_ref,
+        graph_ref=graph_ref,
+        cluster_values=cluster_values,
+        candidate_id=candidate_id,
+        metrics=metrics,
+        evidence_ids=evidence_ids,
+        warnings=warnings,
+    )
 
     try:
         graph_scores = store.metric_graph_silhouette(
@@ -1479,7 +1624,7 @@ def _collect_parameter_candidate_metrics(
             f"smallest cluster has {min_cluster_cells} cells; "
             f"minimum is {deps.minClusterCells}"
         )
-    return metrics, eligibility_reasons
+    return metrics, eligibility_reasons, membership_ref
 
 
 def execute_parameter_candidate(
@@ -1643,7 +1788,11 @@ def execute_parameter_candidate(
                 f"Parameter candidate {candidate_id!r}: completed Leiden clustering"
             )
 
-            metrics, eligibility_reasons = _collect_parameter_candidate_metrics(
+            (
+                metrics,
+                eligibility_reasons,
+                membership_ref,
+            ) = _collect_parameter_candidate_metrics(
                 deps,
                 candidate=candidate,
                 candidate_id=candidate_id,
@@ -1655,6 +1804,10 @@ def execute_parameter_candidate(
                 evidence_ids=evidence_ids,
                 warnings=warnings,
             )
+            if membership_ref is not None:
+                artifacts["membershipStrength"] = ArtifactRecord.from_ref(
+                    membership_ref
+                )
 
             evaluation = ParameterCandidateEvaluation(
                 candidateId=candidate_id,
@@ -1717,6 +1870,361 @@ async def evaluate_parameter_candidate(
     """Expose deterministic candidate execution as a bounded agent tool."""
 
     return execute_parameter_candidate(ctx.deps, candidate_id)
+
+
+def _finite_metric(
+    objectives: dict[str, tuple[float, int, str]],
+    name: str,
+    value: float | None,
+    *,
+    direction: int,
+    evidence_class: str,
+) -> None:
+    if value is not None and np.isfinite(value):
+        objectives[name] = (float(value), direction, evidence_class)
+
+
+def _candidate_objectives(
+    metrics: ParameterMetrics,
+) -> dict[str, tuple[float, int, str]]:
+    objectives: dict[str, tuple[float, int, str]] = {}
+    for name, value in (
+        ("minClusterFraction", metrics.minClusterFraction),
+        ("graphSilhouetteMedian", metrics.graphSilhouetteMedian),
+        ("membershipStrengthMean", metrics.membershipStrengthMean),
+        ("membershipStrengthP10", metrics.membershipStrengthP10),
+        ("clusterConnectivity", metrics.clusterConnectivity),
+    ):
+        _finite_metric(
+            objectives,
+            name,
+            value,
+            direction=1,
+            evidence_class="geometric",
+        )
+    for name, value in (
+        ("seedStability", metrics.seedStability),
+        ("subsampleStability", metrics.subsampleStability),
+    ):
+        _finite_metric(
+            objectives,
+            name,
+            value,
+            direction=1,
+            evidence_class="resamplingStability",
+        )
+    for name, value in (
+        ("markerCoherence", metrics.markerCoherence),
+        ("markerSpecificityMedian", metrics.markerSpecificityMedian),
+    ):
+        _finite_metric(
+            objectives,
+            name,
+            value,
+            direction=1,
+            evidence_class="markerCoherence",
+        )
+    _finite_metric(
+        objectives,
+        "crossUnitSupport",
+        metrics.crossUnitSupport,
+        direction=1,
+        evidence_class="crossUnitSupport",
+    )
+    _finite_metric(
+        objectives,
+        "doubletHighScoreConcentration",
+        metrics.doubletHighScoreConcentration,
+        direction=-1,
+        evidence_class="qualityControl",
+    )
+    for column, value in metrics.technicalAssociation.items():
+        _finite_metric(
+            objectives,
+            f"technicalAssociation:{column}",
+            value,
+            direction=-1,
+            evidence_class="technical",
+        )
+    for column, value in metrics.batchMixing.items():
+        _finite_metric(
+            objectives,
+            f"batchMixing:{column}",
+            value,
+            direction=1,
+            evidence_class="batchRemoval",
+        )
+    for column, values in metrics.biologicalPreservation.items():
+        for name, value in values.items():
+            _finite_metric(
+                objectives,
+                f"biologicalPreservation:{column}:{name}",
+                value,
+                direction=1,
+                evidence_class="protectedVariablePreservation",
+            )
+    return objectives
+
+
+def _single_varied_parameter(
+    left: ParameterCandidate,
+    right: ParameterCandidate,
+) -> str | None:
+    if (
+        left.reductionMethod != right.reductionMethod
+        or left.useHarmony != right.useHarmony
+    ):
+        return None
+    varied = [
+        name
+        for name in ("dimensions", "neighborsK", "leidenResolution")
+        if getattr(left, name) != getattr(right, name)
+    ]
+    return varied[0] if len(varied) == 1 else None
+
+
+def _dominance_metrics(
+    left: ParameterMetrics,
+    right: ParameterMetrics,
+    *,
+    tolerance: float,
+) -> list[str]:
+    left_objectives = _candidate_objectives(left)
+    right_objectives = _candidate_objectives(right)
+    if not left_objectives or set(left_objectives) != set(right_objectives):
+        return []
+    classes = {value[2] for value in left_objectives.values()}
+    if len(classes) < 2:
+        return []
+    strict: list[str] = []
+    for name in sorted(left_objectives):
+        left_value, direction, _evidence_class = left_objectives[name]
+        right_value = right_objectives[name][0]
+        difference = direction * (left_value - right_value)
+        if difference < -tolerance:
+            return []
+        if difference > tolerance:
+            strict.append(name)
+    return strict
+
+
+def annotate_candidate_dominance(
+    evaluations: Sequence[ParameterCandidateEvaluation],
+    *,
+    tolerance: float = 0.02,
+) -> tuple[ParameterCandidateEvaluation, ...]:
+    """Attach conservative pairwise Pareto evidence to comparable candidates."""
+
+    values = list(evaluations)
+    if tolerance < 0 or not np.isfinite(tolerance):
+        raise ValueError("Dominance tolerance must be finite and non-negative")
+    completed = [value for value in values if value.status == "done" and value.eligible]
+    dominated_by: dict[str, list[str]] = {value.candidateId: [] for value in completed}
+    dominates: dict[str, list[str]] = {value.candidateId: [] for value in completed}
+    metrics_by_id: dict[str, dict[str, list[str]]] = {
+        value.candidateId: {} for value in completed
+    }
+    comparable: set[str] = set()
+    for left in completed:
+        for right in completed:
+            if left.candidateId == right.candidateId or (
+                _single_varied_parameter(left.parameters, right.parameters) is None
+            ):
+                continue
+            comparable.add(left.candidateId)
+            strict = _dominance_metrics(
+                left.metrics,
+                right.metrics,
+                tolerance=tolerance,
+            )
+            if not strict:
+                continue
+            dominates[left.candidateId].append(right.candidateId)
+            dominated_by[right.candidateId].append(left.candidateId)
+            metrics_by_id[left.candidateId][f"dominates:{right.candidateId}"] = strict
+            metrics_by_id[right.candidateId][f"dominatedBy:{left.candidateId}"] = strict
+
+    annotated: list[ParameterCandidateEvaluation] = []
+    for evaluation in values:
+        if evaluation.candidateId not in dominated_by:
+            annotated.append(evaluation)
+            continue
+        candidate_id = evaluation.candidateId
+        candidate_dominators = sorted(set(dominated_by[candidate_id]))
+        candidate_dominates = sorted(set(dominates[candidate_id]))
+        updated_metrics = evaluation.metrics.model_copy(
+            update={
+                "paretoOptimal": (
+                    not candidate_dominators if candidate_id in comparable else None
+                ),
+                "dominatedByCandidateIds": candidate_dominators,
+                "dominatesCandidateIds": candidate_dominates,
+                "dominanceMetrics": metrics_by_id[candidate_id],
+            }
+        )
+        prefix = f"candidate:{candidate_id}:"
+        retained_evidence = [
+            evidence_id
+            for evidence_id in evaluation.evidenceIds
+            if not (
+                evidence_id == f"{prefix}paretoDominance"
+                or evidence_id.startswith(f"{prefix}dominatedBy:")
+                or evidence_id.startswith(f"{prefix}dominates:")
+            )
+        ]
+        dominance_evidence = (
+            [f"{prefix}paretoDominance"] if candidate_id in comparable else []
+        )
+        dominance_evidence.extend(
+            f"{prefix}dominatedBy:{other}" for other in candidate_dominators
+        )
+        dominance_evidence.extend(
+            f"{prefix}dominates:{other}" for other in candidate_dominates
+        )
+        annotated.append(
+            evaluation.model_copy(
+                update={
+                    "metrics": updated_metrics,
+                    "evidenceIds": [
+                        *retained_evidence,
+                        *dominance_evidence,
+                    ],
+                }
+            )
+        )
+    return tuple(annotated)
+
+
+def harmony_acceptance_gate(
+    native: ParameterCandidateEvaluation | None,
+    harmony: ParameterCandidateEvaluation | None,
+    *,
+    batch_columns: Sequence[str],
+    protected_columns: Sequence[str],
+    independent_unit_columns: Sequence[str] = (),
+    tolerance: float = 0.05,
+    require_doublet_evidence: bool = False,
+) -> tuple[bool, list[str]]:
+    """Require matched batch improvement without material biological loss."""
+
+    if tolerance < 0 or not np.isfinite(tolerance):
+        raise ValueError("Harmony gate tolerance must be finite and non-negative")
+    reasons: list[str] = []
+    if native is None or harmony is None:
+        return False, ["Matched native and Harmony candidates are unavailable."]
+    if native.status != "done" or not native.eligible:
+        reasons.append("The matched native candidate is not an eligible execution.")
+    if harmony.status != "done" or not harmony.eligible:
+        reasons.append("The matched Harmony candidate is not an eligible execution.")
+    if native.parameters.useHarmony or not harmony.parameters.useHarmony:
+        reasons.append("Candidates do not have native and Harmony correction modes.")
+    native_parameters = native.parameters.model_dump(
+        mode="json",
+        exclude={"candidateId", "useHarmony"},
+    )
+    harmony_parameters = harmony.parameters.model_dump(
+        mode="json",
+        exclude={"candidateId", "useHarmony"},
+    )
+    if native_parameters != harmony_parameters:
+        reasons.append("Native and Harmony candidate parameters are not matched.")
+    if core_artifact_reference(native.cellSelection) != core_artifact_reference(
+        harmony.cellSelection
+    ):
+        reasons.append("Native and Harmony candidates use different cell selections.")
+
+    columns = list(dict.fromkeys(batch_columns))
+    if not columns:
+        reasons.append("No approved batch metric was supplied.")
+    batch_deltas: dict[str, float] = {}
+    for column in columns:
+        native_score = native.metrics.batchMixing.get(column)
+        harmony_score = harmony.metrics.batchMixing.get(column)
+        if native_score is None or harmony_score is None:
+            reasons.append(f"Batch comparison is missing for {column!r}.")
+            continue
+        batch_deltas[column] = harmony_score - native_score
+    if columns and len(batch_deltas) == len(columns):
+        if not any(delta > tolerance for delta in batch_deltas.values()):
+            reasons.append(
+                "Harmony did not improve an approved batch metric beyond tolerance."
+            )
+        if any(delta < -tolerance for delta in batch_deltas.values()):
+            reasons.append("Harmony materially worsened an approved batch metric.")
+
+    for column in dict.fromkeys(protected_columns):
+        native_scores = native.metrics.biologicalPreservation.get(column)
+        harmony_scores = harmony.metrics.biologicalPreservation.get(column)
+        if not native_scores or not harmony_scores:
+            reasons.append(f"Protected comparison is missing for {column!r}.")
+            continue
+        if set(native_scores) != set(harmony_scores):
+            reasons.append(f"Protected metrics do not align for {column!r}.")
+            continue
+        if any(
+            harmony_scores[name] < native_scores[name] - tolerance
+            for name in native_scores
+        ):
+            reasons.append(
+                f"Harmony materially degraded protected evidence for {column!r}."
+            )
+
+    if independent_unit_columns:
+        if (
+            native.metrics.crossUnitSupport is None
+            or harmony.metrics.crossUnitSupport is None
+        ):
+            reasons.append("Cross-unit support comparison is missing.")
+        elif (
+            harmony.metrics.crossUnitSupport
+            < native.metrics.crossUnitSupport - tolerance
+        ):
+            reasons.append("Harmony materially degraded cross-unit support.")
+
+    if (
+        native.metrics.markerCoherence is None
+        or harmony.metrics.markerCoherence is None
+    ):
+        reasons.append("Marker-coherence comparison is missing.")
+    elif harmony.metrics.markerCoherence < native.metrics.markerCoherence - tolerance:
+        reasons.append("Harmony materially degraded marker coherence.")
+
+    for label, native_value, harmony_value in (
+        (
+            "marker specificity",
+            native.metrics.markerSpecificityMedian,
+            harmony.metrics.markerSpecificityMedian,
+        ),
+        (
+            "cluster connectivity",
+            native.metrics.clusterConnectivity,
+            harmony.metrics.clusterConnectivity,
+        ),
+        (
+            "membership strength",
+            native.metrics.membershipStrengthMean,
+            harmony.metrics.membershipStrengthMean,
+        ),
+    ):
+        if native_value is None and harmony_value is None:
+            continue
+        if native_value is None or harmony_value is None:
+            reasons.append(f"Matched {label} comparison is missing.")
+        elif harmony_value < native_value - tolerance:
+            reasons.append(f"Harmony materially degraded {label}.")
+
+    native_doublet = native.metrics.doubletHighScoreConcentration
+    harmony_doublet = harmony.metrics.doubletHighScoreConcentration
+    if (
+        require_doublet_evidence
+        or native_doublet is not None
+        or harmony_doublet is not None
+    ):
+        if native_doublet is None or harmony_doublet is None:
+            reasons.append("Matched doublet-concentration comparison is missing.")
+        elif harmony_doublet > native_doublet + tolerance:
+            reasons.append("Harmony materially increased doublet concentration.")
+    return not reasons, reasons
 
 
 def validate_parameter_search_plan(
@@ -1944,6 +2452,74 @@ def validate_parameter_batch_search_plan(
     return plan.model_copy(update={"assayPlans": validated})
 
 
+def parameter_evidence_classes(evidence_ids: Sequence[str]) -> frozenset[str]:
+    """Infer stable scientific evidence classes from executor evidence IDs."""
+
+    classes: set[str] = set()
+    for evidence_id in evidence_ids:
+        token = evidence_id.casefold()
+        if (
+            "seedstability" in token
+            or "subsamplestability" in token
+            or token.endswith(":stability")
+        ):
+            classes.add("resamplingStability")
+        elif "marker" in token:
+            classes.add("markerCoherence")
+        elif "crossunitsupport" in token or "unitsupport" in token:
+            classes.add("crossUnitSupport")
+        elif (
+            "protected" in token
+            or "clisi" in token
+            or ("graphconnectivity" in token and "clusterconnectivity" not in token)
+        ):
+            classes.add("protectedVariablePreservation")
+        elif "doublet" in token:
+            classes.add("qualityControl")
+        elif "technical" in token or "batchmixing" in token:
+            classes.add("technical")
+        elif any(
+            value in token
+            for value in (
+                "clusterconnectivity",
+                "clusters",
+                "geometry",
+                "membershipstrength",
+                "neighbor",
+                "paretodominance",
+                "silhouette",
+            )
+        ):
+            classes.add("geometric")
+    return frozenset(classes)
+
+
+def require_dominated_candidate_evidence(
+    selected: ParameterCandidateEvaluation,
+    evidence_ids: Sequence[str],
+    *,
+    context: str,
+) -> None:
+    """Require two independent non-geometric classes for a dominated choice."""
+
+    if not selected.metrics.dominatedByCandidateIds:
+        return
+    independent = parameter_evidence_classes(evidence_ids).intersection(
+        {
+            "markerCoherence",
+            "resamplingStability",
+            "crossUnitSupport",
+            "protectedVariablePreservation",
+            "qualityControl",
+        }
+    )
+    if len(independent) < 2:
+        raise ValueError(
+            f"{context} selects a Pareto-dominated candidate and must cite at "
+            "least two independent non-geometric evidence classes"
+        )
+
+
 def validate_parameter_tuning_report(
     report: ParameterTuningReport,
     deps: ParameterTuningDependencies,
@@ -1952,11 +2528,18 @@ def validate_parameter_tuning_report(
 ) -> ParameterTuningReport:
     """Ground the model report in candidate executions recorded by the tool."""
 
-    evaluations = [
-        deps.evaluations[candidate_id]
-        for candidate_id in deps.executionOrder
-        if candidate_id in deps.evaluations
-    ]
+    evaluations = list(
+        annotate_candidate_dominance(
+            [
+                deps.evaluations[candidate_id]
+                for candidate_id in deps.executionOrder
+                if candidate_id in deps.evaluations
+            ]
+        )
+    )
+    evaluations_by_id = {
+        evaluation.candidateId: evaluation for evaluation in evaluations
+    }
     known_evidence = {
         evidence_id
         for evaluation in evaluations
@@ -1998,8 +2581,9 @@ def validate_parameter_tuning_report(
             )
 
     selected_artifacts: dict[str, ArtifactRecord] = {}
+    selected_evaluation: ParameterCandidateEvaluation | None = None
     if report.recommendedCandidateId is not None:
-        selected = deps.evaluations.get(report.recommendedCandidateId)
+        selected = evaluations_by_id.get(report.recommendedCandidateId)
         if selected is None:
             raise ValueError("Recommended candidate was not executed")
         if selected.status != "done":
@@ -2014,6 +2598,7 @@ def validate_parameter_tuning_report(
             raise ValueError(
                 "Recommendation evidence must include the selected candidate"
             )
+        selected_evaluation = selected
         selected_artifacts = dict(selected.artifacts)
 
     if report.status == "done" and not comparison_required and report.comparisons:
@@ -2069,6 +2654,54 @@ def validate_parameter_tuning_report(
                 raise ValueError(
                     "Each candidate comparison requires a concise grounded summary"
                 )
+            if (
+                selected_evaluation is not None
+                and comparison.candidateId
+                in selected_evaluation.metrics.dominatedByCandidateIds
+                and _single_varied_parameter(
+                    selected_evaluation.parameters,
+                    evaluations_by_id[comparison.candidateId].parameters,
+                )
+                in {"neighborsK", "leidenResolution"}
+            ):
+                require_dominated_candidate_evidence(
+                    selected_evaluation,
+                    comparison.evidenceIds,
+                    context=(f"The comparison with {comparison.candidateId!r}"),
+                )
+
+    graph_partition_dominators = (
+        [
+            candidate_id
+            for candidate_id in selected_evaluation.metrics.dominatedByCandidateIds
+            if candidate_id in evaluations_by_id
+            and _single_varied_parameter(
+                selected_evaluation.parameters,
+                evaluations_by_id[candidate_id].parameters,
+            )
+            in {"neighborsK", "leidenResolution"}
+        ]
+        if selected_evaluation is not None
+        else []
+    )
+    if (
+        report.status == "done"
+        and selected_evaluation is not None
+        and graph_partition_dominators
+    ):
+        selection_evidence = [
+            *report.evidenceIds,
+            *(
+                evidence_id
+                for comparison in report.comparisons
+                for evidence_id in comparison.evidenceIds
+            ),
+        ]
+        require_dominated_candidate_evidence(
+            selected_evaluation,
+            selection_evidence,
+            context="The tuning recommendation",
+        )
 
     return report.model_copy(
         update={
@@ -2807,6 +3440,7 @@ def prepare_parameter_tuning_dependencies(
     max_candidates: int = 5,
     max_refined_candidates: int = 0,
     allow_harmony_refinement: bool = True,
+    pair_harmony_candidates: bool | None = None,
     min_cluster_cells: int = 20,
     identity_feature_limit: int = 64,
 ) -> tuple[ParameterTuningDependencies, list[str]]:
@@ -2816,6 +3450,11 @@ def prepare_parameter_tuning_dependencies(
         raise ValueError("max_candidates must be at least one")
     if max_refined_candidates < 0:
         raise ValueError("max_refined_candidates must be non-negative")
+    if pair_harmony_candidates is not None and not isinstance(
+        pair_harmony_candidates,
+        bool,
+    ):
+        raise TypeError("pair_harmony_candidates must be a boolean or None")
     if min_cluster_cells < 1:
         raise ValueError("min_cluster_cells must be at least one")
     if identity_feature_limit < 2:
@@ -2865,8 +3504,12 @@ def prepare_parameter_tuning_dependencies(
             f"Initial candidate count exceeds max_candidates={max_candidates}"
         )
     pair_harmony = (
-        experimental_handoff is not None
-        and experimental_handoff.batchAction == "evaluateHarmony"
+        (
+            experimental_handoff is not None
+            and experimental_handoff.batchAction == "evaluateHarmony"
+        )
+        if pair_harmony_candidates is None
+        else pair_harmony_candidates
     )
     candidate_values = build_initial_parameter_candidates(
         seed_candidates,
@@ -3038,6 +3681,21 @@ def _execute_parameter_candidates(
     )
     for candidate_id in candidate_ids:
         execute_parameter_candidate(deps, candidate_id)
+    _refresh_candidate_dominance(deps)
+
+
+def _refresh_candidate_dominance(deps: ParameterTuningDependencies) -> None:
+    ordered = [
+        deps.evaluations[candidate_id]
+        for candidate_id in deps.executionOrder
+        if candidate_id in deps.evaluations
+    ]
+    deps.evaluations.update(
+        {
+            evaluation.candidateId: evaluation
+            for evaluation in annotate_candidate_dominance(ordered)
+        }
+    )
 
 
 def _register_refined_parameter_candidates(
@@ -3053,6 +3711,32 @@ def _register_refined_parameter_candidates(
         deps.candidates[candidate.candidateId] = candidate
         deps.candidatePhases[candidate.candidateId] = "refined"
         execute_parameter_candidate(deps, candidate.candidateId)
+    _refresh_candidate_dominance(deps)
+
+
+def execute_parameter_search_plan(
+    deps: ParameterTuningDependencies,
+    plan: ParameterSearchPlan,
+    *,
+    initial_candidate_ids: Sequence[str],
+    max_refined_candidates: int,
+) -> tuple[ParameterSearchPlan, tuple[ParameterCandidateEvaluation, ...]]:
+    """Validate and execute one already-proposed bounded refinement plan."""
+
+    validated = validate_parameter_search_plan(
+        plan,
+        deps,
+        initial_candidate_ids=initial_candidate_ids,
+        max_refined_candidates=max_refined_candidates,
+    )
+    _register_refined_parameter_candidates(deps, validated.candidates)
+    return (
+        validated,
+        tuple(
+            deps.evaluations[candidate.candidateId]
+            for candidate in validated.candidates
+        ),
+    )
 
 
 def tune_parameters_batch(
@@ -3141,6 +3825,7 @@ def tune_parameters_batch(
         output_token_limit=32768,
         timeout_seconds=600.0,
     )
+    refinement_planning_failed = False
     if any(max_refined_by_assay.values()):
         try:
             logger.info(
@@ -3171,28 +3856,51 @@ def tune_parameters_batch(
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
             logger.warning(
                 "Batched parameter refinement model run failed within its bounds "
-                f"({type(exc).__name__}); "
-                "skipping optional refinement"
+                f"({type(exc).__name__}); pausing without a refinement decision"
             )
+            refinement_planning_failed = True
+            failed_plans = {
+                assay: ParameterSearchPlan(
+                    status="complete",
+                    basedOnCandidateIds=[
+                        next(
+                            (
+                                candidate_id
+                                for candidate_id in initial_ids[assay]
+                                if dependencies[assay].evaluations[candidate_id].status
+                                == "done"
+                                and dependencies[assay]
+                                .evaluations[candidate_id]
+                                .eligible
+                            ),
+                            initial_ids[assay][0],
+                        )
+                    ],
+                    rationale=(
+                        "The required bounded refinement review was unavailable."
+                    ),
+                    evidenceIds=sorted(
+                        {
+                            evidence_id
+                            for candidate_id in initial_ids[assay]
+                            for evidence_id in dependencies[assay]
+                            .evaluations[candidate_id]
+                            .evidenceIds
+                        }
+                    ),
+                    stoppingCriteria=[
+                        "Obtain a grounded refinement disposition before selection."
+                    ],
+                    runInfo=AgentRunInfo(
+                        agentName="parameter_batch_search_planning_needs_input"
+                    ),
+                )
+                for assay in assay_names
+            }
             batch_plan = ParameterTuningBatchSearchPlan(
-                assayPlans={
-                    assay: ParameterSearchPlan(
-                        status="complete",
-                        rationale=(
-                            "The bounded structured refinement plan was unavailable; "
-                            "optional refinement was skipped."
-                        ),
-                        stoppingCriteria=[
-                            "Use the completed deterministic initial screen."
-                        ],
-                        runInfo=AgentRunInfo(
-                            agentName="parameter_batch_search_planning_fallback"
-                        ),
-                    )
-                    for assay in assay_names
-                },
+                assayPlans=failed_plans,
                 runInfo=AgentRunInfo(
-                    agentName="parameter_batch_search_planning_fallback"
+                    agentName="parameter_batch_search_planning_needs_input"
                 ),
             )
         else:
@@ -3287,6 +3995,12 @@ def tune_parameters_batch(
         )
     if not isinstance(selection_execution.output, ParameterTuningReport):
         raise TypeError("Batched parameter tuning returned an unexpected type")
+    if refinement_planning_failed:
+        return pending_parameter_tuning_batch_report(
+            dependencies,
+            search_plans=batch_plan.assayPlans,
+            primary_assay=resolved_primary,
+        )
     report = validate_parameter_tuning_batch_report(
         selection_execution.output,
         dependencies,
@@ -3351,6 +4065,7 @@ def tune_parameters(
         deps.evaluations[candidate_id] for candidate_id in initial_candidate_ids
     ]
 
+    refinement_planning_failed = False
     if max_refined_candidates == 0:
         logger.info(
             f"Skipping parameter refinement for assay {from_assay!r} because it "
@@ -3401,17 +4116,34 @@ def tune_parameters(
             logger.warning(
                 f"Parameter refinement planning for assay {from_assay!r} "
                 f"failed within its model-run bounds ({type(exc).__name__}); "
-                "skipping optional refinement"
+                "pausing without a refinement decision"
             )
-            plan = ParameterSearchPlan(
-                status="complete",
-                rationale=(
-                    "The bounded structured refinement plan was unavailable; "
-                    "optional refinement was skipped."
+            successful_parent = next(
+                (
+                    evaluation
+                    for evaluation in initial_evaluations
+                    if evaluation.status == "done" and evaluation.eligible
                 ),
-                stoppingCriteria=["Use the completed deterministic initial screen."],
-                runInfo=AgentRunInfo(agentName="parameter_search_planning_fallback"),
+                initial_evaluations[0],
             )
+            failed_plan = ParameterSearchPlan(
+                status="complete",
+                basedOnCandidateIds=[successful_parent.candidateId],
+                rationale=("The required bounded refinement review was unavailable."),
+                evidenceIds=sorted(
+                    {
+                        evidence_id
+                        for evaluation in initial_evaluations
+                        for evidence_id in evaluation.evidenceIds
+                    }
+                ),
+                stoppingCriteria=[
+                    "Obtain a grounded refinement disposition before selection."
+                ],
+                runInfo=AgentRunInfo(agentName="parameter_search_planning_needs_input"),
+            )
+            refinement_planning_failed = True
+            plan = failed_plan
         else:
             if not isinstance(planning_execution.output, ParameterSearchPlan):
                 raise TypeError(
@@ -3476,6 +4208,12 @@ def tune_parameters(
         )
     if not isinstance(selection_execution.output, ParameterTuningReport):
         raise TypeError("Parameter tuning agent returned an unexpected output type")
+    if refinement_planning_failed:
+        return pending_parameter_tuning_report(
+            deps,
+            search_plan=plan,
+            agent_name="parameter_tuning_needs_input",
+        )
     report = validate_parameter_tuning_report(
         selection_execution.output,
         deps,
@@ -3494,10 +4232,12 @@ def tune_parameters(
 
 
 __all__ = [
+    "annotate_candidate_dominance",
     "ArtifactRecord",
     "build_initial_parameter_candidates",
     "CandidateComparison",
     "execute_parameter_candidate",
+    "execute_parameter_search_plan",
     "final_graph_options",
     "final_graph_selection_prompt",
     "final_graph_selection_system_prompt",
@@ -3520,17 +4260,20 @@ __all__ = [
     "ParameterTuningReport",
     "evaluate_parameter_candidate",
     "get_default_parameter_candidates",
+    "harmony_acceptance_gate",
     "parameter_batch_search_prompt",
     "parameter_batch_search_system_prompt",
     "parameter_batch_selection_prompt",
     "parameter_batch_selection_system_prompt",
     "parameter_search_prompt",
     "parameter_search_system_prompt",
+    "parameter_evidence_classes",
     "parameter_tuning_prompt",
     "parameter_tuning_system_prompt",
     "prepare_parameter_tuning_dependencies",
     "promote_parameter_candidate",
     "run_candidate_reduction",
+    "require_dominated_candidate_evidence",
     "select_final_parameter_graph",
     "tune_parameters",
     "tune_parameters_batch",

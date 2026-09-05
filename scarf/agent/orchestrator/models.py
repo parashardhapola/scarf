@@ -23,6 +23,7 @@ type AutomatedWorkflowStatus = Literal[
     "failed",
     "abandoned",
 ]
+type WorkflowInputPolicy = Literal["pause", "unattended"]
 type WorkflowStageStatus = Literal[
     "started", "done", "needsInput", "abstained", "failed"
 ]
@@ -37,6 +38,7 @@ type WorkflowStageName = Literal[
     "feature_policy_review",
     "feature_policy_preprocessing",
     "feature_policy_tuning",
+    "analysis_review",
     "analysis_finalization",
     "biological_interpretation",
 ]
@@ -58,6 +60,7 @@ _STAGE_ORDER: tuple[WorkflowStageName, ...] = (
     "feature_policy_review",
     "feature_policy_preprocessing",
     "feature_policy_tuning",
+    "analysis_review",
     "analysis_finalization",
 )
 
@@ -270,6 +273,13 @@ class PreprocessedAssayHandoff(AgentDataModel):
     graphFeatures: ArtifactReferenceModel | None = None
     markerFeatures: ArtifactReferenceModel | None = None
     normalized: ArtifactReferenceModel | None = None
+    graphFeatureCandidates: dict[str, ArtifactReferenceModel] = Field(
+        default_factory=dict
+    )
+    normalizedCandidates: dict[str, ArtifactReferenceModel] = Field(
+        default_factory=dict
+    )
+    featureCandidateEvaluations: list[dict[str, Any]] = Field(default_factory=list)
     nCells: int = 0
     nFeatures: int = 0
 
@@ -341,6 +351,11 @@ class FinalAnalysisHandoff(AgentDataModel):
     markerFeatures: ArtifactReferenceModel | None = None
     markers: ArtifactReferenceModel | None = None
     doubletScores: list[ArtifactReferenceModel] = Field(default_factory=list)
+    doubletScoreSelections: list[ArtifactReferenceModel] = Field(default_factory=list)
+    doubletEvidence: dict[str, Any] = Field(default_factory=dict)
+    markerEvidence: dict[str, Any] = Field(default_factory=dict)
+    statisticalTests: list[ArtifactReferenceModel] = Field(default_factory=list)
+    analysisEvidence: dict[str, Any] = Field(default_factory=dict)
     parameterReport: AgentReportReference | None = None
     limitations: list[str] = Field(default_factory=list)
 
@@ -399,10 +414,15 @@ class FinalAnalysisHandoff(AgentDataModel):
 class AutomatedWorkflowConfig(AgentDataModel):
     """Bounded execution policy for automated workflows."""
 
+    inputPolicy: WorkflowInputPolicy = Field(
+        default="pause",
+        exclude_if=lambda value: value == "pause",
+    )
     primaryInitialCandidates: int = Field(default=11, ge=1)
     secondaryInitialCandidates: int = Field(default=3, ge=1)
-    maxRefinedCandidatesPerAssay: int = Field(default=0, ge=0, le=0)
+    maxRefinedCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
     maxHarmonyCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
+    runConfoundedHarmonyDiagnostic: bool = False
     integrationResolutionCandidates: int = Field(default=3, ge=1)
     maxCandidateBranches: int = Field(default=24, ge=1)
     minClusterCells: int = Field(default=20, ge=1)

@@ -1083,7 +1083,25 @@ def paused_or_failed_result(
 ) -> AutomatedWorkflowResult:
     prefix = _ensure_orchestration_store(store)
     current = load_agent_workflow(store, workflow.workflowRunId)
-    if outcome.status == "abstained" and current.status == "running":
+    unattended_pause = (
+        request_record.config.inputPolicy == "unattended"
+        and outcome.status == "needsInput"
+    )
+    if (outcome.status == "failed" or unattended_pause) and current.status == "running":
+        current = finalize_agent_workflow(
+            store,
+            workflow.workflowRunId,
+            status="failed",
+            message=(
+                outcome.error
+                or (
+                    "The unattended workflow encountered an unresolved decision."
+                    if unattended_pause
+                    else "A workflow stage failed."
+                )
+            ),
+        )
+    elif outcome.status == "abstained" and current.status == "running":
         current = finalize_agent_workflow(
             store,
             workflow.workflowRunId,
@@ -1095,7 +1113,9 @@ def paused_or_failed_result(
             ),
         )
     status: AutomatedWorkflowStatus = (
-        "needsInput"
+        "failed"
+        if unattended_pause
+        else "needsInput"
         if outcome.status == "needsInput"
         else "abstained"
         if outcome.status == "abstained"
@@ -1112,8 +1132,24 @@ def paused_or_failed_result(
         studyContract=study_contract,
         finalAnalysis=final_analysis,
         decisionRunId=request_record.workflowRunId,
-        needsInput=outcome.needsInput,
-        notes=[*outcome.notes, *([outcome.error] if outcome.error else [])],
+        needsInput=None if unattended_pause else outcome.needsInput,
+        unresolvedClaims=(
+            [question.question for question in outcome.needsInput.questions]
+            if unattended_pause and outcome.needsInput is not None
+            else []
+        ),
+        notes=[
+            *outcome.notes,
+            *(
+                [
+                    "The unattended workflow stopped because a stage returned "
+                    "an unresolved decision."
+                ]
+                if unattended_pause
+                else []
+            ),
+            *([outcome.error] if outcome.error else []),
+        ],
     )
     result = result.model_copy(update={"contentSha256": _record_checksum(result)})
     if status in {"failed", "abstained"}:

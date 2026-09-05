@@ -18,9 +18,12 @@ from typing import Any, cast
 
 from .. import __version__
 from ..datastore.datastore import DataStore
+from ..storage.refs import ArtifactRef
 from ..storage.stores import zarr_root_path
+from ..storage.types import as_zarr_array
 from ..utils.logging import logger
 from . import record_io
+from .decision_persistence import load_latest_decision_workflow_snapshot
 from .orchestrator import journal
 from .orchestrator.models import (
     _STAGE_ORDER,
@@ -148,6 +151,24 @@ def _collect_reports(
             report.model_dump(mode="json")
         )
     return reports
+
+
+def _collect_active_decisions(
+    store: DataStore,
+    workflow_run_id: str,
+) -> dict[str, dict[str, Any]]:
+    try:
+        snapshot = load_latest_decision_workflow_snapshot(store, workflow_run_id)
+    except KeyError:
+        return {}
+    decisions: dict[str, dict[str, Any]] = {}
+    for record in snapshot.workflow.active_decision_records():
+        if record.decisionId in decisions:
+            raise ValueError(
+                f"Decision workflow has multiple active {record.decisionId!r} records"
+            )
+        decisions[record.decisionId] = record.model_dump(mode="json")
+    return decisions
 
 
 def _stage_summary(attempt: WorkflowStageAttempt) -> dict[str, Any]:
@@ -327,10 +348,120 @@ def _safe_assay_name(value: str, fallback: str) -> str:
     return label[:64].rstrip("_") or fallback
 
 
+def _annotate_qc_cutoffs(plot: Any, profile: Mapping[str, Any]) -> None:
+    bounds = _qc_resolved_bounds(profile)
+    if not bounds:
+        return
+    diagnostic_only = profile.get("action") == "skip"
+    styles = {
+        "lowerRemoval": (
+            "lower diagnostic bound" if diagnostic_only else "lower removal cutoff",
+            "#d62728",
+            "--",
+        ),
+        "upperRemoval": (
+            "upper diagnostic bound" if diagnostic_only else "upper removal cutoff",
+            "#d62728",
+            "--",
+        ),
+        "upperFlag": ("high-value diagnostic bound", "#ff7f0e", ":"),
+    }
+    recorded: list[dict[str, Any]] = []
+    for metric, axis in plot.axes.items():
+        metric_bounds = [
+            bound for bound in bounds if str(bound.get("metric") or "") == str(metric)
+        ]
+        original_limits = axis.get_ylim()
+        visible_low, visible_high = sorted(float(value) for value in original_limits)
+        has_legend_entry = False
+        for field, (label, color, linestyle) in styles.items():
+            values = sorted(
+                {
+                    float(bound[field])
+                    for bound in metric_bounds
+                    if isinstance(bound.get(field), int | float)
+                    and not isinstance(bound.get(field), bool)
+                }
+            )
+            if not values:
+                continue
+            formatted_values = _analysis_number_range(values)
+            if len(values) == 1:
+                if visible_low <= values[0] <= visible_high:
+                    axis.axhline(
+                        values[0],
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.2,
+                        label=f"{label}: {formatted_values}",
+                    )
+                else:
+                    axis.plot(
+                        [],
+                        [],
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.2,
+                        label=f"{label}: {formatted_values} (outside plot)",
+                    )
+            else:
+                clipped_low = max(values[0], visible_low)
+                clipped_high = min(values[-1], visible_high)
+                if clipped_low <= clipped_high:
+                    range_suffix = (
+                        " (partly outside plot)"
+                        if values[0] < visible_low or values[-1] > visible_high
+                        else ""
+                    )
+                    axis.axhspan(
+                        clipped_low,
+                        clipped_high,
+                        color=color,
+                        alpha=0.1,
+                        label=f"{label}: {formatted_values}{range_suffix}",
+                    )
+                    for value in values:
+                        if visible_low <= value <= visible_high:
+                            axis.axhline(
+                                value,
+                                color=color,
+                                linestyle=linestyle,
+                                linewidth=0.8,
+                            )
+                else:
+                    axis.plot(
+                        [],
+                        [],
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.2,
+                        label=f"{label}: {formatted_values} (outside plot)",
+                    )
+            has_legend_entry = True
+            recorded.extend(
+                {
+                    "metric": str(metric),
+                    "field": field,
+                    "group": bound.get("group"),
+                    "value": bound.get(field),
+                }
+                for bound in metric_bounds
+                if isinstance(bound.get(field), int | float)
+                and not isinstance(bound.get(field), bool)
+            )
+        if has_legend_entry:
+            axis.legend(frameon=False, fontsize=6.5, loc="upper left")
+        axis.set_ylim(original_limits)
+    plot.provenance.extras["qc_cutoffs"] = recorded
+    plot.provenance.extras["qc_profile"] = profile.get("registeredProfile")
+
+
 def _collect_final_artifacts(
     store: DataStore,
     result: AutomatedWorkflowResult,
     plot_dir: Path,
+    *,
+    qc_profile: Mapping[str, Any] | None = None,
 ) -> tuple[
     dict[str, int],
     list[dict[str, Any]],
@@ -469,6 +600,93 @@ def _collect_final_artifacts(
             f"{n_cells:,} cells, above the memory-safe report limit of "
             f"{MAX_COMPOSITION_PLOT_CELLS:,}"
         )
+
+    qc_attributes = (
+        list(result.preprocessingPlan.cellQc.attributes)
+        if result.preprocessingPlan is not None
+        else []
+    )
+    available_qc_attributes = [
+        value for value in qc_attributes if value in store.cells.columns
+    ]
+    artifact_qc_metrics = (
+        [
+            artifact_model_to_ref(value.artifact)
+            for value in result.preprocessingPlan.cellQc.artifactMetrics
+        ]
+        if result.preprocessingPlan is not None
+        else []
+    )
+    available_qc_attributes = available_qc_attributes[:4]
+
+    def qc_distribution(selection: Any) -> Any:
+        plot = store.plots.distribution(
+            keys=available_qc_attributes,
+            cell_selection=artifact_model_to_ref(selection),
+            kind="violin",
+            max_points=10_000,
+            show=False,
+        )
+        if qc_profile:
+            _annotate_qc_cutoffs(plot, qc_profile)
+        return plot
+
+    active_cells = qc_profile.get("activeCells") if qc_profile else None
+    retained_cells = qc_profile.get("retainedCells") if qc_profile else None
+    if (
+        available_qc_attributes
+        and result.preprocessingPlan is not None
+        and result.preprocessingPlan.cellSelection is not None
+        and isinstance(active_cells, int)
+        and isinstance(retained_cells, int)
+        and retained_cells != active_cells
+    ):
+        render_plot(
+            "qcDistributionsBeforeFiltering",
+            "qc_distributions_before_filtering.png",
+            lambda: qc_distribution(result.preprocessingPlan.cellSelection),
+        )
+    if available_qc_attributes:
+        render_plot(
+            "qcDistributions",
+            "qc_distributions.png",
+            lambda: qc_distribution(final.cellSelection),
+        )
+    remaining_qc_plots = max(0, 4 - len(available_qc_attributes))
+    for index, metric in enumerate(artifact_qc_metrics[:remaining_qc_plots]):
+        render_plot(
+            f"qcDistributionDerived{index + 1}",
+            f"qc_distribution_derived_{index + 1}.png",
+            lambda source=metric: store.plots.distribution(
+                keys=source,
+                kind="violin",
+                max_points=10_000,
+                show=False,
+            ),
+        )
+
+    for index, score_model in enumerate(final.doubletScores[:4]):
+        score_ref = artifact_model_to_ref(score_model)
+        render_plot(
+            f"doubletDistribution{index + 1}",
+            f"doublet_distribution_{index + 1}.png",
+            lambda score=score_ref: store.plots.distribution(
+                keys=score,
+                kind="hist",
+                bins=40,
+                show=False,
+            ),
+        )
+        if index == 0 and n_cells <= MAX_EMBEDDING_PLOT_CELLS:
+            render_plot(
+                "doubletEmbedding",
+                "doublet_embedding.png",
+                lambda score=score_ref: store.plots.embedding(
+                    layout=umap_ref,
+                    color_by=score,
+                    show=False,
+                ),
+            )
 
     top_markers: list[dict[str, Any]] = []
     if final.markers is not None:
@@ -704,28 +922,32 @@ def _hvg_diagnostic_evidence(
     }
 
 
-def _collect_hvg_evidence(
-    store: DataStore,
+def _latest_hvg_diagnostic_artifacts(
     stage_attempts: Sequence[Mapping[str, Any]],
-    preprocessing_plan: Mapping[str, Any],
-) -> dict[str, Any]:
-    selected_name = ""
-    selected_reference: dict[str, Any] = {}
-    selected_artifacts: dict[str, Any] = {}
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
     for attempt in reversed(stage_attempts):
         artifacts = _mapping(attempt.get("artifacts"))
         match = next(
             (
-                (name, _mapping(reference))
+                (str(name), _mapping(reference))
                 for name, reference in artifacts.items()
                 if re.fullmatch(r".+_hvg_diagnostic", str(name))
             ),
             None,
         )
         if match is not None:
-            selected_name, selected_reference = match
-            selected_artifacts = artifacts
-            break
+            return match[0], match[1], artifacts
+    return "", {}, {}
+
+
+def _collect_hvg_evidence(
+    store: DataStore,
+    stage_attempts: Sequence[Mapping[str, Any]],
+    preprocessing_plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected_name, selected_reference, selected_artifacts = (
+        _latest_hvg_diagnostic_artifacts(stage_attempts)
+    )
     if not selected_reference:
         return {}
     assay = selected_name.removesuffix("_hvg_diagnostic")
@@ -755,6 +977,21 @@ def _collect_hvg_evidence(
         {},
     )
     selected_count = _mapping(assay_plan.get("featureParameters")).get("topN")
+    default_reference_counts = sorted(
+        {
+            int(default_match.group(1))
+            for name in selected_artifacts
+            if (
+                default_match := re.fullmatch(
+                    rf"{re.escape(assay)}_hvg_scarf_default_([0-9]+)",
+                    str(name),
+                )
+            )
+        }
+    )
+    executed_branch_count = len(default_reference_counts) + sum(
+        len(_mappings(ranking.get("candidateMetrics"))) for ranking in rankings
+    )
     return {
         "assay": assay,
         "selectedRankingMode": selected.get("rankingMode"),
@@ -766,7 +1003,194 @@ def _collect_hvg_evidence(
         "excludedTechnicalGroupCount": selected.get("excludedTechnicalGroupCount"),
         "minimumDetectedCells": selected.get("minimumDetectedCells"),
         "minimumTechnicalGroupCells": selected.get("minimumTechnicalGroupCells"),
+        "scarfDefaultReferenceCounts": default_reference_counts,
+        "executedBranchCount": executed_branch_count,
     }
+
+
+def _collect_hvg_plots(
+    store: DataStore,
+    stage_attempts: Sequence[Mapping[str, Any]],
+    preprocessing_plan: Mapping[str, Any],
+    plot_dir: Path,
+) -> tuple[dict[str, str], list[str]]:
+    import numpy as np
+
+    selected_name, selected_reference, artifacts = _latest_hvg_diagnostic_artifacts(
+        stage_attempts
+    )
+    if not selected_reference:
+        return {}, []
+    assay_name = selected_name.removesuffix("_hvg_diagnostic")
+    assay_plan = next(
+        (
+            value
+            for value in _mappings(preprocessing_plan.get("assays"))
+            if value.get("assay") == assay_name
+        ),
+        {},
+    )
+    selected_count = _mapping(assay_plan.get("featureParameters")).get("topN")
+    if not isinstance(selected_count, int) or isinstance(selected_count, bool):
+        return {}, ["HVG diagnostics: selected feature count is unavailable"]
+
+    references = (
+        ("global", artifacts.get(f"{assay_name}_hvg_global_diagnostic")),
+        ("batchAware", artifacts.get(f"{assay_name}_hvg_batchAware_diagnostic")),
+    )
+    plots: dict[str, str] = {}
+    notes: list[str] = []
+    seen_artifact_ids: set[str] = set()
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    for ranking_mode, raw_reference in references:
+        if not isinstance(raw_reference, Mapping):
+            continue
+        model = ArtifactReferenceModel.model_validate(dict(raw_reference))
+        if model.artifactId in seen_artifact_ids:
+            continue
+        seen_artifact_ids.add(model.artifactId)
+        plot_name = "hvgGlobal" if ranking_mode == "global" else "hvgBatchAware"
+        filename = (
+            "hvg_global.png" if ranking_mode == "global" else "hvg_batch_aware.png"
+        )
+        try:
+            diagnostic_ref = artifact_model_to_ref(model)
+            diagnostic = store.load_artifact(diagnostic_ref)
+            observed_mode = diagnostic.attrs.get("ranking_mode")
+            if observed_mode != ranking_mode:
+                raise ValueError(
+                    f"HVG diagnostic expected {ranking_mode!r}, got {observed_mode!r}"
+                )
+            status = store.inspect_artifact(diagnostic_ref)
+            raw_summary = (status.inputs or {}).get("global_feature_summary")
+            if not isinstance(raw_summary, Mapping):
+                raise ValueError("HVG diagnostic lacks its global feature summary")
+            summary_ref = ArtifactRef.from_dict(dict(raw_summary))
+            summary = store.load_artifact(summary_ref)
+            corrected_variance = np.asarray(
+                as_zarr_array(
+                    diagnostic["global_corrected_variance"],
+                    name="global_corrected_variance",
+                )[:],
+                dtype=np.float64,
+            )
+            ranking = np.asarray(
+                as_zarr_array(diagnostic["ranking"], name="ranking")[:],
+                dtype=np.int64,
+            )
+            normed_tot = np.asarray(
+                as_zarr_array(summary["normed_tot"], name="normed_tot")[:],
+                dtype=np.float64,
+            )
+            normed_n = np.asarray(
+                as_zarr_array(summary["normed_n"], name="normed_n")[:],
+                dtype=np.float64,
+            )
+            shape = corrected_variance.shape
+            if (
+                corrected_variance.ndim != 1
+                or normed_tot.shape != shape
+                or normed_n.shape != shape
+                or selected_count > ranking.size
+                or ranking.size
+                and (int(ranking.min()) < 0 or int(ranking.max()) >= shape[0])
+                or np.unique(ranking).size != ranking.size
+            ):
+                raise ValueError("HVG plotting arrays are malformed")
+            selected = np.zeros(shape, dtype=bool)
+            selected[ranking[:selected_count]] = True
+            mean_nonzero = np.divide(
+                normed_tot,
+                normed_n,
+                out=np.zeros_like(normed_tot),
+                where=normed_n != 0,
+            )
+            from ..plotting import highly_variable_features
+
+            plot = highly_variable_features(
+                mean_nonzero=mean_nonzero,
+                corrected_variance=corrected_variance,
+                n_cells=normed_n,
+                selected=selected,
+                show=False,
+            )
+            plot.axes["highly_variable_features"].set_title(
+                f"{_hvg_ranking_label(ranking_mode)}\n{selected_count:,} selected genes"
+            )
+            plot.provenance.extras.update(
+                {
+                    "assay": assay_name,
+                    "diagnostic_artifact_id": model.artifactId,
+                    "ranking_mode": ranking_mode,
+                    "selected_feature_count": selected_count,
+                }
+            )
+            _save_plot(plot, plot_dir / filename)
+            plots[plot_name] = f"plots/{filename}"
+        except Exception as exc:
+            notes.append(f"{plot_name}: {type(exc).__name__}: {exc}")
+    return plots, notes
+
+
+def _collect_default_feature_inventories(
+    store: DataStore,
+    preprocessing_plan: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    inventories: list[dict[str, Any]] = []
+    for assay_plan in _mappings(preprocessing_plan.get("assays")):
+        assay_name = str(assay_plan.get("assay") or "")
+        parameters = _mapping(assay_plan.get("featureParameters"))
+        inventory = _mapping(parameters.get("defaultFeatureInventory"))
+        if not inventory:
+            continue
+        feature_column = str(inventory.get("featureColumn") or "")
+        blacklist = str(inventory.get("blacklist") or "")
+        if not assay_name or not feature_column or not blacklist:
+            raise ValueError("Scarf default feature inventory is incomplete")
+        assay = store.get_assay(assay_name)
+        if feature_column not in assay.feats.columns:
+            raise ValueError(
+                f"Scarf default feature column {feature_column!r} is unavailable "
+                f"for assay {assay_name!r}"
+            )
+        names = [str(value) for value in assay.feats.fetch_all(feature_column)]
+        try:
+            compiled = re.compile(blacklist.upper())
+        except re.error as exc:
+            raise ValueError("Scarf default feature blacklist is invalid") from exc
+        matched = sorted(
+            (name for name in names if compiled.match(name.upper()) is not None),
+            key=lambda value: (value.casefold(), value),
+        )
+        expected_total = inventory.get("totalFeatures")
+        expected_matches = inventory.get("matchCount")
+        if isinstance(expected_total, int) and expected_total != len(names):
+            raise ValueError(
+                f"Scarf default feature inventory for {assay_name!r} has stale "
+                "total feature evidence"
+            )
+        if isinstance(expected_matches, int) and expected_matches != len(matched):
+            raise ValueError(
+                f"Scarf default feature inventory for {assay_name!r} has stale "
+                "blacklist match evidence"
+            )
+        inventories.append(
+            {
+                **inventory,
+                "assay": assay_name,
+                "appliedToSelectedRepresentation": (
+                    parameters.get("useScarfDefaultBlacklist") is True
+                ),
+                "selectedExcludeFamilies": _text_values(
+                    parameters.get("excludeFamilies")
+                ),
+                "selectedProtectFamilies": _text_values(
+                    parameters.get("protectFamilies")
+                ),
+                "matchedFeatures": matched,
+            }
+        )
+    return inventories
 
 
 REPORT_STYLES = """
@@ -1203,6 +1627,14 @@ strong { font-weight: 400; }
 }
 .plain-list { margin: 0; padding-left: 1.2rem; }
 .plain-list li { margin: .55rem 0; }
+.column-list {
+  columns: 4 12rem;
+  column-gap: 2rem;
+}
+.column-list li {
+  break-inside: avoid;
+  margin: .25rem 0;
+}
 .section {
   margin-top: 4rem;
   min-width: 0;
@@ -1695,6 +2127,26 @@ def _render_plots(
             "Cluster connectivity",
             "Connectivity between final clusters in the selected graph.",
         ),
+        "qcDistributions": (
+            "QC distributions after the selected policy",
+            "Retained-cell distributions with the selected profile's cutoff annotations.",
+        ),
+        "qcDistributionsBeforeFiltering": (
+            "QC distributions before filtering",
+            "Input-cell distributions with the selected profile's cutoff annotations.",
+        ),
+        "hvgGlobal": (
+            "Global HVG diagnostic",
+            "Mean-variance evidence with genes selected by the global ranking highlighted.",
+        ),
+        "hvgBatchAware": (
+            "Group-aware HVG diagnostic",
+            "Mean-variance evidence with genes selected for recurrence across technical groups highlighted.",
+        ),
+        "doubletEmbedding": (
+            "Advisory doublet scores",
+            "The final embedding colored by non-removing doublet evidence.",
+        ),
     }
     if titles is not None:
         plot_titles.update(titles)
@@ -1708,6 +2160,13 @@ def _render_plots(
             "markerDotplot",
             "clusterComposition",
             "clusterConnectivity",
+            "qcDistributionsBeforeFiltering",
+            "qcDistributions",
+            *(name for name in plots if name.startswith("qcDistributionDerived")),
+            "hvgGlobal",
+            "hvgBatchAware",
+            "doubletEmbedding",
+            *(name for name in plots if name.startswith("doubletDistribution")),
             *plots,
         ]
     )
@@ -1720,6 +2179,14 @@ def _render_plots(
             assay = name.removeprefix("nativeUmap") or "assay"
             title = f"{assay} native UMAP"
             caption = f"The finalized native {assay} representation and clusters."
+        elif name.startswith("doubletDistribution"):
+            title = "Advisory doublet-score distribution"
+            caption = (
+                "Capture-aware doublet evidence retained as flags without removal."
+            )
+        elif name.startswith("qcDistributionDerived"):
+            title = "Derived QC metric distribution"
+            caption = "An immutable feature-family QC metric on the selected cell axis."
         else:
             title, caption = plot_titles.get(
                 name, (_label(name), "A finalized Scarf analysis plot.")
@@ -2177,9 +2644,16 @@ def _selected_qc_profile(
 def _feature_family_label(value: Any) -> str:
     labels = {
         "ribosomal": "ribosomal genes",
+        "ribosomalProtein": "ribosomal protein genes",
         "mitochondrial": "mitochondrial genes",
+        "mitoribosomal": "mitoribosomal genes",
         "sex": "sex-linked genes",
+        "sexLinked": "sex-linked genes",
         "cellCycle": "cell-cycle genes",
+        "cellCycleCcn": "CCN-prefixed genes",
+        "hla": "HLA genes",
+        "h2": "H2 genes",
+        "histone": "histone genes",
     }
     text = str(value or "").strip()
     return labels.get(text, _label(text).lower()) if text else ""
@@ -2190,6 +2664,10 @@ def _public_field_label(value: Any) -> str:
         "T2D": "T2D status",
         "donor_id": "donor",
         "library_id": "library",
+        "RNA_nCounts": "RNA counts",
+        "RNA_nFeatures": "detected genes",
+        "RNA_percentMito": "mitochondrial percentage",
+        "RNA_percentRibo": "ribosomal percentage",
         "sample_id": "sample",
         "sex": "sex",
         "tissue": "tissue",
@@ -2328,7 +2806,10 @@ def _qc_tree_stage(
     }
 
 
-def _feature_tree_stage(plan: Mapping[str, Any]) -> dict[str, Any] | None:
+def _feature_tree_stage(
+    plan: Mapping[str, Any],
+    inventories: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
     assay_plans = _mappings(plan.get("assays"))
     selected_assay = next(
         (assay for assay in assay_plans if assay.get("graphEligible") is True),
@@ -2363,6 +2844,26 @@ def _feature_tree_stage(plan: Mapping[str, Any]) -> dict[str, Any] | None:
         metrics.append(f"Excluded {_format_text_list(excluded)}")
     if protected:
         metrics.append(f"Kept {_format_text_list(protected)} eligible")
+    inventory = _default_inventory_for_assay(
+        inventories,
+        str(selected_assay.get("assay") or ""),
+    )
+    if inventory:
+        match_count = inventory.get("matchCount")
+        total_features = inventory.get("totalFeatures")
+        if isinstance(match_count, int) and isinstance(total_features, int):
+            metrics.append(
+                f"Scarf default reference matched {match_count:,} of "
+                f"{total_features:,} genes"
+            )
+        metrics.append(
+            "Complete Scarf default blacklist applied: "
+            + (
+                "yes"
+                if inventory.get("appliedToSelectedRepresentation") is True
+                else "no"
+            )
+        )
     return {
         "question": "Which measurements should shape the cell map?",
         "description": (
@@ -2389,7 +2890,9 @@ def _feature_tree_stage(plan: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _batch_tree_stage(
     experimental: Mapping[str, Any],
+    parameter: Mapping[str, Any],
     final: Mapping[str, Any],
+    decisions: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     decision = _mapping(experimental.get("decision"))
     batch_plan = _mapping(decision.get("batchCorrection"))
@@ -2407,6 +2910,11 @@ def _batch_tree_stage(
     adjustment_applied = any(
         _present(item.get("batchCorrection")) for item in selected_native
     )
+    native_candidate, harmony_candidate = _harmony_candidate_pair(parameter, final)
+    harmony_executed = _harmony_completed(native_candidate) and _harmony_completed(
+        harmony_candidate
+    )
+    degraded = _degraded_protected_columns(native_candidate, harmony_candidate)
     safety = _mappings(experimental.get("batchSafety"))
     unsafe = [item for item in safety if item.get("status") == "unsafe"]
     coefficients = [
@@ -2425,6 +2933,35 @@ def _batch_tree_stage(
         )
     if remaining_capacity and all(value == 0 for value in remaining_capacity):
         adjustment_metrics.append("Remaining comparison capacity: 0")
+    if harmony_candidate:
+        harmony_parameters = _mapping(harmony_candidate.get("parameters"))
+        adjustment_metrics.append(
+            "Matched parameters: "
+            f"{_scalar(harmony_parameters.get('dimensions'))} dimensions, "
+            f"{_scalar(harmony_parameters.get('neighborsK'))} neighbors, "
+            f"resolution {_scalar(harmony_parameters.get('leidenResolution'))}"
+        )
+    if harmony_executed:
+        adjustment_metrics.insert(0, "Run status: completed diagnostic")
+        native_metrics = _mapping(native_candidate.get("metrics"))
+        harmony_metrics = _mapping(harmony_candidate.get("metrics"))
+        native_batch = _mapping(native_metrics.get("batchMixing"))
+        harmony_batch = _mapping(harmony_metrics.get("batchMixing"))
+        for column in dict.fromkeys([*native_batch, *harmony_batch]):
+            adjustment_metrics.append(
+                f"{_public_field_label(column).capitalize()} mixing: "
+                f"{_score_transition(native_batch.get(column), harmony_batch.get(column))}"
+            )
+        if degraded:
+            adjustment_metrics.append(
+                "Protected evidence degraded: " + _format_text_list(degraded)
+            )
+    correction_license = _active_decision(decisions, "correctionLicense")
+    diagnostic_only = str(correction_license.get("selectedOptionId") or "").endswith(
+        "unsafeConfounded"
+    )
+    if diagnostic_only:
+        adjustment_metrics.append("Selection license: diagnostic only")
     action = str(batch_plan.get("action") or "")
     if adjustment_applied:
         unadjusted_state = "alternative"
@@ -2440,18 +2977,43 @@ def _batch_tree_stage(
         )
     else:
         unadjusted_state = "selected"
-        adjusted_state = "blocked" if action in {"unsafe", "skip"} else "alternative"
+        adjusted_state = (
+            "rejected"
+            if harmony_executed
+            else ("blocked" if action in {"unsafe", "skip"} else "alternative")
+        )
         unadjusted_status = "Selected"
-        adjusted_status = "Not safe" if adjusted_state == "blocked" else "Not selected"
+        adjusted_status = (
+            "Run diagnostically; rejected"
+            if harmony_executed
+            else ("Not run" if adjusted_state == "blocked" else "Not selected")
+        )
         unadjusted_reason = (
-            "Selected because adjustment was not shown to improve the data safely."
+            "Selected after the matched diagnostic retained more of the protected "
+            "biological structure."
+            if harmony_executed
+            else "Selected because adjustment was not shown to improve the data safely."
         )
         adjusted_reason = (
-            "Not used because technical and biological differences could not be "
-            "separated without risking the study comparisons."
-            if adjusted_state == "blocked"
-            else "Tested but did not provide a safer improvement over the "
-            "unadjusted data."
+            "Rejected because protected evidence degraded for "
+            f"{_format_text_list(degraded)}"
+            + (
+                " and the design allowed diagnostic use only."
+                if diagnostic_only
+                else "."
+            )
+            if harmony_executed and degraded
+            else (
+                "Run as a matched diagnostic but not selected."
+                if harmony_executed
+                else (
+                    "Not run because technical and biological differences could "
+                    "not be separated safely."
+                    if adjusted_state == "blocked"
+                    else "Tested but did not provide a safer improvement over the "
+                    "unadjusted data."
+                )
+            )
         )
     return {
         "question": "Should technical variation be adjusted?",
@@ -2464,7 +3026,10 @@ def _batch_tree_stage(
                 label="Use the unadjusted representation",
                 status=unadjusted_status,
                 state=unadjusted_state,
-                metrics=["Biological comparisons remain intact"],
+                metrics=[
+                    "Final representation: native",
+                    "Protected biological comparisons retained",
+                ],
                 reason=unadjusted_reason,
             ),
             _tree_branch(
@@ -2510,6 +3075,212 @@ def _selected_parameter_context(
         {},
     )
     return report, evaluations, selected
+
+
+def _harmony_candidate_pair(
+    parameter: Mapping[str, Any],
+    final: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    _report, evaluations, _selected = _selected_parameter_context(parameter, final)
+    for harmony in reversed(evaluations):
+        harmony_parameters = _mapping(harmony.get("parameters"))
+        if harmony_parameters.get("useHarmony") is not True:
+            continue
+        signature = {
+            key: value
+            for key, value in harmony_parameters.items()
+            if key not in {"candidateId", "useHarmony"}
+        }
+        native_candidates = [
+            evaluation
+            for evaluation in evaluations
+            if _mapping(evaluation.get("parameters")).get("useHarmony") is False
+            and {
+                key: value
+                for key, value in _mapping(evaluation.get("parameters")).items()
+                if key not in {"candidateId", "useHarmony"}
+            }
+            == signature
+        ]
+        if not native_candidates:
+            continue
+        expected_native_id = str(harmony.get("candidateId") or "").replace(
+            "_correction_harmony",
+            "_correction_native",
+        )
+        native = next(
+            (
+                evaluation
+                for evaluation in native_candidates
+                if evaluation.get("candidateId") == expected_native_id
+            ),
+            native_candidates[-1],
+        )
+        return native, harmony
+    return {}, {}
+
+
+def _harmony_completed(evaluation: Mapping[str, Any]) -> bool:
+    return (
+        evaluation.get("status") == "done" and evaluation.get("eligible") is not False
+    )
+
+
+def _score_transition(native: Any, harmony: Any) -> str:
+    if not isinstance(native, (int, float)) or isinstance(native, bool):
+        return "Not available"
+    if not isinstance(harmony, (int, float)) or isinstance(harmony, bool):
+        return "Not available"
+    delta = float(harmony) - float(native)
+    return f"{float(native):.3f} to {float(harmony):.3f} (change {delta:+.3f})"
+
+
+def _harmony_metric_rows(
+    native: Mapping[str, Any],
+    harmony: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    native_metrics = _mapping(native.get("metrics"))
+    harmony_metrics = _mapping(harmony.get("metrics"))
+    rows: list[dict[str, Any]] = []
+
+    def add(
+        category: str,
+        metric: str,
+        native_value: Any,
+        harmony_value: Any,
+        interpretation: str,
+    ) -> None:
+        delta = (
+            float(harmony_value) - float(native_value)
+            if isinstance(native_value, (int, float))
+            and not isinstance(native_value, bool)
+            and isinstance(harmony_value, (int, float))
+            and not isinstance(harmony_value, bool)
+            else None
+        )
+        rows.append(
+            {
+                "category": category,
+                "metric": metric,
+                "native": native_value,
+                "Harmony": harmony_value,
+                "change": delta,
+                "interpretation": interpretation,
+            }
+        )
+
+    native_batch = _mapping(native_metrics.get("batchMixing"))
+    harmony_batch = _mapping(harmony_metrics.get("batchMixing"))
+    for column in dict.fromkeys([*native_batch, *harmony_batch]):
+        add(
+            "Batch removal",
+            f"{_public_field_label(column)} mixing",
+            native_batch.get(column),
+            harmony_batch.get(column),
+            "Higher values indicate stronger mixing across the technical group.",
+        )
+
+    native_association = _mapping(native_metrics.get("technicalAssociation"))
+    harmony_association = _mapping(harmony_metrics.get("technicalAssociation"))
+    for column in dict.fromkeys([*native_association, *harmony_association]):
+        add(
+            "Technical association",
+            _public_field_label(column),
+            native_association.get(column),
+            harmony_association.get(column),
+            "Lower values indicate less association with the technical group.",
+        )
+
+    native_biology = _mapping(native_metrics.get("biologicalPreservation"))
+    harmony_biology = _mapping(harmony_metrics.get("biologicalPreservation"))
+    for column in dict.fromkeys([*native_biology, *harmony_biology]):
+        native_scores = _mapping(native_biology.get(column))
+        harmony_scores = _mapping(harmony_biology.get(column))
+        for name in dict.fromkeys([*native_scores, *harmony_scores]):
+            add(
+                "Protected biology",
+                f"{_public_field_label(column)} {_label(name)}",
+                native_scores.get(name),
+                harmony_scores.get(name),
+                "Protected evidence should not decrease materially.",
+            )
+
+    for key, label, interpretation in (
+        (
+            "crossUnitSupport",
+            "Cross-sample support",
+            "Higher values indicate broader support across study units.",
+        ),
+        (
+            "markerCoherence",
+            "Marker coherence",
+            "Higher values indicate more groups with coherent markers.",
+        ),
+        (
+            "markerSpecificityMedian",
+            "Median marker specificity",
+            "Higher values indicate more group-specific markers.",
+        ),
+        (
+            "clusterConnectivity",
+            "Cluster connectivity",
+            "Higher values indicate better connected groups.",
+        ),
+        (
+            "membershipStrengthMean",
+            "Mean membership strength",
+            "Higher values indicate more stable cluster membership.",
+        ),
+        (
+            "doubletHighScoreConcentration",
+            "Doublet-score concentration",
+            "Lower values indicate less concentration of high doublet scores.",
+        ),
+    ):
+        if key in native_metrics or key in harmony_metrics:
+            add(
+                "Supporting diagnostic",
+                label,
+                native_metrics.get(key),
+                harmony_metrics.get(key),
+                interpretation,
+            )
+    return rows
+
+
+def _degraded_protected_columns(
+    native: Mapping[str, Any],
+    harmony: Mapping[str, Any],
+    *,
+    tolerance: float = 0.05,
+) -> list[str]:
+    native_biology = _mapping(
+        _mapping(native.get("metrics")).get("biologicalPreservation")
+    )
+    harmony_biology = _mapping(
+        _mapping(harmony.get("metrics")).get("biologicalPreservation")
+    )
+    degraded: list[str] = []
+    for column, raw_native in native_biology.items():
+        native_scores = _mapping(raw_native)
+        harmony_scores = _mapping(harmony_biology.get(column))
+        if any(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and isinstance(harmony_scores.get(name), (int, float))
+            and not isinstance(harmony_scores.get(name), bool)
+            and float(harmony_scores[name]) < float(value) - tolerance
+            for name, value in native_scores.items()
+        ):
+            degraded.append(_public_field_label(column))
+    return degraded
+
+
+def _active_decision(
+    decisions: Mapping[str, Any],
+    decision_id: str,
+) -> dict[str, Any]:
+    return _mapping(decisions.get(decision_id))
 
 
 def _common_parameter(
@@ -2780,16 +3551,21 @@ def _analysis_tree_stages(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     experimental = _latest(reports, "experimental_context")
     parameter = _latest(reports, "parameter_tuning")
     biology = _latest(reports, "biological_interpretation")
+    decisions = _mapping(payload.get("activeDecisions"))
+    inventories = _mappings(payload.get("defaultFeatureInventories"))
     cluster_counts = _mapping(payload.get("clusterCounts"))
     total_cells = sum(int(value) for value in cluster_counts.values())
     stages: list[dict[str, Any]] = []
     for stage in (
         _qc_tree_stage(experimental, plan, total_cells),
-        _feature_tree_stage(plan),
-        _batch_tree_stage(experimental, final),
+        _feature_tree_stage(plan, inventories),
     ):
         if stage is not None:
             stages.append(stage)
+    stages.extend(_hvg_tree_stages(_mapping(payload.get("hvgEvidence"))))
+    batch_stage = _batch_tree_stage(experimental, parameter, final, decisions)
+    if batch_stage is not None:
+        stages.append(batch_stage)
     parameter_stages, selected = _parameter_tree_stages(parameter, final)
     stages.extend(parameter_stages)
 
@@ -3049,9 +3825,15 @@ def _analysis_number_range(values: Sequence[Any]) -> str:
         return "Not available"
     low = min(numbers)
     high = max(numbers)
+
+    def display(value: float) -> str:
+        if abs(value) >= 100:
+            return f"{value:,.0f}"
+        return f"{value:,.3f}".rstrip("0").rstrip(".")
+
     if low == high:
-        return f"{low:,.0f}"
-    return f"{low:,.0f} to {high:,.0f}"
+        return display(low)
+    return f"{display(low)} to {display(high)}"
 
 
 def _render_evidence_choices(choices: Sequence[Mapping[str, Any]]) -> str:
@@ -3100,6 +3882,7 @@ def _render_evidence_panel(
     introduction: str,
     body: str,
     measurements: str = "",
+    expanded: bool = False,
 ) -> str:
     measurement_markup = (
         '<details class="evidence-measurements"><summary>Measurements</summary>'
@@ -3107,8 +3890,9 @@ def _render_evidence_panel(
         if measurements
         else ""
     )
+    open_attribute = " open" if expanded else ""
     return (
-        '<details class="evidence-panel"><summary><span>'
+        f'<details class="evidence-panel"{open_attribute}><summary><span>'
         f'<span class="evidence-panel-title">{html.escape(title)}</span>'
         f'<span class="evidence-panel-outcome">{html.escape(outcome)}</span>'
         "</span></summary>"
@@ -3118,9 +3902,16 @@ def _render_evidence_panel(
 
 
 def _qc_profile_scope(profile: Mapping[str, Any]) -> str:
-    bounds = _mappings(_mapping(profile.get("parameters")).get("resolvedBounds"))
+    bounds = _qc_resolved_bounds(profile)
     groups = {str(item.get("group")) for item in bounds if _present(item.get("group"))}
     return "Per-library thresholds" if len(groups) > 1 else "Global thresholds"
+
+
+def _qc_resolved_bounds(profile: Mapping[str, Any]) -> list[dict[str, Any]]:
+    direct = _mappings(profile.get("resolvedBounds"))
+    if direct:
+        return direct
+    return _mappings(_mapping(profile.get("parameters")).get("resolvedBounds"))
 
 
 def _qc_flag_summary(profile: Mapping[str, Any]) -> list[str]:
@@ -3129,6 +3920,8 @@ def _qc_flag_summary(profile: Mapping[str, Any]) -> list[str]:
         ("nCounts:lowQuality", "Low RNA count flags"),
         ("nFeatures:high", "High detected-gene flags"),
         ("nFeatures:lowQuality", "Low detected-gene flags"),
+        ("percentMito:highMito", "High mitochondrial-percentage flags"),
+        ("percentRibo:highRibo", "High ribosomal-percentage flags"),
     )
     flags = _mapping(profile.get("flaggedCells"))
     values: list[str] = []
@@ -3147,18 +3940,152 @@ def _qc_flag_summary(profile: Mapping[str, Any]) -> list[str]:
 
 
 def _qc_bound_summary(profile: Mapping[str, Any]) -> str:
-    bounds = _mappings(_mapping(profile.get("parameters")).get("resolvedBounds"))
+    bounds = _qc_resolved_bounds(profile)
     parts: list[str] = []
-    for role, label in (("count", "RNA counts"), ("feature", "Detected genes")):
+    for role, label in (
+        ("count", "RNA counts"),
+        ("feature", "Detected genes"),
+        ("mitochondrial", "Mitochondrial percentage"),
+        ("ribosomal", "Ribosomal percentage"),
+    ):
         matching = [item for item in bounds if item.get("role") == role]
         if not matching:
             continue
         lower = _analysis_number_range([item.get("lowerRemoval") for item in matching])
-        upper = _analysis_number_range([item.get("upperFlag") for item in matching])
-        parts.append(
-            f"{label}: lower removal cutoff {lower}; high-value flag cutoff {upper}"
+        upper_removal = _analysis_number_range(
+            [item.get("upperRemoval") for item in matching]
         )
+        upper_flag = _analysis_number_range(
+            [item.get("upperFlag") for item in matching]
+        )
+        cutoffs = [
+            value
+            for value in (
+                f"lower cutoff {lower}" if lower != "Not available" else "",
+                (
+                    f"upper cutoff {upper_removal}"
+                    if upper_removal != "Not available"
+                    else ""
+                ),
+                (
+                    f"high-value flag {upper_flag}"
+                    if upper_flag != "Not available"
+                    else ""
+                ),
+            )
+            if value
+        ]
+        if cutoffs:
+            parts.append(f"{label}: {'; '.join(cutoffs)}")
     return ". ".join(parts)
+
+
+def _qc_metric_rows(profile: Mapping[str, Any]) -> list[dict[str, Any]]:
+    bounds = _qc_resolved_bounds(profile)
+    by_metric: dict[str, list[dict[str, Any]]] = {}
+    for bound in bounds:
+        metric = str(bound.get("metric") or bound.get("role") or "")
+        if metric:
+            by_metric.setdefault(metric, []).append(bound)
+    capture_comparisons = _mappings(
+        _mapping(profile.get("parameters")).get("captureComparisons")
+    )
+    if capture_comparisons:
+        first_metrics = _mapping(capture_comparisons[0].get("metricComparisons"))
+        for metric, raw in first_metrics.items():
+            if str(metric).startswith("artifact_") or metric in by_metric:
+                continue
+            comparison = _mapping(raw)
+            by_metric[metric] = [
+                {
+                    "metric": metric,
+                    "group": "global diagnostic",
+                    "role": comparison.get("role"),
+                    "median": comparison.get("globalMedian"),
+                    "diagnosticLower": comparison.get("globalLower"),
+                    "diagnosticUpper": comparison.get("globalUpper"),
+                }
+            ]
+    flags = _mapping(profile.get("metricFlaggedCells"))
+    rows: list[dict[str, Any]] = []
+    for metric, metric_bounds in by_metric.items():
+        medians = [item.get("median") for item in metric_bounds]
+        lower = [item.get("lowerRemoval") for item in metric_bounds]
+        upper = [item.get("upperRemoval") for item in metric_bounds]
+        high_flag = [item.get("upperFlag") for item in metric_bounds]
+        diagnostic_range = [
+            item.get(field)
+            for item in metric_bounds
+            for field in ("diagnosticLower", "diagnosticUpper")
+        ]
+        metric_flags = _mapping(flags.get(metric))
+        rows.append(
+            {
+                "metric": _public_field_label(metric),
+                "scope": (
+                    "Global diagnostic only"
+                    if any(value is not None for value in diagnostic_range)
+                    else _qc_profile_scope({"resolvedBounds": metric_bounds})
+                ),
+                "median": _analysis_number_range(medians),
+                "diagnostic reference": _analysis_number_range(diagnostic_range),
+                "lower cutoff": _analysis_number_range(lower),
+                "upper cutoff": _analysis_number_range(upper),
+                "high flag": _analysis_number_range(high_flag),
+                "flagged cells": sum(
+                    int(value)
+                    for value in metric_flags.values()
+                    if isinstance(value, int)
+                ),
+            }
+        )
+    return rows
+
+
+def _qc_profile_rows(profiles: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for profile in profiles:
+        active = profile.get("activeCells")
+        retained = profile.get("retainedCells")
+        removed = (
+            active - retained
+            if isinstance(active, int) and isinstance(retained, int)
+            else None
+        )
+        rows.append(
+            {
+                "profile": _qc_profile_label(profile),
+                "scope": _qc_profile_scope(profile),
+                "active cells": active,
+                "retained cells": retained,
+                "removed cells": removed,
+                "flags": _qc_flag_summary(profile),
+                "failed libraries": len(
+                    _text_values(profile.get("failedCaptureCandidates"))
+                ),
+            }
+        )
+    return rows
+
+
+def _qc_bound_rows(profiles: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for profile in profiles:
+        for bound in _qc_resolved_bounds(profile):
+            rows.append(
+                {
+                    "profile": _qc_profile_label(profile),
+                    "group": bound.get("group"),
+                    "metric": _public_field_label(
+                        bound.get("metric") or bound.get("role")
+                    ),
+                    "median": bound.get("median"),
+                    "lower removal": bound.get("lowerRemoval"),
+                    "upper removal": bound.get("upperRemoval"),
+                    "upper flag": bound.get("upperFlag"),
+                }
+            )
+    return rows
 
 
 def _render_filtering_evidence(
@@ -3205,6 +4132,7 @@ def _render_filtering_evidence(
                 f"Threshold distance: {float(n_mads):g} median absolute deviations"
             )
         metrics.append(_qc_profile_scope(profile))
+        metrics.extend(_qc_flag_summary(profile))
         choices.append(
             {
                 "label": _qc_profile_label(profile),
@@ -3227,8 +4155,14 @@ def _render_filtering_evidence(
     active = selected.get("activeCells")
     retained = selected.get("retainedCells")
     selected_label = _qc_profile_label(selected)
+    selected_flags = sum(
+        int(value)
+        for value in _mapping(selected.get("flaggedCells")).values()
+        if isinstance(value, int)
+    )
     outcome = (
-        f"{selected_label}; {retained:,} of {active:,} cells retained"
+        f"{selected_label}; {retained:,} of {active:,} cells retained; "
+        f"{selected_flags:,} diagnostic flags"
         if isinstance(active, int) and isinstance(retained, int)
         else f"{selected_label} selected"
     )
@@ -3271,12 +4205,32 @@ def _render_filtering_evidence(
         title="Cell filtering",
         outcome=outcome,
         introduction=(
-            "Four registered filtering strategies were compared. The selected "
-            "strategy retained the published cell set because stricter alternatives "
-            "did not provide stronger support."
+            f"{len(profiles):,} registered filtering strategies were compared. "
+            "The selected strategy retained the published cell set because stricter "
+            "alternatives did not provide stronger support. Its cutoffs are "
+            "diagnostic bounds and did not remove cells."
         ),
-        body=_render_evidence_choices(choices),
+        body=(
+            _render_evidence_choices(choices)
+            + '<div class="subsection"><h3>Selected QC metrics and cutoffs</h3>'
+            + _table(
+                _qc_metric_rows(selected),
+                columns=(
+                    "metric",
+                    "scope",
+                    "median",
+                    "diagnostic reference",
+                    "lower cutoff",
+                    "upper cutoff",
+                    "high flag",
+                    "flagged cells",
+                ),
+                empty="No selected QC metric cutoffs were recorded.",
+            )
+            + "</div>"
+        ),
         measurements=_render_evidence_measurements(measurements),
+        expanded=True,
     )
 
 
@@ -3412,9 +4366,79 @@ def _feature_family_counts(
     return counts
 
 
+def _default_inventory_for_assay(
+    inventories: Sequence[Mapping[str, Any]],
+    assay: str,
+) -> dict[str, Any]:
+    matches = [dict(value) for value in inventories if value.get("assay") == assay]
+    if len(matches) > 1:
+        raise ValueError(
+            f"Multiple Scarf default inventories found for assay {assay!r}"
+        )
+    return matches[0] if matches else {}
+
+
+def _default_inventory_family_rows(
+    inventory: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "family": _feature_family_label(family.get("family")),
+            "pattern": family.get("pattern"),
+            "matched genes": family.get("count"),
+            "examples": _text_values(family.get("examples")),
+        }
+        for family in _mappings(inventory.get("families"))
+    ]
+
+
+def _render_default_inventory_summary(
+    inventory: Mapping[str, Any],
+    *,
+    heading: str,
+) -> str:
+    if not inventory:
+        return ""
+    match_count = inventory.get("matchCount")
+    total_features = inventory.get("totalFeatures")
+    applied = inventory.get("appliedToSelectedRepresentation") is True
+    count_summary = (
+        f"{int(match_count):,} of {int(total_features):,} genes matched."
+        if isinstance(match_count, int) and isinstance(total_features, int)
+        else "The exact default pattern was evaluated."
+    )
+    effect = (
+        "The complete default blacklist was applied to the selected representation."
+        if applied
+        else (
+            "The complete default blacklist was evaluated as a reference but was "
+            "not applied wholesale to the selected representation."
+        )
+    )
+    blacklist = str(inventory.get("blacklist") or "")
+    pattern_markup = (
+        "<p><strong>Exact combined pattern:</strong> "
+        f"<code>{html.escape(blacklist)}</code></p>"
+        if blacklist
+        else ""
+    )
+    return (
+        f'<div class="subsection"><h3>{html.escape(heading)}</h3>'
+        f"<p>{html.escape(count_summary)} {html.escape(effect)}</p>"
+        + _table(
+            _default_inventory_family_rows(inventory),
+            columns=("family", "pattern", "matched genes", "examples"),
+            empty="No default blacklist families were recorded.",
+        )
+        + pattern_markup
+        + "</div>"
+    )
+
+
 def _render_normalization_evidence(
     enrichment: Mapping[str, Any],
     plan: Mapping[str, Any],
+    inventories: Sequence[Mapping[str, Any]],
 ) -> str:
     assay_plans = _mappings(plan.get("assays"))
     if not assay_plans:
@@ -3427,6 +4451,7 @@ def _render_normalization_evidence(
         assay = str(assay_plan.get("assay") or "Assay")
         normalization = _mapping(assay_plan.get("normalizationParameters"))
         feature_parameters = _mapping(assay_plan.get("featureParameters"))
+        inventory = _default_inventory_for_assay(inventories, assay)
         log_transform = normalization.get("logTransform") is True
         renormalize = normalization.get("renormalizeSubset") is True
         normalization_metrics = [
@@ -3482,11 +4507,51 @@ def _render_normalization_evidence(
                     ),
                 }
             )
+        if inventory:
+            default_applied = inventory.get("appliedToSelectedRepresentation") is True
+            match_count = inventory.get("matchCount")
+            total_features = inventory.get("totalFeatures")
+            choices.append(
+                {
+                    "label": "Exact Scarf default HVG blacklist",
+                    "status": (
+                        "Applied to selected representation"
+                        if default_applied
+                        else "Evaluated as reference"
+                    ),
+                    "state": "selected" if default_applied else "reviewed",
+                    "metrics": (
+                        [
+                            f"Matched {int(match_count):,} of "
+                            f"{int(total_features):,} genes"
+                        ]
+                        if isinstance(match_count, int)
+                        and isinstance(total_features, int)
+                        else []
+                    ),
+                    "reason": (
+                        "Applied as the complete selected representation blacklist."
+                        if default_applied
+                        else (
+                            "Not applied wholesale; the final policy used only the "
+                            "families supported by the decision evidence."
+                        )
+                    ),
+                }
+            )
         outcome_parts.append(
             f"{_assay_label(assay)} log normalization"
             if log_transform
             else f"{_assay_label(assay)} normalization"
         )
+        if excluded:
+            outcome_parts.append(
+                f"excluded {_format_text_list([_feature_family_label(value) for value in excluded])} from map construction"
+            )
+        if inventory and not inventory.get("appliedToSelectedRepresentation"):
+            outcome_parts.append(
+                "complete Scarf default blacklist not applied wholesale"
+            )
         for family_name in dict.fromkeys([*excluded, *protected]):
             family = _mapping(families.get((assay, family_name)))
             count = family.get("count")
@@ -3525,6 +4590,13 @@ def _render_normalization_evidence(
                     "Applied before variable-gene ranking.",
                 )
             )
+    inventory_markup = "".join(
+        _render_default_inventory_summary(
+            inventory,
+            heading=f"{_assay_label(inventory.get('assay'))} default blacklist audit",
+        )
+        for inventory in inventories
+    )
     return _render_evidence_panel(
         title="Normalization and feature policy",
         outcome="; ".join(outcome_parts),
@@ -3533,14 +4605,16 @@ def _render_normalization_evidence(
             "Representation exclusions changed the map-building features, not the "
             "genes available for marker analysis."
         ),
-        body=_render_evidence_choices(choices),
+        body=_render_evidence_choices(choices) + inventory_markup,
         measurements=_render_evidence_measurements(measurements),
     )
 
 
 def _render_batch_evidence(
     experimental: Mapping[str, Any],
+    parameter: Mapping[str, Any],
     final: Mapping[str, Any],
+    decisions: Mapping[str, Any],
 ) -> str:
     decision = _mapping(experimental.get("decision"))
     batch_plan = _mapping(decision.get("batchCorrection"))
@@ -3555,6 +4629,11 @@ def _render_batch_evidence(
             if item.get("assay") == final.get("primaryAssay")
         ]
     adjusted = any(_present(item.get("batchCorrection")) for item in native_analyses)
+    native_candidate, harmony_candidate = _harmony_candidate_pair(parameter, final)
+    harmony_executed = _harmony_completed(native_candidate) and _harmony_completed(
+        harmony_candidate
+    )
+    degraded = _degraded_protected_columns(native_candidate, harmony_candidate)
     coefficients = list(
         dict.fromkeys(
             _public_field_label(item.get("coefficient"))
@@ -3563,6 +4642,57 @@ def _render_batch_evidence(
         )
     )
     unsafe = any(item.get("status") == "unsafe" for item in safety)
+    correction_outcome = _active_decision(decisions, "correctionOutcome")
+    correction_license = _active_decision(decisions, "correctionLicense")
+    diagnostic_only = str(correction_license.get("selectedOptionId") or "").endswith(
+        "unsafeConfounded"
+    )
+    native_metrics = _mapping(native_candidate.get("metrics"))
+    harmony_metrics = _mapping(harmony_candidate.get("metrics"))
+    native_batch = _mapping(native_metrics.get("batchMixing"))
+    harmony_batch = _mapping(harmony_metrics.get("batchMixing"))
+    harmony_choice_metrics: list[str] = []
+    if harmony_candidate:
+        parameters = _mapping(harmony_candidate.get("parameters"))
+        harmony_choice_metrics.append(
+            "Matched parameters: "
+            f"{_scalar(parameters.get('dimensions'))} dimensions, "
+            f"{_scalar(parameters.get('neighborsK'))} neighbors, "
+            f"resolution {_scalar(parameters.get('leidenResolution'))}"
+        )
+    if harmony_executed:
+        harmony_choice_metrics.insert(0, "Run status: completed")
+        for column in dict.fromkeys([*native_batch, *harmony_batch]):
+            harmony_choice_metrics.append(
+                f"{_public_field_label(column).capitalize()} mixing: "
+                f"{_score_transition(native_batch.get(column), harmony_batch.get(column))}"
+            )
+        if degraded:
+            harmony_choice_metrics.append(
+                "Protected evidence degraded: " + _format_text_list(degraded)
+            )
+    if coefficients:
+        harmony_choice_metrics.append(
+            f"Design-confounded comparisons: {_format_text_list(coefficients)}"
+        )
+    if diagnostic_only:
+        harmony_choice_metrics.append("Selection license: diagnostic only")
+    recorded_rationale = str(correction_outcome.get("rationale") or "").strip()
+    if harmony_executed and degraded:
+        harmony_reason = (
+            "Rejected because protected evidence degraded for "
+            f"{_format_text_list(degraded)}"
+            + ("; the design license was diagnostic only." if diagnostic_only else ".")
+        )
+    elif harmony_executed:
+        harmony_reason = "Executed as a matched diagnostic but not selected."
+    elif unsafe:
+        harmony_reason = (
+            "Not run because library effects could not be separated safely from "
+            "the protected study comparisons."
+        )
+    else:
+        harmony_reason = "No completed matched Harmony diagnostic was recorded."
     choices = [
         {
             "label": "Use the unadjusted representation",
@@ -3570,7 +4700,10 @@ def _render_batch_evidence(
             "state": "selected" if not adjusted else "rejected",
             "metrics": ["Protected biological comparisons remain intact"],
             "reason": (
-                "Selected because no safe, measurable correction was available."
+                "Selected after the matched diagnostic retained more protected "
+                "biological structure."
+                if harmony_executed and not adjusted
+                else "Selected because no safe, measurable correction was available."
                 if not adjusted
                 else "Not selected after the adjusted result showed a safe benefit."
             ),
@@ -3578,20 +4711,17 @@ def _render_batch_evidence(
         {
             "label": "Apply Harmony correction",
             "status": (
-                "Selected" if adjusted else ("Not safe" if unsafe else "Not selected")
+                "Run and selected"
+                if adjusted
+                else (
+                    "Run diagnostically; rejected"
+                    if harmony_executed
+                    else ("Not run" if unsafe else "Not selected")
+                )
             ),
             "state": "rejected" if not adjusted else "selected",
-            "metrics": (
-                [f"Comparisons at risk: {_format_text_list(coefficients)}"]
-                if coefficients
-                else []
-            ),
-            "reason": (
-                "Not run because library effects could not be separated from the "
-                "protected study comparisons."
-                if unsafe
-                else "Evaluated against the native representation."
-            ),
+            "metrics": harmony_choice_metrics,
+            "reason": harmony_reason,
         },
     ]
     measurements: list[tuple[str, str, str]] = []
@@ -3629,22 +4759,52 @@ def _render_batch_evidence(
         _covariate_pair_measurements(_mapping(experimental.get("characterization")))
     )
     outcome = (
-        "Harmony not applied; protected comparisons were not independently estimable"
-        if unsafe
+        "Harmony completed and was selected"
+        if adjusted
         else (
-            "Harmony correction was selected"
-            if adjusted
-            else "No batch correction was selected"
+            "Diagnostic Harmony completed; rejected and native representation retained"
+            if harmony_executed
+            else (
+                "Harmony not applied; protected comparisons were not independently estimable"
+                if unsafe
+                else "No batch correction was selected"
+            )
         )
+    )
+    comparison_markup = (
+        '<div class="subsection"><h3>Matched native versus Harmony metrics</h3>'
+        + _table(
+            _harmony_metric_rows(native_candidate, harmony_candidate),
+            columns=(
+                "category",
+                "metric",
+                "native",
+                "Harmony",
+                "change",
+                "interpretation",
+            ),
+            empty="No matched Harmony measurements were recorded.",
+        )
+        + "</div>"
+        if harmony_executed
+        else ""
+    )
+    rationale_markup = (
+        '<div class="callout subsection"><h3>Recorded correction decision</h3>'
+        f"<p>{html.escape(recorded_rationale)}</p></div>"
+        if recorded_rationale
+        else ""
     )
     return _render_evidence_panel(
         title="Harmony and batch correction",
         outcome=outcome,
         introduction=(
-            "Correction was allowed only when technical variation could be reduced "
-            "without removing tissue, T2D, donor, or sex structure."
+            "Selection required measured technical improvement without material "
+            "loss of protected tissue, T2D, donor, or sex structure. A diagnostic "
+            "run could still be completed when the design was not licensed for "
+            "corrected-result selection."
         ),
-        body=_render_evidence_choices(choices),
+        body=(_render_evidence_choices(choices) + comparison_markup + rationale_markup),
         measurements=_render_evidence_measurements(measurements),
     )
 
@@ -3656,9 +4816,117 @@ def _hvg_ranking_label(value: Any) -> str:
     }.get(str(value or ""), "Variable-gene ranking")
 
 
+def _hvg_tree_stages(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rankings = _mappings(evidence.get("rankings"))
+    candidates = _mappings(evidence.get("candidateMetrics"))
+    default_counts = [
+        int(value)
+        for value in evidence.get("scarfDefaultReferenceCounts", [])
+        if isinstance(value, int)
+    ]
+    selected_mode = evidence.get("selectedRankingMode")
+    selected_count = evidence.get("selectedFeatureCount")
+    stages: list[dict[str, Any]] = []
+    if rankings:
+        ranking_branches: list[dict[str, Any]] = []
+        for ranking in rankings:
+            selected = ranking.get("rankingMode") == selected_mode
+            ranking_branches.append(
+                _tree_branch(
+                    label=_hvg_ranking_label(ranking.get("rankingMode")),
+                    status="Selected" if selected else "Not selected",
+                    state="selected" if selected else "alternative",
+                    metrics=[
+                        "Mean library coverage: "
+                        f"{_analysis_percent(ranking.get('meanTechnicalGroupCoverage'))}",
+                        "Recurring in at least two libraries: "
+                        f"{_analysis_percent(ranking.get('recurrentInTwoGroupsFraction'))}",
+                    ],
+                    reason=(
+                        "Selected after the combined recurrence, default-overlap, "
+                        "technical-association, and downstream-stability comparison."
+                        if selected
+                        else (
+                            "Not selected after the combined upstream and downstream "
+                            "comparison."
+                        )
+                    ),
+                )
+            )
+        if default_counts:
+            ranking_branches.append(
+                _tree_branch(
+                    label="Exact Scarf-default blacklist reference",
+                    status="Reference evaluated",
+                    state="reviewed",
+                    metrics=[
+                        "Executed set sizes: "
+                        + ", ".join(f"{value:,}" for value in default_counts)
+                    ],
+                    reason=(
+                        "Used as an exact comparison reference; it was not a "
+                        "selectable ranking mode."
+                    ),
+                )
+            )
+        stages.append(
+            {
+                "question": "How should highly variable genes be ranked?",
+                "description": (
+                    "The workflow compared a global variability ranking with a "
+                    "ranking that emphasized recurrence across libraries."
+                ),
+                "branches": ranking_branches,
+            }
+        )
+    if candidates:
+        count_branches: list[dict[str, Any]] = []
+        for candidate in candidates:
+            count = candidate.get("featureCount")
+            if not isinstance(count, int):
+                continue
+            selected = count == selected_count
+            count_branches.append(
+                _tree_branch(
+                    label=f"{count:,} variable genes",
+                    status="Selected" if selected else "Not selected",
+                    state="selected" if selected else "alternative",
+                    metrics=[
+                        "Corrected variance captured: "
+                        f"{_analysis_percent(candidate.get('varianceFraction'))}",
+                        "Recurring across most libraries: "
+                        f"{_analysis_percent(candidate.get('recurrentFraction'))}",
+                    ],
+                    reason=(
+                        "Selected as the supported balance of captured variation, "
+                        "reproducibility, and downstream stability."
+                        if selected
+                        else "Not selected after comparison with the supported set size."
+                    ),
+                )
+            )
+        if count_branches:
+            stages.append(
+                {
+                    "question": "How many highly variable genes should be used?",
+                    "description": (
+                        "Registered focused, standard, and broad feature-set sizes "
+                        "were all executed and compared."
+                    ),
+                    "branches": count_branches,
+                }
+            )
+    return stages
+
+
 def _render_hvg_evidence(evidence: Mapping[str, Any]) -> str:
     rankings = _mappings(evidence.get("rankings"))
     candidates = _mappings(evidence.get("candidateMetrics"))
+    default_counts = [
+        int(value)
+        for value in evidence.get("scarfDefaultReferenceCounts", [])
+        if isinstance(value, int)
+    ]
     if not rankings and not candidates:
         return ""
     selected_mode = evidence.get("selectedRankingMode")
@@ -3678,10 +4946,29 @@ def _render_hvg_evidence(evidence: Mapping[str, Any]) -> str:
                     f"{_analysis_percent(ranking.get('recurrentInTwoGroupsFraction'))}",
                 ],
                 "reason": (
-                    "Selected because variable genes were more consistent across "
-                    "the registered libraries."
+                    "Selected after combining recurrence, exact Scarf-default "
+                    "overlap, technical association, and downstream stability."
                     if selected
-                    else "Not selected because fewer genes recurred across libraries."
+                    else (
+                        "Not selected after the combined upstream and downstream "
+                        "comparison."
+                    )
+                ),
+            }
+        )
+    if default_counts:
+        ranking_choices.append(
+            {
+                "label": "Exact Scarf-default blacklist reference",
+                "status": "Reference evaluated",
+                "state": "reviewed",
+                "metrics": [
+                    "Executed set sizes: "
+                    + ", ".join(f"{value:,}" for value in default_counts)
+                ],
+                "reason": (
+                    "Used as a fixed comparison reference, not as a selectable "
+                    "ranking mode."
                 ),
             }
         )
@@ -3743,6 +5030,13 @@ def _render_hvg_evidence(evidence: Mapping[str, Any]) -> str:
         )
         if isinstance(evidence.get("excludedTechnicalGroupCount"), int)
         else None,
+        (
+            "HVG branches executed",
+            f"{int(evidence['executedBranchCount']):,}",
+            "Global, group-aware, and exact Scarf-default reference branches.",
+        )
+        if isinstance(evidence.get("executedBranchCount"), int)
+        else None,
     ]
     body = (
         '<div class="subsection"><h3>Ranking method</h3>'
@@ -3760,13 +5054,15 @@ def _render_hvg_evidence(evidence: Mapping[str, Any]) -> str:
         outcome=outcome,
         introduction=(
             "The workflow first compared how genes were ranked, then compared three "
-            "registered set sizes. Selection favored signal that recurred across "
-            "libraries instead of variation driven by only a few libraries."
+            "registered set sizes. Selection combined recurrence, exact "
+            "Scarf-default overlap, technical association, and downstream "
+            "stability rather than using one metric alone."
         ),
         body=body,
         measurements=_render_evidence_measurements(
             [item for item in measurements if item is not None]
         ),
+        expanded=True,
     )
 
 
@@ -3777,11 +5073,14 @@ def _render_analysis_evidence(payload: Mapping[str, Any]) -> str:
     final = _mapping(workflow_result.get("finalAnalysis"))
     enrichment = _latest(reports, "data_enrichment")
     experimental = _latest(reports, "experimental_context")
+    parameter = _latest(reports, "parameter_tuning")
+    decisions = _mapping(payload.get("activeDecisions"))
+    inventories = _mappings(payload.get("defaultFeatureInventories"))
     panels = [
         _render_filtering_evidence(experimental, plan),
         _render_covariate_evidence(experimental),
-        _render_normalization_evidence(enrichment, plan),
-        _render_batch_evidence(experimental, final),
+        _render_normalization_evidence(enrichment, plan, inventories),
+        _render_batch_evidence(experimental, parameter, final, decisions),
         _render_hvg_evidence(_mapping(payload.get("hvgEvidence"))),
     ]
     panels = [panel for panel in panels if panel]
@@ -3876,6 +5175,167 @@ def _render_analysis_biology(biology: Mapping[str, Any]) -> str:
     {interpretation_markup}
     {observation_markup}
     {follow_up_markup}
+  </section>
+"""
+
+
+def _render_column_list(items: Sequence[str]) -> str:
+    if not items:
+        return '<p class="empty">No matched feature names were recorded.</p>'
+    return '<ul class="plain-list column-list">{}</ul>'.format(
+        "".join(f"<li>{html.escape(item)}</li>" for item in items)
+    )
+
+
+def _render_qc_technical_audit(
+    experimental: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> str:
+    profiles = _mappings(experimental.get("qcProfiles"))
+    if not profiles:
+        return ""
+    decision = _mapping(experimental.get("decision"))
+    cell_qc = _mapping(plan.get("cellQc"))
+    if not cell_qc:
+        cell_qc = _mapping(decision.get("cellQc"))
+    if not cell_qc:
+        cell_qc = _mapping(experimental.get("cellQc"))
+    selected = _selected_qc_profile(experimental, cell_qc)
+    selected_id = selected.get("profileId")
+    selected_name = selected.get("registeredProfile")
+    profile_rows = _qc_profile_rows(profiles)
+    for row, profile in zip(profile_rows, profiles, strict=True):
+        row["_selected"] = bool(
+            (selected_id and profile.get("profileId") == selected_id)
+            or (
+                not selected_id
+                and selected_name
+                and profile.get("registeredProfile") == selected_name
+            )
+        )
+    selected_metrics = _qc_metric_rows(selected)
+    return f"""
+  <section class="section" id="qc-audit">
+    <h2>Cell QC audit</h2>
+    <p>Selected and alternative filtering profiles, diagnostic flags, and every persisted cutoff are shown below. A cutoff in a retain-with-flags profile is diagnostic and did not remove cells.</p>
+    <div class="subsection"><h3>Profile comparison</h3>{_table(profile_rows, columns=("profile", "scope", "active cells", "retained cells", "removed cells", "flags", "failed libraries"))}</div>
+    <div class="subsection"><h3>Selected-profile metric summary</h3>{_table(selected_metrics, columns=("metric", "scope", "median", "diagnostic reference", "lower cutoff", "upper cutoff", "high flag", "flagged cells"))}</div>
+    <details><summary>All global and per-library cutoffs</summary>{_table(_qc_bound_rows(profiles), columns=("profile", "group", "metric", "median", "lower removal", "upper removal", "upper flag"), empty="No persisted QC cutoffs were recorded.")}</details>
+  </section>
+"""
+
+
+def _render_feature_technical_audit(
+    plan: Mapping[str, Any],
+    inventories: Sequence[Mapping[str, Any]],
+) -> str:
+    if not inventories:
+        return ""
+    policy_rows: list[dict[str, Any]] = []
+    for assay_plan in _mappings(plan.get("assays")):
+        parameters = _mapping(assay_plan.get("featureParameters"))
+        if not parameters:
+            continue
+        policy_rows.append(
+            {
+                "assay": assay_plan.get("assay"),
+                "selected features": parameters.get("topN"),
+                "minimum detected cells": parameters.get("minCells"),
+                "excluded families": _text_values(parameters.get("excludeFamilies")),
+                "protected families": _text_values(parameters.get("protectFamilies")),
+                "complete default blacklist applied": (
+                    parameters.get("useScarfDefaultBlacklist") is True
+                ),
+            }
+        )
+    inventory_markup: list[str] = []
+    for inventory in inventories:
+        assay = _assay_label(inventory.get("assay")) or "Assay"
+        match_count = inventory.get("matchCount")
+        names = _text_values(inventory.get("matchedFeatures"))
+        inventory_markup.append(
+            _render_default_inventory_summary(
+                inventory,
+                heading=f"{assay} exact Scarf-default blacklist",
+            )
+            + "<details><summary>All "
+            + (
+                f"{int(match_count):,}"
+                if isinstance(match_count, int)
+                else f"{len(names):,}"
+            )
+            + " matched feature names</summary>"
+            + _render_column_list(names)
+            + "</details>"
+        )
+    return f"""
+  <section class="section" id="feature-audit">
+    <h2>Normalization and feature-selection audit</h2>
+    <p>The selected representation policy is separate from the exact Scarf-default blacklist reference. Genes excluded from map construction remained available to marker testing.</p>
+    {_table(policy_rows, columns=("assay", "selected features", "minimum detected cells", "excluded families", "protected families", "complete default blacklist applied"))}
+    {"".join(inventory_markup)}
+  </section>
+"""
+
+
+def _render_harmony_technical_audit(
+    experimental: Mapping[str, Any],
+    parameter: Mapping[str, Any],
+    final: Mapping[str, Any],
+    decisions: Mapping[str, Any],
+) -> str:
+    native, harmony = _harmony_candidate_pair(parameter, final)
+    if not native and not harmony:
+        return ""
+    outcome = _active_decision(decisions, "correctionOutcome")
+    license_record = _active_decision(decisions, "correctionLicense")
+    rationale = str(outcome.get("rationale") or "").strip()
+    license_option = str(license_record.get("selectedOptionId") or "not recorded")
+    license_label = _label(license_option.rpartition(":")[2])
+    run_status = (
+        "completed" if _harmony_completed(harmony) else _scalar(harmony.get("status"))
+    )
+    rationale_markup = (
+        '<div class="callout subsection"><h3>Recorded rejection rationale</h3>'
+        f"<p>{html.escape(rationale)}</p></div>"
+        if rationale
+        else ""
+    )
+    candidate_rows = [
+        {
+            "candidate": "Native",
+            "status": native.get("status"),
+            "eligible": native.get("eligible"),
+            **_mapping(native.get("parameters")),
+        },
+        {
+            "candidate": "Harmony",
+            "status": harmony.get("status"),
+            "eligible": harmony.get("eligible"),
+            **_mapping(harmony.get("parameters")),
+        },
+    ]
+    safety_rows: list[dict[str, Any]] = []
+    for item in _mappings(experimental.get("batchSafety")):
+        estimability = _mapping(item.get("estimability"))
+        safety_rows.append(
+            {
+                "comparison": _public_field_label(item.get("coefficient")),
+                "status": item.get("status"),
+                "study units": estimability.get("rowsUsed"),
+                "technical rank": estimability.get("rankTechnical"),
+                "residual degrees of freedom": estimability.get("residualDf"),
+                "remaining capacity": estimability.get("estimableDf"),
+            }
+        )
+    return f"""
+  <section class="section" id="harmony-audit">
+    <h2>Harmony diagnostic audit</h2>
+    <p>Run status: <strong>{html.escape(run_status)}</strong>. Selection license: <strong>{html.escape(license_label)}</strong>.</p>
+    <div class="subsection"><h3>Matched candidates</h3>{_table(candidate_rows, columns=("candidate", "status", "eligible", "dimensions", "neighborsK", "leidenResolution", "useHarmony"))}</div>
+    <div class="subsection"><h3>Native versus Harmony measurements</h3>{_table(_harmony_metric_rows(native, harmony), columns=("category", "metric", "native", "Harmony", "change", "interpretation"))}</div>
+    <div class="subsection"><h3>Design safety</h3>{_table(safety_rows, columns=("comparison", "status", "study units", "technical rank", "residual degrees of freedom", "remaining capacity"), empty="No design-safety rows were recorded.")}</div>
+    {rationale_markup}
   </section>
 """
 
@@ -4021,6 +5481,35 @@ def _render_analysis_document(payload: Mapping[str, Any]) -> str:
             "record the reason."
         ),
     )
+    diagnostic_plot_order = (
+        "qcDistributionsBeforeFiltering",
+        "qcDistributions",
+        *(name for name in plots if name.startswith("qcDistributionDerived")),
+        "hvgGlobal",
+        "hvgBatchAware",
+    )
+    diagnostic_plots = (
+        _render_plots(
+            plots,
+            (),
+            order=diagnostic_plot_order,
+            show_provenance=False,
+            show_notes=False,
+        )
+        if any(name in plots for name in diagnostic_plot_order)
+        else ""
+    )
+    diagnostic_section = (
+        """
+  <section class="section">
+    <h2>Quality control and variable-gene diagnostics</h2>
+    <p>QC panels show the selected cutoff annotations. HVG panels highlight the genes retained by each executed ranking at the selected feature count.</p>
+    {plots}
+  </section>
+""".format(plots=diagnostic_plots)
+        if diagnostic_plots
+        else ""
+    )
     limitations = _analysis_limitations(payload)
     biology_markup = _render_analysis_biology(biology)
     body = f"""  <p class="eyebrow">Analysis summary</p>
@@ -4049,6 +5538,8 @@ def _render_analysis_document(payload: Mapping[str, Any]) -> str:
   </section>
 
   {decision_evidence}
+
+  {diagnostic_section}
 
   <section class="section">
     <h2>Why the final result was selected</h2>
@@ -4090,6 +5581,8 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
     experimental = _latest(reports, "experimental_context")
     parameter = _latest(reports, "parameter_tuning")
     biology = _latest(reports, "biological_interpretation")
+    decisions = _mapping(payload.get("activeDecisions"))
+    inventories = _mappings(payload.get("defaultFeatureInventories"))
     cluster_counts = {
         str(key): int(value)
         for key, value in _mapping(payload.get("clusterCounts")).items()
@@ -4107,6 +5600,8 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
     total_cells = sum(cluster_counts.values())
     assay_plans = _mappings(plan.get("assays"))
     assays = [str(item.get("assay")) for item in assay_plans if item.get("assay")]
+    doublet_evidence = _mapping(final.get("doubletEvidence"))
+    marker_evidence = _mapping(final.get("markerEvidence"))
     metrics = [
         ("Final cells", total_cells or None),
         ("Final clusters", len(cluster_counts) or None),
@@ -4114,6 +5609,12 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
         ("Candidates", parameter.get("totalCandidates")),
         ("Selected graph", final.get("graphMethod")),
         ("Marker assay", final.get("markerAssay")),
+        ("Marker specificity", marker_evidence.get("specificityMedian")),
+        ("Doublet capture coverage", doublet_evidence.get("captureCoverage")),
+        (
+            "Statistical test artifacts",
+            len(_mappings(final.get("statisticalTests"))) or None,
+        ),
     ]
     metric_markup = _render_metrics(metrics)
     interpretation = {
@@ -4129,6 +5630,7 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
         "status": enrichment.get("status"),
         "policies": enrichment.get("policies"),
         "inspections": enrichment.get("inspections"),
+        "defaultFeatureEvidence": enrichment.get("defaultFeatureEvidence"),
         "evidenceIds": enrichment.get("evidenceIds"),
         "unresolvedQuestions": enrichment.get("unresolvedQuestions"),
     }
@@ -4139,6 +5641,7 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
         "qcProfiles": experimental.get("qcProfiles"),
         "batchSafety": experimental.get("batchSafety"),
         "characterization": experimental.get("characterization"),
+        "contrastPlans": experimental.get("contrastPlans"),
     }
     preprocessing_summary = {
         "primaryAssay": plan.get("primaryAssay"),
@@ -4198,6 +5701,25 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
         if biology
         else ""
     )
+    qc_audit = _render_qc_technical_audit(experimental, plan)
+    feature_audit = _render_feature_technical_audit(plan, inventories)
+    harmony_audit = _render_harmony_technical_audit(
+        experimental,
+        parameter,
+        final,
+        decisions,
+    )
+    qc_nav = '<a class="pill pill-outline" href="#qc-audit">QC</a>' if qc_audit else ""
+    feature_nav = (
+        '<a class="pill pill-outline" href="#feature-audit">Features</a>'
+        if feature_audit
+        else ""
+    )
+    harmony_nav = (
+        '<a class="pill pill-outline" href="#harmony-audit">Harmony</a>'
+        if harmony_audit
+        else ""
+    )
     title = f"Scarf agent report {workflow_id}"
     body = f"""  <p class="eyebrow">Technical report</p>
   <h1>Evidence from an automated analysis.</h1>
@@ -4211,6 +5733,9 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
     <a class="pill pill-outline" href="#visuals">Visual results</a>
     {biology_nav}
     <a class="pill pill-outline" href="#context">Context</a>
+    {qc_nav}
+    {feature_nav}
+    {harmony_nav}
     <a class="pill pill-outline" href="#tuning">Tuning</a>
     <a class="pill pill-outline" href="#workflow">Workflow</a>
   </nav>
@@ -4229,9 +5754,15 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
     <h2>Final partition evidence</h2>
     <div class="subsection"><h3>Final cluster sizes</h3>{_render_clusters(cluster_counts)}</div>
     <div class="subsection"><h3>Top marker evidence</h3>{_table(top_markers, columns=marker_columns, empty="No marker table was available.")}</div>
+    <div class="subsection"><h3>Marker-family summary</h3>{_value(marker_evidence)}</div>
+    <div class="subsection"><h3>Advisory doublet summary</h3>{_value(doublet_evidence)}</div>
   </section>
 
   {biology_markup}
+
+  {qc_audit}
+  {feature_audit}
+  {harmony_audit}
 
   <section class="section" id="context"><h2>Study context</h2>{_value(study)}</section>
   <section class="section"><h2>Data enrichment</h2>{_value(enrichment_summary)}</section>
@@ -4239,6 +5770,7 @@ def _render_technical_document(payload: Mapping[str, Any]) -> str:
   <section class="section"><h2>Preprocessing plan</h2>{_value(preprocessing_summary)}</section>
 
   <section class="section" id="tuning"><h2>Parameter tuning and graph selection</h2>{_render_parameter_tuning(parameter)}</section>
+  <section class="section"><h2>Bounded analysis review and hypothesis tests</h2>{_value({"analysisEvidence": final.get("analysisEvidence"), "statisticalTests": final.get("statisticalTests")})}</section>
   <section class="section" id="workflow"><h2>Workflow execution</h2>{_render_timeline(attempts, resumes)}</section>
   <section class="section"><h2>Agent execution</h2>{_render_executions(reports)}</section>
   <section class="section"><h2>Limitations and workflow notes</h2>{_value(limitations) if limitations else '<p class="empty">No limitations were recorded.</p>'}</section>
@@ -4313,19 +5845,38 @@ def generate_agent_report(
         raise ValueError("Agent report path resolves outside the analysis store")
     plot_dir = report_dir / "plots"
     report_dir.mkdir(parents=True, exist_ok=True)
-    cluster_counts, top_markers, plot_files, plot_notes = _collect_final_artifacts(
-        store,
-        result,
-        plot_dir,
-    )
     preprocessing_plan = (
         result.preprocessingPlan.model_dump(mode="json")
         if result.preprocessingPlan is not None
         else {}
     )
+    experimental = _latest(reports, "experimental_context")
+    selected_qc_profile = _selected_qc_profile(
+        experimental,
+        _mapping(preprocessing_plan.get("cellQc")),
+    )
+    cluster_counts, top_markers, plot_files, plot_notes = _collect_final_artifacts(
+        store,
+        result,
+        plot_dir,
+        qc_profile=selected_qc_profile,
+    )
     hvg_evidence = _collect_hvg_evidence(
         store,
         stage_attempts,
+        preprocessing_plan,
+    )
+    hvg_plots, hvg_plot_notes = _collect_hvg_plots(
+        store,
+        stage_attempts,
+        preprocessing_plan,
+        plot_dir,
+    )
+    plot_files.update(hvg_plots)
+    plot_notes.extend(hvg_plot_notes)
+    active_decisions = _collect_active_decisions(store, workflow_run_id)
+    default_feature_inventories = _collect_default_feature_inventories(
+        store,
         preprocessing_plan,
     )
     payload: dict[str, Any] = {
@@ -4344,6 +5895,8 @@ def generate_agent_report(
         "plotFiles": plot_files,
         "plotNotes": plot_notes,
         "hvgEvidence": hvg_evidence,
+        "activeDecisions": active_decisions,
+        "defaultFeatureInventories": default_feature_inventories,
     }
     documents = (
         ("analysis.html", _render_analysis_document(payload)),

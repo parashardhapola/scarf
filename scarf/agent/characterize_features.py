@@ -1,5 +1,6 @@
 """Characterize feature identity, species, families, and exogenous candidates."""
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from ..features.identity import (
     reference_misses,
     resolve_species,
 )
+from ..features.variability import DEFAULT_HVG_BLACKLIST
 from ..quality_control.cell_cycle_genes import (
     g2m_phase_genes,
     g2m_phase_genes_mouse,
@@ -47,6 +49,23 @@ _CELL_CYCLE = {
     "mus_musculus": {"s": s_phase_genes_mouse, "g2m": g2m_phase_genes_mouse},
 }
 _SEX_COEFFICIENT_TOKENS = frozenset({"sex", "gender", "Sex", "Gender"})
+_FEATURE_INVENTORY_EXAMPLE_LIMIT = 8
+_DEFAULT_HVG_FAMILY_PATTERNS = (
+    ("mitochondrial", r"^MT-"),
+    ("ribosomalProtein", r"^RPS|^RPL"),
+    ("mitoribosomal", r"^MRPS|^MRPL"),
+    ("cellCycleCcn", r"^CCN"),
+    ("hla", r"^HLA-"),
+    ("h2", r"^H2-"),
+    ("histone", r"^HIST"),
+    (
+        "sexLinked",
+        (
+            r"^XIST$|^DDX3Y$|^USP9Y$|^EIF1AY$|^KDM5D$|^SRY$|^ZFY$|^UTY$|"
+            r"^TMSB4Y$|^NLGN4Y$"
+        ),
+    ),
+)
 
 
 class FeatureCharacterization(AgentDataModel):
@@ -77,6 +96,54 @@ def _bounded_context(study_context: str | None) -> str:
         if len(text) <= CONFIG._CONTEXT_LIMIT
         else text[: CONFIG._CONTEXT_LIMIT - 3] + "..."
     )
+
+
+def _feature_pattern_matches(names: Sequence[str], pattern: str) -> list[str]:
+    compiled = re.compile(pattern.upper())
+    return [name for name in names if compiled.match(name.upper()) is not None]
+
+
+def _bounded_feature_examples(matches: Sequence[str]) -> list[str]:
+    return sorted(set(matches), key=lambda value: (value.casefold(), value))[
+        :_FEATURE_INVENTORY_EXAMPLE_LIMIT
+    ]
+
+
+def _scarf_default_feature_inventory(
+    assay_name: str,
+    names: Sequence[str],
+) -> dict[str, Any]:
+    evidence_prefix = f"assay:{assay_name}:scarfDefaultHvg"
+    combined_matches = _feature_pattern_matches(names, DEFAULT_HVG_BLACKLIST)
+    families: list[dict[str, Any]] = []
+    family_evidence_ids: list[str] = []
+    for family, pattern in _DEFAULT_HVG_FAMILY_PATTERNS:
+        matches = _feature_pattern_matches(names, pattern)
+        evidence_id = f"{evidence_prefix}:family:{family}"
+        families.append(
+            {
+                "family": family,
+                "pattern": pattern,
+                "caseInsensitive": True,
+                "count": len(matches),
+                "examples": _bounded_feature_examples(matches),
+                "evidenceId": evidence_id,
+            }
+        )
+        family_evidence_ids.append(evidence_id)
+    evidence_id = f"{evidence_prefix}:combined"
+    return {
+        "source": "scarfDefaultHvgBlacklist",
+        "policyEffect": "evidenceOnly",
+        "featureColumn": "names",
+        "totalFeatures": len(names),
+        "blacklist": DEFAULT_HVG_BLACKLIST,
+        "matchCount": len(combined_matches),
+        "examples": _bounded_feature_examples(combined_matches),
+        "families": families,
+        "evidenceId": evidence_id,
+        "evidenceIds": [evidence_id, *family_evidence_ids],
+    }
 
 
 def _audit(
@@ -323,6 +390,19 @@ def _characterize_assay(
             assay=assay_name,
         )
         return record
+
+    default_inventory = _scarf_default_feature_inventory(assay_name, names)
+    record["defaultFeatureInventory"] = default_inventory
+    _audit(
+        audit_log,
+        kind="scarfDefaultFeatureInventory",
+        detail=(
+            f"Scarf's default HVG blacklist matched "
+            f"{default_inventory['matchCount']} of {len(names)} RNA features"
+        ),
+        assay=assay_name,
+        evidenceIds=default_inventory["evidenceIds"],
+    )
 
     species_by_assay = dict(directions.get("speciesByAssay") or {})
     directed_species = species_by_assay.get(assay_name)

@@ -102,6 +102,12 @@ class CovariateCharacterization(AgentDataModel):
     coefficients: list[dict[str, Any]] = Field(default_factory=list)
     technicalNesting: list[dict[str, Any]] = Field(default_factory=list)
     confounding: list[dict[str, Any]] = Field(default_factory=list)
+    unitLevelCounts: list[dict[str, Any]] = Field(default_factory=list)
+    groupImbalance: list[dict[str, Any]] = Field(default_factory=list)
+    missingness: list[dict[str, Any]] = Field(default_factory=list)
+    designStructures: list[dict[str, Any]] = Field(default_factory=list)
+    pairedCoverage: list[dict[str, Any]] = Field(default_factory=list)
+    coefficientEstimability: list[dict[str, Any]] = Field(default_factory=list)
 
     @classmethod
     def get_blank(cls) -> "CovariateCharacterization":
@@ -127,6 +133,42 @@ class _ColumnProfile:
     summary: str
     digest: PartitionDigest
     artifact: ArtifactRef | None = None
+    levelCounts: tuple[dict[str, Any], ...] = ()
+    levelCountsTruncated: bool = False
+
+
+_MAX_LEVEL_COUNT_ITEMS = 32
+_MAX_STRUCTURE_ITEMS = 32
+
+
+def _json_scalar(value: Any) -> str | int | float | bool | None:
+    if isinstance(value, np.generic):
+        value = value.item()
+    missing = pd.isna(value)
+    if isinstance(missing, bool | np.bool_) and bool(missing):
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, str | int | float | bool):
+        return value
+    return str(value)
+
+
+def _bounded_level_counts(
+    values: Sequence[Any] | np.ndarray | pd.Series,
+    *,
+    limit: int = _MAX_LEVEL_COUNT_ITEMS,
+) -> tuple[tuple[dict[str, Any], ...], bool]:
+    series = pd.Series(values)
+    counts = series.value_counts(dropna=False, sort=False)
+    output = tuple(
+        {
+            "value": _json_scalar(value),
+            "count": int(count),
+        }
+        for value, count in counts.iloc[:limit].items()
+    )
+    return output, len(counts) > limit
 
 
 class _SelectionBoundCells:
@@ -387,12 +429,18 @@ def _profile_column(
     resolved_kind = kind or _infer_kind(values)
     summary = _summarize(values, resolved_kind)
     digest = column_partition_digest(store.cells, name, cell_key=cell_key)
+    level_counts: tuple[dict[str, Any], ...] = ()
+    level_counts_truncated = False
+    if resolved_kind == "categorical":
+        level_counts, level_counts_truncated = _bounded_level_counts(values)
     artifact_source = getattr(store.cells, "artifact_source", lambda _name: None)(name)
     return _ColumnProfile(
         kind=resolved_kind,
         summary=summary,
         digest=digest,
         artifact=artifact_source,
+        levelCounts=level_counts,
+        levelCountsTruncated=level_counts_truncated,
     )
 
 
@@ -773,6 +821,194 @@ def _independent_is_coarser(
     return nesting in {"leftInRight", "equivalent"}
 
 
+def _valid_value_mask(values: Sequence[Any] | np.ndarray | pd.Series) -> np.ndarray:
+    missing = pd.isna(np.asarray(values, dtype=object))
+    return np.asarray(~missing, dtype=bool)
+
+
+def _ordered_group_values(values: pd.Series) -> list[str | int | float | bool]:
+    raw = values.to_numpy(dtype=object, copy=False)
+    valid = _valid_value_mask(raw)
+    return [
+        cast(str | int | float | bool, _json_scalar(value))
+        for value in pd.unique(raw[valid])
+    ]
+
+
+def _group_counts(
+    values: pd.Series,
+) -> tuple[list[dict[str, Any]], bool]:
+    raw = values.to_numpy(dtype=object, copy=False)
+    valid = _valid_value_mask(raw)
+    counts, truncated = _bounded_level_counts(raw[valid])
+    return list(counts), truncated
+
+
+def _imbalance_from_counts(counts: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    positive = [int(item["count"]) for item in counts if int(item["count"]) > 0]
+    if not positive:
+        return {
+            "minimum": 0,
+            "maximum": 0,
+            "maxToMinRatio": None,
+            "balanced": False,
+        }
+    minimum = min(positive)
+    maximum = max(positive)
+    return {
+        "minimum": minimum,
+        "maximum": maximum,
+        "maxToMinRatio": float(maximum / minimum),
+        "balanced": minimum == maximum,
+    }
+
+
+def _distinct_units_by_group(
+    design: pd.DataFrame,
+    *,
+    coefficient: str,
+    unit: str,
+    group_order: Sequence[str | int | float | bool],
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    coefficient_values = design[coefficient].to_numpy(dtype=object, copy=False)
+    unit_values = design[unit].to_numpy(dtype=object, copy=False)
+    for group in group_order:
+        mask = coefficient_values == group
+        valid_units = unit_values[mask & _valid_value_mask(unit_values)]
+        output.append(
+            {
+                "group": group,
+                "count": int(pd.Series(valid_units).nunique(dropna=True)),
+            }
+        )
+    return output
+
+
+def _design_missingness(
+    design: pd.DataFrame,
+    columns: Sequence[str],
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    rows = int(len(design))
+    for column in dict.fromkeys(columns):
+        values = design[column].to_numpy(dtype=object, copy=False)
+        missing = int((~_valid_value_mask(values)).sum())
+        output.append(
+            {
+                "column": column,
+                "rows": rows,
+                "missing": missing,
+                "missingFraction": missing / rows if rows else 0.0,
+            }
+        )
+    return output
+
+
+def _categorical_structure(
+    design: pd.DataFrame,
+    left: str,
+    right: str,
+) -> dict[str, Any]:
+    left_values = design[left].to_numpy(dtype=object, copy=False)
+    right_values = design[right].to_numpy(dtype=object, copy=False)
+    mapping = directional_mapping(left_values, right_values)
+    valid = _valid_value_mask(left_values) & _valid_value_mask(right_values)
+    fully_crossed = False
+    if valid.any():
+        table = pd.crosstab(left_values[valid], right_values[valid])
+        fully_crossed = bool(table.size and np.all(table.to_numpy() > 0))
+    nesting = str(mapping.get("nesting", "none"))
+    relationship = (
+        nesting
+        if nesting != "none"
+        else "crossed"
+        if fully_crossed
+        else "partiallyCrossed"
+    )
+    return {
+        "left": left,
+        "right": right,
+        "relationship": relationship,
+        "fullyCrossed": fully_crossed,
+        "directionalMapping": mapping,
+    }
+
+
+def _paired_coverage(
+    design: pd.DataFrame,
+    *,
+    coefficient: str,
+    pair_by: str,
+    group_order: Sequence[str | int | float | bool],
+) -> dict[str, Any]:
+    groups = design[coefficient].to_numpy(dtype=object, copy=False)
+    pairs = design[pair_by].to_numpy(dtype=object, copy=False)
+    valid = _valid_value_mask(groups) & _valid_value_mask(pairs)
+    frame = pd.DataFrame({"group": groups[valid], "pair": pairs[valid]})
+    required = set(group_order)
+    complete = 0
+    incomplete = 0
+    duplicate_pair_groups = 0
+    single_group_pairs = 0
+    incomplete_examples: list[dict[str, Any]] = []
+    for pair, pair_frame in frame.groupby("pair", sort=False, observed=False):
+        counts = pair_frame["group"].value_counts(dropna=False)
+        present = {_json_scalar(value) for value in counts.index}
+        has_duplicate = bool((counts > 1).any())
+        if len(present) == 1:
+            single_group_pairs += 1
+        if present == required and not has_duplicate:
+            complete += 1
+            continue
+        incomplete += 1
+        duplicate_pair_groups += int((counts > 1).sum())
+        if len(incomplete_examples) < _MAX_LEVEL_COUNT_ITEMS:
+            incomplete_examples.append(
+                {
+                    "pair": _json_scalar(pair),
+                    "presentGroups": [
+                        value for value in group_order if value in present
+                    ],
+                    "duplicateGroups": [
+                        _json_scalar(value)
+                        for value, count in counts.items()
+                        if int(count) > 1
+                    ],
+                }
+            )
+    total_pairs = int(frame["pair"].nunique(dropna=True))
+    return {
+        "pairBy": pair_by,
+        "requiredGroups": list(group_order),
+        "pairs": total_pairs,
+        "completePairs": complete,
+        "incompletePairs": incomplete,
+        "duplicatePairGroups": duplicate_pair_groups,
+        "betweenIndependentUnits": (
+            total_pairs >= 2 and single_group_pairs == total_pairs
+        ),
+        "design": (
+            "paired"
+            if total_pairs >= 2
+            and complete == total_pairs
+            and incomplete == 0
+            and duplicate_pair_groups == 0
+            else "betweenIndependentUnits"
+            if total_pairs >= 2 and single_group_pairs == total_pairs
+            else "mixedOrIncomplete"
+        ),
+        "incompleteExamples": incomplete_examples,
+        "examplesTruncated": incomplete > len(incomplete_examples),
+        "complete": (
+            total_pairs >= 2
+            and complete == total_pairs
+            and incomplete == 0
+            and duplicate_pair_groups == 0
+        ),
+    }
+
+
 def _resolve_units(
     run: _Run,
     coefficient: str,
@@ -941,6 +1177,7 @@ def _characterize_coefficient(
     observation_unit: str | None,
     independent_unit: str | None,
     technical: Sequence[str],
+    design_columns: Sequence[str] = (),
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     record: dict[str, Any] = {
         "name": coefficient,
@@ -948,6 +1185,16 @@ def _characterize_coefficient(
         "observationUnit": observation_unit,
         "independentUnit": independent_unit,
         "scope": "unresolvedUnit",
+        "groupOrder": [],
+        "groupCounts": [],
+        "groupCountsTruncated": False,
+        "groupImbalance": {},
+        "unitLevelCounts": {},
+        "replication": {},
+        "missingness": [],
+        "designStructures": [],
+        "pairedCoverage": {},
+        "estimability": {},
     }
     if observation_unit is None or observation_unit not in run.profiles:
         run.note(
@@ -1024,7 +1271,28 @@ def _characterize_coefficient(
             )
             independent_unit = None
             record["independentUnit"] = None
-    columns = list(dict.fromkeys([*group_cols, coefficient, *unit_constant]))
+    design_constant = [
+        name
+        for name in design_columns
+        if name not in {coefficient, observation_unit, independent_unit}
+        and name in run.profiles
+        and column_constant_within(
+            run.store.cells,
+            name,
+            observation_unit,
+            cell_key=run.cell_key,
+        )
+    ]
+    columns = list(
+        dict.fromkeys(
+            [
+                *group_cols,
+                coefficient,
+                *unit_constant,
+                *design_constant,
+            ]
+        )
+    )
     design = reduce_observation_units(
         run.store.cells,
         observation_unit,
@@ -1049,6 +1317,94 @@ def _characterize_coefficient(
 
     record["scope"] = "betweenUnit"
     record["designRows"] = design_rows
+    group_order = _ordered_group_values(design[coefficient])
+    group_counts, group_counts_truncated = _group_counts(design[coefficient])
+    record["groupOrder"] = group_order
+    record["groupCounts"] = group_counts
+    record["groupCountsTruncated"] = group_counts_truncated
+    record["groupImbalance"] = _imbalance_from_counts(group_counts)
+
+    unit_level_counts: dict[str, Any] = {
+        "observationUnit": {
+            "column": observation_unit,
+            "levels": design_rows,
+        },
+        "coefficient": {
+            "column": coefficient,
+            "levels": len(group_order),
+            "counts": group_counts,
+            "truncated": group_counts_truncated,
+        },
+    }
+    observation_by_group = [
+        {
+            "group": item["value"],
+            "count": item["count"],
+        }
+        for item in group_counts
+    ]
+    independent_by_group: list[dict[str, Any]] = []
+    if independent_unit is not None:
+        independent_counts, independent_counts_truncated = _bounded_level_counts(
+            design[independent_unit]
+        )
+        independent_by_group = _distinct_units_by_group(
+            design,
+            coefficient=coefficient,
+            unit=independent_unit,
+            group_order=group_order,
+        )
+        unit_level_counts["independentUnit"] = {
+            "column": independent_unit,
+            "levels": int(design[independent_unit].nunique(dropna=True)),
+            "counts": list(independent_counts),
+            "truncated": independent_counts_truncated,
+            "byGroup": independent_by_group,
+        }
+    record["unitLevelCounts"] = unit_level_counts
+    replication_counts = (
+        independent_by_group if independent_unit is not None else observation_by_group
+    )
+    minimum_replication = min(
+        (int(item["count"]) for item in replication_counts),
+        default=0,
+    )
+    record["replication"] = {
+        "unit": independent_unit or observation_unit,
+        "observationUnitsByGroup": observation_by_group,
+        "independentUnitsByGroup": independent_by_group,
+        "minimumPerGroup": minimum_replication,
+        "sufficient": (
+            len(group_order) >= 2
+            and not group_counts_truncated
+            and minimum_replication >= 2
+        ),
+    }
+    record["missingness"] = _design_missingness(design, columns)
+
+    structural_columns = list(
+        dict.fromkeys(
+            [
+                *([independent_unit] if independent_unit is not None else []),
+                *unit_constant,
+                *design_constant,
+            ]
+        )
+    )
+    structures: list[dict[str, Any]] = []
+    if run.kind(coefficient) == "categorical":
+        for name in structural_columns[:_MAX_STRUCTURE_ITEMS]:
+            if run.kind(name) != "categorical":
+                continue
+            structures.append(_categorical_structure(design, coefficient, name))
+    record["designStructures"] = structures
+    if independent_unit is not None and len(group_order) >= 2:
+        record["pairedCoverage"] = _paired_coverage(
+            design,
+            coefficient=coefficient,
+            pair_by=independent_unit,
+            group_order=group_order,
+        )
 
     report = report_confounding(
         design,
@@ -1062,6 +1418,16 @@ def _characterize_coefficient(
     )
     report["observationUnit"] = observation_unit
     report["independentUnit"] = independent_unit
+    report["groupOrder"] = group_order
+    report["groupCounts"] = group_counts
+    report["groupCountsTruncated"] = group_counts_truncated
+    report["groupImbalance"] = record["groupImbalance"]
+    report["unitLevelCounts"] = unit_level_counts
+    report["replication"] = record["replication"]
+    report["missingness"] = record["missingness"]
+    report["designStructures"] = structures
+    report["pairedCoverage"] = record["pairedCoverage"]
+    record["estimability"] = dict(report.get("estimability") or {})
     run.actions.append(f"confounding:{coefficient}")
     return record, report
 
@@ -1090,6 +1456,7 @@ def _characterize_coefficients(
             observation_unit=observation,
             independent_unit=independent,
             technical=technical,
+            design_columns=design_columns,
         )
         records.append(record)
         if report is not None:
@@ -1140,6 +1507,16 @@ def _column_records(
             "domain": run.domains[name],
             "summary": profile.summary,
             "aliases": list(aliases.get(name, [])),
+            "nRows": profile.digest.nRows,
+            "nLevels": profile.digest.nLevels,
+            "nMissing": profile.digest.nMissing,
+            "missingFraction": (
+                profile.digest.nMissing / profile.digest.nRows
+                if profile.digest.nRows
+                else 0.0
+            ),
+            "levelCounts": list(profile.levelCounts),
+            "levelCountsTruncated": profile.levelCountsTruncated,
         }
         if profile.artifact is None:
             record.update(
@@ -1157,14 +1534,36 @@ def _column_records(
             )
         records.append(record)
     for name, reason in dropped:
+        dropped_profile = run.profiles.get(name)
         record = {
             "name": name,
             "kind": "continuous",
             "domain": "ignore",
             "summary": f"dropped before triage ({CONFIG._DROP_REASONS[reason]})",
             "aliases": [],
+            "nRows": (
+                dropped_profile.digest.nRows if dropped_profile is not None else 0
+            ),
+            "nLevels": (
+                dropped_profile.digest.nLevels if dropped_profile is not None else 0
+            ),
+            "nMissing": (
+                dropped_profile.digest.nMissing if dropped_profile is not None else 0
+            ),
+            "missingFraction": (
+                dropped_profile.digest.nMissing / dropped_profile.digest.nRows
+                if dropped_profile is not None and dropped_profile.digest.nRows
+                else 0.0
+            ),
+            "levelCounts": (
+                list(dropped_profile.levelCounts) if dropped_profile is not None else []
+            ),
+            "levelCountsTruncated": (
+                dropped_profile.levelCountsTruncated
+                if dropped_profile is not None
+                else False
+            ),
         }
-        dropped_profile = run.profiles.get(name)
         if dropped_profile is not None and dropped_profile.artifact is not None:
             record.update(
                 {
@@ -1300,6 +1699,12 @@ def characterize_covariates(
     categorical_technical = [
         name for name in technical if run.kind(name) == "categorical"
     ]
+    column_records = _column_records(
+        run,
+        candidates,
+        aliases=aliases,
+        dropped=dropped,
+    )
     return CovariateCharacterization(
         status="done",
         cellSelection=artifact_reference(cellSelection),
@@ -1310,7 +1715,7 @@ def characterize_covariates(
             "deterministic drops and ontology alias collapse"
         ],
         decisions=run.decisions,
-        columns=_column_records(run, candidates, aliases=aliases, dropped=dropped),
+        columns=column_records,
         coefficients=records,
         technicalNesting=(
             _technical_nesting_reports(
@@ -1322,4 +1727,53 @@ def characterize_covariates(
             else []
         ),
         confounding=reports,
+        unitLevelCounts=[
+            {
+                "coefficient": record["name"],
+                **dict(record["unitLevelCounts"]),
+            }
+            for record in records
+            if record.get("unitLevelCounts")
+        ],
+        groupImbalance=[
+            {
+                "coefficient": record["name"],
+                **dict(record["groupImbalance"]),
+            }
+            for record in records
+            if record.get("groupImbalance")
+        ],
+        missingness=[
+            {
+                "column": record["name"],
+                "rows": record.get("nRows", 0),
+                "missing": record.get("nMissing", 0),
+                "missingFraction": record.get("missingFraction", 0.0),
+            }
+            for record in column_records
+        ],
+        designStructures=[
+            {
+                "coefficient": record["name"],
+                **structure,
+            }
+            for record in records
+            for structure in record.get("designStructures", [])
+        ],
+        pairedCoverage=[
+            {
+                "coefficient": record["name"],
+                **dict(record["pairedCoverage"]),
+            }
+            for record in records
+            if record.get("pairedCoverage")
+        ],
+        coefficientEstimability=[
+            {
+                "coefficient": record["name"],
+                **dict(record["estimability"]),
+            }
+            for record in records
+            if record.get("estimability")
+        ],
     )

@@ -220,6 +220,10 @@ class DatasetManifest(AgentDataModel):
     assayMetadata: MetadataColumnSummary | None = None
     suspensionMetadata: MetadataColumnSummary | None = None
     organismMetadata: MetadataColumnSummary | None = None
+    declaredBatchColumns: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     inventory: H5adInventory
     priorFiltering: PriorFilteringFacts
     decision: DatasetManifestDecision
@@ -582,6 +586,36 @@ def _read_text_scalar(
     return None
 
 
+def _read_text_vector(
+    h5: h5py.File,
+    paths: tuple[str, ...],
+    *,
+    max_items: int = 32,
+    max_length: int = 256,
+) -> list[str]:
+    for path in paths:
+        node = h5.get(path)
+        if not isinstance(node, h5py.Dataset):
+            continue
+        if node.shape == ():
+            values = [node[()]]
+        elif len(node.shape) == 1:
+            if node.shape[0] > max_items:
+                raise ValueError(f"{path} contains too many values")
+            values = list(np.asarray(node[:]).reshape(-1))
+        else:
+            continue
+        resolved = list(
+            dict.fromkeys(
+                text
+                for value in values
+                if (text := _as_text(value).strip()[:max_length])
+            )
+        )
+        return resolved
+    return []
+
+
 def _column_by_name(
     *tables: MetadataTableSummary | None,
     names: tuple[str, ...],
@@ -878,6 +912,22 @@ def inspect_h5ad_manifest(
             h5,
             ("uns/schema_reference", "uns/cellxgene_schema_reference"),
         )
+        declared_batch_columns = _read_text_vector(
+            h5,
+            ("uns/batch_condition",),
+        )
+        obs_node = h5.get("obs")
+        obs_columns = (
+            set(_column_names(obs_node))
+            if isinstance(obs_node, h5py.Group | h5py.Dataset)
+            else set()
+        )
+        unknown_batch_columns = sorted(set(declared_batch_columns) - obs_columns)
+        if unknown_batch_columns:
+            raise ValueError(
+                "uns/batch_condition references unknown obs columns: "
+                f"{unknown_batch_columns}"
+            )
 
     selected_table = raw_var if inspection.featureAttrsKey == "raw/var" else var
     assay = _column_by_name(
@@ -964,6 +1014,7 @@ def inspect_h5ad_manifest(
         assayMetadata=assay,
         suspensionMetadata=suspension,
         organismMetadata=organism,
+        declaredBatchColumns=declared_batch_columns,
         inventory=inventory,
         priorFiltering=prior_filtering,
         decision=decision,

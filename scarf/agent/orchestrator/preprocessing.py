@@ -6,11 +6,19 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import numpy as np
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from ...assay import RNAassay
 from ...datastore.datastore import DataStore
 from ...datastore.summary import AssaySummary
+from ...features.variability import DEFAULT_HVG_BLACKLIST
 from ...metadata.selection import NamedCellArtifact
+from ...quality_control.cell_cycle_genes import (
+    g2m_phase_genes,
+    g2m_phase_genes_mouse,
+    s_phase_genes,
+    s_phase_genes_mouse,
+)
 from ...storage.refs import ArtifactRef
 from ...storage.selections import read_stored_selection_mask
 from ...storage.types import as_zarr_array
@@ -27,8 +35,18 @@ from ..experimental_context import (
     CellQcProfileEvidence,
     ExperimentalContextResult,
 )
-from ..hvg_diagnostics import run_hvg_diagnostic_artifacts
+from ..hvg_diagnostics import (
+    HvgRanking,
+    compare_hvg_ranking_to_default,
+    run_hvg_diagnostic_artifacts,
+)
 from ..persistence import AgentWorkflowRun
+from ..parameter_tuning import (
+    ParameterCandidate,
+    ParameterCandidateEvaluation,
+    execute_parameter_candidate,
+    prepare_parameter_tuning_dependencies,
+)
 from ..qc_execution import execute_registered_cell_qc
 from ..rna_decisions import (
     CellQualityExecutorPayload,
@@ -45,6 +63,11 @@ from ..rna_decisions import (
     require_option_evidence,
 )
 from ..study_contract import StudyContract
+from ..tuning_diagnostics import (
+    SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
+    augment_cluster_evaluations,
+    augment_pca_evaluations,
+)
 from ..types import ArtifactReferenceModel
 from . import journal
 from .decisions import DecisionStagesMixin
@@ -87,6 +110,7 @@ def apply_feature_policy_to_plan(
         parameters = {
             **assay.featureParameters,
             "excludeFamilies": list(payload.excludedFamilies),
+            "useScarfDefaultBlacklist": payload.useScarfDefaultBlacklist,
         }
         assays.append(assay.model_copy(update={"featureParameters": parameters}))
     updated = plan.model_copy(update={"assays": assays, "planChecksum": ""})
@@ -185,17 +209,34 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
 
     @staticmethod
     def _profile_evidence(profile: CellQcProfileEvidence) -> DecisionEvidence:
+        def retention_range(values: Sequence[int]) -> str:
+            if not values:
+                return "no groups"
+            ordered = sorted(int(value) for value in values)
+            return (
+                f"{len(ordered)} groups, min/median/max="
+                f"{ordered[0]}/{ordered[len(ordered) // 2]}/{ordered[-1]}"
+            )
+
+        capture_summary = retention_range(list(profile.sampleRetainedCells.values()))
+        design_summary = "; ".join(
+            f"{column}: {retention_range(list(groups.values()))}"
+            for column, groups in sorted(profile.retainedCellsByColumn.items())
+        )
+        summary = (
+            f"{profile.registeredProfile} retains "
+            f"{profile.retainedCells}/{profile.activeCells} active cells; "
+            f"capture retention={capture_summary}; design retention="
+            f"{design_summary or 'no groups'}; failed capture candidates="
+            f"{profile.failedCaptureCandidates}; unsafe retention groups="
+            f"{profile.unsafeRetentionGroups}."
+        )
+        if len(summary) > 2_000:
+            summary = f"{summary[:1_997].rstrip()}..."
         return DecisionEvidence(
             evidenceId=profile.evidenceId,
             evidenceClass="qualityControl",
-            summary=(
-                f"{profile.registeredProfile} retains "
-                f"{profile.retainedCells}/{profile.activeCells} active cells; "
-                f"retention by capture={profile.sampleRetainedCells}; "
-                f"retention by design column={profile.retainedCellsByColumn}; "
-                f"failed capture candidates={profile.failedCaptureCandidates}; "
-                f"unsafe retention groups={profile.unsafeRetentionGroups}."
-            ),
+            summary=summary,
             artifactReferences=[
                 *[source.artifact for source in profile.artifactMetrics],
                 *(
@@ -427,7 +468,25 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         )
         nominations = list(policy.excludeFamilies) if policy is not None else []
         protected = list(policy.protectFamilies) if policy is not None else []
-        evidence_id = f"evidence:featurePolicy:{plan.primaryAssay}"
+        assay = store.get_assay(plan.primaryAssay)
+        default_match_count = len(assay.feats.grep(DEFAULT_HVG_BLACKLIST))
+        default_families = {
+            "mitochondrial",
+            "ribosomal",
+            "mitoribosomal",
+            "cellCycle",
+            "hla",
+            "h2",
+            "histone",
+            "sexLinked",
+        }
+        default_eligible = bool(
+            default_match_count and not default_families.intersection(protected)
+        )
+        evidence_id = f"evidence:featurePolicy:{plan.primaryAssay}:context"
+        default_evidence_id = (
+            f"evidence:featurePolicy:{plan.primaryAssay}:scarfDefaults"
+        )
         bundle = self._decision_evidence_bundle(
             "featurePolicy",
             [
@@ -439,7 +498,17 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                         f"protected {sorted(protected)}. No representation-dominance "
                         "evidence exists before the native PCA diagnostic."
                     ),
-                )
+                ),
+                DecisionEvidence(
+                    evidenceId=default_evidence_id,
+                    evidenceClass="technical",
+                    summary=(
+                        f"The exact core Scarf DEFAULT_HVG_BLACKLIST matches "
+                        f"{default_match_count} features. It is an explicit "
+                        "representation-only baseline, not an automatic winner; "
+                        f"context-protected families are {sorted(protected)}."
+                    ),
+                ),
             ],
         )
         definition = build_feature_policy_decision(
@@ -447,10 +516,29 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             proposed_exclusion_families=[],
             dominant_families=[],
             protected_families=[],
+            scarf_default_eligible=default_eligible,
         )
+        requirements = {"featurePolicy:keepAll": [evidence_id, default_evidence_id]}
+        if default_eligible:
+            requirements["featurePolicy:excludeScarfDefaults"] = [
+                default_evidence_id,
+                evidence_id,
+            ]
         definition = require_option_evidence(
             definition,
-            {"featurePolicy:keepAll": [evidence_id]},
+            requirements,
+        )
+        rule_selection = (
+            None
+            if default_eligible
+            else DecisionSelection(
+                selectedOptionId="featurePolicy:keepAll",
+                evidenceIds=[evidence_id, default_evidence_id],
+                rationale=(
+                    "Keep all graph-eligible features because the exact Scarf "
+                    "default bundle conflicts with an objective-protected family."
+                ),
+            )
         )
         resolution = self._resolve_rna_decision(
             store,
@@ -458,17 +546,13 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             definition,
             bundle,
             answers,
-            rule_selection=DecisionSelection(
-                selectedOptionId="featurePolicy:keepAll",
-                evidenceIds=[evidence_id],
-                rationale=(
-                    "Keep the conditional families until native representation "
-                    "evidence demonstrates technical dominance."
-                ),
-            ),
+            rule_selection=rule_selection,
         )
         if resolution.compiled is None:
-            raise RuntimeError("A rule-owned feature decision cannot be pending")
+            raise _DecisionNeedsInput(
+                self._pending_decision_question(resolution, definition),
+                resolution.snapshotSha256,
+            )
         payload = resolution.compiled.executorPayload
         if not isinstance(payload, FeaturePolicyExecutorPayload):
             raise TypeError("Feature-policy decision compiled an unexpected payload")
@@ -614,17 +698,32 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                 f"routes=[{route_summary}])"
             )
         except _DecisionNeedsInput as pending:
-            outcome = journal._complete_attempt(
-                started,
-                status="needsInput",
-                artifacts={
-                    "cellSelection": experimental.cellSelection,
-                    **cell_qc_artifacts,
-                },
-                outputs={"decisionSnapshotSha256": pending.snapshotSha256},
-                needs_input=WorkflowNeedsInput(questions=[pending.question]),
-                notes=["A registered filtering decision requires input."],
-            )
+            if request_record.config.inputPolicy == "unattended":
+                outcome = journal._complete_attempt(
+                    started,
+                    status="failed",
+                    artifacts={
+                        "cellSelection": experimental.cellSelection,
+                        **cell_qc_artifacts,
+                    },
+                    outputs={"decisionSnapshotSha256": pending.snapshotSha256},
+                    error=(
+                        "The unattended preprocessing plan returned an unresolved "
+                        "registered decision"
+                    ),
+                )
+            else:
+                outcome = journal._complete_attempt(
+                    started,
+                    status="needsInput",
+                    artifacts={
+                        "cellSelection": experimental.cellSelection,
+                        **cell_qc_artifacts,
+                    },
+                    outputs={"decisionSnapshotSha256": pending.snapshotSha256},
+                    needs_input=WorkflowNeedsInput(questions=[pending.question]),
+                    notes=["A registered filtering decision requires input."],
+                )
             journal._save_outcome(store.zw, prefix, outcome)
             return outcome, AutomatedPreprocessingPlan.get_blank()
         except Exception as exc:
@@ -862,6 +961,15 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     "proposedExcludeFamilies": proposed_families,
                     "protectFamilies": (
                         list(policy.protectFamilies) if policy is not None else []
+                    ),
+                    "species": (
+                        inspection.species if inspection is not None else "unknown"
+                    ),
+                    "defaultFeatureInventory": (
+                        inspection.defaultFeatureInventory.model_dump(mode="json")
+                        if inspection is not None
+                        and inspection.defaultFeatureInventory is not None
+                        else None
                     ),
                 },
                 normalizationParameters={
@@ -1170,22 +1278,42 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             )
             return outcome, handoffs, resolved_plan
         except _DecisionNeedsInput as pending:
-            outcome = journal._complete_attempt(
-                started,
-                status="needsInput",
-                artifacts={
-                    name: value
-                    for name, value in artifacts.items()
-                    if value is not None
-                },
-                outputs={
-                    "operations": operations,
-                    "decisionSnapshotSha256": pending.snapshotSha256,
-                },
-                needs_input=WorkflowNeedsInput(questions=[pending.question]),
-                actions=actions,
-                notes=["A registered RNA preprocessing decision requires input."],
-            )
+            if request_record.config.inputPolicy == "unattended":
+                outcome = journal._complete_attempt(
+                    started,
+                    status="failed",
+                    artifacts={
+                        name: value
+                        for name, value in artifacts.items()
+                        if value is not None
+                    },
+                    outputs={
+                        "operations": operations,
+                        "decisionSnapshotSha256": pending.snapshotSha256,
+                    },
+                    actions=actions,
+                    error=(
+                        "The unattended preprocessing stage returned an unresolved "
+                        "registered decision"
+                    ),
+                )
+            else:
+                outcome = journal._complete_attempt(
+                    started,
+                    status="needsInput",
+                    artifacts={
+                        name: value
+                        for name, value in artifacts.items()
+                        if value is not None
+                    },
+                    outputs={
+                        "operations": operations,
+                        "decisionSnapshotSha256": pending.snapshotSha256,
+                    },
+                    needs_input=WorkflowNeedsInput(questions=[pending.question]),
+                    actions=actions,
+                    notes=["A registered RNA preprocessing decision requires input."],
+                )
             journal._save_outcome(store.zw, prefix, outcome)
             return outcome, [], plan
         except Exception as exc:
@@ -1298,6 +1426,11 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         assay = store.get_assay(assay_plan.assay)
         min_cells = int(assay_plan.featureParameters.get("minCells", 1))
         marker_features: ArtifactRef
+        graph_feature_candidates: dict[str, ArtifactRef] = {}
+        normalized_candidates: dict[str, ArtifactRef] = {}
+        feature_candidate_evaluations: list[ParameterCandidateEvaluation] = []
+        feature_candidate_agreement: dict[str, dict[str, float]] = {}
+        selected_feature_branch_key: str | None = None
         if assay_plan.featureMethod == "hvg":
             if request_record is None or study_contract is None:
                 raise ValueError(
@@ -1322,14 +1455,56 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                 detected,
                 include_families=False,
             )
-            technical_columns = [
-                value
-                for value in (
-                    study_contract.physicalCaptureColumn,
-                    *study_contract.technicalBatchColumns,
+            species = str(assay_plan.featureParameters.get("species", "unknown"))
+            cycle_genes = {
+                "homo_sapiens": (s_phase_genes, g2m_phase_genes),
+                "mus_musculus": (s_phase_genes_mouse, g2m_phase_genes_mouse),
+            }.get(species)
+            if cycle_genes is not None:
+                available_feature_names = set(
+                    np.asarray(assay.feats.fetch_all("names")).astype(str)
                 )
-                if value is not None and value in store.cells.columns
-            ]
+                s_genes, g2m_genes = cycle_genes
+                s_coverage = sum(
+                    value in available_feature_names for value in s_genes
+                ) / len(s_genes)
+                g2m_coverage = sum(
+                    value in available_feature_names for value in g2m_genes
+                ) / len(g2m_genes)
+                if min(s_coverage, g2m_coverage) >= 0.8:
+                    cell_cycle = store.run_cell_cycle_scoring(
+                        cell_selection,
+                        from_assay=assay_plan.assay,
+                        s_genes=list(s_genes),
+                        g2m_genes=list(g2m_genes),
+                        invalidate_cache=False,
+                    )
+                    artifacts[f"{assay_plan.assay}_cell_cycle"] = (
+                        ArtifactReferenceModel.from_artifact_ref(cell_cycle)
+                    )
+                    actions.append(f"score_cell_cycle:{assay_plan.assay}")
+                    operations.append(
+                        {
+                            "operation": "run_cell_cycle_scoring",
+                            "assay": assay_plan.assay,
+                            "species": species,
+                            "sGeneCoverage": s_coverage,
+                            "g2mGeneCoverage": g2m_coverage,
+                            "artifact": ArtifactReferenceModel.from_artifact_ref(
+                                cell_cycle
+                            ).model_dump(mode="json"),
+                        }
+                    )
+            technical_columns = list(
+                dict.fromkeys(
+                    value
+                    for value in (
+                        study_contract.physicalCaptureColumn,
+                        *study_contract.technicalBatchColumns,
+                    )
+                    if value is not None and value in store.cells.columns
+                )
+            )
             technical_column = technical_columns[0] if technical_columns else None
             diagnostics = run_hvg_diagnostic_artifacts(
                 store.zw,
@@ -1347,6 +1522,257 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             )
             if not diagnostics:
                 raise ValueError("HVG diagnostics produced no registered ranking")
+            inventory = assay_plan.featureParameters.get("defaultFeatureInventory")
+            inventory_map = inventory if isinstance(inventory, Mapping) else {}
+            raw_default_families = inventory_map.get("families", [])
+            if not isinstance(raw_default_families, list):
+                raise ValueError("Default feature-family inventory is malformed")
+            default_family_patterns = {
+                str(value["family"]): str(value["pattern"])
+                for value in raw_default_families
+                if isinstance(value, Mapping)
+                and isinstance(value.get("family"), str)
+                and isinstance(value.get("pattern"), str)
+            }
+            if not default_family_patterns:
+                raise ValueError(
+                    "RNA preprocessing requires the deterministic Scarf default "
+                    "feature-family inventory"
+                )
+            registered_counts = sorted(
+                {
+                    candidate.top_n
+                    for value in diagnostics
+                    for candidate in value.candidates
+                }
+            )
+            scarf_default_hvgs: dict[int, ArtifactRef] = {}
+            for count in registered_counts:
+                default_ref = store.select_hvgs(
+                    cell_selection,
+                    from_assay=assay_plan.assay,
+                    min_cells=min_cells,
+                    top_n=count,
+                    n_bins=200,
+                    lowess_frac=0.1,
+                    blacklist=DEFAULT_HVG_BLACKLIST,
+                    show_plot=False,
+                    invalidate_cache=False,
+                )
+                scarf_default_hvgs[count] = default_ref
+                artifacts[f"{assay_plan.assay}_hvg_scarf_default_{count}"] = (
+                    ArtifactReferenceModel.from_artifact_ref(default_ref)
+                )
+                operations.append(
+                    {
+                        "operation": "select_hvgs",
+                        "assay": assay_plan.assay,
+                        "policy": "scarfDefault",
+                        "topN": count,
+                        "blacklist": DEFAULT_HVG_BLACKLIST,
+                        "artifact": ArtifactReferenceModel.from_artifact_ref(
+                            default_ref
+                        ).model_dump(mode="json"),
+                    }
+                )
+            feature_branches: list[tuple[str, ArtifactRef]] = [
+                *(
+                    (f"scarfDefault:{count}", reference)
+                    for count, reference in sorted(scarf_default_hvgs.items())
+                ),
+                *(
+                    (
+                        f"{diagnostic.ranking_mode}:{candidate.top_n}",
+                        candidate.features,
+                    )
+                    for diagnostic in diagnostics
+                    for candidate in diagnostic.candidates
+                ),
+            ]
+            nominated_families = cast(
+                list[str],
+                assay_plan.featureParameters.get("proposedExcludeFamilies", []),
+            )
+            protected_families = cast(
+                list[str],
+                assay_plan.featureParameters.get("protectFamilies", []),
+            )
+            diagnostic_families = list(
+                dict.fromkeys(
+                    [
+                        *SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
+                        *nominated_families,
+                    ]
+                )
+            )
+            fixed_dimensions = min(20, active_cells - 1, min(registered_counts))
+            fixed_neighbors = min(21, active_cells - 1)
+            if fixed_dimensions < 2 or fixed_neighbors < 2:
+                raise ValueError(
+                    "HVG downstream comparison requires at least three active cells"
+                )
+            for branch_key, feature_ref in feature_branches:
+                normalized_ref = store.run_normalization(
+                    cell_selection,
+                    features=feature_ref,
+                    log_transform=cast(
+                        bool,
+                        assay_plan.normalizationParameters.get("logTransform"),
+                    ),
+                    renormalize_subset=cast(
+                        bool,
+                        assay_plan.normalizationParameters.get("renormalizeSubset"),
+                    ),
+                    invalidate_cache=False,
+                )
+                graph_feature_candidates[branch_key] = feature_ref
+                normalized_candidates[branch_key] = normalized_ref
+                candidate_id = "hvg_" + branch_key.replace(":", "_")
+                parameter = ParameterCandidate(
+                    candidateId=candidate_id,
+                    reductionMethod="pca",
+                    dimensions=fixed_dimensions,
+                    neighborsK=fixed_neighbors,
+                    leidenResolution=1.0,
+                    useHarmony=False,
+                )
+                dependencies, candidate_ids = prepare_parameter_tuning_dependencies(
+                    store,
+                    normalized=normalized_ref,
+                    candidates=[parameter],
+                    batch_columns=technical_columns,
+                    preservation_columns=study_contract.protectedColumns,
+                    max_candidates=1,
+                    max_refined_candidates=0,
+                    min_cluster_cells=request_record.config.minClusterCells,
+                    identity_feature_limit=(request_record.config.maxIdentityFeatures),
+                )
+                evaluation = execute_parameter_candidate(
+                    dependencies,
+                    candidate_ids[0],
+                )
+                evaluation = augment_pca_evaluations(
+                    store,
+                    [evaluation],
+                    feature_selection=feature_ref,
+                    nominated_families=diagnostic_families,
+                    protected_families=protected_families,
+                    technical_columns=technical_columns,
+                    batch_columns=technical_columns,
+                    protected_columns=study_contract.protectedColumns,
+                    qc_columns=[
+                        value
+                        for value in (
+                            "RNA_nCounts",
+                            "RNA_nFeatures",
+                            "RNA_percentMito",
+                            "RNA_percentRibo",
+                        )
+                        if value in store.cells.columns
+                    ],
+                )[0]
+                evaluation = augment_cluster_evaluations(
+                    store,
+                    [evaluation],
+                    marker_assay=assay_plan.assay,
+                    marker_features=marker_features,
+                    independent_unit_columns=study_contract.independentUnitColumns,
+                    technical_columns=technical_columns,
+                    nominated_families=diagnostic_families,
+                    protected_families=protected_families,
+                )[0]
+                feature_candidate_evaluations.append(evaluation)
+                artifacts[f"{assay_plan.assay}_{candidate_id}_features"] = (
+                    ArtifactReferenceModel.from_artifact_ref(feature_ref)
+                )
+                artifacts[f"{assay_plan.assay}_{candidate_id}_normalized"] = (
+                    ArtifactReferenceModel.from_artifact_ref(normalized_ref)
+                )
+                for artifact_name, artifact in evaluation.artifacts.items():
+                    artifacts[f"{assay_plan.assay}_{candidate_id}_{artifact_name}"] = (
+                        ArtifactReferenceModel.model_validate(artifact.model_dump())
+                    )
+            completed_feature_candidates = [
+                value
+                for value in feature_candidate_evaluations
+                if value.status == "done"
+                and value.eligible
+                and "clusters" in value.artifacts
+                and "neighbors" in value.artifacts
+            ]
+            labels_by_id: dict[str, np.ndarray] = {}
+            neighbors_by_id: dict[str, np.ndarray] = {}
+            for evaluation in completed_feature_candidates:
+                cluster_model = ArtifactReferenceModel.model_validate(
+                    evaluation.artifacts["clusters"].model_dump()
+                )
+                neighbor_model = ArtifactReferenceModel.model_validate(
+                    evaluation.artifacts["neighbors"].model_dump()
+                )
+                cluster_group = store.load_artifact(
+                    artifact_model_to_ref(cluster_model)
+                )
+                neighbor_group = store.load_artifact(
+                    artifact_model_to_ref(neighbor_model)
+                )
+                labels_by_id[evaluation.candidateId] = np.asarray(
+                    as_zarr_array(
+                        cluster_group["values"],
+                        name="values",
+                    )[:]
+                )
+                neighbors_by_id[evaluation.candidateId] = np.asarray(
+                    as_zarr_array(
+                        neighbor_group["indices"],
+                        name="indices",
+                    )[:],
+                    dtype=np.int64,
+                )
+            for evaluation in completed_feature_candidates:
+                ari_values: list[float] = []
+                nmi_values: list[float] = []
+                neighbor_values: list[float] = []
+                labels = labels_by_id[evaluation.candidateId]
+                neighbors = neighbors_by_id[evaluation.candidateId]
+                sample_rows = np.linspace(
+                    0,
+                    len(neighbors) - 1,
+                    min(2_000, len(neighbors)),
+                    dtype=np.int64,
+                )
+                for other in completed_feature_candidates:
+                    if other.candidateId == evaluation.candidateId:
+                        continue
+                    other_labels = labels_by_id[other.candidateId]
+                    other_neighbors = neighbors_by_id[other.candidateId]
+                    if labels.shape != other_labels.shape:
+                        raise ValueError("HVG candidate cluster artifacts do not align")
+                    if neighbors.shape != other_neighbors.shape:
+                        raise ValueError(
+                            "HVG candidate neighbor artifacts do not align"
+                        )
+                    ari_values.append(float(adjusted_rand_score(labels, other_labels)))
+                    nmi_values.append(
+                        float(normalized_mutual_info_score(labels, other_labels))
+                    )
+                    row_overlaps = [
+                        len(set(neighbors[row]).intersection(other_neighbors[row]))
+                        / neighbors.shape[1]
+                        for row in sample_rows
+                    ]
+                    neighbor_values.append(float(np.mean(row_overlaps)))
+                feature_candidate_agreement[evaluation.candidateId] = {
+                    "minimumAri": min(ari_values, default=1.0),
+                    "medianAri": float(np.median(ari_values)) if ari_values else 1.0,
+                    "minimumNmi": min(nmi_values, default=1.0),
+                    "medianNmi": float(np.median(nmi_values)) if nmi_values else 1.0,
+                    "minimumNeighborOverlap": min(neighbor_values, default=1.0),
+                    "medianNeighborOverlap": float(np.median(neighbor_values))
+                    if neighbor_values
+                    else 1.0,
+                }
+            feature_names = np.asarray(assay.feats.fetch_all("names")).astype(str)
+            hvg_comparisons: dict[tuple[str, int], Any] = {}
             ranking_evidence: list[DecisionEvidence] = []
             ranking_evidence_ids: dict[str, str] = {}
             for candidate_ranking in diagnostics:
@@ -1387,6 +1813,78 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     )[:],
                     dtype=np.float64,
                 )
+                corrected_variance_values = np.asarray(
+                    as_zarr_array(
+                        ranking_group["global_corrected_variance"],
+                        name="global_corrected_variance",
+                    )[:],
+                    dtype=np.float64,
+                )
+                eligible_values = np.asarray(
+                    as_zarr_array(
+                        ranking_group["eligible"],
+                        name="eligible",
+                    )[:],
+                    dtype=bool,
+                )
+                ranking_model = HvgRanking(
+                    ranking_mode=mode,
+                    eligible=eligible_values,
+                    global_corrected_variance=corrected_variance_values,
+                    recurrence=recurrence_values,
+                    mean_within_group_rank=within_group_ranks,
+                    ranking=ranking_values,
+                    valid_group_count=len(candidate_ranking.valid_groups),
+                    candidate_counts=tuple(
+                        candidate.top_n for candidate in candidate_ranking.candidates
+                    ),
+                )
+                comparison_summaries: list[str] = []
+                for candidate in candidate_ranking.candidates:
+                    default_group = store.load_artifact(
+                        scarf_default_hvgs[candidate.top_n]
+                    )
+                    default_mask = np.asarray(
+                        as_zarr_array(
+                            default_group["values"],
+                            name="values",
+                        )[:],
+                        dtype=bool,
+                    )
+                    comparison = next(
+                        value
+                        for value in compare_hvg_ranking_to_default(
+                            default_mask,
+                            ranking_model,
+                            feature_names=feature_names.tolist(),
+                            default_family_patterns=default_family_patterns,
+                        )
+                        if value.top_n == candidate.top_n
+                    )
+                    hvg_comparisons[(mode, candidate.top_n)] = comparison
+                    leakage = sum(
+                        value.agent_selected_count
+                        for value in comparison.default_family_leakage
+                    )
+                    downstream = next(
+                        value
+                        for value in feature_candidate_evaluations
+                        if value.candidateId == f"hvg_{mode}_{candidate.top_n}"
+                    )
+                    agreement = feature_candidate_agreement.get(
+                        downstream.candidateId,
+                        {},
+                    )
+                    comparison_summaries.append(
+                        f"top {candidate.top_n}: default overlap "
+                        f"{comparison.agent_overlap_fraction:.1%}, Jaccard "
+                        f"{comparison.jaccard:.3f}, default-family selections "
+                        f"{leakage}, downstream marker coherence "
+                        f"{downstream.metrics.markerCoherence}, cross-unit support "
+                        f"{downstream.metrics.crossUnitSupport}, technical "
+                        f"association {downstream.metrics.technicalAssociation}, "
+                        f"agreement {agreement}"
+                    )
                 broad_count = max(
                     candidate.top_n for candidate in candidate_ranking.candidates
                 )
@@ -1422,12 +1920,27 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                         "variability across the exact filtered cell selection."
                         f"{recurrence_summary}"
                     )
+                summary += (
+                    " Exact Scarf-default comparisons: "
+                    + "; ".join(comparison_summaries)
+                    + "."
+                )
                 ranking_evidence.append(
                     DecisionEvidence(
                         evidenceId=evidence_id,
                         evidenceClass="technical",
                         summary=summary,
-                        artifactReferences=[diagnostic_model],
+                        artifactReferences=[
+                            diagnostic_model,
+                            *[
+                                ArtifactReferenceModel.model_validate(
+                                    artifact.model_dump()
+                                )
+                                for evaluation in feature_candidate_evaluations
+                                if evaluation.candidateId.startswith(f"hvg_{mode}_")
+                                for artifact in evaluation.artifacts.values()
+                            ],
+                        ],
                     )
                 )
             ranking_bundle = self._decision_evidence_bundle(
@@ -1558,6 +2071,44 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     f"{variance_fraction:.1%} of corrected variance across "
                     f"{diagnostic.eligible_feature_count} eligible genes."
                 )
+                comparison = hvg_comparisons[(diagnostic.ranking_mode, candidate.top_n)]
+                downstream = next(
+                    value
+                    for value in feature_candidate_evaluations
+                    if value.candidateId
+                    == f"hvg_{diagnostic.ranking_mode}_{candidate.top_n}"
+                )
+                default_downstream = next(
+                    value
+                    for value in feature_candidate_evaluations
+                    if value.candidateId == f"hvg_scarfDefault_{candidate.top_n}"
+                )
+                agreement = feature_candidate_agreement.get(
+                    downstream.candidateId,
+                    {},
+                )
+                leakage_by_family = {
+                    value.family: value.agent_selected_count
+                    for value in comparison.default_family_leakage
+                    if value.agent_selected_count
+                }
+                summary += (
+                    " Compared with the exact Scarf-default selection, overlap is "
+                    f"{comparison.agent_overlap_fraction:.1%}, Jaccard is "
+                    f"{comparison.jaccard:.3f}, and selected default-family counts "
+                    f"are {leakage_by_family}. The fixed downstream branch produced marker "
+                    f"coherence {downstream.metrics.markerCoherence}, cross-unit "
+                    f"support {downstream.metrics.crossUnitSupport}, technical "
+                    f"association {downstream.metrics.technicalAssociation}, "
+                    f"doublet concentration "
+                    f"{downstream.metrics.doubletHighScoreConcentration}, and "
+                    f"cross-candidate agreement {agreement}. The matched core "
+                    "Scarf baseline produced marker coherence "
+                    f"{default_downstream.metrics.markerCoherence}, cross-unit "
+                    f"support {default_downstream.metrics.crossUnitSupport}, and "
+                    "technical association "
+                    f"{default_downstream.metrics.technicalAssociation}."
+                )
                 if diagnostic.valid_groups:
                     replicated = recurrence[selected_indices] >= max(
                         2,
@@ -1577,6 +2128,18 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                             ArtifactReferenceModel.from_artifact_ref(
                                 candidate.features
                             ),
+                            *[
+                                ArtifactReferenceModel.model_validate(
+                                    artifact.model_dump()
+                                )
+                                for artifact in downstream.artifacts.values()
+                            ],
+                            *[
+                                ArtifactReferenceModel.model_validate(
+                                    artifact.model_dump()
+                                )
+                                for artifact in default_downstream.artifacts.values()
+                            ],
                         ],
                     )
                 )
@@ -1629,6 +2192,9 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     "Selected HVG count has no exact persisted candidate artifact"
                 )
             graph_features = selected_candidate.features
+            selected_feature_branch_key = (
+                f"{diagnostic.ranking_mode}:{selected_candidate.top_n}"
+            )
             actions.append(f"audit_hvg_count:{assay_plan.assay}")
             operations.append(
                 {
@@ -1663,6 +2229,12 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                         "exactExcludedFeatures": list(assay_plan.exactExcludedFeatures),
                         "excludeFamilies": list(
                             assay_plan.featureParameters.get("excludeFamilies", [])
+                        ),
+                        "useScarfDefaultBlacklist": bool(
+                            assay_plan.featureParameters.get(
+                                "useScarfDefaultBlacklist",
+                                False,
+                            )
                         ),
                         "artifact": ArtifactReferenceModel.from_artifact_ref(
                             eligible_features
@@ -1758,18 +2330,23 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             )
         else:
             raise ValueError(f"Unsupported feature route {assay_plan.featureMethod!r}")
-        normalized = store.run_normalization(
-            cell_selection,
-            features=graph_features,
-            log_transform=cast(
-                bool,
-                assay_plan.normalizationParameters.get("logTransform"),
-            ),
-            renormalize_subset=cast(
-                bool,
-                assay_plan.normalizationParameters.get("renormalizeSubset"),
-            ),
-            invalidate_cache=False,
+        normalized = (
+            normalized_candidates[selected_feature_branch_key]
+            if selected_feature_branch_key is not None
+            and selected_feature_branch_key in normalized_candidates
+            else store.run_normalization(
+                cell_selection,
+                features=graph_features,
+                log_transform=cast(
+                    bool,
+                    assay_plan.normalizationParameters.get("logTransform"),
+                ),
+                renormalize_subset=cast(
+                    bool,
+                    assay_plan.normalizationParameters.get("renormalizeSubset"),
+                ),
+                invalidate_cache=False,
+            )
         )
         graph_feature_group = store.load_artifact(graph_features)
         graph_feature_values = cast(Any, graph_feature_group["values"])
@@ -1787,6 +2364,24 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             graphFeatures=graph_features_model,
             markerFeatures=marker_features_model,
             normalized=normalized_model,
+            graphFeatureCandidates={
+                key: ArtifactReferenceModel.from_artifact_ref(value)
+                for key, value in graph_feature_candidates.items()
+            },
+            normalizedCandidates={
+                key: ArtifactReferenceModel.from_artifact_ref(value)
+                for key, value in normalized_candidates.items()
+            },
+            featureCandidateEvaluations=[
+                {
+                    **value.model_dump(mode="json"),
+                    "agreement": feature_candidate_agreement.get(
+                        value.candidateId,
+                        {},
+                    ),
+                }
+                for value in feature_candidate_evaluations
+            ],
             nCells=active_cells,
             nFeatures=int(selected_values.sum()),
         )
@@ -2049,16 +2644,32 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         raise ValueError(f"Unsupported cell QC action {plan.action!r}")
 
     def rna_blacklist(self, plan: AssayPreprocessingPlan) -> str:
-        patterns: list[str] = []
+        patterns: list[str] = (
+            [DEFAULT_HVG_BLACKLIST]
+            if plan.featureParameters.get("useScarfDefaultBlacklist") is True
+            else []
+        )
         families = set(
             cast(list[str], plan.featureParameters.get("excludeFamilies", []))
         )
         if "mitochondrial" in families:
             patterns.append(r"^(MT-|mt-)")
         if "ribosomal" in families:
-            patterns.append(r"^(RPS|RPL|MRPS|MRPL|Rps|Rpl|Mrps|Mrpl)")
+            patterns.append(r"^(RPS|RPL)")
+        if "mitoribosomal" in families:
+            patterns.append(r"^(MRPS|MRPL)")
         if "histone" in families:
-            patterns.append(r"^(HIST|Hist)")
+            patterns.append(r"^HIST")
+        if "hla" in families:
+            patterns.append(r"^HLA-")
+        if "h2" in families:
+            patterns.append(r"^H2-")
+        if "cellCycle" in families:
+            patterns.append(r"^CCN")
+        if "sexLinked" in families:
+            patterns.append(
+                r"^(XIST|DDX3Y|USP9Y|EIF1AY|KDM5D|SRY|ZFY|UTY|TMSB4Y|NLGN4Y)$"
+            )
         patterns.extend(
             rf"^{re.escape(value)}$" for value in plan.exactExcludedFeatures if value
         )
@@ -2077,7 +2688,11 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             if include_families
             else set()
         )
-        if not plan.exactExcludedFeatures and not families:
+        use_scarf_defaults = bool(
+            include_families
+            and plan.featureParameters.get("useScarfDefaultBlacklist") is True
+        )
+        if not plan.exactExcludedFeatures and not families and not use_scarf_defaults:
             return source
         assay = store.get_assay(plan.assay)
         source_group = store.load_artifact(source)
@@ -2092,12 +2707,26 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         if "mitochondrial" in families:
             family_patterns.append(r"^(MT-|mt-)")
         if "ribosomal" in families:
-            family_patterns.append(r"^(RPS|RPL|MRPS|MRPL|Rps|Rpl|Mrps|Mrpl)")
+            family_patterns.append(r"^(RPS|RPL)")
+        if "mitoribosomal" in families:
+            family_patterns.append(r"^(MRPS|MRPL)")
         if "histone" in families:
-            family_patterns.append(r"^(HIST|Hist)")
+            family_patterns.append(r"^HIST")
+        if "hla" in families:
+            family_patterns.append(r"^HLA-")
+        if "h2" in families:
+            family_patterns.append(r"^H2-")
+        if "cellCycle" in families:
+            family_patterns.append(r"^CCN")
+        if "sexLinked" in families:
+            family_patterns.append(
+                r"^(XIST|DDX3Y|USP9Y|EIF1AY|KDM5D|SRY|ZFY|UTY|TMSB4Y|NLGN4Y)$"
+            )
+        if use_scarf_defaults:
+            family_patterns.append(DEFAULT_HVG_BLACKLIST)
         if family_patterns:
             technical = np.zeros(len(mask), dtype=bool)
-            combined = re.compile("|".join(family_patterns))
+            combined = re.compile("|".join(family_patterns), re.IGNORECASE)
             technical |= np.fromiter(
                 (combined.search(value) is not None for value in ids),
                 dtype=bool,

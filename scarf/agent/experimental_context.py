@@ -2,9 +2,10 @@
 
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -13,8 +14,13 @@ from ..metadata.queries import reduce_observation_units
 from ..metadata.selection import resolve_cell_aligned_artifact
 from ..metrics.association import coefficient_estimability
 from ..quality_control.filtering import (
-    _sample_aware_mad_mask,
+    _validated_sample_labels,
     gaussian_quantile_bounds,
+)
+from ..storage.artifacts import (
+    fingerprint_array,
+    fingerprint_strings,
+    inspect_artifact,
 )
 from ..storage.refs import ArtifactRef
 from ..storage.selections import read_stored_selection_mask
@@ -28,9 +34,13 @@ from .config import AgentRunConfig
 from .config._deps import AGENT_INSTALL_HINT
 from .config.agent_exec import run_agent_sync
 from .qc_profiles import (
+    AutoFilterProjection,
+    QcMetricRole,
     RegisteredCellQcProfile,
     RegisteredQcProjection,
     offered_registered_qc_profiles,
+    project_auto_filter_profile,
+    qc_metric_execution_name,
     registered_qc_metric_role,
 )
 from .tools import artifact_reference, core_artifact_reference
@@ -61,6 +71,8 @@ __all__ = [
     "BatchSafetyEvidence",
     "CellQcPlan",
     "CellQcProfileEvidence",
+    "CaptureFailureEvidence",
+    "ContrastPlan",
     "CovariateEvidence",
     "ExperimentalContextAgent",
     "ExperimentalContextDecision",
@@ -68,9 +80,12 @@ __all__ = [
     "ExperimentalContextResult",
     "InferenceUnit",
     "NamedArtifactSource",
+    "QcMetricSourceEvidence",
+    "QcSourceConcordance",
     "RepresentationEvaluation",
     "RegisteredCellQcProfile",
     "analyze_experimental_design",
+    "contrast_plans_from_characterization",
     "inspect_cell_covariates",
     "score_current_representation",
     "validate_experimental_context",
@@ -94,7 +109,6 @@ type CellQcDriverType = Literal["RNA", "ATAC"]
 
 _CONTEXT_LIMIT = 1200
 _MAX_QC_SAMPLE_PROFILES = 4
-_MAX_SAMPLE_RETENTION_ITEMS = 20
 
 
 class InferenceUnit(AgentDataModel):
@@ -179,6 +193,203 @@ class NamedArtifactSource(AgentDataModel):
         )
 
 
+class QcMetricSourceEvidence(AgentDataModel):
+    """One source-specific quality metric on the exact active cells."""
+
+    sourceId: str = ""
+    metricName: str = ""
+    metricRole: QcMetricRole = "diagnostic"
+    assay: str | None = None
+    sourceType: Literal["metadataColumn", "artifact"] = "metadataColumn"
+    origin: Literal[
+        "ingestionMetadata",
+        "derivedArtifact",
+        "externalArtifact",
+    ] = "ingestionMetadata"
+    executionName: str = ""
+    metadataColumn: str | None = None
+    artifact: ArtifactReferenceModel | None = None
+    cellSelection: ArtifactReferenceModel | None = None
+    inputArtifacts: list[ArtifactReferenceModel] = Field(default_factory=list)
+    provenanceOperation: str | None = None
+    valuesFingerprint: str = ""
+    activeCells: int = 0
+    missingCells: int = 0
+    missingCellsByCapture: dict[str, int] = Field(default_factory=dict)
+    usableForFiltering: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "QcMetricSourceEvidence":
+        if (
+            not self.sourceId
+            and not self.metricName
+            and self.metadataColumn is None
+            and self.artifact is None
+        ):
+            return self
+        if self.sourceType == "metadataColumn":
+            if self.metadataColumn is None or self.artifact is not None:
+                raise ValueError(
+                    "A metadata QC source requires only metadataColumn provenance"
+                )
+            if self.origin != "ingestionMetadata":
+                raise ValueError(
+                    "Metadata QC sources must use ingestionMetadata origin"
+                )
+        elif self.artifact is None or self.metadataColumn is not None:
+            raise ValueError("An artifact QC source requires only artifact provenance")
+        if self.activeCells < 0 or not 0 <= self.missingCells <= self.activeCells:
+            raise ValueError("QC source active and missing counts are inconsistent")
+        if self.usableForFiltering and self.missingCells:
+            raise ValueError("A QC source with missing values cannot drive filtering")
+        return self
+
+
+class QcSourceConcordance(AgentDataModel):
+    """Observed agreement between imported and derived forms of one metric."""
+
+    metricRole: QcMetricRole = "diagnostic"
+    leftSourceId: str = ""
+    rightSourceId: str = ""
+    comparedCells: int = 0
+    missingCells: int = 0
+    meanAbsoluteDifference: float | None = None
+    maximumAbsoluteDifference: float | None = None
+    pearsonCorrelation: float | None = None
+    exactlyEqual: bool = False
+    numericallyClose: bool = False
+    evidenceId: str = ""
+
+
+class CaptureFailureEvidence(AgentDataModel):
+    """Multi-axis capture anomaly plus exclusion-safety inputs."""
+
+    capture: str = ""
+    activeCells: int = 0
+    retainedCells: int = 0
+    retainedFraction: float = 0.0
+    adverseAxes: list[QcMetricRole] = Field(default_factory=list)
+    independentAdverseAxes: int = 0
+    metricMissingFractions: dict[str, float] = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)
+    wholeCaptureFailure: bool = False
+    conditionAndUnitSafety: list[dict[str, Any]] = Field(default_factory=list)
+    preservesConditionCoverage: bool = False
+    preservesIndependentUnitCoverage: bool = False
+    exclusionEligible: bool = False
+    doubletEvidenceIds: list[str] = Field(default_factory=list)
+    evidenceId: str = ""
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> "CaptureFailureEvidence":
+        if self.independentAdverseAxes != len(set(self.adverseAxes)):
+            raise ValueError("Capture failure axis count must match its unique axes")
+        if self.wholeCaptureFailure != (self.independentAdverseAxes >= 2):
+            raise ValueError(
+                "Whole-capture failure requires at least two independent QC axes"
+            )
+        if self.exclusionEligible and (
+            not self.wholeCaptureFailure
+            or not self.preservesConditionCoverage
+            or not self.preservesIndependentUnitCoverage
+        ):
+            raise ValueError(
+                "Capture exclusion requires failure and preserved design coverage"
+            )
+        return self
+
+
+type ContrastTest = Literal["mann_whitney", "kruskal_wallis", "wilcoxon"]
+type ContrastSampleStatistic = Literal["mean", "median", "fraction"]
+type ContrastStatus = Literal["licensed", "blocked", "needsInput"]
+
+
+class ContrastPlan(AgentDataModel):
+    """One deterministic sample-aware statistical-testing license."""
+
+    coefficient: str = ""
+    groupOrder: list[str | int | float | bool] = Field(default_factory=list)
+    sampleBy: str | None = None
+    pairBy: str | None = None
+    test: ContrastTest | None = None
+    sampleStatistic: ContrastSampleStatistic = "mean"
+    expressionCutoff: float = 0.0
+    status: ContrastStatus = "blocked"
+    betweenUnitDesign: bool = False
+    replicationPassed: bool = False
+    estimabilityPassed: bool = False
+    pairedCoveragePassed: bool | None = None
+    replication: dict[str, Any] = Field(default_factory=dict)
+    estimability: dict[str, Any] = Field(default_factory=dict)
+    pairedCoverage: dict[str, Any] = Field(default_factory=dict)
+    blockedReasons: list[str] = Field(default_factory=list)
+    evidenceId: str = ""
+    evidenceIds: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_contrast(self) -> "ContrastPlan":
+        if self.coefficient != self.coefficient.strip():
+            raise ValueError(
+                "Contrast coefficient cannot contain surrounding whitespace"
+            )
+        if self.sampleBy is not None and (
+            not self.sampleBy.strip() or self.sampleBy != self.sampleBy.strip()
+        ):
+            raise ValueError("Contrast sampleBy must be a non-empty trimmed name")
+        if self.pairBy is not None and (
+            not self.pairBy.strip() or self.pairBy != self.pairBy.strip()
+        ):
+            raise ValueError("Contrast pairBy must be a non-empty trimmed name")
+        group_keys = [(type(value).__name__, repr(value)) for value in self.groupOrder]
+        if len(group_keys) != len(set(group_keys)):
+            raise ValueError("Contrast groupOrder must contain unique values")
+        if any(
+            isinstance(value, float) and not math.isfinite(value)
+            for value in self.groupOrder
+        ):
+            raise ValueError("Contrast groupOrder cannot contain non-finite values")
+        if not math.isfinite(self.expressionCutoff):
+            raise ValueError("Contrast expressionCutoff must be finite")
+        if self.sampleStatistic != "fraction" and self.expressionCutoff != 0.0:
+            raise ValueError(
+                "Contrast expressionCutoff is only used with fraction summaries"
+            )
+        if self.test == "mann_whitney" and len(self.groupOrder) != 2:
+            raise ValueError("mann_whitney requires exactly two ordered groups")
+        if self.test == "kruskal_wallis" and len(self.groupOrder) < 3:
+            raise ValueError("kruskal_wallis requires at least three ordered groups")
+        if self.test == "wilcoxon":
+            if len(self.groupOrder) != 2 or self.pairBy is None:
+                raise ValueError(
+                    "wilcoxon requires exactly two groups and an explicit pairBy"
+                )
+        elif self.pairBy is not None and self.test is not None:
+            raise ValueError("A paired contrast must use the wilcoxon test")
+        if self.status == "licensed":
+            if (
+                not self.coefficient
+                or self.sampleBy is None
+                or self.test is None
+                or self.blockedReasons
+                or not self.betweenUnitDesign
+                or not self.replicationPassed
+                or not self.estimabilityPassed
+                or (self.pairBy is not None and self.pairedCoveragePassed is not True)
+            ):
+                raise ValueError(
+                    "A licensed contrast requires resolved design, replication, "
+                    "estimability, and paired coverage"
+                )
+        elif not self.blockedReasons:
+            raise ValueError("A non-licensed contrast requires blockedReasons")
+        return self
+
+    @classmethod
+    def get_blank(cls) -> "ContrastPlan":
+        return cls(blockedReasons=["unresolvedContrast"])
+
+
 def _validate_qc_sources(
     *,
     action: CellQcAction,
@@ -187,6 +398,7 @@ def _validate_qc_sources(
     sample_column: str | None,
     sample_artifact: NamedArtifactSource | None,
     registered_profile: RegisteredCellQcProfile | None = None,
+    allow_metric_name_collisions: bool = False,
 ) -> None:
     if len(attributes) != len(set(attributes)):
         raise ValueError("Cell-QC metadata attributes must be unique")
@@ -200,14 +412,14 @@ def _validate_qc_sources(
     artifact_names = [source.name for source in artifact_metrics]
     if len(artifact_names) != len(set(artifact_names)):
         raise ValueError("Cell-QC artifact metric names must be unique")
+    if not allow_metric_name_collisions and set(attributes) & set(artifact_names):
+        raise ValueError(
+            "Cell-QC metadata and artifact metric names collide; explicitly "
+            "validated multi-source evidence is required"
+        )
     if any(source.artifact.kind != "quality_metric" for source in artifact_metrics):
         raise ValueError(
             "Cell-QC artifactMetrics must reference quality_metric artifacts"
-        )
-    collisions = sorted(set(attributes).intersection(artifact_names))
-    if collisions:
-        raise ValueError(
-            f"Cell-QC metadata and artifact metric names collide: {collisions}"
         )
     if sample_column is not None and sample_artifact is not None:
         raise ValueError(
@@ -279,17 +491,26 @@ class CellQcProfileEvidence(AgentDataModel):
     driverAssayType: CellQcDriverType | None = None
     sampleColumn: str | None = None
     sampleArtifact: NamedArtifactSource | None = None
+    captureColumn: str | None = None
+    captureArtifact: NamedArtifactSource | None = None
     attributes: list[str] = Field(default_factory=list)
     artifactMetrics: list[NamedArtifactSource] = Field(default_factory=list)
+    metricSources: list[QcMetricSourceEvidence] = Field(default_factory=list)
+    sourceConcordance: list[QcSourceConcordance] = Field(default_factory=list)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    resolvedBounds: dict[str, Any] | list[dict[str, Any]] = Field(default_factory=dict)
     activeCells: int = 0
     retainedCells: int = 0
     retainedFraction: float = 0.0
+    activeCellsByCapture: dict[str, int] = Field(default_factory=dict)
     sampleRetainedCells: dict[str, int] = Field(default_factory=dict)
     retainedCellsByColumn: dict[str, dict[str, int]] = Field(default_factory=dict)
     unsafeRetentionGroups: list[str] = Field(default_factory=list)
     flaggedCells: dict[str, int] = Field(default_factory=dict)
+    metricFlaggedCells: dict[str, dict[str, int]] = Field(default_factory=dict)
     failedCaptureCandidates: list[str] = Field(default_factory=list)
+    captureFailureEvidence: list[CaptureFailureEvidence] = Field(default_factory=list)
+    excludableCaptureCandidates: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     evidenceId: str = ""
 
@@ -302,7 +523,36 @@ class CellQcProfileEvidence(AgentDataModel):
             sample_column=self.sampleColumn,
             sample_artifact=self.sampleArtifact,
             registered_profile=self.registeredProfile,
+            allow_metric_name_collisions=True,
         )
+        if self.captureColumn is not None and self.captureArtifact is not None:
+            raise ValueError(
+                "Cell-QC captureColumn and captureArtifact are mutually exclusive"
+            )
+        if (
+            self.captureArtifact is not None
+            and self.captureArtifact.artifact.kind != "hto_identity"
+        ):
+            raise ValueError(
+                "Cell-QC captureArtifact must reference an hto_identity artifact"
+            )
+        failures = {item.capture: item for item in self.captureFailureEvidence}
+        if len(failures) != len(self.captureFailureEvidence):
+            raise ValueError("Cell-QC capture failure evidence must be unique")
+        expected_failed = sorted(
+            capture for capture, item in failures.items() if item.wholeCaptureFailure
+        )
+        if failures and sorted(self.failedCaptureCandidates) != expected_failed:
+            raise ValueError(
+                "Cell-QC failed captures must match their multi-axis evidence"
+            )
+        expected_excludable = sorted(
+            capture for capture, item in failures.items() if item.exclusionEligible
+        )
+        if failures and sorted(self.excludableCaptureCandidates) != expected_excludable:
+            raise ValueError(
+                "Cell-QC excludable captures must match design-safety evidence"
+            )
         return self
 
     @classmethod
@@ -351,6 +601,7 @@ class CellQcPlan(AgentDataModel):
             sample_column=self.sampleColumn,
             sample_artifact=self.sampleArtifact,
             registered_profile=self.registeredProfile,
+            allow_metric_name_collisions=True,
         )
         return self
 
@@ -468,6 +719,9 @@ class CovariateEvidence(AgentDataModel):
     )
     batchSafety: list[BatchSafetyEvidence] = Field(default_factory=list)
     qcProfiles: list[CellQcProfileEvidence] = Field(default_factory=list)
+    qcMetricSources: list[QcMetricSourceEvidence] = Field(default_factory=list)
+    qcSourceConcordance: list[QcSourceConcordance] = Field(default_factory=list)
+    contrastPlans: list[ContrastPlan] = Field(default_factory=list)
     htoIdentityColumns: list[str] = Field(default_factory=list)
     htoIdentityArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
     evidenceIds: list[str] = Field(default_factory=list)
@@ -509,6 +763,9 @@ class ExperimentalContextResult(AgentDataModel):
     cellSelection: ArtifactReferenceModel | None = None
     cellQc: CellQcPlan = Field(default_factory=CellQcPlan.get_blank)
     qcProfiles: list[CellQcProfileEvidence] = Field(default_factory=list)
+    qcMetricSources: list[QcMetricSourceEvidence] = Field(default_factory=list)
+    qcSourceConcordance: list[QcSourceConcordance] = Field(default_factory=list)
+    contrastPlans: list[ContrastPlan] = Field(default_factory=list)
     qualityMetricArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
     htoIdentityColumns: list[str] = Field(default_factory=list)
     htoIdentityArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
@@ -683,6 +940,9 @@ class ExperimentalContextDependencies(AgentDataModel):
     characterization: CovariateCharacterization | None = None
     batchSafety: dict[str, BatchSafetyEvidence] = Field(default_factory=dict)
     qcProfiles: dict[str, CellQcProfileEvidence] = Field(default_factory=dict)
+    qcMetricSources: list[QcMetricSourceEvidence] = Field(default_factory=list)
+    qcSourceConcordance: list[QcSourceConcordance] = Field(default_factory=list)
+    contrastPlans: dict[str, ContrastPlan] = Field(default_factory=dict)
     htoIdentityColumns: list[str] = Field(default_factory=list)
     qualityMetricArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
     htoIdentityArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
@@ -760,6 +1020,132 @@ def characterization_evidence(
             if isinstance(technical, str):
                 evidence_ids.add(f"confounding:{coefficient}:{technical}")
     return evidence_ids
+
+
+def contrast_plans_from_characterization(
+    characterization: CovariateCharacterization,
+) -> list[ContrastPlan]:
+    """Build deterministic test licenses from bounded coefficient evidence."""
+    reports = {
+        report.get("coefficient"): report
+        for report in characterization.confounding
+        if isinstance(report.get("coefficient"), str)
+    }
+    plans: list[ContrastPlan] = []
+    for record in characterization.coefficients:
+        coefficient = record.get("name")
+        if not isinstance(coefficient, str):
+            continue
+        report = reports.get(coefficient, {})
+        raw_groups = record.get("groupOrder")
+        group_order = (
+            list(raw_groups)
+            if isinstance(raw_groups, list)
+            and all(
+                isinstance(value, str | int | float | bool)
+                and not (isinstance(value, float) and not math.isfinite(value))
+                for value in raw_groups
+            )
+            else []
+        )
+        sample_by = record.get("observationUnit")
+        sample_by = sample_by if isinstance(sample_by, str) else None
+        independent_unit = record.get("independentUnit")
+        independent_unit = (
+            independent_unit if isinstance(independent_unit, str) else None
+        )
+        between_unit = record.get("scope") == "betweenUnit"
+        replication = dict(record.get("replication") or {})
+        replication_passed = replication.get("sufficient") is True
+        estimability = dict(
+            record.get("estimability") or report.get("estimability") or {}
+        )
+        estimability_passed = (
+            estimability.get("status") == "ok"
+            and estimability.get("coefficientEstimable") is True
+            and estimability.get("rankDeficient") is not True
+        )
+        paired_coverage = dict(record.get("pairedCoverage") or {})
+        pair_by: str | None = None
+        paired_passed: bool | None = None
+        mixed_independent_design = False
+        if independent_unit is not None:
+            if paired_coverage.get("complete") is True:
+                pair_by = independent_unit
+                paired_passed = True
+            elif paired_coverage.get("betweenIndependentUnits") is True:
+                sample_by = independent_unit
+            else:
+                pair_by = independent_unit
+                paired_passed = False
+                mixed_independent_design = True
+
+        reasons: list[str] = []
+        needs_input = False
+        if record.get("kind") != "categorical":
+            reasons.append("coefficientRequiresExplicitCategoricalGroups")
+            needs_input = True
+        if not between_unit:
+            reasons.append("coefficientIsNotBetweenUnit")
+        if sample_by is None:
+            reasons.append("sampleByIsUnresolved")
+            needs_input = True
+        if len(group_order) < 2:
+            reasons.append("fewerThanTwoObservedGroups")
+            needs_input = True
+        if record.get("groupCountsTruncated") is True:
+            reasons.append("groupOrderIsTruncated")
+            needs_input = True
+        if not replication_passed:
+            reasons.append("insufficientIndependentReplication")
+        if not estimability_passed:
+            reasons.append("coefficientIsNotEstimable")
+
+        test: ContrastTest | None = None
+        if pair_by is not None:
+            if len(group_order) != 2:
+                reasons.append("pairedTestsRequireExactlyTwoGroups")
+            else:
+                test = "wilcoxon"
+            if paired_passed is not True:
+                reasons.append("pairedCoverageIsIncomplete")
+        elif mixed_independent_design:
+            reasons.append("independentUnitStructureIsMixed")
+        elif len(group_order) == 2:
+            test = "mann_whitney"
+        elif len(group_order) >= 3:
+            test = "kruskal_wallis"
+
+        reasons = list(dict.fromkeys(reasons))
+        status: ContrastStatus = (
+            "licensed" if not reasons else "needsInput" if needs_input else "blocked"
+        )
+        evidence_ids = [
+            f"column:{coefficient}",
+            f"coefficient:{coefficient}",
+            f"estimability:{coefficient}",
+        ]
+        plans.append(
+            ContrastPlan(
+                coefficient=coefficient,
+                groupOrder=group_order,
+                sampleBy=sample_by,
+                pairBy=pair_by,
+                test=test,
+                status=status,
+                betweenUnitDesign=between_unit,
+                replicationPassed=replication_passed,
+                estimabilityPassed=estimability_passed,
+                pairedCoveragePassed=paired_passed,
+                replication=replication,
+                estimability=estimability,
+                pairedCoverage=paired_coverage,
+                blockedReasons=reasons,
+                evidenceId=f"contrastPlan:{coefficient}:{status}",
+                evidenceIds=evidence_ids,
+            )
+        )
+    return plans
 
 
 def _persisted_assay_type(store: Any, assay_name: str) -> str:
@@ -873,15 +1259,379 @@ def _resolved_artifact_values(
     return np.asarray(resolved.values)
 
 
+def _artifact_input_references(
+    value: Any,
+    *,
+    limit: int = 16,
+) -> list[ArtifactReferenceModel]:
+    refs: list[ArtifactReferenceModel] = []
+    seen: set[tuple[str, str | None, str, str]] = set()
+
+    def visit(item: Any) -> None:
+        if len(refs) >= limit:
+            return
+        if isinstance(item, ArtifactRef):
+            ref = item
+        elif isinstance(item, Mapping) and {
+            "scope",
+            "kind",
+            "artifact_id",
+        }.issubset(item):
+            try:
+                ref = ArtifactRef.from_dict(item)
+            except (KeyError, TypeError, ValueError):
+                ref = None
+        else:
+            ref = None
+        if ref is not None:
+            key = (ref.scope, ref.assay, ref.kind, ref.artifact_id)
+            if key not in seen:
+                seen.add(key)
+                refs.append(artifact_reference(ref))
+            return
+        if isinstance(item, Mapping):
+            for nested in item.values():
+                visit(nested)
+        elif isinstance(item, list | tuple):
+            for nested in item:
+                visit(nested)
+
+    visit(value)
+    return refs
+
+
+def _qc_metric_sources(
+    deps: ExperimentalContextDependencies,
+    driver: tuple[str, CellQcDriverType],
+) -> tuple[
+    dict[str, np.ndarray],
+    list[str],
+    list[NamedArtifactSource],
+    list[QcMetricSourceEvidence],
+    list[QcSourceConcordance],
+    list[str],
+    dict[str, np.ndarray],
+]:
+    assay_name, assay_type = driver
+    del assay_type
+    selection = _cell_selection_ref(deps)
+    selection_model = artifact_reference(selection)
+    active_cells = _active_cell_count(deps)
+    metadata_names = _qc_attributes(deps.store, assay_name, driver[1])
+    artifact_candidates: list[NamedArtifactSource] = []
+    for source in deps.qualityMetricArtifacts:
+        artifact = _source_ref(source, expected_kind="quality_metric")
+        if artifact.assay == assay_name:
+            artifact_candidates.append(source)
+    metadata_collisions = set(metadata_names).intersection(
+        source.name for source in artifact_candidates
+    )
+
+    values_by_execution_name: dict[str, np.ndarray] = {}
+    values_by_source: dict[str, np.ndarray] = {}
+    sources: list[QcMetricSourceEvidence] = []
+    valid_metadata: list[str] = []
+    valid_artifacts: list[NamedArtifactSource] = []
+    notes: list[str] = []
+
+    for name in metadata_names:
+        raw = np.asarray(deps.cells.fetch(name))
+        try:
+            values = np.asarray(raw, dtype=float)
+        except (TypeError, ValueError):
+            fingerprint = fingerprint_strings(raw)
+            source_id = f"qcMetric:metadata:{assay_name}:{name}:{fingerprint}"
+            sources.append(
+                QcMetricSourceEvidence(
+                    sourceId=source_id,
+                    metricName=name,
+                    metricRole=registered_qc_metric_role(name),
+                    assay=assay_name,
+                    sourceType="metadataColumn",
+                    origin="ingestionMetadata",
+                    executionName=name,
+                    metadataColumn=name,
+                    cellSelection=selection_model,
+                    valuesFingerprint=fingerprint,
+                    activeCells=active_cells,
+                    missingCells=active_cells,
+                    notes=["Metric is not numeric and cannot drive filtering"],
+                )
+            )
+            notes.append(f"QC metadata source {name!r} is not numeric")
+            continue
+        if values.ndim != 1 or values.shape != (active_cells,):
+            raise ValueError(
+                f"QC metadata source {name!r} does not align with cellSelection"
+            )
+        fingerprint = fingerprint_array(values)
+        missing = int((~np.isfinite(values)).sum())
+        source_id = f"qcMetric:metadata:{assay_name}:{name}:{fingerprint}"
+        usable = missing == 0
+        source_notes = (
+            [] if usable else [f"{missing} active cells have non-finite metric values"]
+        )
+        sources.append(
+            QcMetricSourceEvidence(
+                sourceId=source_id,
+                metricName=name,
+                metricRole=registered_qc_metric_role(name),
+                assay=assay_name,
+                sourceType="metadataColumn",
+                origin="ingestionMetadata",
+                executionName=name,
+                metadataColumn=name,
+                cellSelection=selection_model,
+                valuesFingerprint=fingerprint,
+                activeCells=active_cells,
+                missingCells=missing,
+                usableForFiltering=usable,
+                notes=source_notes,
+            )
+        )
+        values_by_source[source_id] = values
+        if usable:
+            values_by_execution_name[name] = values
+            valid_metadata.append(name)
+        else:
+            notes.extend(source_notes)
+
+    for source in artifact_candidates:
+        artifact = _source_ref(source, expected_kind="quality_metric")
+        values = np.asarray(
+            _resolved_artifact_values(
+                deps,
+                source,
+                expected_kind="quality_metric",
+            ),
+            dtype=float,
+        )
+        if values.ndim != 1 or values.shape != (active_cells,):
+            raise ValueError(
+                f"QC artifact {source.name!r} does not align with cellSelection"
+            )
+        execution_name = qc_metric_execution_name(
+            source.name,
+            artifact_id=artifact.artifact_id,
+            collides_with_metadata=source.name in metadata_collisions,
+        )
+        if execution_name in values_by_execution_name:
+            raise ValueError(
+                f"QC execution metric name {execution_name!r} is not unique"
+            )
+        fingerprint = fingerprint_array(values)
+        missing = int((~np.isfinite(values)).sum())
+        status = inspect_artifact(deps.store.zw, artifact)
+        operation = status.operation
+        origin: Literal[
+            "ingestionMetadata",
+            "derivedArtifact",
+            "externalArtifact",
+        ] = (
+            "derivedArtifact"
+            if operation == "run_feature_percentage"
+            else "externalArtifact"
+        )
+        source_id = (
+            f"qcMetric:artifact:{artifact.assay}:{source.name}:{artifact.artifact_id}"
+        )
+        usable = missing == 0
+        source_notes = (
+            [] if usable else [f"{missing} active cells have non-finite metric values"]
+        )
+        sources.append(
+            QcMetricSourceEvidence(
+                sourceId=source_id,
+                metricName=source.name,
+                metricRole=registered_qc_metric_role(source.name),
+                assay=assay_name,
+                sourceType="artifact",
+                origin=origin,
+                executionName=execution_name,
+                artifact=artifact_reference(artifact),
+                cellSelection=selection_model,
+                inputArtifacts=_artifact_input_references(status.inputs or {}),
+                provenanceOperation=operation,
+                valuesFingerprint=fingerprint,
+                activeCells=active_cells,
+                missingCells=missing,
+                usableForFiltering=usable,
+                notes=source_notes,
+            )
+        )
+        values_by_source[source_id] = values
+        if usable:
+            values_by_execution_name[execution_name] = values
+            valid_artifacts.append(source)
+        else:
+            notes.extend(source_notes)
+
+    concordance: list[QcSourceConcordance] = []
+    metadata_sources = [
+        source for source in sources if source.sourceType == "metadataColumn"
+    ]
+    artifact_sources = [source for source in sources if source.sourceType == "artifact"]
+    for left in metadata_sources:
+        for right in artifact_sources:
+            if left.metricRole != right.metricRole or left.metricRole == "diagnostic":
+                continue
+            if right.artifact is None:
+                raise ValueError("Artifact QC source lacks its exact reference")
+            left_values = values_by_source.get(left.sourceId)
+            right_values = values_by_source.get(right.sourceId)
+            if left_values is None or right_values is None:
+                continue
+            finite = np.isfinite(left_values) & np.isfinite(right_values)
+            compared = int(finite.sum())
+            missing = int(len(finite) - compared)
+            mean_difference: float | None = None
+            maximum_difference: float | None = None
+            pearson: float | None = None
+            exactly_equal = False
+            numerically_close = False
+            if compared:
+                left_finite = left_values[finite]
+                right_finite = right_values[finite]
+                differences = np.abs(left_finite - right_finite)
+                mean_difference = float(differences.mean())
+                maximum_difference = float(differences.max())
+                exactly_equal = missing == 0 and bool(
+                    np.array_equal(left_finite, right_finite)
+                )
+                numerically_close = missing == 0 and bool(
+                    np.allclose(
+                        left_finite,
+                        right_finite,
+                        rtol=1e-6,
+                        atol=1e-8,
+                    )
+                )
+                if (
+                    compared >= 2
+                    and float(np.std(left_finite)) > 0.0
+                    and float(np.std(right_finite)) > 0.0
+                ):
+                    correlation = float(np.corrcoef(left_finite, right_finite)[0, 1])
+                    if math.isfinite(correlation):
+                        pearson = correlation
+            evidence_id = (
+                f"qcConcordance:{left.metricRole}:"
+                f"{left.valuesFingerprint}:{right.artifact.artifactId}"
+            )
+            concordance.append(
+                QcSourceConcordance(
+                    metricRole=left.metricRole,
+                    leftSourceId=left.sourceId,
+                    rightSourceId=right.sourceId,
+                    comparedCells=compared,
+                    missingCells=missing,
+                    meanAbsoluteDifference=mean_difference,
+                    maximumAbsoluteDifference=maximum_difference,
+                    pearsonCorrelation=pearson,
+                    exactlyEqual=exactly_equal,
+                    numericallyClose=numerically_close,
+                    evidenceId=evidence_id,
+                )
+            )
+    return (
+        values_by_execution_name,
+        valid_metadata,
+        valid_artifacts,
+        sources,
+        concordance,
+        notes,
+        values_by_source,
+    )
+
+
 def _qc_attributes(store: Any, assay_name: str, assay_type: str) -> list[str]:
     del assay_type
-    suffixes = ["nCounts", "nFeatures"]
+    suffixes = ["nCounts", "nFeatures", "percentMito", "percentRibo"]
     available = set(store.cells.columns)
     return [
         f"{assay_name}_{suffix}"
         for suffix in suffixes
         if f"{assay_name}_{suffix}" in available
     ]
+
+
+def _derive_missing_percentage_artifacts(
+    store: Any,
+    *,
+    cell_selection: ArtifactRef,
+    driver: tuple[str, CellQcDriverType] | None,
+    quality_sources: Sequence[NamedArtifactSource],
+) -> list[NamedArtifactSource]:
+    """Derive missing RNA percentage metrics through public immutable APIs."""
+    sources = list(quality_sources)
+    if driver is None or driver[1] != "RNA":
+        return sources
+    if not callable(getattr(store, "set_feature_selection", None)) or not callable(
+        getattr(store, "run_feature_percentage", None)
+    ):
+        return sources
+    assay_name = driver[0]
+    available_metadata = set(store.cells.columns)
+    supplied_roles = {
+        registered_qc_metric_role(source.name)
+        for source in sources
+        if source.artifact.assay == assay_name
+    }
+    assay = store.get_assay(assay_name)
+    feature_ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
+    feature_names = np.asarray(assay.feats.fetch_all("names")).astype(str)
+    specifications: tuple[
+        tuple[QcMetricRole, str, re.Pattern[str]],
+        ...,
+    ] = (
+        ("mitochondrial", "percentMito", re.compile(r"^(MT-|mt-)")),
+        (
+            "ribosomal",
+            "percentRibo",
+            re.compile(r"^(RPS|RPL|MRPS|MRPL|Rps|Rpl|Mrps|Mrpl)"),
+        ),
+    )
+    existing_names = {source.name for source in sources}
+    for role, suffix, pattern in specifications:
+        metric_name = f"{assay_name}_{suffix}"
+        if metric_name in available_metadata or role in supplied_roles:
+            continue
+        mask = np.fromiter(
+            (
+                pattern.search(feature_id) is not None
+                or pattern.search(feature_name) is not None
+                for feature_id, feature_name in zip(
+                    feature_ids,
+                    feature_names,
+                    strict=True,
+                )
+            ),
+            dtype=bool,
+            count=assay.feats.N,
+        )
+        if not mask.any():
+            continue
+        if metric_name in existing_names:
+            raise ValueError(f"Derived QC metric name {metric_name!r} is not unique")
+        feature_selection = store.set_feature_selection(
+            from_assay=assay_name,
+            mask=mask,
+            invalidate_cache=False,
+        )
+        metric = store.run_feature_percentage(
+            cell_selection,
+            feature_selection,
+            invalidate_cache=False,
+        )
+        sources.append(
+            NamedArtifactSource(
+                name=metric_name,
+                artifact=artifact_reference(metric),
+            )
+        )
+        existing_names.add(metric_name)
+        supplied_roles.add(role)
+    return sources
 
 
 def _qc_sample_columns(
@@ -1010,6 +1760,285 @@ def _directed_pooled_reference_captures(
     return references
 
 
+def _provenance_label(value: Any) -> str | None:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return str(value)
+
+
+def _ordered_labels(values: np.ndarray, mask: np.ndarray) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for raw in values[mask]:
+        label = _provenance_label(raw)
+        if label is None or label in seen:
+            continue
+        seen.add(label)
+        output.append(label)
+    return output
+
+
+def _capture_design_safety(
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization | None,
+    capture_labels: np.ndarray,
+    capture: str,
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    if characterization is None:
+        return [], False, False
+    active = np.ones(len(capture_labels), dtype=bool)
+    normalized = _validated_sample_labels(
+        capture_labels,
+        active,
+        label_name="physical capture labels",
+    )
+    encoded = np.asarray(
+        [
+            value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            for value in normalized
+        ],
+        dtype=object,
+    )
+    after = encoded != capture
+    safety: list[dict[str, Any]] = []
+    for record in characterization.coefficients:
+        coefficient = record.get("name")
+        observation = record.get("observationUnit")
+        independent = record.get("independentUnit")
+        if (
+            not isinstance(coefficient, str)
+            or not isinstance(observation, str)
+            or record.get("scope") != "betweenUnit"
+            or coefficient not in deps.cells.columns
+            or observation not in deps.cells.columns
+        ):
+            continue
+        condition_values = np.asarray(deps.cells.fetch(coefficient), dtype=object)
+        observation_values = np.asarray(deps.cells.fetch(observation), dtype=object)
+        if (
+            condition_values.shape != after.shape
+            or observation_values.shape != after.shape
+        ):
+            raise ValueError("Capture safety columns do not align with cellSelection")
+        required_groups = _ordered_labels(condition_values, active)
+        remaining_groups = _ordered_labels(condition_values, after)
+        preserves_conditions = set(remaining_groups) == set(required_groups)
+
+        observation_counts: list[dict[str, Any]] = []
+        independent_counts: list[dict[str, Any]] = []
+        independent_values: np.ndarray | None = None
+        if isinstance(independent, str):
+            if independent not in deps.cells.columns:
+                continue
+            independent_values = np.asarray(
+                deps.cells.fetch(independent),
+                dtype=object,
+            )
+            if independent_values.shape != after.shape:
+                raise ValueError(
+                    "Capture independent-unit column does not align with cellSelection"
+                )
+        for group in required_groups:
+            group_mask = np.asarray(
+                [_provenance_label(value) == group for value in condition_values],
+                dtype=bool,
+            )
+            observation_levels = set(
+                _ordered_labels(observation_values, after & group_mask)
+            )
+            observation_counts.append(
+                {"group": group, "count": len(observation_levels)}
+            )
+            if independent_values is not None:
+                independent_levels = set(
+                    _ordered_labels(independent_values, after & group_mask)
+                )
+                independent_counts.append(
+                    {"group": group, "count": len(independent_levels)}
+                )
+
+        replication_counts = (
+            independent_counts if independent_values is not None else observation_counts
+        )
+        minimum_units = min(
+            (int(item["count"]) for item in replication_counts),
+            default=0,
+        )
+        complete_pairs = 0
+        incomplete_pairs = 0
+        duplicate_pair_groups = 0
+        single_group_pairs = 0
+        if independent_values is not None:
+            pair_groups: dict[str, dict[str, set[str]]] = {}
+            for index in np.flatnonzero(after):
+                pair = _provenance_label(independent_values[index])
+                pair_group = _provenance_label(condition_values[index])
+                observation_value = _provenance_label(observation_values[index])
+                if pair is None or pair_group is None or observation_value is None:
+                    continue
+                pair_groups.setdefault(pair, {}).setdefault(pair_group, set()).add(
+                    observation_value
+                )
+            required_set = set(required_groups)
+            for groups in pair_groups.values():
+                if len(groups) == 1:
+                    single_group_pairs += 1
+                duplicate_pair_groups += sum(
+                    len(observations) > 1 for observations in groups.values()
+                )
+                if set(groups) == required_set and all(
+                    len(observations) == 1 for observations in groups.values()
+                ):
+                    complete_pairs += 1
+                else:
+                    incomplete_pairs += 1
+        original_pair_design = dict(record.get("pairedCoverage") or {}).get("design")
+        pair_structure_safe = (
+            True
+            if independent_values is None
+            else (
+                complete_pairs >= 2
+                and incomplete_pairs == 0
+                and duplicate_pair_groups == 0
+            )
+            if original_pair_design == "paired"
+            else (len(pair_groups) >= 2 and single_group_pairs == len(pair_groups))
+            if original_pair_design == "betweenIndependentUnits"
+            else False
+        )
+        preserves_units = (
+            preserves_conditions and minimum_units >= 2 and pair_structure_safe
+        )
+        safety.append(
+            {
+                "coefficient": coefficient,
+                "conditionColumn": coefficient,
+                "observationUnit": observation,
+                "independentUnit": independent,
+                "requiredGroups": required_groups,
+                "remainingGroups": remaining_groups,
+                "observationUnitsByGroup": observation_counts,
+                "independentUnitsByGroup": independent_counts,
+                "minimumIndependentUnitsAfterExclusion": minimum_units,
+                "completePairsAfterExclusion": complete_pairs,
+                "incompletePairsAfterExclusion": incomplete_pairs,
+                "duplicatePairGroupsAfterExclusion": duplicate_pair_groups,
+                "independentUnitDesign": original_pair_design,
+                "preservesConditionCoverage": preserves_conditions,
+                "preservesIndependentUnitCoverage": preserves_units,
+            }
+        )
+    return (
+        safety,
+        bool(safety) and all(item["preservesConditionCoverage"] for item in safety),
+        bool(safety)
+        and all(item["preservesIndependentUnitCoverage"] for item in safety),
+    )
+
+
+def _capture_source_missingness(
+    sources: Sequence[QcMetricSourceEvidence],
+    values_by_source: Mapping[str, np.ndarray],
+    capture_labels: np.ndarray | None,
+) -> list[QcMetricSourceEvidence]:
+    if capture_labels is None:
+        return list(sources)
+    active = np.ones(len(capture_labels), dtype=bool)
+    normalized = _validated_sample_labels(
+        capture_labels,
+        active,
+        label_name="physical capture labels",
+    )
+    captures: list[tuple[str, np.ndarray]] = []
+    seen: set[str] = set()
+    for raw in normalized:
+        value = raw.item() if isinstance(raw, np.generic) else raw
+        key = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        captures.append((key, normalized == value))
+    output: list[QcMetricSourceEvidence] = []
+    for source in sources:
+        values = values_by_source.get(source.sourceId)
+        missing_by_capture: dict[str, int] = {}
+        if values is not None:
+            for capture, mask in captures:
+                missing_by_capture[capture] = int((~np.isfinite(values[mask])).sum())
+        elif source.missingCells == source.activeCells:
+            missing_by_capture = {
+                capture: int(mask.sum()) for capture, mask in captures
+            }
+        output.append(
+            source.model_copy(update={"missingCellsByCapture": missing_by_capture})
+        )
+    return output
+
+
+def _capture_failure_models(
+    projection: RegisteredQcProjection | AutoFilterProjection,
+    *,
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization | None,
+    capture_labels: np.ndarray | None,
+    metric_sources: Sequence[QcMetricSourceEvidence],
+) -> list[CaptureFailureEvidence]:
+    if capture_labels is None:
+        return []
+    output: list[CaptureFailureEvidence] = []
+    source_by_id = {source.sourceId: source for source in metric_sources}
+    for comparison in projection.captureComparisons:
+        missing_fractions = {
+            source_id: (
+                source.missingCellsByCapture.get(comparison.capture, 0)
+                / comparison.cells
+                if comparison.cells
+                else 0.0
+            )
+            for source_id, source in source_by_id.items()
+        }
+        safety, condition_safe, unit_safe = _capture_design_safety(
+            deps,
+            characterization,
+            capture_labels,
+            comparison.capture,
+        )
+        failure = CaptureFailureEvidence(
+            capture=comparison.capture,
+            activeCells=comparison.cells,
+            retainedCells=comparison.retainedCells or 0,
+            retainedFraction=comparison.retainedFraction or 0.0,
+            adverseAxes=list(comparison.adverseAxes),
+            independentAdverseAxes=comparison.independentAdverseAxes,
+            metricMissingFractions=missing_fractions,
+            reasons=list(comparison.reasons),
+            wholeCaptureFailure=comparison.wholeCaptureFailure,
+            conditionAndUnitSafety=safety,
+            preservesConditionCoverage=condition_safe,
+            preservesIndependentUnitCoverage=unit_safe,
+            exclusionEligible=(
+                comparison.wholeCaptureFailure and condition_safe and unit_safe
+            ),
+            evidenceId=(
+                f"qcCapture:{comparison.capture}:"
+                f"{comparison.independentAdverseAxes}axes"
+            ),
+        )
+        output.append(failure)
+    return output
+
+
 def _registered_profile_evidence(
     projection: RegisteredQcProjection,
     *,
@@ -1020,21 +2049,19 @@ def _registered_profile_evidence(
     values_by_attr: dict[str, np.ndarray],
     metadata_attributes: list[str],
     artifact_metrics: list[NamedArtifactSource],
+    metric_sources: list[QcMetricSourceEvidence],
+    source_concordance: list[QcSourceConcordance],
     sample_column: str | None,
     sample_artifact: NamedArtifactSource | None,
+    capture_column: str | None,
+    capture_artifact: NamedArtifactSource | None,
+    capture_labels: np.ndarray | None,
     pooled_reference_captures: tuple[str, ...] | None,
     active_cells: int,
     comparison_source: str | None,
 ) -> CellQcProfileEvidence:
-    supported_names = {
-        name
-        for name in values_by_attr
-        if registered_qc_metric_role(name) != "diagnostic"
-    }
-    attributes = [name for name in metadata_attributes if name in supported_names]
-    metric_artifacts = [
-        source for source in artifact_metrics if source.name in supported_names
-    ]
+    attributes = list(metadata_attributes)
+    metric_artifacts = list(artifact_metrics)
     profile_id = _registered_qc_profile_id(
         projection.profile,
         driver=driver,
@@ -1063,6 +2090,13 @@ def _registered_profile_evidence(
         "captureComparisonSource": comparison_source,
         "pooledReferenceCaptures": list(pooled_reference_captures or ()),
     }
+    failure_evidence = _capture_failure_models(
+        projection,
+        deps=deps,
+        characterization=characterization,
+        capture_labels=capture_labels,
+        metric_sources=metric_sources,
+    )
     cells = deps.cells if deps.cells is not None else deps.store.cells
     retention_columns: list[str] = []
     if characterization is not None:
@@ -1100,19 +2134,30 @@ def _registered_profile_evidence(
         driverAssayType=driver[1],
         sampleColumn=sample_column,
         sampleArtifact=sample_artifact,
+        captureColumn=capture_column,
+        captureArtifact=capture_artifact,
         attributes=attributes,
         artifactMetrics=metric_artifacts,
+        metricSources=metric_sources,
+        sourceConcordance=source_concordance,
         parameters=parameters,
+        resolvedBounds=parameters["resolvedBounds"],
         activeCells=active_cells,
         retainedCells=projection.retainedCells,
         retainedFraction=(
             projection.retainedCells / active_cells if active_cells else 0.0
         ),
+        activeCellsByCapture=projection.captureSizes,
         sampleRetainedCells=projection.retainedByCapture,
         retainedCellsByColumn=retained_by_column,
         unsafeRetentionGroups=sorted(unsafe_groups),
         flaggedCells=projection.flagCounts,
+        metricFlaggedCells=projection.metricFlagCounts,
         failedCaptureCandidates=list(projection.failedCaptureCandidates),
+        captureFailureEvidence=failure_evidence,
+        excludableCaptureCandidates=[
+            item.capture for item in failure_evidence if item.exclusionEligible
+        ],
         notes=list(projection.warnings),
         evidenceId=f"qcProfile:{profile_id}",
     )
@@ -1127,8 +2172,12 @@ def _registered_qc_profiles(
     values_by_attr: dict[str, np.ndarray],
     metadata_attributes: list[str],
     artifact_metrics: list[NamedArtifactSource],
+    metric_sources: list[QcMetricSourceEvidence],
+    source_concordance: list[QcSourceConcordance],
+    capture: tuple[str | None, NamedArtifactSource | None, np.ndarray] | None = None,
 ) -> list[CellQcProfileEvidence]:
-    capture = _directed_capture_source(deps)
+    if capture is None:
+        capture = _directed_capture_source(deps)
     sample_column: str | None = None
     sample_artifact: NamedArtifactSource | None = None
     capture_labels: np.ndarray | None = None
@@ -1172,8 +2221,13 @@ def _registered_qc_profiles(
                 values_by_attr=values_by_attr,
                 metadata_attributes=metadata_attributes,
                 artifact_metrics=artifact_metrics,
+                metric_sources=metric_sources,
+                source_concordance=source_concordance,
                 sample_column=sample_column if uses_capture else None,
                 sample_artifact=sample_artifact if uses_capture else None,
+                capture_column=sample_column,
+                capture_artifact=sample_artifact,
+                capture_labels=capture_labels,
                 pooled_reference_captures=(
                     pooled_references
                     if projection.profile == "pooledReferenceMad5"
@@ -1195,50 +2249,110 @@ def _global_qc_profile(
     metadata_attributes: list[str],
     artifact_metrics: list[NamedArtifactSource],
     attribute_notes: list[str],
+    *,
+    characterization: CovariateCharacterization | None = None,
+    metric_sources: list[QcMetricSourceEvidence] | None = None,
+    source_concordance: list[QcSourceConcordance] | None = None,
+    capture: tuple[str | None, NamedArtifactSource | None, np.ndarray] | None = None,
 ) -> CellQcProfileEvidence | None:
-    """Build the bounded global Gaussian QC profile when bounds are valid."""
-    resolved_bounds: dict[str, dict[str, float]] = {}
-    global_keep = active.copy()
-    selected_names: list[str] = []
-    for attribute, values in values_by_attr.items():
-        if float(np.std(values)) == 0.0:
-            attribute_notes.append(f"Ignored constant QC metric {attribute!r}")
+    """Build an execution-exact projection of core global auto-filtering."""
+    if not values_by_attr:
+        return None
+    metric_sources = list(metric_sources or [])
+    source_concordance = list(source_concordance or [])
+    executable_values: dict[str, np.ndarray] = {}
+    for name, values in values_by_attr.items():
+        selected = np.asarray(values)[active]
+        if selected.size and np.all(selected == selected[0]):
+            attribute_notes.append(f"Ignored constant QC metric {name!r}")
             continue
-        low, high = gaussian_quantile_bounds(values, 0.01, 0.99)
+        low, high = gaussian_quantile_bounds(selected, 0.01, 0.99)
         if not np.isfinite([low, high]).all():
             attribute_notes.append(
-                f"Ignored QC column {attribute!r} with non-finite Gaussian bounds"
+                f"Ignored QC metric {name!r} with non-finite Gaussian bounds"
             )
             continue
-        resolved_bounds[attribute] = {"low": low, "high": high}
-        selected_names.append(attribute)
-        global_keep &= (values > low) & (values < high)
-    if not selected_names:
+        executable_values[name] = values
+    if not executable_values:
         return None
-    retained_cells = int(global_keep.sum())
+    executable_names = set(executable_values)
+    metadata_names = set(metadata_attributes)
+    metadata_attributes = [
+        name for name in metadata_attributes if name in executable_names
+    ]
+    artifact_metrics = [
+        source
+        for source in artifact_metrics
+        if qc_metric_execution_name(
+            source.name,
+            artifact_id=source.artifact.artifactId,
+            collides_with_metadata=source.name in metadata_names,
+        )
+        in executable_names
+    ]
+    metric_sources = [
+        source for source in metric_sources if source.executionName in executable_names
+    ]
+    retained_source_ids = {source.sourceId for source in metric_sources}
+    source_concordance = [
+        comparison
+        for comparison in source_concordance
+        if comparison.leftSourceId in retained_source_ids
+        and comparison.rightSourceId in retained_source_ids
+    ]
+    capture_column: str | None = None
+    capture_artifact: NamedArtifactSource | None = None
+    capture_labels: np.ndarray | None = None
+    if capture is not None:
+        capture_column, capture_artifact, capture_labels = capture
+    try:
+        projection = project_auto_filter_profile(
+            "globalGaussian",
+            values_by_metric=executable_values,
+            active=active,
+            sample_labels=capture_labels,
+            grouping_proven=capture is not None,
+        )
+    except ValueError as exc:
+        attribute_notes.append(f"Global Gaussian QC is not executable: {exc}")
+        return None
     profile_id = _qc_profile_id(
         "globalGaussian",
         driver=driver,
     )
-    selected = set(selected_names)
+    failures = _capture_failure_models(
+        projection,
+        deps=deps,
+        characterization=characterization,
+        capture_labels=capture_labels,
+        metric_sources=metric_sources,
+    )
     return CellQcProfileEvidence(
         profileId=profile_id,
         action="globalGaussian",
         driverAssay=driver[0],
         driverAssayType=driver[1],
-        attributes=[name for name in metadata_attributes if name in selected],
-        artifactMetrics=[
-            source for source in artifact_metrics if source.name in selected
-        ],
-        parameters={
-            "minP": 0.01,
-            "maxP": 0.99,
-            "resolvedBounds": resolved_bounds,
-        },
+        captureColumn=capture_column,
+        captureArtifact=capture_artifact,
+        attributes=list(metadata_attributes),
+        artifactMetrics=list(artifact_metrics),
+        metricSources=metric_sources,
+        sourceConcordance=source_concordance,
+        parameters=projection.parameters,
+        resolvedBounds=cast(dict[str, Any], projection.parameters["resolvedBounds"]),
         activeCells=active_cells,
-        retainedCells=retained_cells,
-        retainedFraction=retained_cells / active_cells,
-        notes=attribute_notes,
+        retainedCells=projection.retainedCells,
+        retainedFraction=projection.retainedCells / active_cells,
+        activeCellsByCapture=projection.captureSizes,
+        sampleRetainedCells=projection.retainedByCapture,
+        flaggedCells=projection.flagCounts,
+        metricFlaggedCells=projection.metricFlagCounts,
+        failedCaptureCandidates=list(projection.failedCaptureCandidates),
+        captureFailureEvidence=failures,
+        excludableCaptureCandidates=[
+            item.capture for item in failures if item.exclusionEligible
+        ],
+        notes=[*attribute_notes, *projection.warnings],
         evidenceId=f"qcProfile:{profile_id}",
     )
 
@@ -1252,21 +2366,52 @@ def _sample_qc_profiles(
     values_by_attr: dict[str, np.ndarray],
     metadata_attributes: list[str],
     artifact_metrics: list[NamedArtifactSource],
+    metric_sources: list[QcMetricSourceEvidence],
+    source_concordance: list[QcSourceConcordance],
+    capture: tuple[str | None, NamedArtifactSource | None, np.ndarray] | None,
 ) -> list[CellQcProfileEvidence]:
-    """Build bounded sample-aware MAD profiles from exact sample sources."""
+    """Build core-parity sample MAD profiles from exact grouping sources."""
     attributes = list(values_by_attr)
     profiles: list[CellQcProfileEvidence] = []
-    sample_sources: list[tuple[str | None, NamedArtifactSource | None]] = [
-        (None, source) for source in deps.htoIdentityArtifacts
-    ]
+    sample_sources: list[
+        tuple[str | None, NamedArtifactSource | None, np.ndarray | None, bool]
+    ] = []
+    if capture is not None:
+        sample_sources.append((*capture[:2], capture[2], True))
     sample_sources.extend(
-        (column, None) for column in _qc_sample_columns(deps, characterization)
+        (None, source, None, False) for source in deps.htoIdentityArtifacts
     )
-    for sample_column, sample_artifact in sample_sources[:_MAX_QC_SAMPLE_PROFILES]:
+    sample_sources.extend(
+        (column, None, None, False)
+        for column in _qc_sample_columns(deps, characterization)
+    )
+    seen_sources: set[str] = set()
+    for (
+        sample_column,
+        sample_artifact,
+        supplied_labels,
+        is_physical_capture,
+    ) in sample_sources:
+        source_key = (
+            f"metadata:{sample_column}"
+            if sample_column is not None
+            else (
+                f"artifact:{sample_artifact.artifact.artifactId}"
+                if sample_artifact is not None
+                else ""
+            )
+        )
+        if not source_key or source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+        if len(seen_sources) > _MAX_QC_SAMPLE_PROFILES:
+            break
         if not attributes:
             break
         artifact_labels = (
-            None
+            supplied_labels
+            if supplied_labels is not None
+            else None
             if sample_artifact is None
             else _resolved_artifact_values(
                 deps,
@@ -1276,47 +2421,43 @@ def _sample_qc_profiles(
         )
         try:
             sample_labels = (
-                np.asarray(deps.cells.fetch(sample_column))
+                np.asarray(supplied_labels)
+                if supplied_labels is not None
+                else np.asarray(deps.cells.fetch(sample_column))
                 if sample_column is not None
                 else np.asarray(artifact_labels)
             )
-            keep, provenance = _sample_aware_mad_mask(
-                values_by_attr=values_by_attr,
+            projection = project_auto_filter_profile(
+                "sampleMad",
+                values_by_metric=values_by_attr,
                 sample_labels=sample_labels,
                 active=active,
+                grouping_proven=True,
                 n_mads=3.0,
                 min_cells_per_sample=20,
-                attrs=attributes,
             )
         except (TypeError, ValueError):
             continue
-        retained_mask = active & keep
-        retained_cells = int(retained_mask.sum())
-        sample_retention: dict[str, int] = {}
-        seen: set[object] = set()
-        for label in sample_labels[active]:
-            value = label.item() if isinstance(label, np.generic) else label
-            if value in seen:
-                continue
-            seen.add(value)
-            key = value.decode("utf-8") if isinstance(value, bytes) else str(value)
-            sample_retention[key] = int(
-                (retained_mask & (sample_labels == label)).sum()
-            )
-        notes = list(provenance["warnings"])
-        if len(sample_retention) > _MAX_SAMPLE_RETENTION_ITEMS:
-            notes.append(
-                "Per-sample retention was truncated to the first "
-                f"{_MAX_SAMPLE_RETENTION_ITEMS} samples"
-            )
-            sample_retention = dict(
-                list(sample_retention.items())[:_MAX_SAMPLE_RETENTION_ITEMS]
-            )
         profile_id = _qc_profile_id(
             "sampleMad",
             driver=driver,
             sample_column=sample_column,
             sample_artifact=sample_artifact,
+        )
+        failures = (
+            _capture_failure_models(
+                projection,
+                deps=deps,
+                characterization=characterization,
+                capture_labels=sample_labels,
+                metric_sources=metric_sources,
+            )
+            if is_physical_capture
+            else []
+        )
+        skip_reasons = cast(
+            dict[str, object],
+            projection.parameters["skipReasons"],
         )
         profiles.append(
             CellQcProfileEvidence(
@@ -1326,19 +2467,39 @@ def _sample_qc_profiles(
                 driverAssayType=driver[1],
                 sampleColumn=sample_column,
                 sampleArtifact=sample_artifact,
+                captureColumn=sample_column if is_physical_capture else None,
+                captureArtifact=sample_artifact if is_physical_capture else None,
                 attributes=list(metadata_attributes),
                 artifactMetrics=list(artifact_metrics),
+                metricSources=metric_sources,
+                sourceConcordance=source_concordance,
                 parameters={
                     "nMads": 3.0,
                     "minCellsPerSample": 20,
-                    "nSamples": len(provenance["sample_sizes"]),
-                    "nSkippedSamples": len(provenance["skip_reasons"]),
+                    "nSamples": len(projection.captureSizes),
+                    "nSkippedSamples": len(skip_reasons),
                 },
+                resolvedBounds=cast(
+                    dict[str, Any],
+                    projection.parameters["resolvedBounds"],
+                ),
                 activeCells=active_cells,
-                retainedCells=retained_cells,
-                retainedFraction=retained_cells / active_cells,
-                sampleRetainedCells=sample_retention,
-                notes=notes,
+                retainedCells=projection.retainedCells,
+                retainedFraction=projection.retainedCells / active_cells,
+                activeCellsByCapture=projection.captureSizes,
+                sampleRetainedCells=projection.retainedByCapture,
+                flaggedCells=projection.flagCounts,
+                metricFlaggedCells=projection.metricFlagCounts,
+                failedCaptureCandidates=(
+                    list(projection.failedCaptureCandidates)
+                    if is_physical_capture
+                    else []
+                ),
+                captureFailureEvidence=failures,
+                excludableCaptureCandidates=[
+                    item.capture for item in failures if item.exclusionEligible
+                ],
+                notes=list(projection.warnings),
                 evidenceId=f"qcProfile:{profile_id}",
             )
         )
@@ -1400,54 +2561,58 @@ def _offered_qc_profiles(
         deps.qcProfiles = {profile.profileId: profile for profile in profiles}
         return profiles
 
-    driver_assay, driver_type = driver
-    metadata_attributes = _qc_attributes(deps.store, driver_assay, driver_type)
-    values_by_attr: dict[str, np.ndarray] = {}
-    attribute_notes: list[str] = []
-    for attribute in metadata_attributes:
-        try:
-            values = np.asarray(
-                deps.cells.fetch(attribute),
-                dtype=float,
-            )
-        except (TypeError, ValueError):
-            attribute_notes.append(f"Ignored non-numeric QC column {attribute!r}")
-            continue
-        if values.ndim != 1 or values.shape != active.shape:
-            attribute_notes.append(f"Ignored unaligned QC column {attribute!r}")
-            continue
-        if not np.isfinite(values).all():
-            attribute_notes.append(f"Ignored non-finite QC column {attribute!r}")
-            continue
-        values_by_attr[attribute] = values
-    valid_metadata_attributes = [
-        attribute for attribute in metadata_attributes if attribute in values_by_attr
-    ]
-    artifact_metrics: list[NamedArtifactSource] = []
-    for source in deps.qualityMetricArtifacts:
-        artifact = _source_ref(source, expected_kind="quality_metric")
-        if artifact.assay != driver_assay:
-            continue
-        if source.name in values_by_attr:
-            raise ValueError(
-                f"QC artifact name {source.name!r} collides with a metadata metric"
-            )
-        values = np.asarray(
-            _resolved_artifact_values(
-                deps,
-                source,
-                expected_kind="quality_metric",
-            ),
-            dtype=float,
+    (
+        values_by_attr,
+        valid_metadata_attributes,
+        artifact_metrics,
+        metric_sources,
+        source_concordance,
+        attribute_notes,
+        values_by_source,
+    ) = _qc_metric_sources(deps, driver)
+    capture = _directed_capture_source(deps)
+    capture_column: str | None = None
+    capture_artifact: NamedArtifactSource | None = None
+    capture_labels: np.ndarray | None = None
+    capture_sizes: dict[str, int] = {}
+    if capture is not None:
+        capture_column, capture_artifact, capture_labels = capture
+        normalized = _validated_sample_labels(
+            capture_labels,
+            active,
+            label_name="physical capture labels",
         )
-        if values.ndim != 1 or values.shape != active.shape:
-            raise ValueError(
-                f"QC artifact {source.name!r} does not align with cellSelection"
+        for raw in normalized:
+            value = raw.item() if isinstance(raw, np.generic) else raw
+            key = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            capture_sizes[key] = capture_sizes.get(key, 0) + 1
+    metric_sources = _capture_source_missingness(
+        metric_sources,
+        values_by_source,
+        capture_labels,
+    )
+    deps.qcMetricSources = metric_sources
+    deps.qcSourceConcordance = source_concordance
+    if not registered_only:
+        profiles = [
+            CellQcProfileEvidence(
+                profileId=skip_id,
+                action="skip",
+                driverAssay=driver_assay,
+                driverAssayType=driver_type,
+                captureColumn=capture_column,
+                captureArtifact=capture_artifact,
+                metricSources=metric_sources,
+                sourceConcordance=source_concordance,
+                activeCells=active_cells,
+                retainedCells=active_cells,
+                retainedFraction=1.0,
+                activeCellsByCapture=capture_sizes,
+                sampleRetainedCells=capture_sizes,
+                notes=[*skip_notes, *attribute_notes],
+                evidenceId=f"qcProfile:{skip_id}",
             )
-        if not np.isfinite(values).all():
-            raise ValueError(f"QC artifact {source.name!r} contains non-finite values")
-        values_by_attr[source.name] = values
-        artifact_metrics.append(source)
+        ]
 
     if not registered_only:
         global_profile = _global_qc_profile(
@@ -1459,6 +2624,10 @@ def _offered_qc_profiles(
             valid_metadata_attributes,
             artifact_metrics,
             attribute_notes,
+            characterization=characterization,
+            metric_sources=metric_sources,
+            source_concordance=source_concordance,
+            capture=capture,
         )
         if global_profile is not None:
             profiles.append(global_profile)
@@ -1472,6 +2641,9 @@ def _offered_qc_profiles(
                 values_by_attr,
                 valid_metadata_attributes,
                 artifact_metrics,
+                metric_sources,
+                source_concordance,
+                capture,
             )
         )
     profiles.extend(
@@ -1483,6 +2655,9 @@ def _offered_qc_profiles(
             values_by_attr=values_by_attr,
             metadata_attributes=valid_metadata_attributes,
             artifact_metrics=artifact_metrics,
+            metric_sources=metric_sources,
+            source_concordance=source_concordance,
+            capture=capture,
         )
     )
 
@@ -1511,8 +2686,18 @@ async def inspect_cell_covariates(
     )
     ctx.deps.characterization = characterization
     qc_profiles = _offered_qc_profiles(ctx.deps)
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    ctx.deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
     evidence_ids = characterization_evidence(characterization)
     evidence_ids.update(profile.evidenceId for profile in qc_profiles)
+    evidence_ids.update(source.sourceId for source in ctx.deps.qcMetricSources)
+    evidence_ids.update(item.evidenceId for item in ctx.deps.qcSourceConcordance)
+    evidence_ids.update(plan.evidenceId for plan in contrast_plans)
+    evidence_ids.update(
+        failure.evidenceId
+        for profile in qc_profiles
+        for failure in profile.captureFailureEvidence
+    )
     evidence_ids.update(
         f"htoIdentity:{column}" for column in ctx.deps.htoIdentityColumns
     )
@@ -1533,10 +2718,131 @@ async def inspect_cell_covariates(
     return CovariateEvidence(
         characterization=characterization,
         qcProfiles=qc_profiles,
+        qcMetricSources=ctx.deps.qcMetricSources,
+        qcSourceConcordance=ctx.deps.qcSourceConcordance,
+        contrastPlans=contrast_plans,
         htoIdentityColumns=ctx.deps.htoIdentityColumns,
         htoIdentityArtifacts=ctx.deps.htoIdentityArtifacts,
         evidenceIds=sorted(evidence_ids),
     )
+
+
+def _batch_safety_evidence(
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization,
+    *,
+    coefficients: Sequence[str],
+    batch_columns: Sequence[str],
+) -> list[BatchSafetyEvidence]:
+    column_records = {
+        record.get("name"): record
+        for record in characterization.columns
+        if isinstance(record.get("name"), str)
+    }
+    coefficient_records = {
+        record.get("name"): record
+        for record in characterization.coefficients
+        if isinstance(record.get("name"), str)
+    }
+    confounding_reports = {
+        report.get("coefficient"): report
+        for report in characterization.confounding
+        if isinstance(report.get("coefficient"), str)
+    }
+    canonical_batch_columns = sorted(batch_columns)
+    batch_safety: list[BatchSafetyEvidence] = []
+    for coefficient in coefficients:
+        if not canonical_batch_columns:
+            break
+        coefficient_record = coefficient_records.get(coefficient)
+        report = confounding_reports.get(coefficient)
+        coefficient_kind = (
+            coefficient_record.get("kind") if coefficient_record is not None else None
+        )
+        if coefficient_kind not in {"categorical", "continuous"}:
+            coefficient_kind = None
+        observation_unit = (
+            report.get("observationUnit")
+            if report is not None
+            else (
+                coefficient_record.get("observationUnit")
+                if coefficient_record is not None
+                else None
+            )
+        )
+        unit_constant = {
+            pair.get("technical")
+            for pair in (report.get("pairs", []) if report is not None else [])
+            if isinstance(pair.get("technical"), str)
+        }
+        effective_batch_columns = [
+            name for name in canonical_batch_columns if name in unit_constant
+        ]
+        estimability: dict[str, Any]
+        if (
+            coefficient_record is None
+            or coefficient_record.get("scope") != "betweenUnit"
+            or report is None
+            or not isinstance(observation_unit, str)
+            or coefficient_kind is None
+        ):
+            estimability = {
+                "status": "notComputed",
+                "reason": "unresolvedCoefficientDesign",
+            }
+        else:
+            try:
+                design = reduce_observation_units(
+                    deps.cells,
+                    observation_unit,
+                    [coefficient, *effective_batch_columns],
+                    cell_key="I",
+                )
+                estimability = coefficient_estimability(
+                    design[coefficient].to_numpy(),
+                    coefficientKind=coefficient_kind,
+                    technicals={
+                        name: design[name].to_numpy()
+                        for name in effective_batch_columns
+                    },
+                    technicalKinds={
+                        name: column_records[name]["kind"]
+                        for name in effective_batch_columns
+                    },
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.debug(
+                    "Experimental Context batch estimability was not computed: "
+                    f"errorType={type(exc).__name__}"
+                )
+                estimability = {
+                    "status": "notComputed",
+                    "reason": type(exc).__name__,
+                }
+        if estimability.get("status") != "ok":
+            safety_status: BatchSafetyStatus = "notComputed"
+        elif estimability.get("coefficientEstimable") is True and not bool(
+            estimability.get("rankDeficient")
+        ):
+            safety_status = "safe"
+        else:
+            safety_status = "unsafe"
+        batch_token = ",".join(canonical_batch_columns)
+        safety = BatchSafetyEvidence(
+            coefficient=coefficient,
+            coefficientKind=coefficient_kind,
+            observationUnit=(
+                observation_unit if isinstance(observation_unit, str) else None
+            ),
+            batchColumns=canonical_batch_columns,
+            unitConstantBatchColumns=effective_batch_columns,
+            status=safety_status,
+            estimability=estimability,
+            evidenceId=f"batchEstimability:{coefficient}:{batch_token}",
+        )
+        batch_safety.append(safety)
+        deps.batchSafety[safety.evidenceId] = safety
+    return batch_safety
 
 
 async def analyze_experimental_design(
@@ -1544,7 +2850,7 @@ async def analyze_experimental_design(
     column_domains: dict[str, ColumnDomain],
     coefficients_of_interest: list[str],
     units_of_inference: dict[str, InferenceUnit],
-    batch_columns: list[str] | str | None = None,
+    batch_columns: list[str],
 ) -> CovariateEvidence:
     """Validate proposed domains and inference units and compute confounding.
 
@@ -1554,17 +2860,13 @@ async def analyze_experimental_design(
         coefficients_of_interest: Biological columns representing study contrasts.
         units_of_inference: Observation and independent units for each coefficient.
         batch_columns: Exact technical columns proposed for Harmony evaluation.
-            A single column may be supplied as either a string or a one-item list.
     """
-    proposed_batch_count = (
-        1 if isinstance(batch_columns, str) else len(batch_columns or [])
-    )
     logger.info(
         "Experimental Context design analysis started: "
         f"domains={len(column_domains)}, "
         f"coefficients={len(coefficients_of_interest)}, "
         f"inferenceUnits={len(units_of_inference)}, "
-        f"batchColumns={proposed_batch_count}"
+        f"batchColumns={len(batch_columns)}"
     )
     directions = dict(ctx.deps.directions)
     directed_domains = dict(column_domains)
@@ -1586,9 +2888,24 @@ async def analyze_experimental_design(
     directed_units.update(dict(directions.get("unitsOfInference") or {}))
     directions["unitsOfInference"] = directed_units
 
-    proposed_batch_columns = (
-        [batch_columns] if isinstance(batch_columns, str) else list(batch_columns or [])
-    )
+    proposed_batch_columns = list(batch_columns)
+    directed_batch_columns = directions.get("batchColumns")
+    if directed_batch_columns is not None:
+        if not isinstance(directed_batch_columns, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in directed_batch_columns
+        ):
+            raise ModelRetry(
+                "directions.batchColumns must be a list of exact metadata columns"
+            )
+        if len(set(directed_batch_columns)) != len(directed_batch_columns):
+            raise ModelRetry("directions.batchColumns must be unique")
+        if proposed_batch_columns != directed_batch_columns:
+            logger.info(
+                "Experimental Context replaced model-proposed batch columns with "
+                "the exact directed columns"
+            )
+        proposed_batch_columns = list(directed_batch_columns)
     canonical_batch_columns = sorted(set(proposed_batch_columns))
     if len(canonical_batch_columns) != len(proposed_batch_columns):
         logger.warning(
@@ -1665,8 +2982,18 @@ async def analyze_experimental_design(
     if not ctx.deps.htoIdentityColumns:
         ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
     qc_profiles = _offered_qc_profiles(ctx.deps, characterization)
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    ctx.deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
     evidence_ids = characterization_evidence(characterization)
     evidence_ids.update(profile.evidenceId for profile in qc_profiles)
+    evidence_ids.update(source.sourceId for source in ctx.deps.qcMetricSources)
+    evidence_ids.update(item.evidenceId for item in ctx.deps.qcSourceConcordance)
+    evidence_ids.update(plan.evidenceId for plan in contrast_plans)
+    evidence_ids.update(
+        failure.evidenceId
+        for profile in qc_profiles
+        for failure in profile.captureFailureEvidence
+    )
     evidence_ids.update(
         f"htoIdentity:{column}" for column in ctx.deps.htoIdentityColumns
     )
@@ -1707,108 +3034,12 @@ async def analyze_experimental_design(
                 f"Batch column {batch_column!r} must be categorical for Harmony"
             )
 
-    coefficient_records = {
-        record.get("name"): record
-        for record in characterization.coefficients
-        if isinstance(record.get("name"), str)
-    }
-    confounding_reports = {
-        report.get("coefficient"): report
-        for report in characterization.confounding
-        if isinstance(report.get("coefficient"), str)
-    }
-    batch_safety: list[BatchSafetyEvidence] = []
-    for coefficient in directed_coefficients:
-        if not canonical_batch_columns:
-            break
-        coefficient_record = coefficient_records.get(coefficient)
-        report = confounding_reports.get(coefficient)
-        coefficient_kind = (
-            coefficient_record.get("kind") if coefficient_record is not None else None
-        )
-        if coefficient_kind not in {"categorical", "continuous"}:
-            coefficient_kind = None
-        observation_unit = (
-            report.get("observationUnit")
-            if report is not None
-            else (
-                coefficient_record.get("observationUnit")
-                if coefficient_record is not None
-                else None
-            )
-        )
-        unit_constant = {
-            pair.get("technical")
-            for pair in (report.get("pairs", []) if report is not None else [])
-            if isinstance(pair.get("technical"), str)
-        }
-        effective_batch_columns = [
-            name for name in canonical_batch_columns if name in unit_constant
-        ]
-        estimability: dict[str, Any]
-        if (
-            coefficient_record is None
-            or coefficient_record.get("scope") != "betweenUnit"
-            or report is None
-            or not isinstance(observation_unit, str)
-            or coefficient_kind is None
-        ):
-            estimability = {
-                "status": "notComputed",
-                "reason": "unresolvedCoefficientDesign",
-            }
-        else:
-            try:
-                design = reduce_observation_units(
-                    ctx.deps.cells,
-                    observation_unit,
-                    [coefficient, *effective_batch_columns],
-                    cell_key="I",
-                )
-                estimability = coefficient_estimability(
-                    design[coefficient].to_numpy(),
-                    coefficientKind=coefficient_kind,
-                    technicals={
-                        name: design[name].to_numpy()
-                        for name in effective_batch_columns
-                    },
-                    technicalKinds={
-                        name: column_records[name]["kind"]
-                        for name in effective_batch_columns
-                    },
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.debug(
-                    "Experimental Context batch estimability was not computed: "
-                    f"errorType={type(exc).__name__}"
-                )
-                estimability = {
-                    "status": "notComputed",
-                    "reason": type(exc).__name__,
-                }
-        if estimability.get("status") != "ok":
-            safety_status: BatchSafetyStatus = "notComputed"
-        elif estimability.get("coefficientEstimable") is True and not bool(
-            estimability.get("rankDeficient")
-        ):
-            safety_status = "safe"
-        else:
-            safety_status = "unsafe"
-        batch_token = ",".join(canonical_batch_columns)
-        safety = BatchSafetyEvidence(
-            coefficient=coefficient,
-            coefficientKind=coefficient_kind,
-            observationUnit=(
-                observation_unit if isinstance(observation_unit, str) else None
-            ),
-            batchColumns=canonical_batch_columns,
-            unitConstantBatchColumns=effective_batch_columns,
-            status=safety_status,
-            estimability=estimability,
-            evidenceId=f"batchEstimability:{coefficient}:{batch_token}",
-        )
-        batch_safety.append(safety)
-        ctx.deps.batchSafety[safety.evidenceId] = safety
+    batch_safety = _batch_safety_evidence(
+        ctx.deps,
+        characterization,
+        coefficients=directed_coefficients,
+        batch_columns=canonical_batch_columns,
+    )
 
     evidence_ids.update(item.evidenceId for item in batch_safety)
     ctx.deps.evidenceIds.update(evidence_ids)
@@ -1829,6 +3060,9 @@ async def analyze_experimental_design(
         characterization=characterization,
         batchSafety=batch_safety,
         qcProfiles=qc_profiles,
+        qcMetricSources=ctx.deps.qcMetricSources,
+        qcSourceConcordance=ctx.deps.qcSourceConcordance,
+        contrastPlans=contrast_plans,
         htoIdentityColumns=ctx.deps.htoIdentityColumns,
         htoIdentityArtifacts=ctx.deps.htoIdentityArtifacts,
         evidenceIds=sorted(evidence_ids),
@@ -2168,6 +3402,29 @@ def _validate_batch_correction_plan(
         if isinstance(report.get("coefficient"), str)
     }
     plan = decision.batchCorrection
+    directed_batch_columns = deps.directions.get("batchColumns")
+    if directed_batch_columns is not None:
+        if not isinstance(directed_batch_columns, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in directed_batch_columns
+        ):
+            raise ModelRetry(
+                "directions.batchColumns must be a list of exact metadata columns"
+            )
+        canonical_directed_batch = sorted(directed_batch_columns)
+        directed_plan_mismatch = (
+            (
+                plan.action not in {"evaluateHarmony", "unsafe"}
+                or sorted(plan.batchColumns) != canonical_directed_batch
+            )
+            if canonical_directed_batch
+            else plan.action != "skip" or bool(plan.batchColumns)
+        )
+        if directed_plan_mismatch:
+            raise ModelRetry(
+                "The batch-correction plan must assess the exact directed batch "
+                f"columns: {canonical_directed_batch}"
+            )
     unknown_columns = sorted(set(decision.columnDomains) - set(records))
     if unknown_columns:
         raise ModelRetry(f"Unknown column domain assignments: {unknown_columns}")
@@ -2405,6 +3662,9 @@ def validate_experimental_context(
         raise ModelRetry("; ".join(characterization.notes))
     deps.characterization = characterization
     deps.evidenceIds.update(characterization_evidence(characterization))
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
+    deps.evidenceIds.update(plan.evidenceId for plan in contrast_plans)
 
     if "inspect_cell_covariates" not in deps.toolCalls:
         raise ModelRetry("Call inspect_cell_covariates before returning a decision")
@@ -2419,6 +3679,8 @@ def validate_experimental_context(
     if not deps.qcProfiles:
         _offered_qc_profiles(deps, characterization)
     deps.evidenceIds.update(profile.evidenceId for profile in deps.qcProfiles.values())
+    deps.evidenceIds.update(source.sourceId for source in deps.qcMetricSources)
+    deps.evidenceIds.update(item.evidenceId for item in deps.qcSourceConcordance)
 
     requested_coefficients = set(directions["coefficientsOfInterest"])
     characterized_coefficients = {
@@ -2494,6 +3756,196 @@ def validate_experimental_context(
     return validated
 
 
+def _deterministic_experimental_context_decision(
+    deps: ExperimentalContextDependencies,
+) -> ExperimentalContextDecision:
+    characterization = deps.characterization
+    if characterization is None or characterization.status == "failed":
+        raise ValueError("Deterministic covariate characterization is unavailable")
+    records: dict[str, dict[str, Any]] = {}
+    for record in characterization.columns:
+        name = record.get("name")
+        if isinstance(name, str):
+            records[name] = record
+    coefficient_records: dict[str, dict[str, Any]] = {}
+    for record in characterization.coefficients:
+        name = record.get("name")
+        if isinstance(name, str):
+            coefficient_records[name] = record
+    directions = dict(deps.directions)
+    raw_batch_columns = directions.get("batchColumns")
+    if raw_batch_columns is not None:
+        if not isinstance(raw_batch_columns, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in raw_batch_columns
+        ):
+            raise ValueError(
+                "directions.batchColumns must be a list of exact metadata columns"
+            )
+        if len(raw_batch_columns) != len(set(raw_batch_columns)):
+            raise ValueError("directions.batchColumns must be unique")
+        batch_columns = list(raw_batch_columns)
+    else:
+        candidates = sorted(
+            name
+            for name, record in records.items()
+            if record.get("domain") == "technical"
+            and record.get("kind") == "categorical"
+        )
+        if "batch" in candidates:
+            batch_columns = ["batch"]
+        elif len(candidates) <= 1:
+            batch_columns = candidates
+        else:
+            raise ValueError(
+                "Multiple categorical technical columns remain without one exact "
+                "batch condition"
+            )
+
+    coefficients = [
+        str(record["name"])
+        for record in characterization.coefficients
+        if isinstance(record.get("name"), str)
+    ]
+    units = {
+        coefficient: InferenceUnit(
+            observationUnit=coefficient_records[coefficient].get("observationUnit"),
+            independentUnit=coefficient_records[coefficient].get("independentUnit"),
+        )
+        for coefficient in coefficients
+        if coefficient in coefficient_records
+    }
+    batch_safety = _batch_safety_evidence(
+        deps,
+        characterization,
+        coefficients=coefficients,
+        batch_columns=batch_columns,
+    )
+    unresolved_safety = [
+        item.coefficient for item in batch_safety if item.status == "notComputed"
+    ]
+    if unresolved_safety:
+        raise ValueError(
+            "Batch estimability is unavailable for coefficients: "
+            f"{sorted(unresolved_safety)}"
+        )
+    if batch_columns and any(item.status == "unsafe" for item in batch_safety):
+        action: BatchCorrectionAction = "unsafe"
+    elif batch_columns:
+        action = "evaluateHarmony"
+    else:
+        action = "skip"
+    categorical_coefficients = [
+        coefficient
+        for coefficient in coefficients
+        if records[coefficient].get("kind") == "categorical"
+    ]
+    if action == "evaluateHarmony" and set(categorical_coefficients) != set(
+        coefficients
+    ):
+        raise ValueError(
+            "Harmony preservation requires categorical coefficients of interest"
+        )
+
+    known_evidence = sorted(characterization_evidence(characterization))
+    batch_evidence = [
+        *(f"column:{column}" for column in batch_columns),
+        *(item.evidenceId for item in batch_safety),
+    ]
+    if not batch_evidence:
+        batch_evidence = known_evidence[:1]
+    if not batch_evidence:
+        raise ValueError("No deterministic evidence supports a batch decision")
+    deps.evidenceIds.update(known_evidence)
+    deps.evidenceIds.update(batch_evidence)
+    if "analyze_experimental_design" not in deps.toolCalls:
+        deps.toolCalls.append("analyze_experimental_design")
+    column_domains = {
+        name: cast(ColumnDomain, record["domain"])
+        for name, record in records.items()
+        if record.get("domain")
+        in {"biological", "technical", "design", "ignore", "unknown"}
+    }
+    metrics_required: list[IntegrationMetric] = []
+    if action == "evaluateHarmony":
+        metrics_required = ["iLISI", "proportionalBatchMixing"]
+        if categorical_coefficients:
+            metrics_required.extend(["cLISI", "graphConnectivity"])
+    plan = BatchCorrectionPlan(
+        action=action,
+        batchColumns=batch_columns if action != "skip" else [],
+        preserveColumns=(
+            categorical_coefficients if action == "evaluateHarmony" else []
+        ),
+        metricsRequired=metrics_required,
+        rationale=(
+            "Evaluate the exact declared categorical technical batch condition "
+            "against the uncorrected representation."
+            if action == "evaluateHarmony"
+            else "The exact batch condition is confounded with the study design."
+            if action == "unsafe"
+            else "No exact categorical technical batch condition was available."
+        ),
+        evidenceIds=sorted(set(batch_evidence)),
+    )
+    decision = ExperimentalContextDecision(
+        columnDomains=column_domains,
+        coefficientsOfInterest=coefficients,
+        unitsOfInference=units,
+        batchCorrection=plan,
+        rationale=(
+            "Deterministic covariate characterization resolved the study design "
+            "after the model tool call failed."
+        ),
+        evidenceIds=known_evidence,
+    )
+    return validate_experimental_context(decision, deps)
+
+
+def failed_experimental_context_result(
+    deps: ExperimentalContextDependencies,
+    *,
+    error: Exception,
+    fallback_error: Exception,
+    model_name: str,
+) -> ExperimentalContextResult:
+    """Fail unattended execution when deterministic design evidence is insufficient."""
+    characterization = deps.characterization or CovariateCharacterization(
+        status="failed",
+        notes=["Deterministic covariate characterization is unavailable."],
+    )
+    model_detail = str(error).replace("\n", " ").strip()[:500]
+    fallback_detail = str(fallback_error).replace("\n", " ").strip()[:500]
+    return ExperimentalContextResult(
+        status="failed",
+        decision=ExperimentalContextDecision(
+            rationale="No validated experimental-context decision was available.",
+            evidenceIds=sorted(deps.evidenceIds),
+        ),
+        characterization=characterization,
+        cellSelection=artifact_reference(deps.cellSelection),
+        cellQc=CellQcPlan.get_blank(),
+        qcProfiles=list(deps.qcProfiles.values()),
+        qcMetricSources=deps.qcMetricSources,
+        qcSourceConcordance=deps.qcSourceConcordance,
+        contrastPlans=list(deps.contrastPlans.values()),
+        qualityMetricArtifacts=deps.qualityMetricArtifacts,
+        htoIdentityColumns=deps.htoIdentityColumns,
+        htoIdentityArtifacts=deps.htoIdentityArtifacts,
+        batchSafety=list(deps.batchSafety.values()),
+        currentRepresentation=deps.currentRepresentation,
+        notes=[
+            "The model did not produce a validated experimental-context decision.",
+            f"Model failure: {model_detail}",
+            f"Deterministic recovery failure: {fallback_detail}",
+        ],
+        runInfo=AgentRunInfo(
+            agentName="experimental_context_failed",
+            modelName=model_name,
+        ),
+    )
+
+
 def pending_experimental_context_result(
     deps: ExperimentalContextDependencies,
     *,
@@ -2519,8 +3971,13 @@ def pending_experimental_context_result(
     qc_profiles = list(deps.qcProfiles.values())
     if not qc_profiles:
         qc_profiles = _offered_qc_profiles(deps, characterization)
+    contrast_plans = contrast_plans_from_characterization(characterization)
+    deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
     evidence_ids = characterization_evidence(characterization)
     evidence_ids.update(profile.evidenceId for profile in qc_profiles)
+    evidence_ids.update(source.sourceId for source in deps.qcMetricSources)
+    evidence_ids.update(item.evidenceId for item in deps.qcSourceConcordance)
+    evidence_ids.update(plan.evidenceId for plan in contrast_plans)
     evidence_ids.update(f"htoIdentity:{column}" for column in deps.htoIdentityColumns)
     evidence_ids.update(
         _artifact_evidence_id(source) for source in deps.htoIdentityArtifacts
@@ -2550,6 +4007,9 @@ def pending_experimental_context_result(
         cellSelection=artifact_reference(deps.cellSelection),
         cellQc=CellQcPlan.get_blank(),
         qcProfiles=qc_profiles,
+        qcMetricSources=deps.qcMetricSources,
+        qcSourceConcordance=deps.qcSourceConcordance,
+        contrastPlans=contrast_plans,
         qualityMetricArtifacts=deps.qualityMetricArtifacts,
         htoIdentityColumns=deps.htoIdentityColumns,
         htoIdentityArtifacts=deps.htoIdentityArtifacts,
@@ -2571,8 +4031,10 @@ class ExperimentalContextAgent:
         model: Any,
         *,
         config: AgentRunConfig | None = None,
+        unattended: bool = False,
     ) -> None:
         self.model = model
+        self.unattended = unattended
         self.config = (config or AgentRunConfig()).with_limits(
             request_limit=9,
             tool_call_limit=5,
@@ -2701,7 +4163,12 @@ class ExperimentalContextAgent:
                 raise ValueError(
                     "neighbors and connectivity_map must use the same cell selection"
                 )
-        quality_sources = list(quality_metric_artifacts)
+        quality_sources = _derive_missing_percentage_artifacts(
+            store,
+            cell_selection=cell_selection,
+            driver=_qc_driver(store),
+            quality_sources=quality_metric_artifacts,
+        )
         hto_sources = list(hto_identity_artifacts)
         source_names: set[str] = set()
         for sources, expected_kind in (
@@ -2805,7 +4272,7 @@ class ExperimentalContextAgent:
                     ),
                     Tool(
                         analyze_experimental_design,
-                        max_retries=1,
+                        max_retries=3,
                         prepare=_prepare_experimental_context_tool,
                         sequential=self.config.sequentialTools,
                         timeout=self.config.timeoutSeconds,
@@ -2828,12 +4295,59 @@ class ExperimentalContextAgent:
             )
         except UnexpectedModelBehavior as exc:
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            return pending_experimental_context_result(
-                deps,
-                error=exc,
-                model_name=str(model_name),
+            if self.unattended:
+                try:
+                    decision = _deterministic_experimental_context_decision(deps)
+                except (
+                    ModelRetry,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as fallback_exc:
+                    return failed_experimental_context_result(
+                        deps,
+                        error=exc,
+                        fallback_error=fallback_exc,
+                        model_name=str(model_name),
+                    )
+                run_info = AgentRunInfo(
+                    agentName="experimental_context_deterministic",
+                    modelName=str(model_name),
+                )
+            else:
+                return pending_experimental_context_result(
+                    deps,
+                    error=exc,
+                    model_name=str(model_name),
+                )
+        else:
+            decision = ExperimentalContextDecision.model_validate(execution.output)
+            run_info = execution.runInfo
+        if self.unattended and (
+            decision.needsInput or decision.batchCorrection.action == "needsInput"
+        ):
+            try:
+                decision = _deterministic_experimental_context_decision(deps)
+            except (ModelRetry, RuntimeError, TypeError, ValueError) as fallback_exc:
+                model_name = getattr(
+                    self.model, "model_name", type(self.model).__name__
+                )
+                return failed_experimental_context_result(
+                    deps,
+                    error=RuntimeError(
+                        "The model returned an unresolved experimental-context decision"
+                    ),
+                    fallback_error=fallback_exc,
+                    model_name=str(model_name),
+                )
+            run_info = AgentRunInfo(
+                agentName="experimental_context_deterministic",
+                modelName=getattr(
+                    self.model,
+                    "model_name",
+                    type(self.model).__name__,
+                ),
             )
-        decision = ExperimentalContextDecision.model_validate(execution.output)
         characterization = deps.characterization
         if characterization is None:
             characterization = characterize_covariates(
@@ -2857,6 +4371,9 @@ class ExperimentalContextAgent:
             f"coefficients={len(decision.coefficientsOfInterest)}, "
             f"toolCalls={len(deps.toolCalls)}, evidence={len(deps.evidenceIds)}"
         )
+        contrast_plans = list(deps.contrastPlans.values())
+        if not contrast_plans:
+            contrast_plans = contrast_plans_from_characterization(characterization)
         return ExperimentalContextResult(
             status=status,
             decision=decision,
@@ -2864,11 +4381,14 @@ class ExperimentalContextAgent:
             cellSelection=artifact_reference(cell_selection),
             cellQc=CellQcPlan.get_blank(),
             qcProfiles=list(deps.qcProfiles.values()),
+            qcMetricSources=deps.qcMetricSources,
+            qcSourceConcordance=deps.qcSourceConcordance,
+            contrastPlans=contrast_plans,
             qualityMetricArtifacts=deps.qualityMetricArtifacts,
             htoIdentityColumns=deps.htoIdentityColumns,
             htoIdentityArtifacts=deps.htoIdentityArtifacts,
             batchSafety=list(deps.batchSafety.values()),
             currentRepresentation=deps.currentRepresentation,
             notes=[*characterization.notes, *decision.needsInput],
-            runInfo=execution.runInfo,
+            runInfo=run_info,
         )
