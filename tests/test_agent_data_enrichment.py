@@ -486,7 +486,7 @@ def test_data_enrichment_retries_hallucinated_features(
     assert state["request"] == 3
 
 
-def test_data_enrichment_falls_back_from_completed_inspection(
+def test_data_enrichment_pauses_after_completed_inspection_without_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scarf.agent import data_enrichment as module
@@ -513,17 +513,46 @@ def test_data_enrichment_falls_back_from_completed_inspection(
         context=DataEnrichmentContext(organismHint="human"),
     )
 
-    assert result.status == "done"
-    assert result.runInfo.agentName == "data_enrichment_fallback"
-    assert result.policies[0].species == "homo_sapiens"
-    assert result.policies[0].speciesConfidence == "medium"
-    assert result.policies[0].excludeFamilies == ["mitochondrial"]
-    assert result.policies[0].protectFamilies == ["sex"]
-    assert result.policies[0].artificialFeatures == []
+    assert result.status == "needsInput"
+    assert result.runInfo.agentName == "data_enrichment_needs_input"
+    assert result.policies == []
+    assert result.unresolvedQuestions
+    assert result.inspections[0].species == "unknown"
+    assert "No scientific feature policy was selected" in result.limitations[0]
     assert tool_retries == {
         "inspect_assay_features_batch": 1,
         "find_present_features_batch": 1,
     }
+
+
+def test_unattended_data_enrichment_uses_inspected_policy_after_model_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scarf.agent import data_enrichment as module
+
+    store = ReadOnlyStore()
+    monkeypatch.setattr(
+        module,
+        "characterize_features",
+        lambda *_args, **_kwargs: characterization(),
+    )
+
+    def unavailable_structured_output(**kwargs: object) -> None:
+        deps = kwargs["deps"]
+        assert isinstance(deps, DataEnrichmentDependencies)
+        asyncio.run(module.inspect_assay_features_batch(SimpleNamespace(deps=deps)))
+        raise UnexpectedModelBehavior("structured output unavailable")
+
+    monkeypatch.setattr(module, "run_agent_sync", unavailable_structured_output)
+    result = DataEnrichmentAgent(object(), unattended=True).run(
+        store,
+        context=DataEnrichmentContext(organismHint="human"),
+    )
+
+    assert result.status == "done"
+    assert [policy.assay for policy in result.policies] == ["RNA"]
+    assert result.unresolvedQuestions == []
+    assert result.runInfo.agentName == "data_enrichment_deterministic"
 
 
 def test_feature_lookup_cache_rejects_different_arguments() -> None:

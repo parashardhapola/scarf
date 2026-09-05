@@ -24,6 +24,7 @@ from scarf.agent.orchestrator import (
     AutomatedWorkflowRequest,
     AutomatedWorkflowResult,
     AutomatedWorkflowResumeRequest,
+    FinalAnalysisHandoff,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,
@@ -96,8 +97,12 @@ def _mock_ingest(monkeypatch: pytest.MonkeyPatch) -> None:
 class _CheckpointOrchestrator(AgentOrchestrator):
     """Minimal deterministic stage machine exercising persistence and resume."""
 
-    def __init__(self) -> None:
-        super().__init__(object())
+    def __init__(
+        self,
+        *,
+        config: AutomatedWorkflowConfig | None = None,
+    ) -> None:
+        super().__init__(object(), config=config)
         self.enrichmentExecutions = 0
 
     def _continue(
@@ -221,6 +226,11 @@ class _CheckpointOrchestrator(AgentOrchestrator):
             status="completed",
             message="Checkpoint workflow completed",
         )
+        final_analysis = FinalAnalysisHandoff(
+            workflowRunId=terminal.workflowRunId,
+            primaryAssay="RNA",
+            markerAssay="RNA",
+        ).with_handoff_id()
         result = AutomatedWorkflowResult(
             status="completed",
             currentStage="preprocessing_plan",
@@ -231,6 +241,9 @@ class _CheckpointOrchestrator(AgentOrchestrator):
                 prefix,
                 workflow.workflowRunId,
             ),
+            finalAnalysis=final_analysis,
+            finalHandoffId=final_analysis.handoffId,
+            decisionRunId=terminal.workflowRunId,
         )
         result = result.model_copy(
             update={"contentSha256": journal_module._record_checksum(result)}
@@ -257,6 +270,7 @@ def _start_paused_workflow(
             sourcePath=str(path),
             zarrPath=str(path),
             studyContext="A deterministic test study.",
+            studyObjective="Discover stable RNA populations.",
             workspace=workspace,
         )
     )
@@ -288,6 +302,30 @@ def test_orchestration_records_are_plain_json_with_valid_checksums(
     for record_path in records:
         _assert_record_checksum(record_path)
         assert record_path.name in {"started.json", "outcome.json"}
+
+
+def test_unattended_workflow_never_returns_needs_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = create_store(tmp_path / "data.zarr")
+    _mock_ingest(monkeypatch)
+    orchestrator = _CheckpointOrchestrator(
+        config=AutomatedWorkflowConfig(inputPolicy="unattended")
+    )
+
+    result = orchestrator.run(
+        AutomatedWorkflowRequest(
+            sourcePath=str(path),
+            zarrPath=str(path),
+            studyContext="A deterministic unattended test study.",
+            studyObjective="Discover stable RNA populations.",
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.needsInput is None
+    assert result.unresolvedClaims == ["Approve the preprocessing plan?"]
 
 
 def test_approval_resume_reuses_completed_stages_and_persists_answer_lineage(
@@ -697,7 +735,7 @@ def test_failed_stage_preserves_completed_operation_journal(tmp_path: Path) -> N
             sourcePath=str(path),
             zarrPath=str(path),
             studyContext="A failed-stage journal test.",
-            allowAssumptions=True,
+            studyObjective="Discover stable RNA populations.",
         ),
         config=AutomatedWorkflowConfig(),
     )
@@ -765,7 +803,7 @@ def test_retryable_model_http_error_leaves_stage_interrupted(
             sourcePath=str(path),
             zarrPath=str(path),
             studyContext="A retryable model failure test.",
-            allowAssumptions=True,
+            studyObjective="Discover stable RNA populations.",
         ),
         config=AutomatedWorkflowConfig(),
     )
@@ -826,7 +864,7 @@ def test_nonretryable_model_http_error_remains_terminal(
             sourcePath=str(path),
             zarrPath=str(path),
             studyContext="A terminal model failure test.",
-            allowAssumptions=True,
+            studyObjective="Discover stable RNA populations.",
         ),
         config=AutomatedWorkflowConfig(),
     )
@@ -871,7 +909,7 @@ def test_failed_stage_links_report_committed_before_exception(tmp_path: Path) ->
             sourcePath=str(path),
             zarrPath=str(path),
             studyContext="A report-link crash test.",
-            allowAssumptions=True,
+            studyObjective="Discover stable RNA populations.",
         ),
         config=AutomatedWorkflowConfig(),
     )

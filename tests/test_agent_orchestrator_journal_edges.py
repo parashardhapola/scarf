@@ -13,6 +13,7 @@ from scarf.agent.orchestrator import (
     AutomatedWorkflowRequest,
     AutomatedWorkflowResult,
     AutomatedWorkflowResumeRequest,
+    FinalAnalysisHandoff,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,
@@ -78,13 +79,21 @@ def _terminal_workflow() -> AgentWorkflowRun:
 
 
 def _terminal_result(workflow: AgentWorkflowRun) -> AutomatedWorkflowResult:
+    final_analysis = FinalAnalysisHandoff(
+        workflowRunId=workflow.workflowRunId,
+        primaryAssay="RNA",
+        markerAssay="RNA",
+    ).with_handoff_id()
     return _with_checksum(
         AutomatedWorkflowResult(
             status="completed",
-            currentStage="biological_interpretation",
+            currentStage="analysis_finalization",
             zarrPath="analysis.zarr",
             workflowRun=workflow,
             reportReferences=list(workflow.reports),
+            finalAnalysis=final_analysis,
+            finalHandoffId=final_analysis.handoffId,
+            decisionRunId=workflow.workflowRunId,
         )
     )
 
@@ -111,12 +120,31 @@ def test_orchestration_model_validation_edges() -> None:
             WorkflowStageAttempt(**updates)
 
     invalid_requests = (
-        ({"sourcePath": " ", "studyContext": "study"}, "sourcePath"),
-        ({"sourcePath": "data", "studyContext": " "}, "studyContext"),
+        (
+            {
+                "sourcePath": " ",
+                "studyContext": "study",
+                "studyObjective": "objective",
+            },
+            "sourcePath",
+        ),
+        (
+            {
+                "sourcePath": "data",
+                "studyContext": " ",
+                "studyObjective": "objective",
+            },
+            "studyContext",
+        ),
+        (
+            {"sourcePath": "data", "studyContext": "study"},
+            "studyObjective",
+        ),
         (
             {
                 "sourcePath": "data",
                 "studyContext": "study",
+                "studyObjective": "objective",
                 "analysisAssays": ["RNA", "RNA"],
             },
             "analysisAssays",
@@ -125,6 +153,7 @@ def test_orchestration_model_validation_edges() -> None:
             {
                 "sourcePath": "data",
                 "studyContext": "study",
+                "studyObjective": "objective",
                 "pairedAssays": ["RNA", "RNA"],
             },
             "pairedAssays must be unique",
@@ -133,6 +162,7 @@ def test_orchestration_model_validation_edges() -> None:
             {
                 "sourcePath": "data",
                 "studyContext": "study",
+                "studyObjective": "objective",
                 "pairedAssays": ["RNA"],
             },
             "at least two",
@@ -177,6 +207,32 @@ def test_journal_storage_guards(monkeypatch: pytest.MonkeyPatch) -> None:
         patch.setattr(journal_module.record_io, "read_key", lambda *_args: b"{")
         with pytest.raises(ValueError, match="Malformed orchestration record"):
             journal_module._read_model(root, "bad.json", WorkflowQuestion)
+
+
+def test_final_handoff_journal_is_content_addressed_and_idempotent() -> None:
+    root = zarr.open_group(store=MemoryStore(), mode="w")
+    root.create_group("agents")
+    store = SimpleNamespace(zw=root)
+    prefix = journal_module._ensure_orchestration_store(store)
+    handoff = FinalAnalysisHandoff(
+        workflowRunId="workflow-1",
+        primaryAssay="RNA",
+        markerAssay="RNA",
+    ).with_handoff_id()
+
+    first = journal_module.save_final_analysis_handoff(store, prefix, handoff)
+    second = journal_module.save_final_analysis_handoff(store, prefix, handoff)
+
+    assert first == second == handoff
+    assert (
+        journal_module.load_final_analysis_handoff(
+            store,
+            prefix,
+            handoff.workflowRunId,
+            handoff.handoffId,
+        )
+        == handoff
+    )
 
 
 def test_orchestration_namespace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -620,11 +676,11 @@ def test_terminal_result_validation_and_persistence_edges(
         )
 
     missing_workflow = _with_checksum(
-        AutomatedWorkflowResult(
-            status="completed", currentStage="biological_interpretation"
+        AutomatedWorkflowResult.model_construct(
+            status="completed", currentStage="analysis_finalization"
         )
     )
-    with pytest.raises(ValueError, match="missing its workflow identity"):
+    with pytest.raises(ValueError, match="Malformed automated workflow result"):
         load(
             journal_module.record_io.display_json_bytes(
                 missing_workflow.model_dump(mode="json")

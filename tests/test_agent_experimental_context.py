@@ -474,6 +474,26 @@ def test_agent_runs_only_read_only_tools_and_returns_a_grounded_report() -> None
                     )
                 ]
             )
+        if request == 2:
+            decision = _design_decision()
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="analyze_experimental_design",
+                        args={
+                            "column_domains": decision.columnDomains,
+                            "coefficients_of_interest": (
+                                decision.coefficientsOfInterest
+                            ),
+                            "units_of_inference": {
+                                name: unit.model_dump()
+                                for name, unit in decision.unitsOfInference.items()
+                            },
+                            "batch_columns": decision.batchCorrection.batchColumns,
+                        },
+                    )
+                ]
+            )
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -505,6 +525,7 @@ def test_agent_runs_only_read_only_tools_and_returns_a_grounded_report() -> None
     assert [call.toolName for call in result.runInfo.toolCalls] == [
         "inspect_cell_covariates",
         "analyze_experimental_design",
+        "analyze_experimental_design",
     ]
     assert tool_names == {
         "inspect_cell_covariates",
@@ -520,7 +541,7 @@ def test_agent_runs_only_read_only_tools_and_returns_a_grounded_report() -> None
     assert sorted(store.zw.group_keys()) == ["artifacts", "cellData"]
 
 
-def test_agent_uses_conservative_fallback_after_tool_retry_exhaustion(
+def test_agent_pauses_after_design_tool_retry_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store()
@@ -558,23 +579,69 @@ def test_agent_uses_conservative_fallback_after_tool_retry_exhaustion(
         cell_selection=store.cell_selection,
     )
 
-    assert analyze_retries == [1]
-    assert result.status == "done"
-    assert result.decision.batchCorrection.action == "skip"
+    assert analyze_retries == [3]
+    assert result.status == "needsInput"
+    assert result.decision.batchCorrection.action == "needsInput"
     assert result.decision.batchCorrection.batchColumns == []
     assert result.cellSelection is not None
     assert result.cellSelection.artifactId == store.cell_selection.artifact_id
-    assert result.cellQc.profileId in {
-        profile.profileId for profile in result.qcProfiles
-    }
-    assert result.cellQc.evidenceIds == [
-        profile.evidenceId
-        for profile in result.qcProfiles
-        if profile.profileId == result.cellQc.profileId
-    ]
-    assert result.runInfo.agentName == "experimental_context_fallback"
-    assert result.to_parameter_tuning_handoff().batchAction == "skip"
-    assert any("Harmony was skipped" in note for note in result.notes)
+    assert result.cellQc.profileId == ""
+    assert result.qcProfiles
+    assert result.runInfo.agentName == "experimental_context_needs_input"
+    with pytest.raises(ValueError, match="must be done"):
+        result.to_parameter_tuning_handoff()
+    assert any("could not produce" in note for note in result.notes)
+
+
+def test_agent_recovers_malformed_batch_tool_call_without_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store()
+
+    def unavailable_design(**kwargs: Any) -> None:
+        deps = kwargs["deps"]
+        asyncio.run(
+            inspect_cell_covariates(
+                RunContext(
+                    deps=deps,
+                    model=TestModel(),
+                    usage=RunUsage(),
+                )
+            )
+        )
+        raise UnexpectedModelBehavior(
+            "Tool 'analyze_experimental_design' exceeded max retries count of 3; "
+            "caused by ModelRetry: Unknown batch column 'batchassay'"
+        )
+
+    monkeypatch.setattr(
+        experimental_context_module,
+        "run_agent_sync",
+        unavailable_design,
+    )
+    result = ExperimentalContextAgent(object(), unattended=True).run(
+        store,
+        study_context="Population discovery across sequencing batches.",
+        study_objective="Discover stable cell populations.",
+        cell_selection=store.cell_selection,
+        directions={
+            "columnDomains": {
+                "batch": "technical",
+                "donor": "design",
+                "sample": "design",
+            },
+            "coefficientsOfInterest": [],
+            "unitsOfInference": {},
+            "batchColumns": ["batch"],
+        },
+    )
+
+    assert result.status == "done"
+    assert result.decision.needsInput == []
+    assert result.decision.batchCorrection.action == "evaluateHarmony"
+    assert result.decision.batchCorrection.batchColumns == ["batch"]
+    assert result.to_parameter_tuning_handoff().batchAction == "evaluateHarmony"
+    assert result.runInfo.agentName == "experimental_context_deterministic"
 
 
 def test_handoff_builders_reject_incomplete_or_ambiguous_results() -> None:
@@ -630,6 +697,36 @@ def test_tools_build_a_grounded_design_report_without_mutation() -> None:
     assert sorted(store.zw.group_keys()) == ["artifacts", "cellData"]
 
 
+def test_exact_batch_direction_overrides_model_tool_arguments() -> None:
+    store = _Store()
+    context = _context(store, directions={"batchColumns": ["batch"]})
+    decision = _design_decision()
+
+    asyncio.run(inspect_cell_covariates(context))
+    analyzed = asyncio.run(
+        analyze_experimental_design(
+            context,
+            column_domains=decision.columnDomains,
+            coefficients_of_interest=decision.coefficientsOfInterest,
+            units_of_inference=decision.unitsOfInference,
+            batch_columns=[],
+        )
+    )
+
+    assert analyzed.batchSafety[0].batchColumns == ["batch"]
+    skip = decision.model_copy(
+        update={
+            "batchCorrection": BatchCorrectionPlan(
+                action="skip",
+                rationale="Skip the declared batch condition.",
+                evidenceIds=["column:batch"],
+            )
+        }
+    )
+    with pytest.raises(ModelRetry, match="exact directed batch"):
+        validate_experimental_context(skip, context.deps)
+
+
 def test_qc_profiles_use_persisted_modality_and_shared_cell_selection() -> None:
     store = _Store()
     store.assay_names = ["protein", "peaks", "transcript"]
@@ -656,6 +753,7 @@ def test_qc_profiles_use_persisted_modality_and_shared_cell_selection() -> None:
     assert {profile.action for profile in inspected.qcProfiles} == {
         "skip",
         "globalGaussian",
+        "registeredMad",
     }
     for profile in inspected.qcProfiles:
         assert profile.driverAssay == "transcript"
@@ -725,23 +823,12 @@ def test_design_tool_offers_only_grounded_sample_mad_profiles() -> None:
     assert sample_profile.retainedCells == 12
     assert sample_profile.evidenceId in analyzed.evidenceIds
 
-    decision.cellQc = CellQcPlan(
-        action=sample_profile.action,
-        profileId=sample_profile.profileId,
-        driverAssay=sample_profile.driverAssay,
-        driverAssayType=sample_profile.driverAssayType,
-        sampleColumn=sample_profile.sampleColumn,
-        sampleArtifact=sample_profile.sampleArtifact,
-        attributes=sample_profile.attributes,
-        artifactMetrics=sample_profile.artifactMetrics,
-        rationale="Use sample-aware retention evidence.",
-        evidenceIds=[sample_profile.evidenceId],
-    )
     validated = validate_experimental_context(decision, context.deps)
-    assert validated.cellQc == decision.cellQc
+    assert validated.cellQc == CellQcPlan.get_blank()
+    assert sample_profile in context.deps.qcProfiles.values()
 
 
-def test_caller_qc_direction_overrides_model_profile_selection() -> None:
+def test_caller_qc_direction_shapes_evidence_without_preselection() -> None:
     store = _Store()
     store.cells._values["RNA_nCounts"] = np.arange(12, dtype=float) + 1
     store.cells._values["RNA_nFeatures"] = np.arange(12, dtype=float) + 5
@@ -761,23 +848,13 @@ def test_caller_qc_direction_overrides_model_profile_selection() -> None:
             batch_columns=decision.batchCorrection.batchColumns,
         )
     )
-    decision.cellQc = CellQcPlan(
-        action="skip",
-        profileId="model-authored-profile",
-        evidenceIds=["model-authored-evidence"],
-    )
-
     validated = validate_experimental_context(decision, context.deps)
 
-    assert validated.cellQc.action == "sampleMad"
-    assert validated.cellQc.sampleColumn == "sample"
-    assert validated.cellQc.evidenceIds == [
-        next(
-            profile.evidenceId
-            for profile in context.deps.qcProfiles.values()
-            if profile.action == "sampleMad"
-        )
-    ]
+    assert validated.cellQc == CellQcPlan.get_blank()
+    assert any(
+        profile.action == "sampleMad" and profile.sampleColumn == "sample"
+        for profile in context.deps.qcProfiles.values()
+    )
 
 
 def test_adt_and_hto_do_not_drive_qc_and_hto_identity_remains_metadata() -> None:
@@ -1819,6 +1896,7 @@ def test_design_analysis_rejects_invalid_batch_proposals(
                 column_domains={},
                 coefficients_of_interest=[],
                 units_of_inference={},
+                batch_columns=[],
             )
         )
 
@@ -1978,7 +2056,6 @@ def test_batch_correction_plan_validation_edges() -> None:
             characterization,
             requested if requested is not None else {"disease"},
             units,
-            candidate.cellQc,
             candidate_records or records,
             candidate_coefficients or coefficient_records,
         )

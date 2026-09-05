@@ -74,3 +74,6 @@ scarf/_version.py
 temp/
 # Dev testing scard reports
 modal_scarf/
+notebook/
+PR/
+scarf/agent/*.md

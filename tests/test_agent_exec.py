@@ -20,9 +20,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 
 from scarf.agent import CovariateCharacterization, FeatureCharacterization, IngestResult
-from scarf.agent.config.agent_exec import _model_name, run_agent, run_agent_sync
+from scarf.agent.config.agent_exec import (
+    _image_input_is_unsupported,
+    _model_name,
+    run_agent,
+    run_agent_sync,
+)
 from scarf.agent.config import AgentRunConfig, get_model_settings, get_usage_limits
 from scarf.agent.tools import artifact_reference, core_artifact_reference
 from scarf.agent.types import (
@@ -45,6 +51,24 @@ class ExampleOutput(AgentDataModel):
     @classmethod
     def get_example(cls) -> "ExampleOutput":
         return cls(value="complete")
+
+
+def test_image_input_rejection_is_distinguished_from_other_provider_errors() -> None:
+    unsupported = ModelHTTPError(
+        400,
+        "text-model",
+        {
+            "message": "This model does not support multimodal (image/video/audio) inputs."
+        },
+    )
+    authentication = ModelHTTPError(401, "text-model", {"message": "Unauthorized"})
+    unsupported_local = UserError("This model does not support binary content")
+    unrelated_local = UserError("max_retries must be greater than or equal to zero")
+
+    assert _image_input_is_unsupported(unsupported) is True
+    assert _image_input_is_unsupported(authentication) is False
+    assert _image_input_is_unsupported(unsupported_local) is True
+    assert _image_input_is_unsupported(unrelated_local) is False
 
 
 def test_shared_models_have_blank_and_example_constructors() -> None:

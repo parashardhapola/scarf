@@ -32,7 +32,7 @@ from scarf.agent.parameter_tuning import (
     build_initial_parameter_candidates,
     evaluate_parameter_candidate,
     execute_parameter_candidate,
-    fallback_parameter_tuning_report,
+    pending_parameter_tuning_report,
     FinalGraphComparison,
     FinalGraphNeedsInput,
     FinalGraphSelection,
@@ -1813,7 +1813,7 @@ def test_batched_refinement_planning_allows_a_validator_retry() -> None:
     assert result.runInfo.usage.requests == 1
 
 
-def test_batched_tuning_falls_back_after_structured_output_exhaustion(
+def test_batched_tuning_pauses_after_structured_output_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scarf.agent import parameter_tuning as module
@@ -1843,16 +1843,18 @@ def test_batched_tuning_falls_back_after_structured_output_exhaustion(
     )
 
     assert calls == ["parameter_batch_search_planning", "parameter_tuning_batch"]
-    assert result.status == "done"
-    assert result.recommendedByAssay == {"RNA": "baseline"}
+    assert result.status == "needsInput"
+    assert result.recommendedByAssay == {}
     assert result.assayReports["RNA"].confidence == "low"
-    assert result.assayReports["RNA"].comparisons[0].candidateId == "pca_15"
+    assert result.assayReports["RNA"].recommendedCandidateId is None
+    assert result.assayReports["RNA"].needsInput is not None
+    assert result.assayReports["RNA"].needsInput.options == ["baseline", "pca_15"]
     assert result.searchPlan is not None
     assert result.searchPlan.status == "complete"
-    assert result.runInfo.agentName == "parameter_tuning_batch_fallback"
+    assert result.runInfo.agentName == "parameter_tuning_batch_needs_input"
 
 
-def test_single_tuning_falls_back_after_structured_output_exhaustion(
+def test_single_tuning_pauses_after_structured_output_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scarf.agent import parameter_tuning as module
@@ -1873,13 +1875,15 @@ def test_single_tuning_falls_back_after_structured_output_exhaustion(
         max_refined_candidates=1,
     )
 
-    assert result.status == "done"
-    assert result.recommendedCandidateId == "baseline"
+    assert result.status == "needsInput"
+    assert result.recommendedCandidateId is None
     assert result.confidence == "low"
-    assert result.runInfo.agentName == "parameter_tuning_fallback"
+    assert result.needsInput is not None
+    assert result.needsInput.options == ["baseline", "pca_15"]
+    assert result.runInfo.agentName == "parameter_tuning_needs_input"
 
 
-def test_parameter_fallback_does_not_select_without_successful_baseline() -> None:
+def test_pending_parameter_report_does_not_select_without_successful_baseline() -> None:
     candidates = [
         ParameterCandidate.get_example(),
         ParameterCandidate(candidateId="pca_15", dimensions=15),
@@ -1900,10 +1904,10 @@ def test_parameter_fallback_does_not_select_without_successful_baseline() -> Non
         }
     )
 
-    result = fallback_parameter_tuning_report(
+    result = pending_parameter_tuning_report(
         deps,
         search_plan=ParameterSearchPlan(status="complete"),
-        agent_name="parameter_tuning_fallback",
+        agent_name="parameter_tuning_needs_input",
     )
 
     assert result.status == "needsInput"
@@ -2026,7 +2030,7 @@ def test_final_graph_retry_exhaustion_pauses_when_multiple_options_exist(
     ]
     assert selected.finalSelection is not None
     assert selected.finalSelection.runInfo.agentName == (
-        "parameter_tuning_final_graph_fallback"
+        "parameter_tuning_final_graph_needs_input"
     )
 
 
