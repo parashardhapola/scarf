@@ -13,7 +13,7 @@ import pytest
 import scarf.agent.orchestrator.context as context_module
 import scarf.agent.orchestrator.journal as journal_module
 import scarf.agent.orchestrator.tuning as tuning_module
-import scarf.agent.parameter_tuning.agent as parameter_tuning_agent
+import scarf.agent.parameter_tuning.selection as parameter_tuning_selection
 from scarf.agent.orchestrator.preprocessing import PreprocessingStagesMixin
 from scarf.agent.config import AgentRunConfig
 from scarf.agent.config.agent_exec import (
@@ -1479,13 +1479,9 @@ def test_initial_candidates_reject_fully_invalid_rank_or_neighbor_count() -> Non
         )
 
 
-def test_parameter_tuning_rejects_legacy_refinement_budget(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del tmp_path, monkeypatch
-    with pytest.raises(ValueError, match="less than or equal to 0"):
-        AutomatedWorkflowConfig(maxRefinedCandidatesPerAssay=1)
+def test_parameter_tuning_rejects_more_than_one_refinement_candidate() -> None:
+    with pytest.raises(ValueError, match="less than or equal to 1"):
+        AutomatedWorkflowConfig(maxRefinedCandidatesPerAssay=2)
 
 
 def test_final_selection_pause_exposes_exact_options_and_resumes_without_screen(
@@ -1591,7 +1587,11 @@ def test_final_selection_pause_exposes_exact_options_and_resumes_without_screen(
             ),
         )
 
-    monkeypatch.setattr(parameter_tuning_agent, "run_agent_sync", selection_execution)
+    monkeypatch.setattr(
+        parameter_tuning_selection,
+        "run_agent_sync",
+        selection_execution,
+    )
 
     class CountingAgent:
         config = AgentRunConfig()
@@ -1625,6 +1625,11 @@ def test_final_selection_pause_exposes_exact_options_and_resumes_without_screen(
         lambda *_args, **_kwargs: CountingAgent(),
     )
     orchestrator = AgentOrchestrator(object())
+    monkeypatch.setattr(
+        orchestrator,
+        "_augment_legacy_scientific_evidence",
+        lambda _store, report, **_kwargs: report,
+    )
 
     def evaluate_integrations(*_args: Any, **_kwargs: Any) -> list[Any]:
         calls["integrate"] += 1
