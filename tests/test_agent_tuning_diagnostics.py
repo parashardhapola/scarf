@@ -1,3 +1,4 @@
+from tests.agent_examples import example
 from types import SimpleNamespace
 
 import numpy as np
@@ -68,8 +69,8 @@ def test_advisory_doublets_record_duplicate_feature_limitation(
 
     evidence = score_advisory_doublets(
         Store(),
-        ParameterCandidateEvaluation.get_example(),
-        [ParameterCandidateEvaluation.get_example()],
+        example(ParameterCandidateEvaluation),
+        [example(ParameterCandidateEvaluation)],
         assay="RNA",
         feature_selection=ArtifactRef(
             scope="assay",

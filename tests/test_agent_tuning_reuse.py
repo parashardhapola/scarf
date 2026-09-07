@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import zarr
 
-from scarf.agent.orchestrator import tuning
 from scarf.agent.parameter_tuning import diagnostics, execution
+from scarf.agent.parameter_tuning.selection import harmony_acceptance_gate
 from scarf.agent.parameter_tuning.contracts import (
     ArtifactRecord,
     ParameterCandidate,
@@ -83,9 +83,11 @@ def test_stage_metric_reuse_tracks_artifacts_and_live_metadata(
     assert counts()["metric_proportional_batch_mixing"] == 4
 
 
+@pytest.mark.parametrize("kind", ["categorical", "continuous"])
 def test_pca_diagnostic_reuse_precedes_numerical_work(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     root = zarr.open_group(str(tmp_path / "diagnostic.zarr"), mode="w")
     reduction = root.create_group("reduction")
@@ -148,13 +150,21 @@ def test_pca_diagnostic_reuse_precedes_numerical_work(
         covariate_columns=("batch",),
         covariate_roles=("technical",),
         adjacent_overlap=0.8,
+        column_kinds={"batch": kind},
     )
     assert result[0] == diagnostic_ref
     np.testing.assert_array_equal(result[1], payload["component_variance"])
     assert planned[0]["parameters"]["covariate_fingerprints"] == {"batch": "current"}
+    assert planned[0]["parameters"]["covariate_kinds"] == {"batch": kind}
+    assert (
+        planned[0]["parameters"]["covariate_method"] == "typedCompleteCaseAssociation"
+    )
 
 
-@pytest.mark.parametrize("damage", ["none", "doublets", "protected", "selection"])
+@pytest.mark.parametrize(
+    "damage",
+    ["none", "doublets", "protected", "selection", "clisi", "graphConnectivity"],
+)
 def test_workflow_harmony_gate_keeps_matched_evidence_requirements(damage: str) -> None:
     native = ParameterCandidateEvaluation(
         candidateId="native",
@@ -164,7 +174,9 @@ def test_workflow_harmony_gate_keeps_matched_evidence_requirements(damage: str) 
         parameters=ParameterCandidate(candidateId="native"),
         metrics=ParameterMetrics(
             batchMixing={"batch": 0.4},
-            biologicalPreservation={"condition": {"clisi": 0.8}},
+            biologicalPreservation={
+                "condition": {"clisi": 0.8, "graphConnectivity": 0.8}
+            },
             markerCoherence=0.8,
             doubletHighScoreConcentration=0.1,
         ),
@@ -182,7 +194,10 @@ def test_workflow_harmony_gate_keeps_matched_evidence_requirements(damage: str) 
         corrected.cellSelection = ArtifactReferenceModel.from_artifact_ref(
             _cell_selection(99)
         )
-    accepted, reasons = tuning.harmony_acceptance_gate(
+    elif damage in {"clisi", "graphConnectivity"}:
+        del native.metrics.biologicalPreservation["condition"][damage]
+        del corrected.metrics.biologicalPreservation["condition"][damage]
+    accepted, reasons = harmony_acceptance_gate(
         native,
         corrected,
         batch_columns=["batch", "batch"],

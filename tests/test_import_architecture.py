@@ -609,7 +609,6 @@ def test_agent_implementations_live_in_owner_packages():
             "tools.py",
             "validation.py",
         },
-        "hypotheses": {"__init__.py", "contracts.py", "execution.py"},
         "parameter_tuning": {
             "__init__.py",
             "agent.py",
@@ -619,19 +618,11 @@ def test_agent_implementations_live_in_owner_packages():
             "hvg.py",
             "prompts.py",
             "selection.py",
-            "sequential.py",
-        },
-        "persistence": {
-            "__init__.py",
-            "contracts.py",
-            "decisions.py",
-            "reports.py",
         },
         "report": {
             "__init__.py",
             "artifacts.py",
             "contracts.py",
-            "decision_tree.py",
             "generator.py",
             "plots.py",
             "rendering.py",
@@ -639,6 +630,10 @@ def test_agent_implementations_live_in_owner_packages():
     }
 
     assert retired.isdisjoint(path.name for path in agent_root.glob("*.py"))
+    assert not list((agent_root / "persistence").glob("*.py"))
+    assert not list((agent_root / "hypotheses").glob("*.py"))
+    assert not (agent_root / "parameter_tuning/sequential.py").exists()
+    assert not (agent_root / "report/decision_tree.py").exists()
     for package, names in required.items():
         package_root = agent_root / package
         assert package_root.is_dir()

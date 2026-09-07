@@ -44,15 +44,6 @@ class ArtifactRecord(ArtifactReferenceModel):
     def get_blank(cls) -> "ArtifactRecord":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "ArtifactRecord":
-        return cls(
-            scope="assay",
-            kind="connectivity_map",
-            artifactId="a" * 64,
-            assay="RNA",
-        )
-
 
 class ParameterCandidate(AgentDataModel):
     """One exact, caller-authorized parameter candidate."""
@@ -70,17 +61,6 @@ class ParameterCandidate(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterCandidate":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterCandidate":
-        return cls(
-            candidateId="baseline",
-            reductionMethod="pca",
-            dimensions=21,
-            leidenResolution=1.0,
-            neighborsK=11,
-            useHarmony=False,
-        )
 
 
 class ParameterMetrics(AgentDataModel):
@@ -141,22 +121,6 @@ class ParameterMetrics(AgentDataModel):
     def get_blank(cls) -> "ParameterMetrics":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "ParameterMetrics":
-        return cls(
-            nClusters=8,
-            minClusterCells=42,
-            minClusterFraction=0.021,
-            graphSilhouetteMedian=0.41,
-            pcaSilhouette=0.36,
-            macroF1=0.82,
-            weightedF1=0.86,
-            batchMixing={"batch": 0.73},
-            biologicalPreservation={
-                "cell_type": {"clisi": 0.88, "graphConnectivity": 0.91}
-            },
-        )
-
 
 class ParameterCandidateEvaluation(AgentDataModel):
     """Execution record returned to the model for one candidate."""
@@ -182,35 +146,6 @@ class ParameterCandidateEvaluation(AgentDataModel):
     def get_blank(cls) -> "ParameterCandidateEvaluation":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "ParameterCandidateEvaluation":
-        candidate = ParameterCandidate.get_example()
-        return cls(
-            candidateId=candidate.candidateId,
-            status="done",
-            eligible=True,
-            parameters=candidate,
-            artifacts={
-                "connectivityMap": ArtifactRecord.get_example(),
-                "clusters": ArtifactRecord(
-                    assay="RNA",
-                    kind="cluster_labels",
-                    artifactId="b" * 64,
-                ),
-            },
-            cellSelection=ArtifactReferenceModel(
-                scope="datastore",
-                assay=None,
-                kind="cell_selection",
-                artifactId="c" * 64,
-            ),
-            clusterColumn="RNA_agent_tuning_baseline",
-            clusterLabel="agent_tuning_baseline",
-            effectiveDimensions=21,
-            metrics=ParameterMetrics.get_example(),
-            evidenceIds=["candidate:baseline:clusters"],
-        )
-
 
 class IntegrationMetrics(AgentDataModel):
     """Metrics that are valid for an integrated graph comparison."""
@@ -226,17 +161,6 @@ class IntegrationMetrics(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "IntegrationMetrics":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "IntegrationMetrics":
-        return cls(
-            nClusters=8,
-            minClusterCells=37,
-            minClusterFraction=0.0185,
-            adjustedRandByAssay={"RNA": 0.71, "ADT": 0.63},
-            normalizedMutualInformationByAssay={"RNA": 0.76, "ADT": 0.69},
-            modalityWeightsValid=True,
-        )
 
 
 class IntegrationCandidateEvaluation(AgentDataModel):
@@ -262,35 +186,6 @@ class IntegrationCandidateEvaluation(AgentDataModel):
     def get_blank(cls) -> "IntegrationCandidateEvaluation":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "IntegrationCandidateEvaluation":
-        return cls(
-            integrationId="wnn_resolution_1",
-            method="wnn",
-            assays=["RNA", "ADT"],
-            status="done",
-            eligible=True,
-            cellSelection=ArtifactReferenceModel(
-                scope="datastore",
-                assay=None,
-                kind="cell_selection",
-                artifactId="c" * 64,
-            ),
-            graphArtifact=ArtifactRecord(
-                scope="datastore",
-                kind="integrated_graph",
-                artifactId="2" * 64,
-            ),
-            clusterArtifact=ArtifactRecord(
-                scope="datastore",
-                kind="cluster_labels",
-                artifactId="3" * 64,
-            ),
-            clusterColumn="agent_wnn_cluster",
-            metrics=IntegrationMetrics.get_example(),
-            evidenceIds=["integration:wnn_resolution_1:clusters"],
-        )
-
 
 class FinalGraphComparison(AgentDataModel):
     """Evidence-backed comparison against one eligible final graph option."""
@@ -303,17 +198,6 @@ class FinalGraphComparison(AgentDataModel):
     def get_blank(cls) -> "FinalGraphComparison":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "FinalGraphComparison":
-        return cls(
-            optionId="native:ADT:baseline",
-            summary="The RNA-native option better preserves the requested labels.",
-            evidenceIds=[
-                "native:RNA:candidate:baseline:clusters",
-                "native:ADT:candidate:baseline:clusters",
-            ],
-        )
-
 
 class FinalGraphNeedsInput(AgentDataModel):
     """Concrete input needed before a final graph can be selected."""
@@ -325,13 +209,6 @@ class FinalGraphNeedsInput(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "FinalGraphNeedsInput":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "FinalGraphNeedsInput":
-        return cls(
-            question="Which biological signal must the final graph preserve?",
-            options=["cell_type", "condition"],
-        )
 
 
 class FinalGraphSelection(AgentDataModel):
@@ -357,21 +234,6 @@ class FinalGraphSelection(AgentDataModel):
     def get_blank(cls) -> "FinalGraphSelection":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "FinalGraphSelection":
-        return cls(
-            status="done",
-            selectedOptionId="native:RNA:baseline",
-            graphMethod="native",
-            nativeAssay="RNA",
-            nativeCandidateId="baseline",
-            markerAssay="RNA",
-            confidence="medium",
-            rationale="The selected native graph has the strongest supported balance.",
-            evidenceIds=["native:RNA:candidate:baseline:clusters"],
-            runInfo=AgentRunInfo.get_example(),
-        )
-
 
 class CandidateComparison(AgentDataModel):
     """Evidence-backed comparison against one executed non-selected candidate."""
@@ -383,17 +245,6 @@ class CandidateComparison(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "CandidateComparison":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "CandidateComparison":
-        return cls(
-            candidateId="pca_15",
-            summary="The selected baseline retains larger minimum clusters.",
-            evidenceIds=[
-                "candidate:baseline:clusters",
-                "candidate:pca_15:clusters",
-            ],
-        )
 
 
 class ParameterSearchPlan(AgentDataModel):
@@ -425,31 +276,6 @@ class ParameterSearchPlan(AgentDataModel):
     def get_blank(cls) -> "ParameterSearchPlan":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "ParameterSearchPlan":
-        return cls(
-            status="refine",
-            candidates=[
-                ParameterCandidate(
-                    candidateId="refined_pca_18",
-                    dimensions=18,
-                    leidenResolution=1.0,
-                    neighborsK=11,
-                    useHarmony=False,
-                )
-            ],
-            basedOnCandidateIds=["baseline", "pca_15"],
-            harmonyBatchColumns=[],
-            objectives=["Resolve the dimension tradeoff."],
-            rationale="The initial screen brackets a narrower dimension range.",
-            evidenceIds=[
-                "candidate:baseline:clusters",
-                "candidate:pca_15:clusters",
-            ],
-            stoppingCriteria=["Run the proposed candidate once."],
-            runInfo=AgentRunInfo.get_example(),
-        )
-
 
 class ParameterTuningBatchSearchPlan(AgentDataModel):
     """One bounded refinement plan for every assay in a batched screen."""
@@ -460,10 +286,6 @@ class ParameterTuningBatchSearchPlan(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterTuningBatchSearchPlan":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterTuningBatchSearchPlan":
-        return cls(assayPlans={"RNA": ParameterSearchPlan.get_example()})
 
 
 class ParameterTuningNeedsInput(AgentDataModel):
@@ -476,14 +298,6 @@ class ParameterTuningNeedsInput(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterTuningNeedsInput":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterTuningNeedsInput":
-        return cls(
-            question="Which trusted biological label should be preserved?",
-            options=["cell_type", "none"],
-            evidenceIds=["candidate:baseline:batchMixing:batch"],
-        )
 
 
 class ParameterTuningReport(AgentDataModel):
@@ -521,30 +335,6 @@ class ParameterTuningReport(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterTuningReport":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterTuningReport":
-        evaluation = ParameterCandidateEvaluation.get_example()
-        return cls(
-            status="done",
-            fromAssay="RNA",
-            cellSelection=evaluation.cellSelection,
-            evaluations=[evaluation],
-            recommendedCandidateId=evaluation.candidateId,
-            selectedArtifacts=dict(evaluation.artifacts),
-            confidence="medium",
-            rationale="The baseline balances separation and cluster size.",
-            evidenceIds=["candidate:baseline:clusters"],
-            tradeoffs=["Higher resolutions produced smaller clusters."],
-            limitations=["No trusted biological preservation label was supplied."],
-            stopReason="All authorized candidates were evaluated.",
-            recommendedByAssay={"RNA": evaluation.candidateId},
-            totalCandidates=1,
-            graphAssay="RNA",
-            markerAssay="RNA",
-            finalSelection=FinalGraphSelection.get_example(),
-            runInfo=AgentRunInfo.get_example(),
-        )
 
     def to_biological_handoff(
         self,
@@ -663,6 +453,10 @@ class ParameterTuningDependencies(AgentDataModel):
     candidatePhases: dict[str, CandidatePhase] = Field(default_factory=dict)
     batchColumns: tuple[str, ...] = ()
     preservationColumns: tuple[str, ...] = ()
+    protectedCombinations: tuple[tuple[str, ...], ...] = ()
+    columnKinds: dict[str, Literal["categorical", "continuous"]] = Field(
+        default_factory=dict
+    )
     harmonyAuthorized: bool = False
     maxCandidates: int = 5
     minClusterCells: int = 20
@@ -674,17 +468,6 @@ class ParameterTuningDependencies(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterTuningDependencies":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterTuningDependencies":
-        candidate = ParameterCandidate.get_example()
-        return cls(
-            fromAssay="RNA",
-            normalizedShape=(1000, 2000),
-            candidates={candidate.candidateId: candidate},
-            batchColumns=("batch",),
-            preservationColumns=("cell_type",),
-        )
 
 
 class ParameterTuningAssayInput(AgentDataModel):
@@ -704,18 +487,6 @@ class ParameterTuningAssayInput(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ParameterTuningAssayInput":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ParameterTuningAssayInput":
-        return cls(
-            normalized=ArtifactRecord(
-                assay="RNA",
-                kind="normalized",
-                artifactId="4" * 64,
-            ),
-            candidates=_default_parameter_candidates(),
-            experimentalHandoff=ExperimentalTuningHandoff(batchAction="skip"),
-        )
 
 
 def _default_parameter_candidates() -> list[ParameterCandidate]:

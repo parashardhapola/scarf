@@ -354,48 +354,6 @@ class DecisionSelection(DecisionKernelModel):
         return self
 
 
-class PendingDecision(DecisionKernelModel):
-    """One unresolved checkpoint persisted without fabricating a selection."""
-
-    questionId: str
-    decisionId: str
-    definitionVersion: int = Field(ge=1, strict=True)
-    evidenceBundleId: str
-    evidenceBundleSha256: str
-    offeredOptionIds: list[str] = Field(min_length=1)
-    availableEvidenceIds: list[str] = Field(default_factory=list)
-    reason: str = Field(min_length=1, max_length=2000)
-    createdAtNs: int = Field(default=0, ge=0, strict=True)
-
-    @field_validator("questionId", "decisionId", "evidenceBundleId")
-    @classmethod
-    def validate_ids(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "identifier")
-        return _validate_identifier(value, field_name)
-
-    @field_validator("offeredOptionIds", "availableEvidenceIds")
-    @classmethod
-    def validate_id_lists(cls, value: list[str], info: object) -> list[str]:
-        field_name = getattr(info, "field_name", "identifiers")
-        for item in value:
-            _validate_identifier(item, f"{field_name} item")
-        return _validate_unique(value, field_name)
-
-    @field_validator("reason")
-    @classmethod
-    def validate_reason(cls, value: str) -> str:
-        if value != value.strip():
-            raise ValueError("reason must not contain surrounding whitespace")
-        return value
-
-    @field_validator("evidenceBundleSha256")
-    @classmethod
-    def validate_evidence_bundle_sha256(cls, value: str) -> str:
-        if _SHA256_PATTERN.fullmatch(value) is None:
-            raise ValueError("evidenceBundleSha256 must be a lowercase SHA-256 digest")
-        return value
-
-
 class DecisionRecord(DecisionKernelModel):
     """One durable rule, agent, or human selection from an exact option set."""
 
@@ -420,8 +378,6 @@ class DecisionRecord(DecisionKernelModel):
     promptSha256: str | None = None
     modelName: str | None = None
     softwareSha256: str | None = None
-    verificationId: str | None = None
-    supersedes: str | None = None
     createdAtNs: int = Field(default=0, ge=0, strict=True)
 
     @field_validator(
@@ -429,8 +385,6 @@ class DecisionRecord(DecisionKernelModel):
         "decisionId",
         "evidenceBundleId",
         "selectedOptionId",
-        "verificationId",
-        "supersedes",
         "overrideOfOptionId",
     )
     @classmethod
@@ -509,8 +463,6 @@ class DecisionRecord(DecisionKernelModel):
                 raise ValueError("overrideOfOptionId must reference an offered option")
             if self.overrideOfOptionId == self.selectedOptionId:
                 raise ValueError("overrideOfOptionId must differ from selectedOptionId")
-        if self.supersedes == self.recordId:
-            raise ValueError("A DecisionRecord cannot supersede itself")
         return self
 
 
@@ -542,325 +494,6 @@ class VerificationCheck(DecisionKernelModel):
         return value
 
 
-class VerificationRecord(DecisionKernelModel):
-    """Deterministic verification result for exactly one decision record."""
-
-    verificationId: str
-    decisionRecordId: str
-    status: VerificationStatus
-    checks: list[VerificationCheck] = Field(min_length=1)
-    createdAtNs: int = Field(default=0, ge=0, strict=True)
-
-    @field_validator("verificationId", "decisionRecordId")
-    @classmethod
-    def validate_ids(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "identifier")
-        return _validate_identifier(value, field_name)
-
-    @model_validator(mode="after")
-    def validate_aggregate_status(self) -> "VerificationRecord":
-        check_ids = [check.checkId for check in self.checks]
-        _validate_unique(check_ids, "VerificationRecord check IDs")
-        statuses = {check.status for check in self.checks}
-        if self.status == "passed" and statuses != {"passed"}:
-            raise ValueError("passed verification requires every check to pass")
-        if self.status == "failed" and "failed" not in statuses:
-            raise ValueError("failed verification requires a failed check")
-        if self.status == "inconclusive" and (
-            "failed" in statuses or "inconclusive" not in statuses
-        ):
-            raise ValueError(
-                "inconclusive verification requires an inconclusive check and no failures"
-            )
-        return self
-
-
-class RevisionRequest(DecisionKernelModel):
-    """A bounded request to supersede one decision using exact audit evidence."""
-
-    revisionId: str
-    targetDecisionRecordId: str
-    verificationId: str
-    replacementOptionId: str
-    reason: str = Field(min_length=1, max_length=2000)
-    evidenceBundleId: str | None = None
-    evidenceBundleSha256: str | None = None
-    availableEvidenceIds: list[str] = Field(default_factory=list)
-    evidenceIds: list[str] = Field(default_factory=list)
-    invalidatesDecisionRecordIds: list[str] = Field(default_factory=list)
-    createdAtNs: int = Field(default=0, ge=0, strict=True)
-
-    @field_validator(
-        "revisionId",
-        "targetDecisionRecordId",
-        "verificationId",
-        "replacementOptionId",
-        "evidenceBundleId",
-    )
-    @classmethod
-    def validate_ids(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        field_name = getattr(info, "field_name", "identifier")
-        return _validate_identifier(value, field_name)
-
-    @field_validator(
-        "availableEvidenceIds",
-        "evidenceIds",
-        "invalidatesDecisionRecordIds",
-    )
-    @classmethod
-    def validate_id_lists(cls, value: list[str], info: object) -> list[str]:
-        field_name = getattr(info, "field_name", "identifiers")
-        for item in value:
-            _validate_identifier(item, f"{field_name} item")
-        return _validate_unique(value, field_name)
-
-    @field_validator("evidenceBundleSha256")
-    @classmethod
-    def validate_evidence_bundle_sha256(cls, value: str | None) -> str | None:
-        if value is not None and _SHA256_PATTERN.fullmatch(value) is None:
-            raise ValueError("evidenceBundleSha256 must be a lowercase SHA-256 digest")
-        return value
-
-    @field_validator("reason")
-    @classmethod
-    def validate_reason(cls, value: str) -> str:
-        if value != value.strip():
-            raise ValueError("reason must not contain surrounding whitespace")
-        return value
-
-    @model_validator(mode="after")
-    def validate_evidence_bundle(self) -> "RevisionRequest":
-        if (self.evidenceBundleId is None) != (self.evidenceBundleSha256 is None):
-            raise ValueError(
-                "Revision evidence bundle ID and checksum must be provided together"
-            )
-        if self.evidenceBundleId is None and (
-            self.availableEvidenceIds or self.evidenceIds
-        ):
-            raise ValueError(
-                "Revision evidence inventory requires an exact evidence bundle"
-            )
-        if not set(self.evidenceIds).issubset(self.availableEvidenceIds):
-            raise ValueError(
-                "Revision evidence must reference its exact available inventory"
-            )
-        return self
-
-
-class DecisionWorkflowRun(DecisionKernelModel):
-    """Versioned, acyclic ledger for one bounded decision workflow."""
-
-    recordType: Literal["decisionWorkflowRun"] = "decisionWorkflowRun"
-    formatVersion: Literal[2] = 2
-    workflowRunId: str
-    status: DecisionWorkflowStatus = "running"
-    decisionRecords: list[DecisionRecord] = Field(default_factory=list)
-    verificationRecords: list[VerificationRecord] = Field(default_factory=list)
-    revisionRequests: list[RevisionRequest] = Field(default_factory=list)
-    maxRevisions: int = Field(default=2, ge=0, le=2, strict=True)
-    pendingDecision: PendingDecision | None = None
-    finalHandoffId: str | None = None
-    limitations: list[str] = Field(default_factory=list)
-    unresolvedClaims: list[str] = Field(default_factory=list)
-
-    @field_validator("workflowRunId", "finalHandoffId")
-    @classmethod
-    def validate_ids(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        field_name = getattr(info, "field_name", "identifier")
-        return _validate_identifier(value, field_name)
-
-    @model_validator(mode="after")
-    def validate_ledger(self) -> "DecisionWorkflowRun":
-        if len(self.revisionRequests) > self.maxRevisions:
-            raise ValueError("Decision workflow exceeds its configured revision limit")
-
-        records: dict[str, DecisionRecord] = {}
-        record_positions: dict[str, int] = {}
-        active_by_decision: dict[str, str] = {}
-        for position, record in enumerate(self.decisionRecords):
-            if record.recordId in records:
-                raise ValueError("decisionRecords must have unique recordId values")
-            if record.decisionId in active_by_decision:
-                expected_parent = active_by_decision[record.decisionId]
-                if record.supersedes != expected_parent:
-                    raise ValueError(
-                        "Repeated decisions must supersede the current active record"
-                    )
-            elif record.supersedes is not None:
-                raise ValueError(
-                    "supersedes must reference an earlier matching decision"
-                )
-            if record.supersedes is not None:
-                parent = records.get(record.supersedes)
-                if parent is None or parent.decisionId != record.decisionId:
-                    raise ValueError(
-                        "supersedes must reference an earlier record for the same decision"
-                    )
-            records[record.recordId] = record
-            record_positions[record.recordId] = position
-            active_by_decision[record.decisionId] = record.recordId
-
-        verifications: dict[str, VerificationRecord] = {}
-        verified_records: set[str] = set()
-        for verification in self.verificationRecords:
-            if verification.verificationId in verifications:
-                raise ValueError(
-                    "verificationRecords must have unique verificationId values"
-                )
-            if verification.decisionRecordId not in records:
-                raise ValueError("Verification must reference an exact decision record")
-            if verification.decisionRecordId in verified_records:
-                raise ValueError("A decision record may have only one verification")
-            linked_record = records[verification.decisionRecordId]
-            if linked_record.verificationId != verification.verificationId:
-                raise ValueError(
-                    "Decision and verification references must agree exactly"
-                )
-            verifications[verification.verificationId] = verification
-            verified_records.add(verification.decisionRecordId)
-
-        revision_ids: set[str] = set()
-        revised_targets: set[str] = set()
-        revisions_by_target: dict[str, RevisionRequest] = {}
-        for revision in self.revisionRequests:
-            if revision.revisionId in revision_ids:
-                raise ValueError("revisionRequests must have unique revisionId values")
-            if revision.targetDecisionRecordId in revised_targets:
-                raise ValueError("A decision record may be revised only once")
-            target = records.get(revision.targetDecisionRecordId)
-            if target is None:
-                raise ValueError("Revision must reference an exact decision record")
-            revision_verification = verifications.get(revision.verificationId)
-            if (
-                revision_verification is None
-                or revision_verification.decisionRecordId
-                != revision.targetDecisionRecordId
-            ):
-                raise ValueError(
-                    "Revision must reference the target decision's verification"
-                )
-            if revision_verification.status == "passed" and (
-                revision.evidenceBundleId is None or not revision.evidenceIds
-            ):
-                raise ValueError(
-                    "Revising a passed decision requires exact downstream evidence"
-                )
-            if revision.replacementOptionId == target.selectedOptionId:
-                raise ValueError("Revision replacement must change the selected option")
-            if revision.evidenceBundleId == target.evidenceBundleId and (
-                revision.evidenceBundleSha256 != target.evidenceBundleSha256
-                or revision.availableEvidenceIds != target.availableEvidenceIds
-            ):
-                raise ValueError(
-                    "Revision evidence must match the target bundle exactly"
-                )
-            for invalidated_id in revision.invalidatesDecisionRecordIds:
-                if invalidated_id not in records:
-                    raise ValueError(
-                        "Revision invalidation must reference an exact decision record"
-                    )
-                if (
-                    record_positions[invalidated_id]
-                    <= record_positions[target.recordId]
-                ):
-                    raise ValueError(
-                        "Revision invalidation may reference only downstream decisions"
-                    )
-            revision_ids.add(revision.revisionId)
-            revised_targets.add(revision.targetDecisionRecordId)
-            revisions_by_target[revision.targetDecisionRecordId] = revision
-
-        invalidated_record_ids = {
-            record_id
-            for revision in self.revisionRequests
-            for record_id in revision.invalidatesDecisionRecordIds
-        }
-        for record in self.decisionRecords:
-            if record.supersedes is None:
-                continue
-            matching_revision = revisions_by_target.get(record.supersedes)
-            if (
-                matching_revision is None
-                and record.supersedes not in invalidated_record_ids
-            ):
-                raise ValueError("A superseding decision requires a revision request")
-            if (
-                matching_revision is not None
-                and matching_revision.replacementOptionId != record.selectedOptionId
-            ):
-                raise ValueError(
-                    "A superseding decision must select the requested replacement option"
-                )
-
-        active_record_ids = set(active_by_decision.values()).difference(
-            invalidated_record_ids
-        )
-        active_records = [records[record_id] for record_id in active_record_ids]
-        if self.status == "completed":
-            if self.finalHandoffId is None:
-                raise ValueError("completed workflows require finalHandoffId")
-            if self.pendingDecision is not None:
-                raise ValueError(
-                    "completed workflows cannot contain a pending decision"
-                )
-            for record in active_records:
-                verification_id = record.verificationId
-                active_verification = (
-                    verifications.get(verification_id)
-                    if verification_id is not None
-                    else None
-                )
-                if record.status in {"defer", "abstain"} or (
-                    active_verification is None
-                    or active_verification.status != "passed"
-                ):
-                    raise ValueError(
-                        "completed workflows require every active decision to pass"
-                    )
-        elif self.finalHandoffId is not None:
-            raise ValueError("Only completed workflows may reference a final handoff")
-
-        if self.status == "needsInput" and (
-            self.pendingDecision is None
-            and not any(record.status == "defer" for record in active_records)
-        ):
-            raise ValueError(
-                "needsInput workflows require a pending or active defer decision"
-            )
-        if self.status != "needsInput" and self.pendingDecision is not None:
-            raise ValueError("Only needsInput workflows may contain a pending decision")
-        if self.status == "abstained" and not any(
-            record.status == "abstain" for record in active_records
-        ):
-            raise ValueError("abstained workflows require an active abstain decision")
-        return self
-
-    def invalidated_decision_record_ids(self) -> set[str]:
-        """Return records invalidated by accepted revision requests."""
-        return {
-            record_id
-            for revision in self.revisionRequests
-            for record_id in revision.invalidatesDecisionRecordIds
-        }
-
-    def active_decision_records(self) -> list[DecisionRecord]:
-        """Return active records in their original transition order."""
-        superseded = {
-            record.supersedes
-            for record in self.decisionRecords
-            if record.supersedes is not None
-        }
-        invalidated = self.invalidated_decision_record_ids()
-        inactive = superseded | invalidated
-        return [
-            record for record in self.decisionRecords if record.recordId not in inactive
-        ]
-
-
 class DeterministicDecisionAuditor:
     """Cross-check a decision against its authoritative spec and evidence bundle."""
 
@@ -872,7 +505,7 @@ class DeterministicDecisionAuditor:
         record: DecisionRecord,
         *,
         created_at_ns: int = 0,
-    ) -> VerificationRecord:
+    ) -> list[VerificationCheck]:
         """Return a deterministic verification without repairing invalid output."""
         checks: list[VerificationCheck] = []
         evidence_sha256 = (
@@ -1016,16 +649,7 @@ class DeterministicDecisionAuditor:
                 record.overrideEvidenceIds,
             )
 
-        verification_status: VerificationStatus = (
-            "failed" if any(check.status == "failed" for check in checks) else "passed"
-        )
-        return VerificationRecord(
-            verificationId=f"verification:{record.recordId}",
-            decisionRecordId=record.recordId,
-            status=verification_status,
-            checks=checks,
-            createdAtNs=created_at_ns,
-        )
+        return checks
 
 
 __all__ = [
@@ -1037,16 +661,12 @@ __all__ = [
     "DecisionSource",
     "DecisionSpec",
     "DecisionStatus",
-    "DecisionWorkflowRun",
     "DecisionWorkflowStatus",
     "DeterministicDecisionAuditor",
     "EvidenceBundle",
     "EvidenceClass",
-    "PendingDecision",
     "ProtectedVariableEffect",
     "ProtectedVariableEffectStatus",
-    "RevisionRequest",
     "VerificationCheck",
-    "VerificationRecord",
     "VerificationStatus",
 ]

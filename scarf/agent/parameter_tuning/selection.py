@@ -330,6 +330,14 @@ def harmony_acceptance_gate(
         if not native_scores or not harmony_scores:
             reasons.append(f"Protected comparison is missing for {column!r}.")
             continue
+        missing_metrics = sorted(
+            {"clisi", "graphConnectivity"} - (set(native_scores) & set(harmony_scores))
+        )
+        if missing_metrics:
+            reasons.append(
+                f"Required protected metrics {missing_metrics} are missing for {column!r}."
+            )
+            continue
         if set(native_scores) != set(harmony_scores):
             reasons.append(f"Protected metrics do not align for {column!r}.")
             continue

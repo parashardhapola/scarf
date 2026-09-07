@@ -4,7 +4,6 @@ import re
 
 from ...features.gene_reference import species_registry
 from ...utils.logging import logger
-from .._deps import AGENT_INSTALL_HINT
 from ..types import AgentRunInfo
 from .contracts import (
     DataEnrichmentContext,
@@ -14,11 +13,6 @@ from .contracts import (
     FeatureSelectionPolicy,
     StudyContextSummary,
 )
-
-try:
-    from pydantic_ai import UnexpectedModelBehavior, UsageLimitExceeded
-except ImportError as exc:
-    raise ImportError(AGENT_INSTALL_HINT) from exc
 
 _SUPPORTED_SPECIES = species_registry()
 
@@ -285,109 +279,25 @@ def validate_data_enrichment_report(
     return report
 
 
-def pending_data_enrichment_report(
-    deps: DataEnrichmentDependencies,
-    *,
-    error: UnexpectedModelBehavior | UsageLimitExceeded,
-    model_name: str,
-) -> DataEnrichmentReport:
-    """Pause after deterministic inspection when no valid policy was selected."""
-    if set(deps.inspections) != set(deps.assays):
-        raise error
-    error_detail = str(error).replace("\n", " ").strip()[:500]
-    report = DataEnrichmentReport(
-        status="needsInput",
-        studyContextSummary=StudyContextSummary.get_blank(),
-        unresolvedQuestions=[
-            "The Data Enrichment agent did not produce a validated feature policy. "
-            "Provide explicit organism and representation-feature intent."
-        ],
-        limitations=[
-            "No scientific feature policy was selected after model failure.",
-            error_detail,
-        ],
-        runInfo=AgentRunInfo(
-            agentName="data_enrichment_needs_input",
-            modelName=model_name,
-        ),
-    )
-    validated = validate_data_enrichment_report(deps, report)
-    logger.warning(
-        "Data Enrichment paused without a scientific selection: "
-        f"assays={len(validated.inspections)}, evidence={len(validated.evidenceIds)}, "
-        f"reason={error_detail}"
-    )
-    return validated
-
-
-def deterministic_data_enrichment_report(
+def failed_data_enrichment_report(
     deps: DataEnrichmentDependencies,
     *,
     error: Exception,
     model_name: str,
 ) -> DataEnrichmentReport:
-    """Use inspected feature evidence when an unattended model run is invalid."""
-    if set(deps.inspections) != set(deps.assays):
-        raise error
-    policies = []
-    for assay in deps.assays:
-        inspection = deps.inspections[assay]
-        evidence_ids = list(inspection.evidenceIds)
-        if not evidence_ids:
-            raise ValueError(f"Assay {assay!r} has no deterministic feature evidence")
-        policies.append(
-            FeatureSelectionPolicy(
-                assay=assay,
-                species=(
-                    inspection.species
-                    if inspection.species in {*_SUPPORTED_SPECIES, "unknown"}
-                    else "unknown"
-                ),
-                speciesConfidence=(
-                    "high" if inspection.species in _SUPPORTED_SPECIES else "unknown"
-                ),
-                speciesRationale=(
-                    inspection.speciesReason
-                    or "Feature inspection did not resolve a supported species."
-                ),
-                excludeFamilies=[
-                    item.family
-                    for item in inspection.families
-                    if item.defaultExclude is True
-                ],
-                protectFamilies=[
-                    item.family
-                    for item in inspection.families
-                    if item.defaultExclude is False
-                ],
-                rationale=(
-                    "Use the exact observed default-exclusion families as the "
-                    "initial representation-sensitivity policy."
-                ),
-                evidenceIds=evidence_ids,
-            )
-        )
-    summary = StudyContextSummary(
-        organismReferences=(
-            [deps.context.organismHint] if deps.context.organismHint else []
-        ),
-        tissueReferences=list(deps.context.tissueReferences),
-        cellTypeReferences=list(deps.context.cellTypeReferences),
-        experimentalReferences=list(deps.context.experimentalDetails),
-    )
-    error_detail = str(error).replace("\n", " ").strip()[:500]
-    report = DataEnrichmentReport(
-        status="done",
-        policies=policies,
-        studyContextSummary=summary,
-        limitations=[
-            "The model feature-policy output was invalid; the workflow used only "
-            "deterministic assay inspection evidence.",
-            error_detail,
+    """Retain observed inspection evidence without selecting a policy after failure."""
+    context = _ground_study_context_summary(deps.context, StudyContextSummary())
+    return DataEnrichmentReport(
+        status="failed",
+        inspections=[
+            deps.inspections[name] for name in deps.assays if name in deps.inspections
         ],
-        runInfo=AgentRunInfo(
-            agentName="data_enrichment_deterministic",
-            modelName=model_name,
-        ),
+        studyContextSummary=context,
+        toolCalls=list(deps.toolCalls),
+        evidenceIds=sorted({*deps.evidenceIds, *context.evidenceIds}),
+        limitations=[
+            "No scientific feature policy was selected after model failure.",
+            str(error).replace("\n", " ").strip()[:500],
+        ],
+        runInfo=AgentRunInfo(agentName="data_enrichment_failed", modelName=model_name),
     )
-    return validate_data_enrichment_report(deps, report)

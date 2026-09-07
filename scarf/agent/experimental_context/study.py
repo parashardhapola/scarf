@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from ..types import AgentDataModel
+from .contracts import CovariateComparison
 
 type AuthorLabelPolicy = Literal["holdout", "preservation"]
 type ProcessingGoal = Literal[
@@ -33,6 +34,11 @@ class StudyContract(AgentDataModel):
     conditionColumns: list[str] = Field(default_factory=list)
     technicalBatchColumns: list[str] = Field(default_factory=list)
     protectedColumns: list[str] = Field(default_factory=list)
+    protectedCombinations: list[list[str]] = Field(default_factory=list)
+    unsupportedProtection: list[str] = Field(default_factory=list)
+    columnKinds: dict[str, Literal["categorical", "continuous"]] = Field(
+        default_factory=dict
+    )
     authorLabelPolicy: AuthorLabelPolicy = "holdout"
     correctionLicense: CorrectionLicense = "notApplicable"
     allowedClaims: list[str] = Field(default_factory=list)
@@ -62,41 +68,44 @@ class StudyContract(AgentDataModel):
             raise ValueError("Technical batch columns cannot also be condition columns")
         if self.correctionLicense == "safe" and not self.technicalBatchColumns:
             raise ValueError("A safe correction license requires batch columns")
+        if any(
+            len(columns) != 2
+            or len(set(columns)) != 2
+            or not set(columns).issubset(self.protectedColumns)
+            for columns in self.protectedCombinations
+        ):
+            raise ValueError(
+                "Protected combinations require two distinct protected columns"
+            )
         return self
 
     @classmethod
     def get_blank(cls) -> "StudyContract":
         return cls(studyContext="Study context", studyObjective="Study objective")
 
-    @classmethod
-    def get_example(cls) -> "StudyContract":
-        return cls(
-            studyContext="Treated and control blood samples from multiple donors.",
-            studyObjective=(
-                "Discover stable populations while preserving treatment-associated "
-                "structure."
-            ),
-            processingGoal="conditionPreservingDiscovery",
-            scientificQuestions=[
-                "Discover stable populations while preserving treatment-associated "
-                "structure."
-            ],
-            physicalCaptureColumn="sample",
-            independentUnitColumns=["donor"],
-            conditionColumns=["treatment"],
-            technicalBatchColumns=["batch"],
-            protectedColumns=["treatment", "donor"],
-            correctionLicense="safe",
-            allowedClaims=["Describe reproducible population structure."],
-            unsupportedClaims=[
-                "This workflow does not test differential-expression hypotheses."
-            ],
-            evidenceIds=["column:batch", "column:donor", "column:treatment"],
-        )
-
 
 def _unique(values: Iterable[str | None]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def unsupported_comparison_limitations(
+    comparisons: Iterable[CovariateComparison],
+) -> list[str]:
+    """Describe unsupported comparisons without implying a scientific finding."""
+
+    limitations = []
+    for comparison in comparisons:
+        if comparison.status == "unsupported":
+            proposal = comparison.proposal
+            limitations.append(
+                f"Unresolved design comparison {comparison.evidenceId}: "
+                f"{proposal.response} against {', '.join(proposal.explanatoryColumns)} "
+                f"using observation unit {proposal.observationUnit!r} and "
+                f"independent unit {proposal.independentUnit or proposal.observationUnit!r}; "
+                f"reasons={', '.join(comparison.reasons) or 'unsupported evidence'}. "
+                "This comparison provides no supported association or absence finding."
+            )
+    return limitations
 
 
 def build_study_contract(
@@ -118,7 +127,18 @@ def build_study_contract(
     independent_units = _unique(
         unit.independentUnit for unit in decision.unitsOfInference.values()
     )
-    protected = _unique([*conditions, *independent_units, *batch_plan.preserveColumns])
+    protected = _unique(
+        [
+            *conditions,
+            *independent_units,
+            *batch_plan.preserveColumns,
+            *(
+                column
+                for columns in decision.protectedCombinations
+                for column in columns
+            ),
+        ]
+    )
     assessed_batch_columns = _unique(
         [
             *batch_plan.batchColumns,
@@ -154,7 +174,12 @@ def build_study_contract(
             *(item.evidenceId for item in experimental_result.batchSafety),
         ]
     )
-    limitations = list(experimental_result.notes)
+    limitations = [
+        *experimental_result.notes,
+        *unsupported_comparison_limitations(
+            experimental_result.characterization.comparisons
+        ),
+    ]
     if physical_capture_column is None:
         limitations.append(
             "Physical capture identity is unresolved; capture-aware doublet removal "
@@ -175,6 +200,15 @@ def build_study_contract(
         conditionColumns=conditions,
         technicalBatchColumns=assessed_batch_columns,
         protectedColumns=protected,
+        protectedCombinations=[
+            list(columns) for columns in decision.protectedCombinations
+        ],
+        unsupportedProtection=list(decision.unsupportedProtection),
+        columnKinds={
+            record["name"]: record["kind"]
+            for record in experimental_result.characterization.columns
+            if record.get("kind") in {"categorical", "continuous"}
+        },
         authorLabelPolicy=author_label_policy,
         correctionLicense=correction_license,
         allowedClaims=[

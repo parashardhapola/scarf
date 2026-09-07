@@ -1,5 +1,7 @@
 """Tests for the read-only data enrichment agent."""
 
+from tests.agent_examples import example
+
 import asyncio
 from types import SimpleNamespace
 
@@ -133,7 +135,7 @@ def test_data_enrichment_models_have_factories_and_camelcase_fields() -> None:
 
     for model_type in model_types:
         assert isinstance(model_type.get_blank(), model_type)
-        assert isinstance(model_type.get_example(), model_type)
+        assert isinstance(example(model_type), model_type)
         assert all("_" not in field_name for field_name in model_type.model_fields)
 
 
@@ -490,7 +492,7 @@ def test_data_enrichment_retries_hallucinated_features(
     assert state["request"] == 3
 
 
-def test_data_enrichment_pauses_after_completed_inspection_without_selection(
+def test_data_enrichment_fails_after_completed_inspection_without_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scarf.agent.data_enrichment import tools as module
@@ -521,10 +523,10 @@ def test_data_enrichment_pauses_after_completed_inspection_without_selection(
         context=DataEnrichmentContext(organismHint="human"),
     )
 
-    assert result.status == "needsInput"
-    assert result.runInfo.agentName == "data_enrichment_needs_input"
+    assert result.status == "failed"
+    assert result.runInfo.agentName == "data_enrichment_failed"
     assert result.policies == []
-    assert result.unresolvedQuestions
+    assert result.unresolvedQuestions == []
     assert result.inspections[0].species == "unknown"
     assert "No scientific feature policy was selected" in result.limitations[0]
     assert tool_retries == {
@@ -533,10 +535,11 @@ def test_data_enrichment_pauses_after_completed_inspection_without_selection(
     }
 
 
-def test_unattended_data_enrichment_uses_inspected_policy_after_model_failure(
+def test_data_enrichment_preserves_validated_policy_uncertainty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scarf.agent.data_enrichment import tools as module
+    from scarf.agent.types import AgentRunInfo
 
     store = ReadOnlyStore()
     monkeypatch.setattr(
@@ -545,26 +548,36 @@ def test_unattended_data_enrichment_uses_inspected_policy_after_model_failure(
         lambda *_args, **_kwargs: characterization(),
     )
 
-    def unavailable_structured_output(**kwargs: object) -> None:
+    def unresolved_structured_output(**kwargs: object) -> SimpleNamespace:
         deps = kwargs["deps"]
         assert isinstance(deps, DataEnrichmentDependencies)
         asyncio.run(module.inspect_assay_features_batch(SimpleNamespace(deps=deps)))
-        raise UnexpectedModelBehavior("structured output unavailable")
+        return SimpleNamespace(
+            output=DataEnrichmentReport(
+                status="needsInput",
+                unresolvedQuestions=[
+                    "The objective does not resolve which response genes must be protected."
+                ],
+            ),
+            runInfo=AgentRunInfo(agentName="data_enrichment", modelName="test-model"),
+        )
 
     monkeypatch.setattr(
         data_enrichment_agent_module,
         "run_agent_sync",
-        unavailable_structured_output,
+        unresolved_structured_output,
     )
-    result = DataEnrichmentAgent(object(), unattended=True).run(
+    result = DataEnrichmentAgent(object()).run(
         store,
         context=DataEnrichmentContext(organismHint="human"),
     )
 
-    assert result.status == "done"
-    assert [policy.assay for policy in result.policies] == ["RNA"]
-    assert result.unresolvedQuestions == []
-    assert result.runInfo.agentName == "data_enrichment_deterministic"
+    assert result.status == "needsInput"
+    assert result.policies == []
+    assert result.unresolvedQuestions == [
+        "The objective does not resolve which response genes must be protected."
+    ]
+    assert result.runInfo.agentName == "data_enrichment"
 
 
 def test_feature_lookup_cache_rejects_different_arguments() -> None:
@@ -1110,23 +1123,18 @@ def test_data_enrichment_report_rejects_incomplete_assay_inventory() -> None:
         )
 
 
-def test_deterministic_enrichment_requires_complete_inspection_evidence() -> None:
-    error = RuntimeError("model failed")
-    incomplete = DataEnrichmentDependencies(
-        store=ReadOnlyStore(),
-        assays=["RNA"],
-    )
-    with pytest.raises(RuntimeError, match="model failed"):
-        data_enrichment_validation.deterministic_data_enrichment_report(
-            incomplete,
-            error=error,
+def test_failed_enrichment_retains_partial_evidence_without_inventing_policy() -> None:
+    incomplete = DataEnrichmentDependencies(store=ReadOnlyStore(), assays=["RNA"])
+    for inspections in (
+        {},
+        {"RNA": AssayFeatureInspection(assay="RNA", species="unknown")},
+    ):
+        failed = data_enrichment_validation.failed_data_enrichment_report(
+            incomplete.model_copy(update={"inspections": inspections}),
+            error=RuntimeError("model failed"),
             model_name="test",
         )
-
-    empty_inspection = AssayFeatureInspection(assay="RNA", species="unknown")
-    with pytest.raises(ValueError, match="no deterministic feature evidence"):
-        data_enrichment_validation.deterministic_data_enrichment_report(
-            incomplete.model_copy(update={"inspections": {"RNA": empty_inspection}}),
-            error=error,
-            model_name="test",
-        )
+        assert failed.status == "failed"
+        assert failed.policies == []
+        assert failed.inspections == list(inspections.values())
+        assert "model failed" in failed.limitations

@@ -21,14 +21,11 @@ from ..experimental_context.contracts import (
 from ..experimental_context.study import build_study_contract
 from ..ingest import IngestResult
 from ..ingest.manifest import DatasetManifest, is_author_label_column
-from ..persistence.contracts import (
-    AgentInvocation,
-    AgentReportReference,
-    AgentWorkflowRun,
-)
 from ..types import AgentRunInfo, ArtifactReferenceModel
 from . import journal
 from .models import (
+    WorkflowIdentity,
+    StageEvidenceReference,
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
     WorkflowNeedsInput,
@@ -118,7 +115,7 @@ class ContextStagesMixin:
         self,
         store: DataStore,
         prefix: str,
-        workflow: AgentWorkflowRun,
+        workflow: WorkflowIdentity,
         request_record: OrchestrationRequestRecord,
         ingest_result: IngestResult,
         dataset_manifest: DatasetManifest | None = None,
@@ -132,7 +129,7 @@ class ContextStagesMixin:
             [],
         )
         if existing is not None:
-            logger.info(
+            logger.debug(
                 f"Workflow {workflow.workflowRunId}: reusing persisted ingest stage"
             )
             return existing
@@ -184,7 +181,7 @@ class ContextStagesMixin:
             notes=ingest_result.notes,
         )
         journal._save_outcome(store.zw, prefix, outcome)
-        logger.info(
+        logger.debug(
             f"Workflow {workflow.workflowRunId}: ingest recorded "
             f"{len(ingest_result.assayNames)} assay(s)"
         )
@@ -193,7 +190,7 @@ class ContextStagesMixin:
     def data_enrichment_stage(
         self,
         store: DataStore,
-        workflow: AgentWorkflowRun,
+        workflow: WorkflowIdentity,
         request_record: OrchestrationRequestRecord,
         parents: Sequence[WorkflowStageLink],
         cell_selection: ArtifactReferenceModel,
@@ -212,7 +209,7 @@ class ContextStagesMixin:
             parents,
         )
         if existing is not None:
-            logger.info(
+            logger.debug(
                 f"Workflow {workflow.workflowRunId}: reusing Data Enrichment report"
             )
             report = journal.load_stage_report(store, existing, DataEnrichmentReport)
@@ -228,7 +225,7 @@ class ContextStagesMixin:
             return existing, report
         request = request_record.request
         selected_assays = [selected]
-        logger.info(
+        logger.debug(
             f"Workflow {workflow.workflowRunId}: Data Enrichment will inspect "
             f"{len(selected_assays)} assay(s)"
         )
@@ -277,7 +274,6 @@ class ContextStagesMixin:
             recovered = journal._recover_persisted_stage_report(
                 store,
                 started,
-                agent_name="data_enrichment",
                 expected_type=DataEnrichmentReport,
             )
             if recovered is not None:
@@ -285,13 +281,12 @@ class ContextStagesMixin:
                 report = cast(DataEnrichmentReport, recovered_report)
                 actions.append("recover_persisted_data_enrichment_report")
             else:
-                logger.info(
+                logger.debug(
                     f"Workflow {workflow.workflowRunId}: invoking Data Enrichment"
                 )
                 agent = DataEnrichmentAgent(
                     self.model,
                     config=request_record.config.agentRunConfig,
-                    unattended=request_record.config.inputPolicy == "unattended",
                 )
                 report = agent.run(
                     store,
@@ -304,22 +299,10 @@ class ContextStagesMixin:
                     store,
                     started,
                     report,
-                    invocation=AgentInvocation(
-                        agentName="data_enrichment",
-                        inputs={
-                            "context": enrichment_context.model_dump(mode="json"),
-                            "assays": selected_assays,
-                            "cellSelection": cell_selection.model_dump(mode="json"),
-                            "cacheDir": request_record.config.cacheDir,
-                            "allowDownload": request_record.config.allowDownloads,
-                        },
-                        artifacts={"cellSelection": cell_selection},
-                        runConfig=agent.config,
-                    ),
                     expected_type=DataEnrichmentReport,
                 )
                 report = cast(DataEnrichmentReport, saved_report)
-            logger.info(
+            logger.debug(
                 f"Workflow {workflow.workflowRunId}: Data Enrichment returned "
                 f"status={report.status!r}, policies={len(report.policies)}, "
                 f"inspections={len(report.inspections)}"
@@ -387,10 +370,6 @@ class ContextStagesMixin:
                     notes=report.limitations,
                 )
             journal._save_outcome(store.zw, prefix, outcome)
-            if outcome.status == "failed":
-                journal.finalize_failed(
-                    store, workflow, outcome.error or "enrichment failed"
-                )
             return outcome, report
         except Exception as exc:
             outcome = journal.finish_exception(
@@ -405,10 +384,10 @@ class ContextStagesMixin:
             )
             return outcome, DataEnrichmentReport.get_blank()
 
-    def _hto_stage(
+    def _rna_quality_metrics_stage(
         self,
         store: DataStore,
-        workflow: AgentWorkflowRun,
+        workflow: WorkflowIdentity,
         request_record: OrchestrationRequestRecord,
         parents: Sequence[WorkflowStageLink],
         enrichment: DataEnrichmentReport,
@@ -430,7 +409,7 @@ class ContextStagesMixin:
             store,
             prefix,
             workflow.workflowRunId,
-            "hto_demultiplexing",
+            "rna_quality_metrics",
             request_record,
             parents,
         )
@@ -449,17 +428,15 @@ class ContextStagesMixin:
                 raise ValueError(
                     "Saved automatic HTO processing is unsupported; start a new RNA workflow."
                 )
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: reusing RNA quality metrics"
-            )
+            logger.info("Reusing RNA quality metrics")
             return existing
         cell_selection_ref = artifact_model_to_ref(cell_selection)
-        logger.info(f"Workflow {workflow.workflowRunId}: computing RNA quality metrics")
+        logger.info("Computing RNA quality metrics")
         started = journal._start_attempt(
             store.zw,
             prefix,
             workflow.workflowRunId,
-            "hto_demultiplexing",
+            "rna_quality_metrics",
             request_record,
             parents,
             inputs={
@@ -585,9 +562,7 @@ class ContextStagesMixin:
                 actions=actions,
             )
             journal._save_outcome(store.zw, prefix, outcome)
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: RNA quality metrics completed"
-            )
+            logger.info("RNA quality metrics completed")
             return outcome
         except Exception as exc:
             return journal.finish_exception(
@@ -604,11 +579,11 @@ class ContextStagesMixin:
     def experimental_context_stage(
         self,
         store: DataStore,
-        workflow: AgentWorkflowRun,
+        workflow: WorkflowIdentity,
         request_record: OrchestrationRequestRecord,
         parents: Sequence[WorkflowStageLink],
         cell_selection: ArtifactReferenceModel,
-        enrichment_reference: AgentReportReference,
+        enrichment_reference: StageEvidenceReference,
         quality_metric_artifacts: Sequence[NamedArtifactSource],
         hto_identity_artifacts: Sequence[NamedArtifactSource],
         answers: Mapping[str, Any],
@@ -635,7 +610,7 @@ class ContextStagesMixin:
             parents,
         )
         if existing is not None:
-            logger.info(
+            logger.debug(
                 f"Workflow {workflow.workflowRunId}: reusing Experimental Context "
                 "report"
             )
@@ -660,14 +635,6 @@ class ContextStagesMixin:
                 raise ValueError(
                     "Persisted Experimental Context HTO artifacts are stale"
                 )
-            record = journal.load_agent_record(
-                store,
-                existing.reportReferences[0],
-            )
-            if record.invocation.artifacts != context_artifacts:
-                raise ValueError(
-                    "Persisted Experimental Context invocation artifacts are stale"
-                )
             return existing, resolved_report
         cell_selection_ref = artifact_model_to_ref(cell_selection)
         paused = journal._validated_done_outcome(
@@ -680,7 +647,6 @@ class ContextStagesMixin:
             required_status="needsInput",
         )
         directions = dict(request_record.request.experimentalDirections)
-        directions["registeredQcOnly"] = True
         supplied_directions = answers.get("experimentalDirections")
         if isinstance(supplied_directions, Mapping):
             directions.update(dict(supplied_directions))
@@ -754,7 +720,7 @@ class ContextStagesMixin:
             },
             resume_record=resume_record,
         )
-        logger.info(
+        logger.debug(
             f"Workflow {workflow.workflowRunId}: Experimental Context will evaluate "
             f"{len(quality_metric_artifacts)} quality metric artifact(s) and "
             f"{len(hto_identity_artifacts)} HTO identity artifact(s)"
@@ -779,20 +745,13 @@ class ContextStagesMixin:
             recovered = journal._recover_persisted_stage_report(
                 store,
                 started,
-                agent_name="experimental_context",
                 expected_type=ExperimentalContextResult,
             )
             if recovered is not None:
                 recovered_report, reference = recovered
                 report = cast(ExperimentalContextResult, recovered_report)
-                recovered_record = journal.load_agent_record(store, reference)
-                if recovered_record.invocation.artifacts != context_artifacts:
-                    raise ValueError(
-                        "Recovered Experimental Context invocation artifacts are stale"
-                    )
                 actions.append("recover_persisted_experimental_context_report")
             else:
-                parent_reports = [journal._report_link(enrichment_reference)]
                 if unsafe_resolution == "skip" or no_inference_resolution:
                     assert paused is not None
                     if not paused.reportReferences:
@@ -820,14 +779,6 @@ class ContextStagesMixin:
                     ):
                         raise ValueError(
                             "Paused Experimental Context exact inputs are stale"
-                        )
-                    paused_record = journal.load_agent_record(
-                        store,
-                        paused.reportReferences[0],
-                    )
-                    if paused_record.invocation.artifacts != context_artifacts:
-                        raise ValueError(
-                            "Paused Experimental Context invocation artifacts are stale"
                         )
                     prior_plan = prior_report.decision.batchCorrection
                     if no_inference_resolution:
@@ -887,19 +838,14 @@ class ContextStagesMixin:
                         }
                     )
                     actions.append(resolution_action)
-                    parent_reports.append(
-                        journal._report_link(paused.reportReferences[0])
-                    )
-                    run_config = paused_record.invocation.runConfig
                 else:
-                    logger.info(
+                    logger.debug(
                         f"Workflow {workflow.workflowRunId}: invoking Experimental "
                         "Context"
                     )
                     agent = ExperimentalContextAgent(
                         self.model,
                         config=request_record.config.agentRunConfig,
-                        unattended=request_record.config.inputPolicy == "unattended",
                     )
                     report = agent.run(
                         store,
@@ -911,35 +857,10 @@ class ContextStagesMixin:
                         quality_metric_artifacts=quality_metric_artifacts,
                         hto_identity_artifacts=hto_identity_artifacts,
                     )
-                    run_config = agent.config
                 saved_report, reference = journal._save_stage_report(
                     store,
                     started,
                     report,
-                    invocation=AgentInvocation(
-                        agentName="experimental_context",
-                        parentReports=parent_reports,
-                        inputs={
-                            "studyContext": request_record.request.studyContext,
-                            "studyObjective": request_record.request.studyObjective,
-                            "cellSelection": cell_selection.model_dump(mode="json"),
-                            "directions": directions,
-                            "qualityMetricArtifacts": [
-                                source.model_dump(mode="json")
-                                for source in quality_metric_artifacts
-                            ],
-                            "htoIdentityArtifacts": [
-                                source.model_dump(mode="json")
-                                for source in hto_identity_artifacts
-                            ],
-                            "unsafeResolution": unsafe_resolution,
-                            "deterministicResolution": (
-                                actions[-1] if actions else None
-                            ),
-                        },
-                        artifacts=context_artifacts,
-                        runConfig=run_config,
-                    ),
                     expected_type=ExperimentalContextResult,
                 )
                 report = cast(ExperimentalContextResult, saved_report)
@@ -957,7 +878,7 @@ class ContextStagesMixin:
                 raise ValueError(
                     "Experimental Context returned different HTO identity artifacts"
                 )
-            logger.info(
+            logger.debug(
                 f"Workflow {workflow.workflowRunId}: Experimental Context returned "
                 f"status={report.status!r}, batchAction="
                 f"{report.decision.batchCorrection.action!r}"
@@ -1005,7 +926,6 @@ class ContextStagesMixin:
                 )
             elif (
                 report.decision.batchCorrection.action == "unsafe"
-                and not request_record.config.runConfoundedHarmonyDiagnostic
                 and request_record.config.inputPolicy != "unattended"
             ):
                 batch_plan = report.decision.batchCorrection
@@ -1053,7 +973,8 @@ class ContextStagesMixin:
                     study_objective=request_record.request.studyObjective,
                     experimental_result=report,
                     author_label_policy=(request_record.request.authorLabelPolicy),
-                    physical_capture_column=physical_capture,
+                    physical_capture_column=report.decision.physicalCaptureColumn
+                    or physical_capture,
                 )
                 outcome = journal._complete_attempt(
                     started,
@@ -1081,10 +1002,6 @@ class ContextStagesMixin:
                     notes=report.notes,
                 )
             journal._save_outcome(store.zw, prefix, outcome)
-            if outcome.status == "failed":
-                journal.finalize_failed(
-                    store, workflow, outcome.error or "context failed"
-                )
             return outcome, report
         except Exception as exc:
             outcome = journal.finish_exception(

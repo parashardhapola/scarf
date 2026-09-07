@@ -1,8 +1,9 @@
 """Tests for shared Scarf agent execution and configuration."""
 
+from tests.agent_examples import example
+
 import asyncio
 import json
-import sys
 import threading
 
 import httpx
@@ -23,7 +24,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 
-from scarf.agent import CovariateCharacterization, FeatureCharacterization, IngestResult
+from scarf.agent.experimental_context.contracts import CovariateCharacterization
+from scarf.agent.data_enrichment.characterization import FeatureCharacterization
+from scarf.agent.ingest import IngestResult
 from scarf.agent.config.agent_exec import (
     _image_input_is_unsupported,
     _model_name,
@@ -91,134 +94,25 @@ def test_shared_models_have_blank_and_example_constructors() -> None:
     )
     for model in models:
         assert isinstance(model.get_blank(), model)
-        assert isinstance(model.get_example(), model)
+        assert isinstance(example(model), model)
         assert all("_" not in field_name for field_name in model.model_fields)
 
 
-def test_four_agent_objects_are_public() -> None:
-    import scarf.agent as agent_package
+def test_focused_scientific_agents_remain_available_in_their_subpackages() -> None:
+    from scarf.agent.biological_interpretation import BiologicalInterpretationAgent
+    from scarf.agent.data_enrichment import DataEnrichmentAgent
+    from scarf.agent.experimental_context import ExperimentalContextAgent
+    from scarf.agent.parameter_tuning import ParameterTuningAgent
 
-    assert agent_package.DataEnrichmentAgent.__name__ == "DataEnrichmentAgent"
-    assert agent_package.ExperimentalContextAgent.__name__ == "ExperimentalContextAgent"
-    assert agent_package.ParameterTuningAgent.__name__ == "ParameterTuningAgent"
-    assert (
-        agent_package.BiologicalInterpretationAgent.__name__
-        == "BiologicalInterpretationAgent"
+    assert all(
+        callable(agent)
+        for agent in (
+            DataEnrichmentAgent,
+            ExperimentalContextAgent,
+            ParameterTuningAgent,
+            BiologicalInterpretationAgent,
+        )
     )
-
-
-def test_agent_facade_exports_remain_stable() -> None:
-    import scarf.agent as agent_package
-
-    expected = {
-        "AgentInvocation",
-        "AgentName",
-        "AgentOrchestrator",
-        "AgentPersistenceTarget",
-        "AgentReport",
-        "AgentReportLink",
-        "AgentReportRecord",
-        "AgentReportReference",
-        "AgentReportType",
-        "AgentRunConfig",
-        "AgentTerminalStatus",
-        "AgentWorkflowRun",
-        "AgentWorkflowStatus",
-        "AssayPreprocessingPlan",
-        "AutomatedPreprocessingPlan",
-        "AutomatedWorkflowConfig",
-        "AutomatedWorkflowRequest",
-        "AutomatedWorkflowResult",
-        "AutomatedWorkflowResumeRequest",
-        "BatchSafetyEvidence",
-        "BiologicalContext",
-        "BiologicalInterpretationAgent",
-        "BiologicalInterpretationReport",
-        "CellQcPlan",
-        "CovariateCharacterization",
-        "DataEnrichmentAgent",
-        "DataEnrichmentContext",
-        "DataEnrichmentReport",
-        "Decision",
-        "DecisionEvidence",
-        "DecisionOption",
-        "DecisionRecord",
-        "DecisionSelection",
-        "DecisionSpec",
-        "DecisionValidationError",
-        "DecisionWorkflowRun",
-        "DeterministicDecisionAuditor",
-        "DatasetManifest",
-        "DatasetManifestDecision",
-        "EvidenceBundle",
-        "EvidenceItem",
-        "ExperimentalBiologyHandoff",
-        "ExperimentalContextAgent",
-        "ExperimentalContextResult",
-        "ExperimentalTuningHandoff",
-        "FeatureCharacterization",
-        "FinalAnalysisHandoff",
-        "FinalGraphSelection",
-        "IngestResult",
-        "IntegrationCandidateEvaluation",
-        "IntegrationMetrics",
-        "NamedArtifactSource",
-        "NativeAnalysisHandoff",
-        "NeedsInput",
-        "ParameterCandidate",
-        "ParameterSearchPlan",
-        "ParameterTuningAgent",
-        "ParameterTuningAssayInput",
-        "ParameterTuningReport",
-        "PendingDecision",
-        "PreprocessedAssayHandoff",
-        "ProtectedVariableEffect",
-        "RevisionRequest",
-        "StageResult",
-        "StageStatus",
-        "StudyContextSummary",
-        "StudyContract",
-        "TuningBiologyHandoff",
-        "VerificationCheck",
-        "VerificationRecord",
-        "WorkflowNeedsInput",
-        "WorkflowQuestion",
-        "WorkflowStageAttempt",
-        "WorkflowStageLink",
-        "analyze_rna",
-        "characterize_covariates",
-        "characterize_features",
-        "check_runtime",
-        "create_agent_workflow",
-        "decide",
-        "detect_format",
-        "finalize_agent_workflow",
-        "generate_agent_report",
-        "get_default_parameter_candidates",
-        "ingest",
-        "inspect_h5ad_manifest",
-        "list_agent_reports",
-        "list_agent_workflows",
-        "load_agent_record",
-        "load_agent_report",
-        "load_agent_workflow",
-        "load_env",
-        "run_agent",
-        "run_agent_sync",
-        "save_agent_report",
-        "tune_parameters",
-    }
-
-    assert set(agent_package.__all__) == expected
-    assert agent_package._deps is not None
-    assert {
-        "scarf.agent.biological_interpretation",
-        "scarf.agent.data_enrichment",
-        "scarf.agent.experimental_context",
-        "scarf.agent.parameter_tuning",
-        "scarf.agent.persistence",
-        "scarf.agent.report",
-    } <= sys.modules.keys()
 
 
 def test_model_settings_disable_thinking_across_provider_shapes() -> None:
@@ -420,7 +314,7 @@ def test_sync_runner_records_only_function_tool_calls() -> None:
             parts=[
                 ToolCallPart(
                     tool_name=info.output_tools[0].name,
-                    args=ExampleOutput.get_example().model_dump(),
+                    args=example(ExampleOutput).model_dump(),
                 )
             ]
         )
@@ -434,7 +328,7 @@ def test_sync_runner_records_only_function_tool_calls() -> None:
         name="example-agent",
     )
 
-    assert result.output == ExampleOutput.get_example()
+    assert result.output == example(ExampleOutput)
     assert result.runInfo.agentName == "example-agent"
     assert result.runInfo.usage.toolCalls == 1
     assert [call.toolName for call in result.runInfo.toolCalls] == ["inspect_value"]
@@ -512,7 +406,7 @@ def test_sync_runner_works_when_an_event_loop_is_already_running() -> None:
             parts=[
                 ToolCallPart(
                     tool_name=info.output_tools[0].name,
-                    args=ExampleOutput.get_example().model_dump(),
+                    args=example(ExampleOutput).model_dump(),
                 )
             ]
         )
@@ -529,7 +423,7 @@ def test_sync_runner_works_when_an_event_loop_is_already_running() -> None:
 
     result = asyncio.run(call_from_running_loop())
 
-    assert result.output == ExampleOutput.get_example()
+    assert result.output == example(ExampleOutput)
     assert result.runInfo.agentName == "notebook-host"
     assert [call.toolName for call in result.runInfo.toolCalls] == ["inspect_value"]
 
@@ -564,7 +458,7 @@ def test_sync_runner_closes_and_reopens_owned_client_between_notebook_calls(
                                     "function": {
                                         "name": output_tool_name,
                                         "arguments": json.dumps(
-                                            ExampleOutput.get_example().model_dump()
+                                            example(ExampleOutput).model_dump()
                                         ),
                                     },
                                 }
@@ -613,8 +507,8 @@ def test_sync_runner_closes_and_reopens_owned_client_between_notebook_calls(
     results = asyncio.run(call_twice_from_running_loop())
 
     assert [result.output for result in results] == [
-        ExampleOutput.get_example(),
-        ExampleOutput.get_example(),
+        example(ExampleOutput),
+        example(ExampleOutput),
     ]
     assert len(clients) == 2
     assert all(client.is_closed for client in clients)
@@ -652,7 +546,7 @@ def test_async_runner_does_not_run_sync_function_model_on_event_loop() -> None:
             parts=[
                 ToolCallPart(
                     tool_name=info.output_tools[0].name,
-                    args=ExampleOutput.get_example().model_dump(),
+                    args=example(ExampleOutput).model_dump(),
                 )
             ]
         )
@@ -666,7 +560,7 @@ def test_async_runner_does_not_run_sync_function_model_on_event_loop() -> None:
         )
     )
 
-    assert result.output == ExampleOutput.get_example()
+    assert result.output == example(ExampleOutput)
     assert callback_thread != event_loop_thread
 
 

@@ -1,5 +1,7 @@
 """Tests for the tool-driven Experimental Context Agent."""
 
+from tests.agent_examples import example
+
 import asyncio
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -425,7 +427,7 @@ def test_agent_models_have_blank_and_example_constructors() -> None:
     )
     for model in models:
         assert isinstance(model.get_blank(), model)
-        assert isinstance(model.get_example(), model)
+        assert isinstance(example(model), model)
         assert all("_" not in field_name for field_name in model.model_fields)
     assert set(RepresentationEvaluation.model_fields) == {
         "available",
@@ -502,6 +504,7 @@ def test_study_contract_builder_records_correction_and_label_policies() -> None:
         return SimpleNamespace(
             status="done",
             decision=_design_decision(action=action),
+            characterization=CovariateCharacterization(status="done"),
             batchSafety=[],
             notes=[],
         )
@@ -641,7 +644,7 @@ def test_agent_runs_only_read_only_tools_and_returns_a_grounded_report() -> None
     assert sorted(store.zw.group_keys()) == ["artifacts", "cellData"]
 
 
-def test_agent_pauses_after_design_tool_retry_exhaustion(
+def test_agent_fails_after_design_tool_retry_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store()
@@ -680,20 +683,20 @@ def test_agent_pauses_after_design_tool_retry_exhaustion(
     )
 
     assert analyze_retries == [3]
-    assert result.status == "needsInput"
+    assert result.status == "failed"
     assert result.decision.batchCorrection.action == "needsInput"
     assert result.decision.batchCorrection.batchColumns == []
     assert result.cellSelection is not None
     assert result.cellSelection.artifactId == store.cell_selection.artifact_id
     assert result.cellQc.profileId == ""
     assert result.qcProfiles
-    assert result.runInfo.agentName == "experimental_context_needs_input"
+    assert result.runInfo.agentName == "experimental_context_failed"
     with pytest.raises(ValueError, match="must be done"):
         result.to_parameter_tuning_handoff()
-    assert any("could not produce" in note for note in result.notes)
+    assert any("did not produce" in note for note in result.notes)
 
 
-def test_agent_recovers_malformed_batch_tool_call_without_input(
+def test_agent_rejects_malformed_batch_tool_call_without_default_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store()
@@ -719,7 +722,7 @@ def test_agent_recovers_malformed_batch_tool_call_without_input(
         "run_agent_sync",
         unavailable_design,
     )
-    result = ExperimentalContextAgent(object(), unattended=True).run(
+    result = ExperimentalContextAgent(object()).run(
         store,
         study_context="Population discovery across sequencing batches.",
         study_objective="Discover stable cell populations.",
@@ -736,12 +739,55 @@ def test_agent_recovers_malformed_batch_tool_call_without_input(
         },
     )
 
-    assert result.status == "done"
-    assert result.decision.needsInput == []
-    assert result.decision.batchCorrection.action == "evaluateHarmony"
-    assert result.decision.batchCorrection.batchColumns == ["batch"]
-    assert result.to_parameter_tuning_handoff().batchAction == "evaluateHarmony"
-    assert result.runInfo.agentName == "experimental_context_deterministic"
+    assert result.status == "failed"
+    assert result.decision.batchCorrection.batchColumns == []
+    with pytest.raises(ValueError, match="must be done"):
+        result.to_parameter_tuning_handoff()
+    assert result.runInfo.agentName == "experimental_context_failed"
+    assert any("batchassay" in note for note in result.notes)
+
+
+def test_agent_preserves_validated_design_uncertainty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store()
+
+    def unresolved_design(**kwargs: Any) -> SimpleNamespace:
+        deps = kwargs["deps"]
+        context = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+        asyncio.run(inspect_cell_covariates(context))
+        planned = _design_decision("needsInput")
+        asyncio.run(
+            analyze_experimental_design(
+                context,
+                column_domains=planned.columnDomains,
+                coefficients_of_interest=planned.coefficientsOfInterest,
+                units_of_inference=planned.unitsOfInference,
+                batch_columns=planned.batchCorrection.batchColumns,
+            )
+        )
+        planned.needsInput = ["Physical capture provenance remains unresolved."]
+        decision = kwargs["output_validator"](planned)
+        return SimpleNamespace(
+            output=decision,
+            runInfo=experimental_context_contracts.AgentRunInfo(
+                agentName="experimental_context", modelName="test"
+            ),
+        )
+
+    monkeypatch.setattr(experimental_context_agent, "run_agent_sync", unresolved_design)
+    result = ExperimentalContextAgent(object()).run(
+        store,
+        study_context="Case-control study with samples nested in donors.",
+        cell_selection=store.cell_selection,
+    )
+    assert result.status == "needsInput"
+    assert result.decision.needsInput == [
+        "Physical capture provenance remains unresolved."
+    ]
+    assert result.runInfo.agentName == "experimental_context"
+    with pytest.raises(ValueError, match="must be done"):
+        result.to_parameter_tuning_handoff()
 
 
 def test_handoff_builders_reject_incomplete_or_ambiguous_results() -> None:
@@ -749,7 +795,7 @@ def test_handoff_builders_reject_incomplete_or_ambiguous_results() -> None:
     with pytest.raises(ValueError, match="must be done"):
         incomplete.to_parameter_tuning_handoff()
 
-    ambiguous = ExperimentalContextResult.get_example()
+    ambiguous = example(ExperimentalContextResult)
     ambiguous.decision.coefficientsOfInterest.append("second_coefficient")
     with pytest.raises(ValueError, match="Select one coefficient explicitly"):
         ambiguous.to_biological_handoff()
@@ -1553,6 +1599,8 @@ def test_batch_safety_checks_multiple_columns_jointly() -> None:
             batch_columns=["plate"],
         )
     )
+    context = _context(store, directions={"columnKinds": {"disease": "continuous"}})
+    asyncio.run(inspect_cell_covariates(context))
     joint = asyncio.run(
         analyze_experimental_design(
             context,
@@ -1894,7 +1942,7 @@ def test_returned_decision_canonicalizes_caller_directions() -> None:
 
 
 def test_named_artifact_and_qc_source_validation_edges() -> None:
-    metric = NamedArtifactSource.get_example()
+    metric = example(NamedArtifactSource)
     identity = NamedArtifactSource(
         name="HTO_identity",
         artifact=ArtifactReferenceModel(
@@ -2267,7 +2315,7 @@ def test_cell_qc_profile_requires_exact_capture_failure_inventory() -> None:
 
 
 def test_experimental_handoff_validation_edges() -> None:
-    result = ExperimentalContextResult.get_example()
+    result = example(ExperimentalContextResult)
     without_selection = result.model_copy(update={"cellSelection": None})
     with pytest.raises(ValueError, match="lacks a cell selection"):
         without_selection.to_parameter_tuning_handoff()
@@ -2421,7 +2469,7 @@ def test_experimental_context_private_input_guards(
         experimental_context_qc._active_cell_count(deps)
 
 
-def test_qc_profile_degradation_and_selection_guards(
+def test_core_qc_reports_unavailable_default_bounds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store()
@@ -2440,7 +2488,7 @@ def test_qc_profile_degradation_and_selection_guards(
         notes,
     )
     assert profile is None
-    assert notes == ["Ignored constant QC metric 'constant'"]
+    assert "constant metric 'constant'" in notes[0]
 
     monkeypatch.setattr(
         experimental_context_qc,
@@ -2460,87 +2508,6 @@ def test_qc_profile_degradation_and_selection_guards(
     )
     assert profile is None
     assert "non-finite Gaussian bounds" in notes[0]
-
-    skip = CellQcProfileEvidence(
-        profileId="skip",
-        action="skip",
-        activeCells=store.cells.N,
-        retainedCells=store.cells.N,
-        retainedFraction=1.0,
-        evidenceId="qcProfile:skip",
-    )
-    global_profile = CellQcProfileEvidence(
-        profileId="global",
-        action="globalGaussian",
-        driverAssay="RNA",
-        driverAssayType="RNA",
-        attributes=["RNA_nCounts"],
-        activeCells=store.cells.N,
-        retainedCells=store.cells.N - 1,
-        retainedFraction=(store.cells.N - 1) / store.cells.N,
-        evidenceId="qcProfile:global",
-    )
-    deps.qcProfiles = {"skip": skip, "global": global_profile}
-    characterization = CovariateCharacterization(status="done")
-
-    deps.directions = {"cellQc": {"profileId": 3}}
-    with pytest.raises(ModelRetry, match="profileId direction must be a string"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-    deps.directions = {
-        "cellQc": {"sampleColumn": "sample", "sampleArtifactName": "identity"}
-    }
-    with pytest.raises(ModelRetry, match="cannot select both"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-    deps.directions = {"cellQc": {"sampleArtifactName": 3}}
-    with pytest.raises(ModelRetry, match="sampleArtifactName must be a string"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-    deps.directions = {"cellQc": {"action": "unknown"}}
-    with pytest.raises(ModelRetry, match="Unsupported cellQc.action"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-    deps.directions = {"cellQc": {"action": "sampleMad"}}
-    with pytest.raises(ModelRetry, match="exactly one offered profile"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-    deps.directions = {"cellQc": {"profileId": "unknown"}}
-    with pytest.raises(ModelRetry, match="was not offered"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            CellQcPlan(), deps, characterization
-        )
-
-    deps.directions = {}
-    selected = experimental_context_validation._canonical_cell_qc_plan(
-        CellQcPlan(), deps, characterization
-    )
-    assert selected.profileId == "global"
-
-    mismatched = CellQcPlan(
-        action="globalGaussian",
-        profileId="global",
-        driverAssay="RNA",
-        driverAssayType="RNA",
-        attributes=["different_metric"],
-        evidenceIds=["qcProfile:global"],
-    )
-    with pytest.raises(ModelRetry, match="copy the selected offered profile"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            mismatched, deps, characterization
-        )
-    missing_evidence = mismatched.model_copy(
-        update={"attributes": ["RNA_nCounts"], "evidenceIds": []}
-    )
-    with pytest.raises(ModelRetry, match="cite its exact profile"):
-        experimental_context_validation._canonical_cell_qc_plan(
-            missing_evidence, deps, characterization
-        )
 
 
 def test_design_analysis_rejects_invalid_batch_proposals(
@@ -2840,7 +2807,7 @@ def test_batch_correction_plan_validation_edges() -> None:
             "kind": "continuous",
         },
     }
-    with pytest.raises(ModelRetry, match="must be categorical"):
+    with pytest.raises(ModelRetry, match="Batch correction is unsafe"):
         validate(
             changed_plan(
                 action="evaluateHarmony",

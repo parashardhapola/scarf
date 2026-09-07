@@ -89,10 +89,6 @@ class AgentRunConfig(AgentDataModel):
         )
         return type(self).model_validate(values)
 
-    @classmethod
-    def get_example(cls) -> "AgentRunConfig":
-        return cls(requestLimit=9, toolCallLimit=5, outputTokenLimit=2048)
-
 
 def get_model_settings(
     config: AgentRunConfig | None = None,

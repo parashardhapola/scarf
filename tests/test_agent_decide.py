@@ -8,7 +8,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.models.test import TestModel
 
-from scarf.agent import DecisionValidationError, EvidenceItem, decide
+from scarf.agent.decisions.selection import DecisionValidationError, decide
+from scarf.agent.types import EvidenceItem
 from scarf.agent.decisions.selection import _SYSTEM_PROMPT, validate_decision
 from scarf.agent.types import Decision
 

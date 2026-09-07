@@ -24,6 +24,24 @@ type RegisteredCellQcProfile = Literal[
     "captureMad3Sensitivity",
     "pooledReferenceMad5",
 ]
+type CellQualityProfile = (
+    RegisteredCellQcProfile | Literal["coreGlobalGaussian", "coreSampleMad3"]
+)
+
+
+def cell_qc_policy(
+    action: str, registered_profile: RegisteredCellQcProfile | None
+) -> CellQualityProfile | None:
+    """Name the exact filtering route shared by selection, execution, and resume."""
+    if registered_profile is not None:
+        return registered_profile
+    if action == "globalGaussian":
+        return "coreGlobalGaussian"
+    if action == "sampleMad":
+        return "coreSampleMad3"
+    return None
+
+
 type AutoFilterAction = Literal["globalGaussian", "sampleMad"]
 type QcMetricRole = Literal[
     "count",

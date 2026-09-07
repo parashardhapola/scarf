@@ -82,14 +82,6 @@ class FeatureCharacterization(AgentDataModel):
     def get_blank(cls) -> "FeatureCharacterization":
         return cls(status="failed")
 
-    @classmethod
-    def get_example(cls) -> "FeatureCharacterization":
-        return cls(
-            status="done",
-            notes=["Feature identity and families were characterized."],
-            assays=[{"assay": "RNA", "species": "homo_sapiens"}],
-        )
-
 
 def _bounded_context(study_context: str | None) -> str:
     text = (study_context or "").strip()

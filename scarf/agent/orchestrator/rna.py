@@ -112,10 +112,12 @@ def validate_rna_handoffs(handoffs: Sequence[Any], selected: str) -> None:
 
 
 def validate_saved_rna_history(
-    root: Any, prefix: str, workflow_run_id: str, selected: str
+    store: Any, prefix: str, workflow_run_id: str, selected: str
 ) -> None:
-    """Reject incompatible saved routes before resume opens the store for writes."""
-    from ..persistence.reports import load_agent_report
+    """Validate single-RNA ownership before opening resumed work for writes."""
+    from ..data_enrichment.contracts import DataEnrichmentReport
+    from ..experimental_context.contracts import ExperimentalContextResult
+    from ..parameter_tuning.contracts import ParameterTuningReport
     from . import journal
     from .models import (
         _STAGE_ORDER,
@@ -123,12 +125,13 @@ def validate_saved_rna_history(
         PreprocessedAssayHandoff,
     )
 
-    loaded_reports: set[tuple[str, str]] = set()
     for stage in _STAGE_ORDER:
-        for outcome in journal._stage_outcomes(root, prefix, workflow_run_id, stage):
+        for outcome in journal._stage_outcomes(
+            store.zw, prefix, workflow_run_id, stage
+        ):
             if outcome.outputs.get("htoIdentityArtifacts"):
                 raise ValueError(
-                    "Saved automatic HTO processing is unsupported; start a new RNA workflow."
+                    "Saved automatic HTO processing is unsupported; start a new RNA workflow"
                 )
             for name in ("preprocessingPlan", "resolvedPreprocessingPlan"):
                 if outcome.outputs.get(name):
@@ -138,50 +141,41 @@ def validate_saved_rna_history(
                         ),
                         selected,
                     )
-            if stage in {"preprocessing", "feature_policy_preprocessing"} and (
-                "assays" in outcome.outputs
-            ):
+            if stage == "preprocessing" and "assays" in outcome.outputs:
                 validate_rna_handoffs(
                     [
-                        PreprocessedAssayHandoff.model_validate(value)
-                        for value in outcome.outputs["assays"]
+                        PreprocessedAssayHandoff.model_validate(v)
+                        for v in outcome.outputs["assays"]
                     ],
                     selected,
                 )
-            for reference in outcome.reportReferences:
-                if reference.agentName not in {
-                    "data_enrichment",
-                    "experimental_context",
-                    "parameter_tuning",
-                }:
-                    continue
-                identity = (reference.agentName, reference.agentRunId)
-                if identity in loaded_reports:
-                    continue
-                loaded_reports.add(identity)
-                report = load_agent_report(root, reference)
-                if report.status != "done":
-                    continue
-                if reference.agentName == "data_enrichment":
-                    policies = getattr(report, "policies", [])
-                    if (
-                        len(policies) != 1
-                        or policies[0].assay != selected
-                        or policies[0].assayModality != "RNA"
-                    ):
-                        raise ValueError(
-                            "Saved enrichment includes unsupported assays; start a new RNA workflow."
-                        )
-                elif reference.agentName == "experimental_context":
-                    validate_rna_context(report, selected)
-                elif reference.agentName == "parameter_tuning":
-                    assays = getattr(report, "assayReports", {})
-                    if (
-                        getattr(report, "recommendedIntegrationId", None) is not None
-                        or set(assays) - {selected}
-                        or getattr(report, "fromAssay", selected) != selected
-                    ):
-                        raise ValueError(
-                            "Saved tuning includes unsupported assays or integration; "
-                            "start a new RNA workflow."
-                        )
+            if not outcome.reportReferences:
+                continue
+            if stage == "data_enrichment":
+                report = DataEnrichmentReport.model_validate(
+                    journal.read_stage_evidence(store, outcome.reportReferences[0])
+                )
+                if report.status == "done" and (
+                    len(report.policies) != 1
+                    or report.policies[0].assay != selected
+                    or report.policies[0].assayModality != "RNA"
+                ):
+                    raise ValueError("Saved enrichment includes unsupported assays")
+            elif stage == "experimental_context":
+                context = ExperimentalContextResult.model_validate(
+                    journal.read_stage_evidence(store, outcome.reportReferences[0])
+                )
+                if context.status == "done":
+                    validate_rna_context(context, selected)
+            elif stage == "parameter_tuning":
+                tuning = ParameterTuningReport.model_validate(
+                    journal.read_stage_evidence(store, outcome.reportReferences[0])
+                )
+                if (
+                    tuning.recommendedIntegrationId is not None
+                    or tuning.assayReports
+                    or tuning.fromAssay != selected
+                ):
+                    raise ValueError(
+                        "Saved tuning includes unsupported assays or integration"
+                    )

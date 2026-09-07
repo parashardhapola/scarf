@@ -10,7 +10,6 @@ import zarr
 from pydantic import ValidationError
 from zarr.storage import MemoryStore
 
-import scarf.agent.experimental_context.validation as experimental_context_validation
 import scarf.agent.orchestrator.preprocessing as preprocessing_module
 from scarf.agent.cell_quality.execution import (
     execute_auto_cell_qc,
@@ -560,7 +559,7 @@ def test_pooled_reference_profile_requires_explicit_eligible_captures() -> None:
     assert {threshold.group for threshold in pooled.thresholds} == {"pooledReference"}
 
 
-def test_experimental_context_offers_and_validates_registered_global_profile() -> None:
+def test_experimental_context_offers_registered_global_profile() -> None:
     store = _Store()
     store.cells._values["RNA_nCounts"] = np.linspace(10, 100, 12)
     store.cells._values["RNA_nFeatures"] = np.linspace(5, 50, 12)
@@ -587,15 +586,6 @@ def test_experimental_context_offers_and_validates_registered_global_profile() -
         "remove": "upper",
         "fixedCutoff": None,
     }
-
-    selected = experimental_context_validation._canonical_cell_qc_plan(
-        CellQcPlan(),
-        context.deps,
-        inspected.characterization,
-    )
-    assert selected.registeredProfile == "globalMad5"
-    assert selected.profileId == offered["globalMad5"].profileId
-    assert selected.evidenceIds == [offered["globalMad5"].evidenceId]
 
     with pytest.raises(ValidationError, match="must use the registeredMad action"):
         CellQcPlan(
@@ -1172,3 +1162,159 @@ def test_orchestrator_executes_retain_with_flags_instead_of_plain_skip(
     assert operations[0]["diagnosticFlags"] == (
         ArtifactReferenceModel.from_artifact_ref(flags).model_dump(mode="json")
     )
+
+
+@pytest.mark.parametrize("sample_aware", [False, True])
+def test_audited_core_qc_policy_executes_exact_projected_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_aware: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from scarf.agent.decisions.rna import QcGroupingExecutorPayload
+
+    values = _quality_values()
+    labels = np.asarray(["a"] * 21 + ["b"] * 21)
+    store, source = _memory_qc_store({**values, "capture": labels})
+    action = "sampleMad" if sample_aware else "globalGaussian"
+    policy = "coreSampleMad3" if sample_aware else "coreGlobalGaussian"
+    projection = project_auto_filter_profile(
+        action,
+        values_by_metric=values,
+        active=np.ones(42, dtype=bool),
+        sample_labels=labels if sample_aware else None,
+        grouping_proven=sample_aware,
+    )
+    parameters = (
+        projection.parameters
+        if not sample_aware
+        else {
+            "nMads": 3.0,
+            "minCellsPerSample": 20,
+            "nSamples": 2,
+            "nSkippedSamples": 0,
+        }
+    )
+    profile = CellQcProfileEvidence(
+        profileId=f"cellQc:RNA:{policy}",
+        action=action,
+        driverAssay="RNA",
+        driverAssayType="RNA",
+        sampleColumn="capture" if sample_aware else None,
+        captureColumn="capture" if sample_aware else None,
+        attributes=list(values),
+        parameters=parameters,
+        resolvedBounds=projection.parameters["resolvedBounds"],
+        activeCells=42,
+        retainedCells=projection.retainedCells,
+        retainedFraction=projection.retainedCells / 42,
+        activeCellsByCapture=projection.captureSizes,
+        sampleRetainedCells=projection.retainedByCapture,
+        flaggedCells=projection.flagCounts,
+        evidenceId=f"qcProfile:{policy}",
+    )
+    from scarf.agent.experimental_context.contracts import (
+        CovariateCharacterization,
+        ExperimentalContextDecision,
+    )
+
+    experimental = ExperimentalContextResult(
+        status="done",
+        decision=ExperimentalContextDecision(),
+        characterization=CovariateCharacterization(status="done"),
+        qcProfiles=[profile],
+    )
+    orchestrator = AgentOrchestrator(object())
+
+    def resolve(_store, _request, definition, bundle, _answers):
+        option = definition.executor_option(f"cellQuality:{policy}")
+        assert option.payload.lowerCountMad is None
+        assert option.payload.upperMitoMad is None
+        if not sample_aware:
+            assert definition.spec.baselineOptionId == "cellQuality:coreGlobalGaussian"
+            assert (
+                definition.spec.options[0].optionId == "cellQuality:coreGlobalGaussian"
+            )
+        assert bundle.evidence[0].evidenceId == profile.evidenceId
+        return SimpleNamespace(
+            compiled=SimpleNamespace(executorPayload=option.payload),
+            record=SimpleNamespace(
+                rationale="Exact core QC preserves valid cells.",
+                evidenceIds=[profile.evidenceId],
+            ),
+            checkpointSha256="a" * 64,
+        )
+
+    monkeypatch.setattr(orchestrator, "_resolve_rna_decision", resolve)
+    payload, plan, _ = orchestrator._resolve_cell_quality_decision(
+        store,
+        None,
+        experimental,
+        QcGroupingExecutorPayload(
+            groupingMode="physicalCapture" if sample_aware else "global"
+        ),
+        {},
+    )
+    from scarf.agent.orchestrator.models import AutomatedPreprocessingPlan
+
+    saved = AutomatedPreprocessingPlan(cellQc=plan, cellQualityPayload=payload)
+    restored = AutomatedPreprocessingPlan.model_validate_json(saved.model_dump_json())
+    assert restored.cellQualityPayload == payload
+    assert restored.cellQc == plan
+    with pytest.raises(ValidationError, match="exact selected QC policy"):
+        AutomatedPreprocessingPlan(
+            cellQc=plan,
+            cellQualityPayload=payload.model_copy(
+                update={
+                    "profile": "coreGlobalGaussian"
+                    if sample_aware
+                    else "coreSampleMad3",
+                    "groupByCapture": not sample_aware,
+                }
+            ),
+        )
+    actions: list[str] = []
+    operations: list[dict[str, Any]] = []
+    selected = orchestrator.apply_cell_qc(
+        store,
+        experimental,
+        source,
+        actions,
+        operations,
+        selected_plan=plan,
+        decision_payload=payload,
+    )
+    np.testing.assert_array_equal(
+        read_stored_selection_mask(
+            store.zw,
+            selected,
+            kind="cell_selection",
+            scope="datastore",
+            assay=None,
+            table_path="cellData",
+        ),
+        projection.keep,
+    )
+    assert operations[0]["profileParameters"] == parameters
+    assert operations[0]["resolvedBounds"] == projection.parameters["resolvedBounds"]
+    assert operations[0]["diagnosticFlags"] is not None
+    np.testing.assert_array_equal(store.cells.fetch_all("I"), True)
+
+
+def test_core_sample_qc_requires_exact_physical_capture_proof() -> None:
+    profile = CellQcProfileEvidence(
+        profileId="cellQc:sample",
+        action="sampleMad",
+        sampleColumn="sample",
+        attributes=["RNA_nCounts"],
+        activeCells=40,
+        retainedCells=39,
+        retainedFraction=39 / 40,
+    )
+    assert not AgentOrchestrator._profile_is_safe(profile)
+    profile.captureColumn = "different"
+    assert not AgentOrchestrator._profile_is_safe(profile)
+    profile.captureColumn = "sample"
+    assert AgentOrchestrator._profile_is_safe(profile)
+    profile.unsafeRetentionGroups = ["combination:treatment,time=case,late"]
+    assert not AgentOrchestrator._profile_is_safe(profile)

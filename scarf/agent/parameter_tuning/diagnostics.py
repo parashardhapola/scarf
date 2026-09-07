@@ -1,15 +1,20 @@
 """Deterministic representation and partition evidence for RNA decisions."""
 
 import hashlib
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from ...clustering.leiden import leiden_membership
-from ...metadata.rows import read_metadata_rows_chunkwise
+from ...metadata.rows import (
+    read_metadata_missing_rows_chunkwise,
+    read_metadata_rows_chunkwise,
+)
 from ...quality_control.cell_cycle_genes import (
     g2m_phase_genes,
     g2m_phase_genes_mouse,
@@ -410,25 +415,33 @@ def _aligned_metadata_values(
     values = np.asarray(read_metadata_rows_chunkwise(store.cells, column, indices))
     if values.shape != (len(indices),):
         raise ValueError(f"Metadata column {column!r} does not align with PCA")
+    missing = read_metadata_missing_rows_chunkwise(store.cells, column, indices)
+    if missing is not None and np.any(missing):
+        values = values.astype(object)
+        values[missing] = None
     return values
 
 
 def _numeric_association(coordinates: Any, values: np.ndarray) -> np.ndarray:
-    numeric = np.asarray(values, dtype=np.float64)
-    if not np.isfinite(numeric).all():
-        raise ValueError("Numeric PCA covariates must be finite")
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(
+        dtype=np.float64
+    )
+    valid = np.isfinite(numeric)
     n_rows, n_components = coordinates.shape
     total_x = np.zeros(n_components, dtype=np.float64)
     total_x2 = np.zeros(n_components, dtype=np.float64)
     total_xy = np.zeros(n_components, dtype=np.float64)
-    total_y = float(numeric.sum())
-    total_y2 = float(np.square(numeric).sum())
+    total_y = float(numeric[valid].sum())
+    total_y2 = float(np.square(numeric[valid]).sum())
     for start in range(0, n_rows, 65_536):
         block = np.asarray(coordinates[start : start + 65_536], dtype=np.float64)
-        y = numeric[start : start + len(block)]
+        selected = valid[start : start + len(block)]
+        y = numeric[start : start + len(block)][selected]
+        block = block[selected]
         total_x += block.sum(axis=0)
         total_x2 += np.square(block).sum(axis=0)
         total_xy += (block * y[:, None]).sum(axis=0)
+    n_rows = int(valid.sum())
     numerator = n_rows * total_xy - total_x * total_y
     denominator = np.sqrt(
         np.maximum(n_rows * total_x2 - np.square(total_x), 0.0)
@@ -446,19 +459,27 @@ def _numeric_association(coordinates: Any, values: np.ndarray) -> np.ndarray:
 
 
 def _categorical_association(coordinates: Any, values: np.ndarray) -> np.ndarray:
-    labels = values.astype(str)
+    valid = np.asarray(~pd.isna(values), dtype=bool)
+    labels = values[valid].astype(str)
     _levels, codes = np.unique(labels, return_inverse=True)
     n_rows, n_components = coordinates.shape
     totals = np.zeros(n_components, dtype=np.float64)
     totals_squared = np.zeros(n_components, dtype=np.float64)
+    if not len(codes):
+        return np.zeros(n_components, dtype=np.float64)
+    all_codes = np.full(len(values), -1, dtype=np.int64)
+    all_codes[valid] = codes
     group_sums = np.zeros((int(codes.max()) + 1, n_components), dtype=np.float64)
     group_counts = np.bincount(codes, minlength=group_sums.shape[0]).astype(np.float64)
     for start in range(0, n_rows, 65_536):
         block = np.asarray(coordinates[start : start + 65_536], dtype=np.float64)
-        block_codes = codes[start : start + len(block)]
+        selected = valid[start : start + len(block)]
+        block_codes = all_codes[start : start + len(block)][selected]
+        block = block[selected]
         totals += block.sum(axis=0)
         totals_squared += np.square(block).sum(axis=0)
         np.add.at(group_sums, block_codes, block)
+    n_rows = int(valid.sum())
     grand_mean = totals / n_rows
     group_means = np.divide(
         group_sums,
@@ -489,20 +510,45 @@ def _covariate_associations(
     coordinates: Any,
     columns: Sequence[str],
     roles: Sequence[str],
+    column_kinds: Mapping[str, str] | None = None,
+    support: dict[str, Any] | None = None,
 ) -> np.ndarray:
     if len(columns) != len(roles):
         raise ValueError("PCA covariate columns and roles must align")
     associations = np.zeros((len(columns), coordinates.shape[1]), dtype=np.float64)
-    for index, (column, role) in enumerate(zip(columns, roles, strict=True)):
+    from ..experimental_context.characterization import _infer_kind
+
+    for index, column in enumerate(columns):
         values = _aligned_metadata_values(store, cell_selection, column)
-        if (
-            role == "qc"
-            and values.dtype.kind in {"i", "u", "f"}
-            and len(np.unique(values)) > 10
-        ):
+        kind = (column_kinds or {}).get(column) or _infer_kind(values)
+        if kind not in {"continuous", "categorical"}:
+            raise ValueError(f"Unknown covariate kind for {column!r}: {kind!r}")
+        valid = np.asarray(~pd.isna(values), dtype=bool)
+        if kind == "continuous":
+            numeric = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(
+                dtype=float
+            )
+            valid &= np.isfinite(numeric)
             associations[index] = _numeric_association(coordinates, values)
         else:
-            associations[index] = _categorical_association(coordinates, values)
+            if len(pd.unique(values[valid])) < int(valid.sum()):
+                associations[index] = _categorical_association(coordinates, values)
+        levels = len(pd.unique(values[valid]))
+        if support is not None:
+            support[column] = {
+                "kind": kind,
+                "method": "absolutePearson"
+                if kind == "continuous"
+                else "correlationRatio",
+                "completeRows": int(valid.sum()),
+                "missingRows": int((~valid).sum()),
+                "levels": levels,
+                "status": "computed"
+                if int(valid.sum()) >= 2
+                and levels >= 2
+                and (kind == "continuous" or levels < int(valid.sum()))
+                else "notComputed",
+            }
     return associations
 
 
@@ -534,6 +580,7 @@ def _write_pca_diagnostic(
     covariate_columns: Sequence[str],
     covariate_roles: Sequence[str],
     adjacent_overlap: float | None,
+    column_kinds: Mapping[str, str] | None = None,
 ) -> tuple[
     ArtifactRef,
     np.ndarray,
@@ -568,6 +615,11 @@ def _write_pca_diagnostic(
             "family_names": list(family_masks),
             "covariate_columns": list(covariate_columns),
             "covariate_roles": list(covariate_roles),
+            "covariate_kinds": {
+                column: (column_kinds or {}).get(column, "inferred")
+                for column in covariate_columns
+            },
+            "covariate_method": "typedCompleteCaseAssociation",
             "top_loading_count": top_n,
             "family_mask_fingerprints": {
                 family: hashlib.sha256(
@@ -618,6 +670,7 @@ def _write_pca_diagnostic(
             AttributeRequirement("family_names", expected_types=(list,)),
             AttributeRequirement("covariate_columns", expected_types=(list,)),
             AttributeRequirement("covariate_roles", expected_types=(list,)),
+            AttributeRequirement("covariate_support", expected_types=(dict,)),
             AttributeRequirement("payload_fingerprint", expected_types=(str,)),
         ),
     )
@@ -674,6 +727,7 @@ def _write_pca_diagnostic(
         selected_indices,
         family_masks,
     )
+    covariate_support: dict[str, Any] = {}
     associations = (
         _covariate_associations(
             store,
@@ -686,6 +740,8 @@ def _write_pca_diagnostic(
             coordinates,
             covariate_columns,
             covariate_roles,
+            column_kinds,
+            covariate_support,
         )
         if evaluation.cellSelection is not None
         else np.zeros((len(covariate_columns), coordinates.shape[1]), dtype=np.float64)
@@ -718,6 +774,7 @@ def _write_pca_diagnostic(
         group.attrs["family_names"] = list(family_masks)
         group.attrs["covariate_columns"] = list(covariate_columns)
         group.attrs["covariate_roles"] = list(covariate_roles)
+        group.attrs["covariate_support"] = covariate_support
         group.attrs["payload_fingerprint"] = fingerprint_stored_arrays(
             group,
             _PCA_DIAGNOSTIC_ARRAYS,
@@ -745,6 +802,7 @@ def augment_pca_evaluations(
     protected_columns: Sequence[str],
     qc_columns: Sequence[str],
     batch_columns: Sequence[str] = (),
+    column_kinds: Mapping[str, str] | None = None,
 ) -> tuple[ParameterCandidateEvaluation, ...]:
     """Attach persisted PCA loading, variance, topology, and covariate evidence."""
     selected_indices, selected_names = _selected_feature_names(
@@ -824,6 +882,7 @@ def augment_pca_evaluations(
             covariate_columns=columns,
             covariate_roles=roles,
             adjacent_overlap=previous_by_id[evaluation.candidateId],
+            column_kinds=column_kinds,
         )
         family_maxima = {
             family: float(family_enrichment[index].max(initial=0.0))
@@ -846,7 +905,15 @@ def augment_pca_evaluations(
             ]
             for component in range(top_indices.shape[0])
         }
-        column_index = {column: index for index, column in enumerate(columns)}
+        support = dict(store.load_artifact(diagnostic).attrs["covariate_support"])
+        column_index = {
+            column: index
+            for index, column in enumerate(columns)
+            if support.get(column, {}).get("status") == "computed"
+        }
+        unsupported_covariates = [
+            column for column in columns if column not in column_index
+        ]
         component_associations = {
             role: {
                 column: associations[column_index[column]].tolist()
@@ -888,6 +955,13 @@ def augment_pca_evaluations(
             evaluation.model_copy(
                 update={
                     "metrics": metrics,
+                    "warnings": [
+                        *evaluation.warnings,
+                        *(
+                            f"PCA association for {column!r} is unavailable with {support.get(column, {}).get('completeRows', 0)} complete rows and {support.get(column, {}).get('levels', 0)} distinct values."
+                            for column in unsupported_covariates
+                        ),
+                    ],
                     "artifacts": {
                         **evaluation.artifacts,
                         "representationDiagnostic": artifact,
@@ -1462,6 +1536,194 @@ def _cross_unit_support(labels: np.ndarray, units: np.ndarray) -> float | None:
     return float(np.mean(supported)) if supported else None
 
 
+def population_support_evidence(
+    store: Any,
+    evaluation: ParameterCandidateEvaluation,
+    columns: Sequence[str],
+) -> dict[str, Any]:
+    """Describe observed population support using exact cells and requested units.
+
+    This is descriptive support, not a validation of population identity or
+    independent replication. Display limits do not change any count or fraction.
+    """
+    if evaluation.status != "done" or evaluation.cellSelection is None:
+        raise ValueError("Population support requires completed, cell-bound evidence")
+    selection = ArtifactRef(
+        scope=evaluation.cellSelection.scope,
+        assay=evaluation.cellSelection.assay,
+        kind=evaluation.cellSelection.kind,
+        artifact_id=evaluation.cellSelection.artifactId,
+    )
+    clusters = _artifact_ref(evaluation, "clusters")
+    status = store.inspect_artifact(clusters)
+    if not status.exists or not status.complete:
+        raise ValueError("Population support requires complete cluster evidence")
+    raw_selection = (status.inputs or {}).get("cell_selection")
+    if (
+        not isinstance(raw_selection, Mapping)
+        or ArtifactRef.from_dict(dict(raw_selection)) != selection
+    ):
+        raise ValueError("Population support cluster and candidate cells differ")
+    if clusters.kind not in {"cluster_labels", "cluster_cut"}:
+        raise ValueError("Population support requires a clustering artifact")
+    indices = read_stored_selection_indices(
+        store.zw,
+        selection,
+        kind="cell_selection",
+        scope="datastore",
+        assay=None,
+        table_path="cellData",
+    )
+    if not len(indices) or np.any(indices[1:] <= indices[:-1]):
+        raise ValueError("Population support requires distinct ordered selected cells")
+    labels = as_zarr_array(
+        store.load_artifact(clusters)[
+            "values" if clusters.kind == "cluster_labels" else "labels"
+        ],
+        name="cluster labels",
+    )
+    if labels.shape != indices.shape or labels.dtype.kind not in "iuf":
+        raise ValueError("Population labels do not align with the selected cells")
+    requested = list(dict.fromkeys(columns))
+    selected_columns = requested[:2]
+    available = [column for column in selected_columns if column in store.cells.columns]
+    totals: Counter[int] = Counter()
+    group_totals: dict[str, Counter[tuple[str, Any]]] = {
+        column: Counter() for column in available
+    }
+    counts: dict[str, dict[int, Counter[tuple[str, Any]]]] = {
+        column: defaultdict(Counter) for column in available
+    }
+    for start in range(0, len(indices), 65_536):
+        stop = min(start + 65_536, len(indices))
+        block = np.asarray(labels[start:stop])
+        if not np.isfinite(block).all() or not np.equal(block, np.floor(block)).all():
+            raise ValueError("Population labels must be finite integers")
+        population_ids = block.astype(np.int64)
+        unique, sizes = np.unique(population_ids, return_counts=True)
+        totals.update(
+            {
+                int(population): int(size)
+                for population, size in zip(unique, sizes, strict=True)
+            }
+        )
+        rows = indices[start:stop]
+        for column in available:
+            values = np.asarray(read_metadata_rows_chunkwise(store.cells, column, rows))
+            missing = read_metadata_missing_rows_chunkwise(store.cells, column, rows)
+            if (
+                values.shape != rows.shape
+                or missing is not None
+                and missing.shape != rows.shape
+            ):
+                raise ValueError(
+                    f"Population metadata {column!r} does not align with cells"
+                )
+            for offset, (population, value) in enumerate(
+                zip(population_ids, values, strict=True)
+            ):
+                value = value.item() if isinstance(value, np.generic) else value
+                if (
+                    missing is not None
+                    and missing[offset]
+                    or pd.isna(value)
+                    or isinstance(value, float)
+                    and not np.isfinite(value)
+                ):
+                    continue
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8")
+                if not isinstance(value, (str, int, float, bool)):
+                    raise ValueError("Population unit labels must be scalar values")
+                if isinstance(value, str) and not value.strip():
+                    continue
+                key = (type(value).__name__, value)
+                group_totals[column][key] += 1
+                counts[column][int(population)][key] += 1
+    evidence_columns: dict[str, Any] = {}
+    for column in selected_columns:
+        if column not in available:
+            evidence_columns[column] = {
+                "status": "unavailable",
+                "reason": "Column is absent.",
+            }
+            continue
+        population_rows: list[dict[str, Any]] = []
+        for population, size in totals.items():
+            group_counts = counts[column][population]
+            ordered = sorted(
+                group_counts.items(),
+                key=lambda item: (-item[1], item[0][0], str(item[0][1])),
+            )
+            displayed = ordered[:5]
+            covered = sum(group_counts.values())
+            population_rows.append(
+                {
+                    "cluster": str(population),
+                    "cells": size,
+                    "coveredCells": covered,
+                    "missingCells": size - covered,
+                    "coverageFraction": covered / size,
+                    "supportingGroups": len(group_counts),
+                    "groupsWithAtLeast5Cells": sum(
+                        count >= 5 for count in group_counts.values()
+                    ),
+                    "largestGroupFraction": ordered[0][1] / size if ordered else None,
+                    "topGroups": [
+                        {
+                            "value": key[1],
+                            "valueType": key[0],
+                            "cells": count,
+                            "fractionOfPopulation": count / size,
+                            "fractionOfGroup": count / group_totals[column][key],
+                        }
+                        for key, count in displayed
+                    ],
+                    "omittedGroups": len(ordered) - len(displayed),
+                    "omittedCells": sum(count for _, count in ordered[5:]),
+                }
+            )
+        population_rows.sort(
+            key=lambda row: (
+                -(row["largestGroupFraction"] or 0),
+                row["cells"],
+                row["cluster"],
+            )
+        )
+        covered = sum(group_totals[column].values())
+        evidence_columns[column] = {
+            "status": "computed",
+            "observedGroups": len(group_totals[column]),
+            "coveredCells": covered,
+            "missingCells": len(indices) - covered,
+            "coverageFraction": covered / len(indices),
+            "populations": population_rows[:64],
+            "omittedPopulations": max(0, len(population_rows) - 64),
+            "omittedPopulationCells": sum(row["cells"] for row in population_rows[64:]),
+        }
+    return {
+        "candidateId": evaluation.candidateId,
+        "cellSelection": selection.to_dict(),
+        "clusters": clusters.to_dict(),
+        "selectedCells": len(indices),
+        "observedPopulations": len(totals),
+        "columns": evidence_columns,
+        "omittedColumns": requested[2:],
+        "displayLimits": {
+            "columns": 2,
+            "populationsPerColumn": 64,
+            "groupsPerPopulation": 5,
+        },
+        "interpretation": (
+            "Counts use all exact selected cells. Population fractions include cells with missing unit metadata; "
+            "group fractions use all selected cells with that unit value. Missing values are unassigned. "
+            "Displayed populations prioritize concentration in one group, then smaller size. "
+            "A group with at least five cells is a descriptive count, not a replication threshold. "
+            "Shared donor or capture support does not establish biological identity or rule out artifacts."
+        ),
+    }
+
+
 def _subsample_partition_stability(
     graph: Any,
     labels: np.ndarray,
@@ -1540,25 +1802,30 @@ def augment_cluster_evaluations(
             ),
         )
 
-        marker_ref = store.run_marker_search(
-            clusters_ref,
-            from_assay=marker_assay,
-            features=marker_features,
-            invalidate_cache=False,
-        )
-        markers = store.get_markers(
-            marker_ref,
-            min_score=0.25,
-            min_frac_exp=0.2,
-        )
+        cluster_count = len(np.unique(labels))
+        marker_ref = None
+        markers = pd.DataFrame()
+        if cluster_count >= 2:
+            marker_ref = store.run_marker_search(
+                clusters_ref,
+                from_assay=marker_assay,
+                features=marker_features,
+                invalidate_cache=False,
+            )
+            markers = store.get_markers(
+                marker_ref,
+                min_score=0.25,
+                min_frac_exp=0.2,
+            )
         marker_groups = (
             set(markers["group_id"].astype(str))
             if "group_id" in markers.columns
             else set()
         )
-        cluster_count = len(np.unique(labels))
         marker_coherence = (
-            float(len(marker_groups) / cluster_count) if cluster_count else 0.0
+            float(len(marker_groups) / cluster_count)
+            if marker_ref is not None
+            else None
         )
         marker_names = (
             markers["feature_name"].astype(str).to_numpy()
@@ -1616,7 +1883,7 @@ def augment_cluster_evaluations(
             )
             background = float(mask.mean())
             enrichment = marker_fraction / background if background > 0 else 0.0
-            if family in nominated_families:
+            if marker_ref is not None and family in nominated_families:
                 marker_family_enrichment[family] = enrichment
             if family in protected_families and marker_fraction > 0:
                 protected_marker_families.append(family)
@@ -1703,9 +1970,15 @@ def augment_cluster_evaluations(
             *evaluation.evidenceIds,
             f"candidate:{evaluation.candidateId}:seedStability",
             f"candidate:{evaluation.candidateId}:subsampleStability",
-            f"candidate:{evaluation.candidateId}:markerCoherence",
-            f"candidate:{evaluation.candidateId}:markerSpecificity",
-            f"candidate:{evaluation.candidateId}:markerFamilies",
+            *(
+                [
+                    f"candidate:{evaluation.candidateId}:markerCoherence",
+                    f"candidate:{evaluation.candidateId}:markerSpecificity",
+                    f"candidate:{evaluation.candidateId}:markerFamilies",
+                ]
+                if marker_ref is not None
+                else []
+            ),
             *(
                 [f"candidate:{evaluation.candidateId}:crossUnitSupport"]
                 if cross_unit_support is not None
@@ -1732,7 +2005,11 @@ def augment_cluster_evaluations(
         artifacts = {
             **evaluation.artifacts,
             "stabilityClusters": ArtifactRecord.from_ref(alternative_ref),
-            "markerTable": ArtifactRecord.from_ref(marker_ref),
+            **(
+                {"markerTable": ArtifactRecord.from_ref(marker_ref)}
+                if marker_ref is not None
+                else {}
+            ),
             **(
                 {
                     f"doubletScore:{index}": ArtifactRecord.from_ref(score)
@@ -1766,6 +2043,21 @@ def augment_cluster_evaluations(
             evaluation.model_copy(
                 update={
                     "metrics": metrics,
+                    "eligible": evaluation.eligible and cluster_count >= 2,
+                    "eligibilityReasons": list(
+                        dict.fromkeys(
+                            [
+                                *evaluation.eligibilityReasons,
+                                *(
+                                    [
+                                        "Marker contrasts require at least two populated clusters"
+                                    ]
+                                    if cluster_count < 2
+                                    else []
+                                ),
+                            ]
+                        )
+                    ),
                     "evidenceIds": list(dict.fromkeys(evidence_ids)),
                     "artifacts": artifacts,
                     "warnings": list(
@@ -1790,6 +2082,7 @@ __all__ = [
     "AdvisoryDoubletScores",
     "augment_cluster_evaluations",
     "augment_pca_evaluations",
+    "population_support_evidence",
     "resolve_native_doublet_inputs",
     "score_advisory_doublets",
 ]

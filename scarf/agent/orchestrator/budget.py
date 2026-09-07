@@ -1,111 +1,190 @@
-"""Conservative candidate admission using the existing stage journal."""
+"""Write-ahead admissions for bounded RNA experiments in the workflow journal."""
 
+import hashlib
 from typing import Any
 
-from ...datastore.datastore import DataStore
-from ...utils.logging import logger
 from .. import record_io
-from ..persistence.contracts import AgentWorkflowRun
 from . import journal
-from .models import (
-    AutomatedWorkflowConfig,
-    OrchestrationRequestRecord,
-    WorkflowStageName,
-)
+from .models import AutomatedWorkflowConfig
 
 
-_PASS_STAGES: dict[WorkflowStageName, str] = {
-    "preprocessing": "baseline",
-    "feature_policy_preprocessing": "featureRevision",
-}
+class CandidateBudgetExceeded(ValueError):
+    """The next scientific experiment exceeds an explicit execution limit."""
 
 
-def candidate_pass_breakdown(config: AutomatedWorkflowConfig) -> dict[str, int]:
-    """Reserve every configured alternative, including conditional work."""
-    return {
-        "hvg": 3 * len(config.hvgCandidateCounts),
-        "pca": len(config.pcaCandidateDimensions),
-        "nativeCorrection": 1,
-        "harmony": config.maxHarmonyCandidatesPerAssay,
-        "neighbors": len(config.graphNeighborCandidates),
-        "resolutions": len(config.leidenResolutionCandidates),
-        "refinement": config.maxRefinedCandidatesPerAssay,
-    }
+def candidate_identity(inputs: dict[str, Any], *, graph: bool = False) -> str:
+    """Identify exact numerical inputs, omitting resolution for graph reuse."""
+    values = dict(inputs)
+    parameters = dict(values["parameters"])
+    parameters.pop("candidateId", None)
+    if graph:
+        parameters.pop("leidenResolution", None)
+    values["parameters"] = parameters
+    return hashlib.sha256(record_io.canonical_json_bytes(values)).hexdigest()
 
 
-def reserve_candidate_pass(
-    store: DataStore,
-    prefix: str,
-    workflow: AgentWorkflowRun,
-    request_record: OrchestrationRequestRecord,
-    stage_name: WorkflowStageName,
-) -> dict[str, Any]:
-    """Admit a logical pass before its immutable started record is written.
+class CandidateBudget:
+    """Reconstruct bounded admissions from fixed immutable journal slots."""
 
-    The caller persists the returned reservation in ``inputs.candidateBudget``.
-    Repeated attempts retain the same slots; conditional work does not refund
-    slots. This bounds candidate alternatives, not numerical work or wall time.
-    """
-    if stage_name not in _PASS_STAGES:
-        raise ValueError("Candidate reservations require a preprocessing stage")
-    if workflow.workflowRunId != request_record.workflowRunId:
-        raise ValueError("Candidate budget belongs to a different workflow")
-    breakdown = candidate_pass_breakdown(request_record.config)
-    per_pass = sum(breakdown.values())
-    admitted: set[str] = set()
-    for stage, logical_pass in _PASS_STAGES.items():
-        expected = {
-            "logicalPass": logical_pass,
-            "reserved": per_pass,
-            "breakdown": breakdown,
-        }
-        for started in journal._stage_starts(
-            store.zw, prefix, workflow.workflowRunId, stage
-        ):
-            if (
-                started.requestSha256 != request_record.requestSha256
-                or started.configSha256 != request_record.configSha256
-            ):
-                raise ValueError(
-                    "Candidate reservation request/config identity differs"
+    def __init__(
+        self,
+        store: Any,
+        prefix: str,
+        workflow_run_id: str,
+        config: AutomatedWorkflowConfig,
+        provenance: dict[str, Any],
+    ) -> None:
+        self.store = store
+        self.prefix = prefix
+        self.workflow_run_id = workflow_run_id
+        self.config = config
+        self.provenance = provenance
+        self.admissions: dict[str, list[dict[str, Any]]] = {}
+        for scope in ("sample0", "sample1", "full"):
+            limit = (
+                config.maxFullPartitions
+                if scope == "full"
+                else config.maxScreeningEvaluations
+            )
+            rows: list[dict[str, Any]] = []
+            for slot in range(limit):
+                row = journal.load_checkpoint(
+                    store,
+                    prefix,
+                    workflow_run_id,
+                    self._key(scope, slot, "admission"),
+                    inputs=provenance,
                 )
-            reservation = started.inputs.get("candidateBudget")
-            if reservation is None:
-                if started.inputs.get("candidateBudgetRejected") is True:
+                if row is None:
                     continue
-                if stage == "feature_policy_preprocessing" and isinstance(
-                    started.inputs.get("baselineAttemptId"), str
+                if (
+                    row.get("slot") != slot
+                    or row.get("scope") != scope
+                    or slot != len(rows)
                 ):
-                    continue
-                raise ValueError(
-                    "Preprocessing history lacks its candidate reservation; "
-                    "start a new workflow"
-                )
-            if record_io.canonical_json_bytes(
-                reservation
-            ) != record_io.canonical_json_bytes(expected):
-                raise ValueError(
-                    f"Persisted {logical_pass} candidate reservation differs "
-                    "from the immutable workflow configuration"
-                )
-            admitted.add(logical_pass)
-    logical_pass = _PASS_STAGES[stage_name]
-    if logical_pass == "featureRevision" and "baseline" not in admitted:
-        raise ValueError("Feature revision requires a reserved baseline pass")
-    total = per_pass * len(admitted | {logical_pass})
-    limit = request_record.config.maxCandidateEvaluations
-    details = ", ".join(f"{name}={count}" for name, count in breakdown.items())
-    if total > limit:
-        already_reserved = per_pass * len(admitted)
-        raise ValueError(
-            f"Candidate budget exceeded before {logical_pass}: "
-            f"{already_reserved} slots already reserved, {per_pass} required "
-            f"for this pass ({details}), workflow limit={limit}. "
-            "Increase maxCandidateEvaluations or explicitly reduce the candidate "
-            "lists in a new workflow. No candidate lists were truncated."
+                    raise ValueError("Candidate admission history is inconsistent")
+                rows.append(row)
+            self.admissions[scope] = rows
+
+    @staticmethod
+    def _key(scope: str, slot: int, kind: str) -> str:
+        return f"parameter_tuning/{scope}/evaluation{slot}/{kind}"
+
+    def admit(self, scope: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        if scope not in self.admissions:
+            raise ValueError("Unknown candidate execution scope")
+        identity = candidate_identity(inputs)
+        rows = self.admissions[scope]
+        for row in rows:
+            if row["identity"] == identity:
+                return row
+        graph_identity = candidate_identity(inputs, graph=True)
+        if scope == "full":
+            if len(rows) >= self.config.maxFullPartitions:
+                raise CandidateBudgetExceeded("Full-cohort partition limit reached")
+            graphs = {row["graphIdentity"] for row in rows} | {graph_identity}
+            if len(graphs) > self.config.maxFullGraphs:
+                raise CandidateBudgetExceeded("Full-cohort graph limit reached")
+        else:
+            if len(rows) >= self.config.maxScreeningEvaluations:
+                raise CandidateBudgetExceeded("Screening candidate limit reached")
+            total = sum(len(self.admissions[name]) for name in ("sample0", "sample1"))
+            if total >= self.config.maxTotalScreeningEvaluations:
+                raise CandidateBudgetExceeded("Total screening candidate limit reached")
+        row = {
+            "slot": len(rows),
+            "scope": scope,
+            "identity": identity,
+            "graphIdentity": graph_identity,
+            "executionInputs": inputs,
+        }
+        journal.save_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow_run_id,
+            self._key(scope, len(rows), "admission"),
+            inputs=self.provenance,
+            outputs=row,
         )
-    logger.info(
-        f"Candidate work: {logical_pass} reserves {per_pass} slots ({details}); "
-        f"workflow reserved {total}/{limit}. Actual evaluations may be fewer."
-    )
-    return {"logicalPass": logical_pass, "reserved": per_pass, "breakdown": breakdown}
+        rows.append(row)
+        return row
+
+    def check_many(
+        self, scope: str, inputs: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Check room for a comparison without committing an admission."""
+        existing = self.admissions[scope]
+        identities = {row["identity"] for row in existing}
+        pending = {
+            candidate_identity(value): value
+            for value in inputs
+            if candidate_identity(value) not in identities
+        }
+        total = len(existing) + len(pending)
+        if scope == "full":
+            graphs = {row["graphIdentity"] for row in existing} | {
+                candidate_identity(value, graph=True) for value in pending.values()
+            }
+            if (
+                total > self.config.maxFullPartitions
+                or len(graphs) > self.config.maxFullGraphs
+            ):
+                raise CandidateBudgetExceeded(
+                    "The full-cohort comparison exceeds the remaining graph/partition limit"
+                )
+        elif (
+            total > self.config.maxScreeningEvaluations
+            or sum(len(self.admissions[name]) for name in ("sample0", "sample1"))
+            + len(pending)
+            > self.config.maxTotalScreeningEvaluations
+        ):
+            raise CandidateBudgetExceeded(
+                "The screening comparison exceeds the remaining candidate limit"
+            )
+        return pending
+
+    def admit_many(self, scope: str, inputs: list[dict[str, Any]]) -> None:
+        """Check a baseline or matched pair in full before its first computation."""
+        for value in self.check_many(scope, inputs).values():
+            self.admit(scope, value)
+
+    def completed(self, admission: dict[str, Any]) -> dict[str, Any] | None:
+        return journal.load_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow_run_id,
+            self._key(admission["scope"], admission["slot"], "complete"),
+            inputs=admission,
+        )
+
+    def complete(self, admission: dict[str, Any], output: dict[str, Any]) -> None:
+        journal.save_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow_run_id,
+            self._key(admission["scope"], admission["slot"], "complete"),
+            inputs=admission,
+            outputs=output,
+        )
+
+    def summary(self) -> dict[str, Any]:
+        """Count distinct reserved and completed comparisons, including reuse."""
+        scopes = {}
+        for scope, rows in self.admissions.items():
+            completed = [row for row in rows if self.completed(row) is not None]
+            scopes[scope] = {
+                state: {
+                    "graphs": len({row["graphIdentity"] for row in entries}),
+                    "partitions": len({row["identity"] for row in entries}),
+                }
+                for state, entries in (("reserved", rows), ("completed", completed))
+            }
+        return {
+            "scopes": scopes,
+            "limits": {
+                "perScreen": self.config.maxScreeningEvaluations,
+                "totalScreens": self.config.maxTotalScreeningEvaluations,
+                "fullPartitions": self.config.maxFullPartitions,
+                "fullGraphs": self.config.maxFullGraphs,
+            },
+        }

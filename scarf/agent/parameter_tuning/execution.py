@@ -8,7 +8,7 @@ from typing import Any, cast
 import numpy as np
 
 from ...metrics import graph_connectivity
-from ...metadata.rows import iter_metadata_column_blocks
+from ...metadata.rows import iter_metadata_column_blocks, metadata_missing_mask
 from ...storage.refs import ArtifactRef
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
@@ -77,6 +77,13 @@ def _metadata_column_fingerprint(metadata: Any, column: str) -> str:
             if block.dtype.hasobject
             else block.tobytes()
         )
+    missing = metadata_missing_mask(metadata, column)
+    digest.update(b"missing:none" if missing is None else b"missing:present")
+    if missing is not None:
+        for start in range(0, len(missing), 65_536):
+            digest.update(
+                np.asarray(missing[start : start + 65_536], dtype=bool).tobytes()
+            )
     return digest.hexdigest()
 
 
@@ -511,6 +518,12 @@ def _collect_parameter_candidate_metrics(
             warnings.append(f"Batch mixing for {column!r} unavailable: {exc}")
 
     for column in deps.preservationColumns:
+        if deps.columnKinds.get(column) == "continuous":
+            warnings.append(
+                f"Matched graph preservation for continuous column {column!r} is unsupported; "
+                "PCA association is descriptive evidence only."
+            )
+            continue
         scores: dict[str, float] = {}
         try:
             clisi = float(
@@ -562,6 +575,54 @@ def _collect_parameter_candidate_metrics(
             warnings.append(f"Graph connectivity for {column!r} unavailable: {exc}")
         if scores:
             metrics.biologicalPreservation[column] = scores
+
+    if deps.protectedCombinations:
+        from ...metrics import clisi_knn
+        from ..experimental_context.characterization import _SelectionBoundCells
+        from ..experimental_context.comparisons import combination_labels
+
+        bound_cells = _SelectionBoundCells(store.zw, store.cells, deps.cellSelection)
+        neighbor_group = store.load_artifact(neighbors_ref)
+        graph_group = store.load_artifact(graph_ref)
+        for columns in deps.protectedCombinations:
+            name = "joint:" + json.dumps(list(columns), separators=(",", ":"))
+            metadata_key = tuple(
+                _metric_metadata_key(store, column) for column in columns
+            )
+            labels = combination_labels(bound_cells, columns)
+            scores = _cached_candidate_metric(
+                (
+                    id(store),
+                    "protected_combination",
+                    neighbors_ref,
+                    graph_ref,
+                    columns,
+                    metadata_key,
+                ),
+                lambda: {
+                    "clisi": float(
+                        clisi_knn(
+                            as_zarr_array(
+                                neighbor_group["distances"], name="distances"
+                            ),
+                            as_zarr_array(neighbor_group["indices"], name="indices"),
+                            labels,
+                            perplexity=None,
+                            scale=True,
+                        )
+                    ),
+                    "graphConnectivity": float(
+                        graph_connectivity(
+                            as_zarr_array(graph_group["edges"], name="edges"),
+                            labels,
+                        )
+                    ),
+                },
+            )
+            if not all(np.isfinite(value) for value in scores.values()):
+                raise ValueError("Protected combination metrics must be finite")
+            metrics.biologicalPreservation[name] = scores
+            evidence_ids.append(f"candidate:{candidate_id}:{name}")
 
     eligibility_reasons: list[str] = []
     if n_clusters < 2:
@@ -621,10 +682,10 @@ def execute_parameter_candidate(
 
         candidate = deps.candidates[candidate_id]
         deps.executionOrder.append(candidate_id)
+        logger.debug(f"Executing candidate {candidate_id!r} for {deps.fromAssay!r}")
         logger.info(
-            f"Running parameter candidate {candidate_id!r} for assay "
-            f"{deps.fromAssay!r}: method={candidate.reductionMethod}, "
-            f"dimensions={candidate.dimensions}, k={candidate.neighborsK}, "
+            f"Comparing settings for {deps.fromAssay}: {candidate.reductionMethod.upper()} "
+            f"dimensions={candidate.dimensions}, neighbors={candidate.neighborsK}, "
             f"resolution={candidate.leidenResolution}, "
             f"harmony={candidate.useHarmony}"
         )
@@ -776,11 +837,9 @@ def execute_parameter_candidate(
                 warnings=warnings,
             )
             logger.info(
-                f"Completed parameter candidate {candidate_id!r} for assay "
-                f"{deps.fromAssay!r}: eligible={evaluation.eligible}, "
-                f"clusters={metrics.nClusters}, "
-                f"minimum_cluster_cells={metrics.minClusterCells}, "
-                f"warnings={len(warnings)}"
+                f"Compared settings: {metrics.nClusters} clusters; "
+                f"smallest population has {metrics.minClusterCells} cells; "
+                f"{'ready for assessment' if evaluation.eligible else 'candidate checks unresolved'}."
             )
         except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             evaluation = ParameterCandidateEvaluation(

@@ -1,10 +1,12 @@
-"""Immutable orchestration journal and stage lifecycle operations."""
+"""One immutable RNA workflow history containing stage evidence and decisions."""
 
 import hashlib
+import json
 import re
 import time
 import uuid
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import zarr
@@ -15,39 +17,27 @@ from ...datastore.datastore import DataStore
 from ...utils.logging import logger
 from .. import record_io
 from ..experimental_context.study import StudyContract
-from ..ingest.manifest import DatasetManifest
-from ..persistence.contracts import (
-    AgentInvocation,
-    AgentName,
-    AgentReportLink,
-    AgentReportReference,
-    AgentWorkflowRun,
-)
-from ..persistence.reports import (
-    AgentReport,
-    finalize_agent_workflow,
-    list_agent_reports,
-    load_agent_record,
-    load_agent_report,
-    load_agent_workflow,
-    save_agent_report,
-)
 from ..types import AgentDataModel, ArtifactReferenceModel
 from .models import (
-    _ORCHESTRATION_FORMAT,
-    _ORCHESTRATION_VERSION,
     _STAGE_ORDER,
-    AutomatedPreprocessingPlan,
+    AutomatedWorkflowConfig,
     AutomatedWorkflowResult,
-    AutomatedWorkflowStatus,
     FinalAnalysisHandoff,
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
+    StageEvidenceReference,
+    WorkflowIdentity,
     WorkflowNeedsInput,
     WorkflowStageAttempt,
     WorkflowStageLink,
     WorkflowStageName,
     artifact_model_to_ref,
+)
+
+_INCOMPATIBLE = (
+    "Unsupported saved agent workflow. Start a new RNA workflow with this release; "
+    "older requests cannot be resumed or regenerated. Existing analysis artifacts "
+    "remain accessible through Scarf's artifact APIs."
 )
 
 
@@ -80,53 +70,100 @@ def _list_keys(group: zarr.Group, prefix: str) -> list[str]:
     return record_io.list_keys(group, prefix)
 
 
+def _checkpoint_key(prefix: str, workflow_run_id: str, key: str) -> str:
+    parts = key.split("/")
+    if not parts or any(
+        re.fullmatch(r"[A-Za-z0-9_.:-]+", part) is None or part in {".", ".."}
+        for part in parts
+    ):
+        raise ValueError("Checkpoint keys must contain safe, non-empty path components")
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", workflow_run_id) is None:
+        raise ValueError("Invalid workflow identifier")
+    return record_io.join_key(prefix, workflow_run_id, "checkpoints", key + ".json")
+
+
+def read_checkpoint(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    key: str,
+) -> dict[str, Any] | None:
+    """Read an exact journal checkpoint with its validated inputs and outputs."""
+    raw = record_io.read_key(store.zw, _checkpoint_key(prefix, workflow_run_id, key))
+    if raw is None:
+        return None
+    value = json.loads(raw)
+    if not isinstance(value, dict) or set(value) != {
+        "inputs",
+        "outputs",
+        "contentSha256",
+    }:
+        raise ValueError(
+            "Unsupported RNA checkpoint contract; start a new workflow. Existing analysis artifacts remain accessible."
+        )
+    payload = {"inputs": value["inputs"], "outputs": value["outputs"]}
+    digest = hashlib.sha256(record_io.canonical_json_bytes(payload)).hexdigest()
+    if value["contentSha256"] != digest:
+        raise ValueError("RNA checkpoint checksum does not match its contents")
+    if not isinstance(value["inputs"], dict) or not isinstance(value["outputs"], dict):
+        raise ValueError("RNA checkpoint inputs and outputs must be mappings")
+    return value
+
+
+def load_checkpoint(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    key: str,
+    inputs: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Read committed outputs only when the exact scientific inputs agree."""
+    value = read_checkpoint(store, prefix, workflow_run_id, key)
+    if value is None:
+        return None
+    if inputs is not None and record_io.canonical_json_bytes(
+        inputs
+    ) != record_io.canonical_json_bytes(value["inputs"]):
+        raise ValueError(f"Checkpoint {key!r} has different scientific inputs")
+    return cast(dict[str, Any], value["outputs"])
+
+
+def save_checkpoint(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    key: str,
+    inputs: Mapping[str, Any],
+    outputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Commit evidence or admission before its dependent work; exact replay is idempotent."""
+    payload = {"inputs": dict(inputs), "outputs": dict(outputs)}
+    value = {
+        **payload,
+        "contentSha256": hashlib.sha256(
+            record_io.canonical_json_bytes(payload)
+        ).hexdigest(),
+    }
+    path = _checkpoint_key(prefix, workflow_run_id, key)
+    try:
+        _write_key_once(store.zw, path, record_io.display_json_bytes(value))
+    except FileExistsError:
+        existing = load_checkpoint(store, prefix, workflow_run_id, key, inputs)
+        if existing != outputs:
+            raise ValueError(
+                f"Checkpoint {key!r} already contains a different outcome"
+            ) from None
+        return existing
+    return dict(outputs)
+
+
 def _orchestration_prefix(store: DataStore) -> str:
     root_path = str(getattr(store.zw, "path", "")).strip("/")
     return record_io.join_key(root_path, "agents", "orchestrations")
 
 
-def _ensure_orchestration_store(store: DataStore) -> str:
-    if "agents" not in store.zw:
-        raise RuntimeError("Create the agent workflow before orchestration records")
-    agents = store.zw["agents"]
-    if not isinstance(agents, zarr.Group):
-        raise ValueError("The agents namespace must be a Zarr group")
-    if "orchestrations" not in agents:
-        candidate_prefix = _orchestration_prefix(store)
-        if _list_keys(store.zw, candidate_prefix):
-            raise ValueError(
-                "A non-Zarr object already occupies the orchestrations namespace"
-            )
-        agents.create_group(
-            "orchestrations",
-            attributes={
-                "format": _ORCHESTRATION_FORMAT,
-                "format_version": _ORCHESTRATION_VERSION,
-            },
-        )
-        logger.info("Initialized the automated workflow orchestration journal")
-    node = agents["orchestrations"]
-    if not isinstance(node, zarr.Group):
-        raise ValueError("The orchestrations namespace must be a Zarr group")
-    if (
-        node.attrs.get("format") != _ORCHESTRATION_FORMAT
-        or node.attrs.get("format_version") != _ORCHESTRATION_VERSION
-    ):
-        raise ValueError("Unrecognized orchestration persistence format")
-    return _orchestration_prefix(store)
-
-
 def _request_key(prefix: str, workflow_run_id: str) -> str:
     return record_io.join_key(prefix, workflow_run_id, "request.json")
-
-
-def _resume_key(prefix: str, workflow_run_id: str, resume_id: str) -> str:
-    return record_io.join_key(
-        prefix,
-        workflow_run_id,
-        "resumes",
-        f"{resume_id}.json",
-    )
 
 
 def _stage_prefix(
@@ -149,68 +186,6 @@ def _stage_key(
         attempt_id,
         filename,
     )
-
-
-def _result_key(prefix: str, workflow_run_id: str) -> str:
-    return record_io.join_key(prefix, workflow_run_id, "result.json")
-
-
-def _handoff_key(
-    prefix: str,
-    workflow_run_id: str,
-    handoff_id: str,
-) -> str:
-    marker, separator, digest = handoff_id.partition(":")
-    if (
-        marker != "handoff"
-        or separator != ":"
-        or len(digest) != 64
-        or any(value not in "0123456789abcdef" for value in digest)
-    ):
-        raise ValueError("handoff_id must contain a lowercase SHA-256 digest")
-    return record_io.join_key(
-        prefix,
-        workflow_run_id,
-        "handoffs",
-        f"{digest}.json",
-    )
-
-
-def save_final_analysis_handoff(
-    store: DataStore,
-    prefix: str,
-    handoff: FinalAnalysisHandoff,
-) -> FinalAnalysisHandoff:
-    handoff = FinalAnalysisHandoff.model_validate(handoff.model_dump(mode="json"))
-    if not handoff.handoffId:
-        raise ValueError("Final analysis handoff requires its content identity")
-    key = _handoff_key(prefix, handoff.workflowRunId, handoff.handoffId)
-    payload = record_io.display_json_bytes(handoff.model_dump(mode="json"))
-    stored = record_io.read_key(store.zw, key)
-    if stored is None:
-        try:
-            _write_key_once(store.zw, key, payload)
-        except FileExistsError:
-            stored = record_io.read_key(store.zw, key)
-            if stored != payload:
-                raise
-    elif stored != payload:
-        raise FileExistsError("Final handoff identity has conflicting content")
-    return handoff
-
-
-def load_final_analysis_handoff(
-    store: DataStore,
-    prefix: str,
-    workflow_run_id: str,
-    handoff_id: str,
-) -> FinalAnalysisHandoff:
-    key = _handoff_key(prefix, workflow_run_id, handoff_id)
-    value = _read_model(store.zw, key, FinalAnalysisHandoff)
-    handoff = cast(FinalAnalysisHandoff, value)
-    if handoff.workflowRunId != workflow_run_id or handoff.handoffId != handoff_id:
-        raise ValueError("Final handoff identity does not match its journal key")
-    return handoff
 
 
 def _read_model(
@@ -250,7 +225,7 @@ def _complete_attempt(
     started: WorkflowStageAttempt,
     *,
     status: Literal["done", "needsInput", "abstained", "failed"],
-    report_references: Sequence[AgentReportReference] = (),
+    report_references: Sequence[StageEvidenceReference] = (),
     artifacts: Mapping[str, ArtifactReferenceModel] | None = None,
     outputs: Mapping[str, Any] | None = None,
     actions: Sequence[str] = (),
@@ -287,15 +262,12 @@ def _start_attempt(
 ) -> WorkflowStageAttempt:
     attempt_inputs = dict(inputs or {})
     if resume_record is not None:
-        attempt_inputs["resumeLineage"] = {
-            "resumeId": resume_record.resumeId,
-            "answeredAttempt": (
-                resume_record.answeredAttempt.model_dump(mode="json")
-                if resume_record.answeredAttempt is not None
-                else None
-            ),
-            "questionIds": list(resume_record.questionIds),
-        }
+        attempt_inputs["resumeAnswers"] = dict(resume_record.answers)
+        attempt_inputs["answeredAttempt"] = (
+            resume_record.answeredAttempt.model_dump(mode="json")
+            if resume_record.answeredAttempt is not None
+            else None
+        )
     attempt = WorkflowStageAttempt(
         workflowRunId=workflow_run_id,
         stage=stage,
@@ -319,10 +291,7 @@ def _start_attempt(
         ),
         attempt,
     )
-    logger.info(
-        f"Workflow {workflow_run_id}: started stage={stage!r} "
-        f"attempt={attempt.attemptId}"
-    )
+    logger.info(f"{stage.replace('_', ' ').capitalize()}: started")
     return attempt
 
 
@@ -347,51 +316,17 @@ def _save_outcome(
         if outcome.completedAtNs is not None
         else 0.0
     )
-    details = (
-        f"reports={len(outcome.reportReferences)}, "
-        f"artifacts={len(outcome.artifacts)}, actions={len(outcome.actions)}"
-    )
+    label = outcome.stage.replace("_", " ").capitalize()
     if outcome.status == "failed":
-        logger.error(
-            f"Stage {outcome.stage!r} failed: "
-            f"{outcome.error or 'unknown error'} ({elapsed_seconds:.1f}s)"
-        )
-    elif outcome.status == "needsInput":
-        question_count = (
-            len(outcome.needsInput.questions) if outcome.needsInput is not None else 0
-        )
-        logger.info(
-            f"Workflow {outcome.workflowRunId}: stage={outcome.stage!r} paused "
-            f"for {question_count} input question(s) ({details}; "
-            f"{elapsed_seconds:.1f}s)"
-        )
-    elif outcome.status == "abstained":
-        logger.info(
-            f"Workflow {outcome.workflowRunId}: stage={outcome.stage!r} "
-            f"abstained ({details}; {elapsed_seconds:.1f}s)"
-        )
+        logger.error(f"{label}: {outcome.error} ({elapsed_seconds:.1f}s)")
+    elif outcome.status in {"needsInput", "abstained"}:
+        reasons = "; ".join(outcome.notes)
+        if outcome.needsInput is not None:
+            reasons = "; ".join(q.question for q in outcome.needsInput.questions)
+        logger.warning(f"{label}: {outcome.status}: {reasons}")
     else:
-        logger.info(
-            f"Workflow {outcome.workflowRunId}: completed stage={outcome.stage!r} "
-            f"({details}; {elapsed_seconds:.1f}s)"
-        )
-    if (
-        outcome.status == "done"
-        and "reuse_baseline_preprocessing" not in outcome.actions
-    ):
-        assays = outcome.outputs.get("assays")
-        if isinstance(assays, list):
-            count = sum(
-                len(assay.get("featureCandidateEvaluations", []))
-                for assay in assays
-                if isinstance(assay, Mapping)
-            )
-            logger.info(f"HVG comparison: {count} actual candidate evaluations.")
-        if "candidateCount" in outcome.outputs:
-            logger.info(
-                "Parameter tuning: "
-                f"{outcome.outputs['candidateCount']} actual candidate evaluations."
-            )
+        logger.info(f"{label}: completed ({elapsed_seconds:.1f}s)")
+    logger.debug(f"Workflow {outcome.workflowRunId}, attempt {outcome.attemptId}")
 
 
 def _stage_outcomes(
@@ -572,61 +507,6 @@ def _resume_answer_errors(
     return errors
 
 
-def _validated_resume_record(
-    store: DataStore,
-    prefix: str,
-    workflow_run_id: str,
-    resume_id: str,
-) -> OrchestrationResumeRecord:
-    record = cast(
-        OrchestrationResumeRecord,
-        _read_model(
-            store.zw,
-            _resume_key(prefix, workflow_run_id, resume_id),
-            OrchestrationResumeRecord,
-        ),
-    )
-    if record.workflowRunId != workflow_run_id or record.resumeId != resume_id:
-        raise ValueError("Persisted resume record identity does not match its path")
-    if record.contentSha256 != _record_checksum(record):
-        raise ValueError("Persisted resume record checksum does not match its content")
-    if record.answeredAttempt is None:
-        if record.questionIds or record.answers:
-            raise ValueError(
-                "A resume without an answered attempt cannot contain question answers"
-            )
-        return record
-    matches = [
-        outcome
-        for outcome in _stage_outcomes(
-            store.zw,
-            prefix,
-            workflow_run_id,
-            record.answeredAttempt.stage,
-        )
-        if outcome.attemptId == record.answeredAttempt.attemptId
-        and outcome.contentSha256 == record.answeredAttempt.contentSha256
-    ]
-    if len(matches) != 1 or matches[0].status != "needsInput":
-        raise ValueError(
-            "Persisted resume record does not cite one paused stage attempt"
-        )
-    answered_outcome = matches[0]
-    assert answered_outcome.needsInput is not None
-    expected_question_ids = [
-        question.questionId for question in answered_outcome.needsInput.questions
-    ]
-    if record.questionIds != expected_question_ids:
-        raise ValueError("Persisted resume record question IDs are stale")
-    answer_errors = _resume_answer_errors(answered_outcome, record.answers)
-    if answer_errors:
-        raise ValueError(
-            "Persisted resume record contains invalid answers: "
-            + "; ".join(answer_errors)
-        )
-    return record
-
-
 def _validated_done_outcome(
     store: DataStore,
     prefix: str,
@@ -727,7 +607,7 @@ def _stage_outcome_resolves(
         for reference in outcome.reportReferences:
             if reference.workflowRunId != workflow_run_id:
                 raise ValueError("Stage report belongs to a different workflow")
-            load_agent_report(store, reference)
+            read_stage_evidence(store, reference)
         for artifact_reference in outcome.artifacts.values():
             store.load_artifact(artifact_model_to_ref(artifact_reference))
         metadata_columns = outcome.outputs.get("metadataColumns", [])
@@ -749,19 +629,10 @@ def _parent_link(outcome: WorkflowStageAttempt) -> WorkflowStageLink:
     )
 
 
-def _safe_label(value: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")
-    return clean or "assay"
-
-
-def _report_link(reference: AgentReportReference) -> AgentReportLink:
-    return AgentReportLink.from_reference(reference)
-
-
 def _stage_execution_id(started: WorkflowStageAttempt) -> str:
     """Return the stable identity of one logical agent-stage invocation."""
     inputs = dict(started.inputs)
-    inputs.pop("resumeLineage", None)
+    inputs.pop("answeredAttempt", None)
     payload = {
         "workflowRunId": started.workflowRunId,
         "stage": started.stage,
@@ -776,55 +647,106 @@ def _stage_execution_id(started: WorkflowStageAttempt) -> str:
     return f"orchestrator_{started.stage}_{digest[:40]}"
 
 
-def _stage_invocation(
-    started: WorkflowStageAttempt,
-    invocation: AgentInvocation,
-) -> AgentInvocation:
-    execution_id = _stage_execution_id(started)
-    inputs = dict(invocation.inputs)
-    observed = inputs.get("orchestrationExecutionId")
-    if observed is not None and observed != execution_id:
-        raise ValueError("Agent invocation has a conflicting orchestration identity")
-    inputs["orchestrationExecutionId"] = execution_id
-    return invocation.model_copy(update={"inputs": inputs})
+def _ensure_orchestration_store(store: DataStore) -> str:
+    """Initialize only the journal namespace, never a second workflow ledger."""
+    agents = store.zw.require_group("agents")
+    if "orchestrations" not in agents:
+        agents.create_group(
+            "orchestrations",
+            attributes={"format": "scarf_agent_orchestrations", "format_version": 2},
+        )
+    node = agents["orchestrations"]
+    if not isinstance(node, zarr.Group) or dict(node.attrs) != {
+        "format": "scarf_agent_orchestrations",
+        "format_version": 2,
+    }:
+        raise ValueError(_INCOMPATIBLE)
+    return _orchestration_prefix(store)
+
+
+def read_request(
+    group: zarr.Group, prefix: str, workflow_run_id: str
+) -> OrchestrationRequestRecord:
+    try:
+        value = cast(
+            OrchestrationRequestRecord,
+            _read_model(
+                group, _request_key(prefix, workflow_run_id), OrchestrationRequestRecord
+            ),
+        )
+    except (ValueError, TypeError) as exc:
+        raise ValueError(_INCOMPATIBLE) from exc
+    if (
+        value.workflowRunId != workflow_run_id
+        or value.requestSha256 != _sha256_model(value.request)
+        or value.configSha256 != _sha256_model(value.config)
+        or value.contentSha256 != _record_checksum(value)
+    ):
+        raise ValueError("RNA workflow request identity or checksum is invalid")
+    return value
+
+
+def open_analysis_store(
+    target: str | Path, workflow_run_id: str, *, workspace: str | None = None
+) -> DataStore:
+    """Open the journal's selected RNA assay read-only, before resolving any result."""
+    from ...storage.schema import validate_workspace_name
+
+    validate_workspace_name(workspace)
+    root = zarr.open_group(str(target), mode="r")
+    active = root if workspace is None else root[workspace]
+    if not isinstance(active, zarr.Group):
+        raise ValueError("Analysis workspace is not a group")
+    prefix = record_io.join_key(active.path, "agents", "orchestrations")
+    record = read_request(active, prefix, workflow_run_id)
+    if record.request.zarrPath is None:
+        raise ValueError("Saved workflow has no store path")
+    if (
+        record.request.workspace != workspace
+        or Path(record.request.zarrPath).resolve() != Path(target).resolve()
+    ):
+        raise ValueError("Analysis address does not match the saved request")
+    if not record.request.primaryAssay:
+        raise ValueError("Saved analysis has no selected RNA assay")
+    return DataStore(
+        str(target),
+        workspace=workspace,
+        default_assay=record.request.primaryAssay,
+        zarr_mode="r",
+        min_features_per_cell=-1,
+        mito_pattern="",
+        ribo_pattern="",
+    )
+
+
+def _report_checkpoint(started: WorkflowStageAttempt) -> str:
+    return f"{started.stage}/report/{_stage_execution_id(started)}"
 
 
 def _recover_persisted_stage_report(
     store: DataStore,
     started: WorkflowStageAttempt,
     *,
-    agent_name: AgentName,
     expected_type: type[AgentDataModel],
-) -> tuple[AgentDataModel, AgentReportReference] | None:
-    """Recover a report committed before its stage outcome was persisted."""
-    execution_id = _stage_execution_id(started)
-    matches = [
-        reference
-        for reference in list_agent_reports(
-            store,
-            started.workflowRunId,
-            agent_name=agent_name,
-        )
-        if reference.agentRunId == execution_id
-    ]
-    if not matches:
+) -> tuple[AgentDataModel, StageEvidenceReference] | None:
+    key = _report_checkpoint(started)
+    inputs = {"execution": _stage_execution_id(started)}
+    data = load_checkpoint(
+        store, _orchestration_prefix(store), started.workflowRunId, key, inputs
+    )
+    if data is None:
         return None
-    if len(matches) != 1:
-        raise ValueError("A logical stage execution has multiple persisted reports")
-    reference = matches[0]
-    record = load_agent_record(store, reference)
-    if record.invocation.inputs.get("orchestrationExecutionId") != execution_id:
-        raise ValueError("Persisted stage report has a stale execution identity")
-    report = load_agent_report(store, reference)
-    if not isinstance(report, expected_type):
-        raise TypeError(
-            f"Persisted {agent_name!r} report is not {expected_type.__name__}"
-        )
-    for artifact in record.invocation.artifacts.values():
-        store.load_artifact(artifact_model_to_ref(artifact))
-    logger.info(
-        f"Workflow {started.workflowRunId}: recovered {agent_name!r} report for "
-        f"stage={started.stage!r}"
+    if (
+        set(data) != {"reportType", "report"}
+        or data["reportType"] != expected_type.__name__
+    ):
+        raise ValueError("Stage evidence has a different scientific result type")
+    report = expected_type.model_validate(data["report"])
+    reference = StageEvidenceReference(
+        workflowRunId=started.workflowRunId,
+        stage=started.stage,
+        key=key,
+        contentSha256=_sha256_model(report),
     )
     return report, reference
 
@@ -834,142 +756,74 @@ def _save_stage_report(
     started: WorkflowStageAttempt,
     report: AgentDataModel,
     *,
-    invocation: AgentInvocation,
     expected_type: type[AgentDataModel],
-) -> tuple[AgentDataModel, AgentReportReference]:
-    """Persist a stage report under its stable logical execution identity."""
-    tagged_invocation = _stage_invocation(started, invocation)
-    try:
-        reference = save_agent_report(
-            store,
-            started.workflowRunId,
-            cast(AgentReport, report),
-            invocation=tagged_invocation,
-            agent_run_id=_stage_execution_id(started),
-        )
-        logger.info(
-            f"Workflow {started.workflowRunId}: persisted "
-            f"{tagged_invocation.agentName!r} report for stage={started.stage!r}"
-        )
-        return report, reference
-    except FileExistsError:
-        recovered = _recover_persisted_stage_report(
-            store,
-            started,
-            agent_name=tagged_invocation.agentName,
-            expected_type=expected_type,
-        )
-        if recovered is None:
-            raise
-        logger.debug(
-            f"Workflow {started.workflowRunId}: reused concurrently persisted "
-            f"{tagged_invocation.agentName!r} report"
-        )
-        return recovered
+    attempt_owned: bool = False,
+) -> tuple[AgentDataModel, StageEvidenceReference]:
+    report = expected_type.model_validate(report.model_dump(mode="json"))
+    # Revisable stages recover individual evidence checkpoints across attempts;
+    # their aggregate reports can change as additional evidence is completed.
+    key = (
+        f"{started.stage}/report/attempt_{started.attemptId}"
+        if attempt_owned
+        else _report_checkpoint(started)
+    )
+    data = {
+        "reportType": expected_type.__name__,
+        "report": report.model_dump(mode="json"),
+    }
+    save_checkpoint(
+        store,
+        _orchestration_prefix(store),
+        started.workflowRunId,
+        key,
+        {"execution": _stage_execution_id(started)},
+        data,
+    )
+    return report, StageEvidenceReference(
+        workflowRunId=started.workflowRunId,
+        stage=started.stage,
+        key=key,
+        contentSha256=_sha256_model(report),
+    )
 
 
-def _load_terminal_result(
-    store: DataStore,
-    prefix: str,
-    workflow: AgentWorkflowRun,
-) -> AutomatedWorkflowResult | None:
-    raw = record_io.read_key(
-        store.zw,
-        _result_key(prefix, workflow.workflowRunId),
+def read_stage_evidence(
+    store: DataStore, reference: StageEvidenceReference
+) -> dict[str, Any]:
+    if not reference.key.startswith(reference.stage + "/report/"):
+        raise ValueError("Evidence checkpoint is not owned by its declared stage")
+    value = load_checkpoint(
+        store,
+        _orchestration_prefix(store),
+        reference.workflowRunId,
+        reference.key,
+        None,
     )
-    if raw is None:
-        return None
-    try:
-        result = AutomatedWorkflowResult.model_validate_json(raw)
-    except ValueError as exc:
-        raise ValueError("Malformed automated workflow result") from exc
-    if result.contentSha256 != _record_checksum(result):
-        raise ValueError("Automated workflow result checksum is invalid")
-    if result.workflowRun is None:
-        raise ValueError("Terminal workflow result is missing its workflow identity")
-    stored_workflow = result.workflowRun
-    identity_fields = (
-        "workflowRunId",
-        "workspace",
-        "status",
-        "finalizedAtNs",
-        "finalizationMessage",
-        "analysisStore",
-        "datasetFingerprints",
-    )
-    if any(
-        getattr(stored_workflow, field) != getattr(workflow, field)
-        for field in identity_fields
+    if value is None or set(value) != {"reportType", "report"}:
+        raise ValueError("Stage evidence checkpoint is missing or malformed")
+    report = value["report"]
+    if (
+        not isinstance(report, dict)
+        or hashlib.sha256(record_io.canonical_json_bytes(report)).hexdigest()
+        != reference.contentSha256
     ):
-        raise ValueError("Automated workflow result has stale workflow metadata")
-    if result.status != workflow.status:
-        raise ValueError("Automated workflow result has a stale terminal status")
-    if result.reportReferences != workflow.reports:
-        raise ValueError("Automated workflow result has stale report references")
-    return result
-
-
-def _persist_terminal_result(
-    store: DataStore,
-    prefix: str,
-    workflow: AgentWorkflowRun,
-    result: AutomatedWorkflowResult,
-) -> AutomatedWorkflowResult:
-    existing = _load_terminal_result(store, prefix, workflow)
-    if existing is not None:
-        logger.debug(
-            f"Workflow {workflow.workflowRunId}: reused terminal result "
-            f"status={workflow.status!r}"
-        )
-        return existing
-    if result.contentSha256 != _record_checksum(result):
-        raise ValueError("Terminal result must carry its exact content checksum")
-    try:
-        _write_model_once(
-            store.zw,
-            _result_key(prefix, workflow.workflowRunId),
-            result,
-        )
-    except FileExistsError:
-        pass
-    persisted = _load_terminal_result(store, prefix, workflow)
-    if persisted is None:
-        raise RuntimeError("Terminal workflow result was not persisted")
-    logger.info(
-        f"Workflow {workflow.workflowRunId}: persisted terminal result "
-        f"status={workflow.status!r}"
-    )
-    return persisted
+        raise ValueError("Stage evidence does not match its exact reference")
+    return report
 
 
 def load_stage_report(
-    store: DataStore,
-    outcome: WorkflowStageAttempt,
-    expected_type: type[AgentDataModel],
+    store: DataStore, outcome: WorkflowStageAttempt, expected_type: type[AgentDataModel]
 ) -> AgentDataModel:
-    references = list(outcome.reportReferences)
-    if outcome.stage == "parameter_tuning" and len(references) > 1:
-        execution_id = _stage_execution_id(outcome)
-        references = [
-            reference
-            for reference in references
-            if reference.agentRunId == execution_id
-        ]
-    if len(references) != 1:
-        raise ValueError(
-            f"Stage {outcome.stage!r} must have exactly one report reference"
-        )
-    report = load_agent_report(store, references[0])
-    if not isinstance(report, expected_type):
-        raise TypeError(
-            f"Stage {outcome.stage!r} report is not {expected_type.__name__}"
-        )
-    return report
+    if len(outcome.reportReferences) != 1:
+        raise ValueError("A scientific stage must own exactly one evidence report")
+    return expected_type.model_validate(
+        read_stage_evidence(store, outcome.reportReferences[0])
+    )
 
 
 def failed_stage(
     store: DataStore,
-    workflow: AgentWorkflowRun,
+    workflow: WorkflowIdentity,
     request_record: OrchestrationRequestRecord,
     stage: WorkflowStageName,
     parents: Sequence[WorkflowStageLink],
@@ -978,9 +832,6 @@ def failed_stage(
     artifacts: Mapping[str, ArtifactReferenceModel] | None = None,
     resume_record: OrchestrationResumeRecord | None = None,
 ) -> WorkflowStageAttempt:
-    logger.error(
-        f"Workflow {workflow.workflowRunId}: stage={stage!r} failed validation"
-    )
     prefix = _ensure_orchestration_store(store)
     started = _start_attempt(
         store.zw,
@@ -992,20 +843,16 @@ def failed_stage(
         resume_record=resume_record,
     )
     outcome = _complete_attempt(
-        started,
-        status="failed",
-        artifacts=artifacts,
-        error=error,
+        started, status="failed", artifacts=artifacts, error=error
     )
     _save_outcome(store.zw, prefix, outcome)
-    finalize_failed(store, workflow, error)
     return outcome
 
 
 def finish_exception(
     store: DataStore,
     prefix: str,
-    workflow: AgentWorkflowRun,
+    workflow: WorkflowIdentity,
     started: WorkflowStageAttempt,
     exc: BaseException,
     *,
@@ -1014,30 +861,10 @@ def finish_exception(
     outputs: Mapping[str, Any] | None = None,
     notes: Sequence[str] = (),
 ) -> WorkflowStageAttempt:
-    if is_retryable_model_error(exc):
-        status_code = getattr(exc, "status_code", "unknown")
-        logger.warning(
-            f"Workflow {workflow.workflowRunId}: stage={started.stage!r} was "
-            f"interrupted by retryable model HTTP status {status_code}; leaving "
-            "the workflow running for recovery"
-        )
-        raise exc
     error = f"{type(exc).__name__}: {exc}"
-    logger.error(
-        f"Workflow {workflow.workflowRunId}: stage={started.stage!r} raised "
-        f"{type(exc).__name__}; details were persisted in the stage outcome"
-    )
-    execution_id = _stage_execution_id(started)
-    report_references = [
-        reference
-        for reference in list_agent_reports(store, workflow.workflowRunId)
-        if reference.agentRunId == execution_id
-        or reference.agentRunId.startswith(f"{execution_id}_integration_")
-    ]
     outcome = _complete_attempt(
         started,
         status="failed",
-        report_references=report_references,
         artifacts=artifacts,
         outputs=outputs,
         actions=actions,
@@ -1045,142 +872,298 @@ def finish_exception(
         error=error,
     )
     _save_outcome(store.zw, prefix, outcome)
-    finalize_failed(store, workflow, error)
     return outcome
-
-
-def is_retryable_model_error(exc: BaseException) -> bool:
-    """Return whether a provider HTTP failure should leave the workflow resumable."""
-    try:
-        from pydantic_ai import ModelHTTPError
-    except ImportError:
-        return False
-    return isinstance(exc, ModelHTTPError) and (
-        exc.status_code == 429 or 500 <= exc.status_code <= 599
-    )
-
-
-def finalize_failed(
-    store: DataStore,
-    workflow: AgentWorkflowRun,
-    message: str,
-) -> None:
-    current = load_agent_workflow(store, workflow.workflowRunId)
-    if current.status == "running":
-        logger.warning(f"Finalizing workflow {workflow.workflowRunId} as failed")
-        finalize_agent_workflow(
-            store,
-            workflow.workflowRunId,
-            status="failed",
-            message=message,
-        )
-
-
-def all_report_references(
-    store: DataStore,
-    prefix: str,
-    workflow_run_id: str,
-) -> list[AgentReportReference]:
-    references: dict[tuple[str, str], AgentReportReference] = {}
-    for stage in _STAGE_ORDER:
-        for outcome in _stage_outcomes(store.zw, prefix, workflow_run_id, stage):
-            for reference in outcome.reportReferences:
-                if reference.workflowRunId != workflow_run_id:
-                    raise ValueError("Stage report belongs to a different workflow")
-                load_agent_report(store, reference)
-                references[(reference.agentName, reference.agentRunId)] = reference
-    return sorted(
-        references.values(),
-        key=lambda value: (value.createdAtNs, value.agentName, value.agentRunId),
-    )
 
 
 def paused_or_failed_result(
     store: DataStore,
-    workflow: AgentWorkflowRun,
+    workflow: WorkflowIdentity,
     request_record: OrchestrationRequestRecord,
     outcome: WorkflowStageAttempt,
     *,
-    dataset_manifest: DatasetManifest | None = None,
-    preprocessing_plan: AutomatedPreprocessingPlan | None = None,
     study_contract: StudyContract | None = None,
-    final_analysis: FinalAnalysisHandoff | None = None,
 ) -> AutomatedWorkflowResult:
-    prefix = _ensure_orchestration_store(store)
-    current = load_agent_workflow(store, workflow.workflowRunId)
-    unattended_pause = (
-        request_record.config.inputPolicy == "unattended"
-        and outcome.status == "needsInput"
-    )
-    if (outcome.status == "failed" or unattended_pause) and current.status == "running":
-        current = finalize_agent_workflow(
-            store,
-            workflow.workflowRunId,
-            status="failed",
-            message=(
-                outcome.error
-                or (
-                    "The unattended workflow encountered an unresolved decision."
-                    if unattended_pause
-                    else "A workflow stage failed."
-                )
-            ),
-        )
-    elif outcome.status == "abstained" and current.status == "running":
-        current = finalize_agent_workflow(
-            store,
-            workflow.workflowRunId,
-            status="abstained",
-            message=(
-                outcome.notes[0]
-                if outcome.notes
-                else "The available data do not support a defensible result"
-            ),
-        )
-    status: AutomatedWorkflowStatus = (
-        "failed"
-        if unattended_pause
-        else "needsInput"
+    status: Literal["needsInput", "abstained", "failed"] = (
+        "needsInput"
         if outcome.status == "needsInput"
         else "abstained"
         if outcome.status == "abstained"
         else "failed"
     )
-    result = AutomatedWorkflowResult(
+    questions = (
+        [q.question for q in outcome.needsInput.questions] if outcome.needsInput else []
+    )
+    return AutomatedWorkflowResult(
         status=status,
         currentStage=outcome.stage,
         zarrPath=str(store.zarr_loc),
-        workflowRun=current,
-        reportReferences=list(current.reports),
-        datasetManifest=dataset_manifest,
-        preprocessingPlan=preprocessing_plan,
-        studyContract=study_contract,
-        finalAnalysis=final_analysis,
-        decisionRunId=request_record.workflowRunId,
-        needsInput=None if unattended_pause else outcome.needsInput,
-        unresolvedClaims=(
-            [question.question for question in outcome.needsInput.questions]
-            if unattended_pause and outcome.needsInput is not None
-            else []
-        ),
-        notes=[
-            *outcome.notes,
-            *(
-                [
-                    "The unattended workflow stopped because a stage returned "
-                    "an unresolved decision."
-                ]
-                if unattended_pause
-                else []
+        workspace=workflow.workspace,
+        workflowRunId=workflow.workflowRunId,
+        needsInput=outcome.needsInput,
+        notes=[*outcome.notes, *([outcome.error] if outcome.error else []), *questions],
+        limitations=list(study_contract.limitations) if study_contract else [],
+        unresolvedClaims=questions,
+    )
+
+
+def _analysis_review_views(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    stages: list[dict[str, Any]],
+    config: AutomatedWorkflowConfig,
+) -> list[dict[str, Any]]:
+    """Derive bounded scientific views from the active exact review checkpoints."""
+    views: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for stage in stages:
+        if stage["stage"] != "parameter_tuning":
+            continue
+        history = stage["outputs"].get("tuningEvidence", {}).get("history", [])
+        for entry in history:
+            if "review" not in entry:
+                continue
+            key = entry.get("checkpointKey", "")
+            match = re.fullmatch(
+                r"parameter_tuning/(sample0|sample1|full)/review([0-9]+)(?:/answer)?",
+                key,
+            )
+            if match is None or match[1] != entry.get("scope"):
+                raise ValueError("Analysis review has an invalid checkpoint address")
+            if key in seen:
+                raise ValueError("Analysis review repeats a checkpoint")
+            seen.add(key)
+            limit = (
+                config.maxFullPartitions
+                if match[1] == "full"
+                else config.maxScreeningEvaluations
+            )
+            if int(match[2]) > limit:
+                raise ValueError("Analysis review exceeds its declared work allowance")
+            value = read_checkpoint(store, prefix, workflow_run_id, key)
+            if value is None:
+                raise ValueError("Analysis review checkpoint is missing")
+            if value["contentSha256"] != entry.get("checkpointSha256"):
+                raise ValueError("Analysis review does not match its exact checkpoint")
+            inputs, outputs = value["inputs"], value["outputs"]
+            if (
+                inputs.get("scope") != entry["scope"]
+                or outputs.get("action") != entry["review"]
+                or inputs.get("imageHashes") != entry.get("imageHashes")
+                or inputs.get("evidenceMode") != entry.get("evidenceMode")
+                or inputs.get("visualInspection") != entry.get("visualInspection")
+            ):
+                raise ValueError("Analysis review evidence bindings differ")
+            mode, inspection = (
+                inputs.get("evidenceMode"),
+                inputs.get("visualInspection"),
+            )
+            if (
+                mode not in {"visual", "structured"}
+                or inspection != ("available" if mode == "visual" else "unavailable")
+                or bool(inputs.get("imageHashes")) != (mode == "visual")
+            ):
+                raise ValueError(
+                    "Analysis review has inconsistent evidence availability"
+                )
+            candidates = inputs.get("candidates", [])
+            settings = inputs.get("settings", {})
+            features = inputs.get("featureEvidence", {})
+            candidate_ids = [item["candidateId"] for item in candidates]
+            if (
+                not 0 < len(candidates) <= limit
+                or len(set(candidate_ids)) != len(candidate_ids)
+                or set(settings) != set(candidate_ids)
+                or set(features) != set(candidate_ids)
+                or entry["review"].get("selectedCandidateId") not in candidate_ids
+            ):
+                raise ValueError("Analysis review candidate evidence does not align")
+            for candidate in candidates:
+                setting = settings[candidate["candidateId"]]
+                if setting.get("parameters") != candidate.get(
+                    "parameters"
+                ) or setting.get("features") != candidate.get("artifacts", {}).get(
+                    "graphFeatures"
+                ):
+                    raise ValueError(
+                        "Analysis review settings do not match its artifacts"
+                    )
+            views.append(
+                {
+                    "scope": entry["scope"],
+                    "evidenceMode": mode,
+                    "visualInspection": inspection,
+                    **entry["review"],
+                    "candidates": [
+                        {
+                            name: item[name]
+                            for name in ("candidateId", "parameters", "metrics")
+                        }
+                        for item in candidates
+                    ],
+                    "settings": {
+                        identity: {
+                            name: setting.get(name)
+                            for name in (
+                                "hvgCount",
+                                "ranking",
+                                "rankingColumn",
+                                "features",
+                                "eligibleFeatures",
+                            )
+                        }
+                        for identity, setting in settings.items()
+                    },
+                    "featureEvidence": {
+                        identity: {
+                            name: evidence.get(name)
+                            for name in (
+                                "selectedGenes",
+                                "eligibleGenes",
+                                "families",
+                                "topSelectedGenes",
+                            )
+                        }
+                        for identity, evidence in features.items()
+                    },
+                }
+            )
+    return views
+
+
+def analysis_snapshot(store: DataStore, workflow_run_id: str) -> dict[str, Any]:
+    """Validate one journal and derive its status, final artifacts, and report view."""
+    prefix = _orchestration_prefix(store)
+    request = read_request(store.zw, prefix, workflow_run_id)
+    stages: list[dict[str, Any]] = []
+    parents: list[WorkflowStageLink] = []
+    final: dict[str, Any] | None = None
+    status = "running"
+    for stage in _STAGE_ORDER:
+        outcomes = _stage_outcomes(store.zw, prefix, workflow_run_id, stage)
+        matching = [v for v in outcomes if v.parentAttempts == parents]
+        if not matching:
+            break
+        outcome = matching[-1]
+        if not _stage_outcome_resolves(
+            store, prefix, workflow_run_id, request, outcome
+        ):
+            raise ValueError(
+                f"Stage {stage!r} contains unresolved artifact or evidence references"
+            )
+        stage_view = outcome.model_dump(mode="json")
+        stage_view["report"] = (
+            read_stage_evidence(store, outcome.reportReferences[0])
+            if outcome.reportReferences
+            else None
+        )
+        stage_view["decisions"] = []
+        stages.append(stage_view)
+        if outcome.status != "done":
+            status = outcome.status
+            break
+        parents = [_parent_link(outcome)]
+        if stage == "analysis_finalization":
+            resolved = FinalAnalysisHandoff.model_validate(
+                outcome.outputs["finalAnalysis"]
+            )
+            if (
+                resolved.workflowRunId != workflow_run_id
+                or resolved.primaryAssay != request.request.primaryAssay
+                or resolved.markerAssay != resolved.primaryAssay
+            ):
+                raise ValueError("Final analysis belongs to a different RNA workflow")
+            for name, kind in {
+                "cellSelection": "cell_selection",
+                "graph": "connectivity_map",
+                "clusters": "cluster_labels",
+                "umap": "embedding",
+                "embeddingInitialization": "embedding_initialization",
+                "markerFeatures": "feature_selection",
+                "markers": "marker_table",
+            }.items():
+                ref = getattr(resolved, name)
+                if (
+                    ref is None
+                    or ref.kind != kind
+                    or ref != outcome.artifacts.get(name)
+                ):
+                    raise ValueError(
+                        f"Final analysis lacks its validated {name} artifact"
+                    )
+                if name != "cellSelection" and ref.assay != resolved.primaryAssay:
+                    raise ValueError(f"Final {name} belongs to another assay")
+            inputs = outcome.inputs.get("preprocessedAssays", [])
+            assert resolved.cellSelection is not None
+            if len(inputs) != 1 or inputs[0].get(
+                "cellSelection"
+            ) != resolved.cellSelection.model_dump(mode="json"):
+                raise ValueError(
+                    "Final analysis does not use the full preprocessing cohort"
+                )
+            final = resolved.model_dump(mode="json")
+            status = "completed"
+    # Decisions belong to this same history and retain their offered evidence.
+    checkpoint_prefix = record_io.join_key(prefix, workflow_run_id, "checkpoints")
+    decisions: list[dict[str, Any]] = []
+    for path in _list_keys(store.zw, checkpoint_prefix):
+        if "/decisions/" not in path or not path.endswith(".json"):
+            continue
+        key = path[len(checkpoint_prefix) + 1 : -5]
+        value = load_checkpoint(store, prefix, workflow_run_id, key, None)
+        if value is not None and "record" in value:
+            decisions.append(value)
+
+    def contains(value: Any, digest: str) -> bool:
+        if isinstance(value, Mapping):
+            return any(contains(v, digest) for v in value.values())
+        if isinstance(value, list):
+            return any(contains(v, digest) for v in value)
+        return bool(value == digest)
+
+    for value in decisions:
+        digest = value.get("checkpointSha256")
+        if not isinstance(digest, str):
+            raise ValueError("Decision checkpoint has no input identity")
+        owner = next(
+            (
+                stage
+                for stage in stages
+                if stage["stage"] == value.get("stage")
+                and (
+                    contains(stage["inputs"], digest)
+                    or contains(stage["outputs"], digest)
+                )
             ),
-            *([outcome.error] if outcome.error else []),
-        ],
+            None,
+        )
+        if owner is not None:
+            owner["decisions"].append(value)
+    reviews = _analysis_review_views(
+        store, prefix, workflow_run_id, stages, request.config
     )
-    result = result.model_copy(update={"contentSha256": _record_checksum(result)})
-    if status in {"failed", "abstained"}:
-        return _persist_terminal_result(store, prefix, current, result)
-    logger.info(
-        f"Workflow {workflow.workflowRunId}: returning needsInput at "
-        f"stage={outcome.stage!r}"
-    )
-    return result
+    if status == "completed":
+        assert final is not None
+        tuning = next(stage for stage in stages if stage["stage"] == "parameter_tuning")
+        report = tuning["report"]
+        full_reviews = [value for value in reviews if value["scope"] == "full"]
+        if (
+            not full_reviews
+            or full_reviews[-1]["action"] != "accept"
+            or full_reviews[-1]["selectedCandidateId"]
+            != report.get("recommendedCandidateId")
+            or report.get("finalClusterArtifact") != final["clusters"]
+        ):
+            raise ValueError(
+                "Final analysis lacks its exact full-cohort acceptance evidence"
+            )
+    return {
+        "runId": workflow_run_id,
+        "status": status,
+        "request": request.request.model_dump(mode="json"),
+        "stages": stages,
+        "finalAnalysis": final,
+        "modelIdentity": request.modelIdentity,
+        "analysisReviews": reviews,
+        "config": request.config.model_dump(mode="json"),
+    }

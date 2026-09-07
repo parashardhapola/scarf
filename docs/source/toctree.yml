@@ -112,6 +112,8 @@ subtrees:
             title: Artifacts and lineage
           - file: reference/api/pipeline
             title: Pipeline
+          - file: reference/api/agent
+            title: Agent analysis
           - file: reference/api/import_export
             title: Import and export
           - file: reference/api/assays

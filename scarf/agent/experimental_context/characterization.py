@@ -1515,9 +1515,18 @@ def _column_records(
         dropped_profile = run.profiles.get(name)
         record = {
             "name": name,
-            "kind": "continuous",
+            "kind": dropped_profile.kind
+            if dropped_profile is not None
+            else "continuous",
             "domain": "ignore",
-            "summary": f"dropped before triage ({_DROP_REASONS[reason]})",
+            "summary": (
+                f"excluded from design roles ({_DROP_REASONS[reason]})"
+                + (
+                    f"; {dropped_profile.summary}"
+                    if dropped_profile is not None
+                    else ""
+                )
+            ),
             "aliases": [],
             "nRows": (
                 dropped_profile.digest.nRows if dropped_profile is not None else 0
@@ -1620,6 +1629,11 @@ def characterize_covariates(
             continue
         varying.append(name)
     candidates = varying
+    for name, reason in dropped:
+        if reason == "dropAssayStat" and name not in profiles:
+            profiles[name] = _profile_column(
+                bound_store, name, cell_key=cell_key, kind="continuous"
+            )
     candidates, aliases, alias_notes = _collapse_ontology_aliases(
         bound_store,
         candidates,

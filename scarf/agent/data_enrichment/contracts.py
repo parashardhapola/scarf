@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from ...features.variability import DEFAULT_HVG_BLACKLIST
 from .._deps import AGENT_INSTALL_HINT
 from ..types import AgentDataModel, AgentRunInfo, StageStatus
 
@@ -27,19 +26,6 @@ class DataEnrichmentContext(AgentDataModel):
     def get_blank(cls) -> "DataEnrichmentContext":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "DataEnrichmentContext":
-        return cls(
-            studyContext="Single-cell profiling of treated lung tissue",
-            studyObjective=(
-                "Discover stable populations while preserving treatment effects."
-            ),
-            organismHint="human",
-            tissueReferences=["lung"],
-            cellTypeReferences=["alveolar macrophage", "T cell"],
-            experimentalDetails=["CRISPR perturbation", "10x 3 prime RNA-seq"],
-        )
-
 
 class StudyContextSummary(AgentDataModel):
     """Verbatim, evidence-backed references extracted from the study context."""
@@ -57,25 +43,6 @@ class StudyContextSummary(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "StudyContextSummary":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "StudyContextSummary":
-        return cls(
-            studyContext=(
-                "Single-cell profiling of treated human lung tests whether "
-                "treatment changes alveolar macrophage states."
-            ),
-            studyObjective=(
-                "Discover populations while preserving the treatment comparison."
-            ),
-            organismReferences=["human"],
-            tissueReferences=["lung"],
-            cellTypeReferences=["alveolar macrophage"],
-            experimentalReferences=["treated"],
-            hypothesisReferences=["treatment changes alveolar macrophage states"],
-            analysisIntentReferences=["Single-cell profiling"],
-            evidenceIds=["context:study"],
-        )
 
 
 class AdtControlEvidence(AgentDataModel):
@@ -95,15 +62,6 @@ class AdtControlEvidence(AgentDataModel):
             evidenceId="",
         )
 
-    @classmethod
-    def get_example(cls) -> "AdtControlEvidence":
-        return cls(
-            featureId="Mouse-IgG1-Control",
-            featureName="Mouse IgG1 isotype control",
-            matchedToken="isotype",
-            evidenceId="assay:ADT:adtControl:Mouse-IgG1-Control",
-        )
-
 
 class HtoTagEvidence(AgentDataModel):
     """One exact feature from an assay persisted with the HTO type."""
@@ -115,14 +73,6 @@ class HtoTagEvidence(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "HtoTagEvidence":
         return cls(featureId="", featureName="", evidenceId="")
-
-    @classmethod
-    def get_example(cls) -> "HtoTagEvidence":
-        return cls(
-            featureId="HTO-1",
-            featureName="Sample tag 1",
-            evidenceId="assay:HTO:htoTag:HTO-1",
-        )
 
 
 class AtacCoordinateEvidence(AgentDataModel):
@@ -141,16 +91,6 @@ class AtacCoordinateEvidence(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "AtacCoordinateEvidence":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "AtacCoordinateEvidence":
-        return cls(
-            status="valid",
-            totalFeatures=2,
-            validFeatures=2,
-            validExamples=["chr1:100-200", "chr2:300-450"],
-            evidenceId="assay:ATAC:atacCoordinates",
-        )
 
 
 class AssayModalityEvidence(AgentDataModel):
@@ -176,21 +116,6 @@ class AssayModalityEvidence(AgentDataModel):
     def get_blank(cls) -> "AssayModalityEvidence":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "AssayModalityEvidence":
-        control = AdtControlEvidence.get_example()
-        return cls(
-            assayType="ADT",
-            modality="ADT",
-            typeSource="persisted",
-            graphEligible=True,
-            markerEligible=True,
-            adtControls=[control],
-            totalObservedFeatures=20,
-            reportedFeatures=1,
-            evidenceIds=["assay:ADT:modality", control.evidenceId],
-        )
-
 
 class FeatureFamilyEvidence(AgentDataModel):
     """One observed feature family from deterministic Scarf analysis."""
@@ -212,18 +137,6 @@ class FeatureFamilyEvidence(AgentDataModel):
     def get_blank(cls) -> "FeatureFamilyEvidence":
         return cls(family="", evidenceId="")
 
-    @classmethod
-    def get_example(cls) -> "FeatureFamilyEvidence":
-        return cls(
-            family="mitochondrial",
-            species="homo_sapiens",
-            method="chromosome",
-            count=2,
-            examples=["MT-CO1", "MT-CYB"],
-            defaultExclude=True,
-            evidenceId="assay:RNA:family:mitochondrial",
-        )
-
 
 class DefaultHvgFamilyEvidence(AgentDataModel):
     """One case-insensitive family within Scarf's default HVG blacklist."""
@@ -238,16 +151,6 @@ class DefaultHvgFamilyEvidence(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "DefaultHvgFamilyEvidence":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "DefaultHvgFamilyEvidence":
-        return cls(
-            family="mitochondrial",
-            pattern="^MT-",
-            count=2,
-            examples=["MT-CO1", "MT-CYB"],
-            evidenceId="assay:RNA:scarfDefaultHvg:family:mitochondrial",
-        )
 
 
 class RnaFeatureInventoryEvidence(AgentDataModel):
@@ -268,20 +171,6 @@ class RnaFeatureInventoryEvidence(AgentDataModel):
     def get_blank(cls) -> "RnaFeatureInventoryEvidence":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "RnaFeatureInventoryEvidence":
-        family = DefaultHvgFamilyEvidence.get_example()
-        evidence_id = "assay:RNA:scarfDefaultHvg:combined"
-        return cls(
-            totalFeatures=20_000,
-            blacklist=DEFAULT_HVG_BLACKLIST,
-            matchCount=2,
-            examples=["MT-CO1", "MT-CYB"],
-            families=[family],
-            evidenceId=evidence_id,
-            evidenceIds=[evidence_id, family.evidenceId],
-        )
-
 
 class ExogenousFeatureEvidence(AgentDataModel):
     """One bounded candidate for an artificial or exogenous feature."""
@@ -295,16 +184,6 @@ class ExogenousFeatureEvidence(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ExogenousFeatureEvidence":
         return cls(featureId="", featureName="", evidenceId="")
-
-    @classmethod
-    def get_example(cls) -> "ExogenousFeatureEvidence":
-        return cls(
-            featureId="ERCC-00002",
-            featureName="ERCC-00002",
-            score=4,
-            classification="potentialExogenous",
-            evidenceId="assay:RNA:exogenous:ERCC-00002",
-        )
 
 
 class AssayFeatureInspection(AgentDataModel):
@@ -329,38 +208,6 @@ class AssayFeatureInspection(AgentDataModel):
     def get_blank(cls) -> "AssayFeatureInspection":
         return cls(assay="")
 
-    @classmethod
-    def get_example(cls) -> "AssayFeatureInspection":
-        family = FeatureFamilyEvidence.get_example()
-        default_inventory = RnaFeatureInventoryEvidence.get_example()
-        modality = AssayModalityEvidence(
-            assayType="RNA",
-            modality="RNA",
-            typeSource="persisted",
-            graphEligible=True,
-            markerEligible=True,
-            totalObservedFeatures=20_000,
-            evidenceIds=["assay:RNA:modality"],
-        )
-        return cls(
-            assay="RNA",
-            assayKind="RNAassay",
-            identity={"nFeatures": 20_000, "nDuplicateIds": 0},
-            species="homo_sapiens",
-            speciesMethod="ensemblPrefix",
-            speciesReason="Most feature IDs carry the ENSG prefix",
-            families=[family],
-            defaultFeatureInventory=default_inventory,
-            modalityEvidence=modality,
-            evidenceIds=[
-                "assay:RNA:identity",
-                "assay:RNA:species",
-                family.evidenceId,
-                *default_inventory.evidenceIds,
-                *modality.evidenceIds,
-            ],
-        )
-
 
 class AssayFeatureInspectionBatch(AgentDataModel):
     """All requested assay inspections returned by one model tool call."""
@@ -372,14 +219,6 @@ class AssayFeatureInspectionBatch(AgentDataModel):
     def get_blank(cls) -> "AssayFeatureInspectionBatch":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "AssayFeatureInspectionBatch":
-        inspection = AssayFeatureInspection.get_example()
-        return cls(
-            inspections=[inspection],
-            evidenceIds=list(inspection.evidenceIds),
-        )
-
 
 class FeatureReference(AgentDataModel):
     """An exact feature identifier and name observed in one assay."""
@@ -390,10 +229,6 @@ class FeatureReference(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "FeatureReference":
         return cls(featureId="", featureName="")
-
-    @classmethod
-    def get_example(cls) -> "FeatureReference":
-        return cls(featureId="ENSG00000198727", featureName="MT-CYB")
 
 
 class FeatureMatch(AgentDataModel):
@@ -408,15 +243,6 @@ class FeatureMatch(AgentDataModel):
     def get_blank(cls) -> "FeatureMatch":
         return cls(query="", status="absent")
 
-    @classmethod
-    def get_example(cls) -> "FeatureMatch":
-        return cls(
-            query="MT-CYB",
-            status="present",
-            matches=[FeatureReference.get_example()],
-            evidenceIds=["assay:RNA:feature:ENSG00000198727"],
-        )
-
 
 class FeatureLookupResult(AgentDataModel):
     """Bounded result from exact feature lookup."""
@@ -429,15 +255,6 @@ class FeatureLookupResult(AgentDataModel):
     def get_blank(cls) -> "FeatureLookupResult":
         return cls(assay="")
 
-    @classmethod
-    def get_example(cls) -> "FeatureLookupResult":
-        match = FeatureMatch.get_example()
-        return cls(
-            assay="RNA",
-            results=[match],
-            evidenceIds=list(match.evidenceIds),
-        )
-
 
 class FeatureLookupBatch(AgentDataModel):
     """Exact feature lookups for every requested assay in one tool result."""
@@ -448,11 +265,6 @@ class FeatureLookupBatch(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "FeatureLookupBatch":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "FeatureLookupBatch":
-        lookup = FeatureLookupResult.get_example()
-        return cls(lookups=[lookup], evidenceIds=list(lookup.evidenceIds))
 
 
 class FeatureSelectionPolicy(AgentDataModel):
@@ -504,28 +316,6 @@ class FeatureSelectionPolicy(AgentDataModel):
     def get_blank(cls) -> "FeatureSelectionPolicy":
         return cls(assay="")
 
-    @classmethod
-    def get_example(cls) -> "FeatureSelectionPolicy":
-        return cls(
-            assay="RNA",
-            species="homo_sapiens",
-            organismName="human",
-            speciesConfidence="high",
-            speciesRationale="Gene IDs and study context agree",
-            excludeFamilies=["mitochondrial", "ribosomal"],
-            protectFamilies=["cellCycle", "sex"],
-            artificialFeatures=["ERCC-00002"],
-            tissueReferences=["lung"],
-            cellTypeReferences=["alveolar macrophage"],
-            experimentalReferences=["ERCC spike-in"],
-            assayType="RNA",
-            assayModality="RNA",
-            graphEligible=True,
-            markerEligible=True,
-            rationale="Use technical families for feature-selection exclusions",
-            evidenceIds=["assay:RNA:species", "assay:RNA:family:mitochondrial"],
-        )
-
 
 class DataEnrichmentToolCall(AgentDataModel):
     """Compact audit record for one read-only model tool call."""
@@ -537,14 +327,6 @@ class DataEnrichmentToolCall(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "DataEnrichmentToolCall":
         return cls(name="", assay="")
-
-    @classmethod
-    def get_example(cls) -> "DataEnrichmentToolCall":
-        return cls(
-            name="inspect_assay_features",
-            assay="RNA",
-            evidenceIds=["assay:RNA:identity", "assay:RNA:species"],
-        )
 
 
 class DataEnrichmentReport(AgentDataModel):
@@ -576,20 +358,6 @@ class DataEnrichmentReport(AgentDataModel):
     def get_blank(cls) -> "DataEnrichmentReport":
         return cls(status="failed", limitations=["No agent result was produced"])
 
-    @classmethod
-    def get_example(cls) -> "DataEnrichmentReport":
-        policy = FeatureSelectionPolicy.get_example()
-        inspection = AssayFeatureInspection.get_example()
-        return cls(
-            status="done",
-            policies=[policy],
-            inspections=[inspection],
-            studyContextSummary=StudyContextSummary.get_example(),
-            evidenceIds=list(policy.evidenceIds),
-            toolCalls=[DataEnrichmentToolCall.get_example()],
-            runInfo=AgentRunInfo.get_example(),
-        )
-
 
 class DataEnrichmentDependencies(AgentDataModel):
     """Hidden runtime state supplied to read-only enrichment tools."""
@@ -614,13 +382,3 @@ class DataEnrichmentDependencies(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "DataEnrichmentDependencies":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "DataEnrichmentDependencies":
-        return cls(
-            context=DataEnrichmentContext.get_example(),
-            assays=["RNA"],
-            cacheDir=Path("/tmp/scarf-gene-reference"),
-            allowDownload=False,
-            evidenceIds={"context:organism", "context:tissue:0"},
-        )

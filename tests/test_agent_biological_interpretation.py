@@ -1,5 +1,7 @@
 """Tests for the bounded Biological Interpretation Agent."""
 
+from tests.agent_examples import example
+
 import asyncio
 from types import SimpleNamespace
 
@@ -266,7 +268,7 @@ def test_models_have_blank_and_example_constructors() -> None:
     )
     for model in models:
         assert isinstance(model.get_blank(), model)
-        assert isinstance(model.get_example(), model)
+        assert isinstance(example(model), model)
         assert all("_" not in field_name for field_name in model.model_fields)
 
 

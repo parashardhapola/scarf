@@ -12,13 +12,20 @@ from .._deps import AGENT_INSTALL_HINT
 from ..tools import artifact_reference, core_artifact_reference
 from ..types import BatchSafetyEvidence, BatchSafetyStatus
 from .characterization import characterize_covariates
+from .comparisons import (
+    DESIGN_ROUND_LIMITS,
+    accept_capture_proposal,
+    evaluate_proposals,
+)
 from .contracts import (
+    CaptureProposal,
     ColumnDomain,
     ContrastPlan,
     ContrastStatus,
     ContrastTest,
     CovariateCharacterization,
     CovariateEvidence,
+    CovariateProposal,
     ExperimentalContextDependencies,
     InferenceUnit,
     RepresentationEvaluation,
@@ -42,14 +49,14 @@ def _prepare_experimental_context_tool(
     ctx: RunContext[ExperimentalContextDependencies],
     tool_definition: ToolDefinition,
 ) -> ToolDefinition | None:
-    """Expose each context tool once and in its required dependency order."""
+    """Expose inspection once and at most two ordered design evidence rounds."""
     completed_calls = set(ctx.deps.toolCalls)
     if tool_definition.name == "inspect_cell_covariates":
         return None if tool_definition.name in completed_calls else tool_definition
     if tool_definition.name == "analyze_experimental_design":
         if (
             "inspect_cell_covariates" not in completed_calls
-            or tool_definition.name in completed_calls
+            or ctx.deps.designRounds >= len(DESIGN_ROUND_LIMITS)
         ):
             return None
         return tool_definition
@@ -357,6 +364,33 @@ def _batch_safety_evidence(
             safety_status = "safe"
         else:
             safety_status = "unsafe"
+        # Sparse descriptive associations cannot erase a computed design constraint.
+        joint_checks = [
+            {
+                "evidenceId": comparison.evidenceId,
+                **comparison.evidence["jointGroupEstimability"],
+            }
+            for comparison in characterization.comparisons
+            if comparison.proposal.response == coefficient
+            and comparison.proposal.observationUnit == observation_unit
+            and comparison.proposal.conditionedOn is None
+            and all(
+                column_records.get(name, {}).get("kind") == kind
+                for name, kind in comparison.evidence.get("columnKinds", {}).items()
+            )
+            and set(comparison.proposal.explanatoryColumns).issubset(
+                canonical_batch_columns
+            )
+            and "jointGroupEstimability" in comparison.evidence
+        ]
+        if joint_checks:
+            estimability = {**estimability, "jointStratumChecks": joint_checks}
+            if any(
+                check.get("status") == "ok"
+                and check.get("coefficientEstimable") is False
+                for check in joint_checks
+            ):
+                safety_status = "unsafe"
         batch_token = ",".join(canonical_batch_columns)
         safety = BatchSafetyEvidence(
             coefficient=coefficient,
@@ -381,6 +415,8 @@ async def analyze_experimental_design(
     coefficients_of_interest: list[str],
     units_of_inference: dict[str, InferenceUnit],
     batch_columns: list[str],
+    proposals: list[CovariateProposal] | None = None,
+    capture_proposal: CaptureProposal | None = None,
 ) -> CovariateEvidence:
     """Validate proposed domains and inference units and compute confounding.
 
@@ -390,6 +426,8 @@ async def analyze_experimental_design(
         coefficients_of_interest: Biological columns representing study contrasts.
         units_of_inference: Observation and independent units for each coefficient.
         batch_columns: Exact technical columns proposed for Harmony evaluation.
+        proposals: Up to eight initial or four follow-up objective-led comparisons.
+        capture_proposal: Exact capture and baseline identities supported by study prose.
     """
     logger.info(
         "Experimental Context design analysis started: "
@@ -398,6 +436,12 @@ async def analyze_experimental_design(
         f"inferenceUnits={len(units_of_inference)}, "
         f"batchColumns={len(batch_columns)}"
     )
+    if ctx.deps.designRounds >= len(DESIGN_ROUND_LIMITS):
+        raise ModelRetry("Design comparison permits at most two evidence rounds")
+    if len(proposals or ()) > DESIGN_ROUND_LIMITS[ctx.deps.designRounds]:
+        raise ModelRetry(
+            "Design comparison permits eight initial and four follow-up proposals"
+        )
     directions = dict(ctx.deps.directions)
     directed_domains = dict(column_domains)
     directed_domains.update(dict(directions.get("columnDomains") or {}))
@@ -509,6 +553,12 @@ async def analyze_experimental_design(
     # columns below are rejected. A bounded retry or resumed decision can reuse
     # the evidence without rescanning metadata or accepting an unsafe choice.
     ctx.deps.characterization = characterization
+    try:
+        evaluate_proposals(ctx.deps, characterization, proposals or ())
+        if capture_proposal is not None:
+            accept_capture_proposal(ctx.deps, characterization, capture_proposal)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
     if not ctx.deps.htoIdentityColumns:
         ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
     qc_profiles = _offered_qc_profiles(ctx.deps, characterization)

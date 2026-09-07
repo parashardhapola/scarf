@@ -331,7 +331,7 @@ def _execution_result(
         ),
     )
     usage = execution.runInfo.usage
-    logger.info(
+    logger.debug(
         f"Agent {name or 'unnamed'} completed in "
         f"{execution.runInfo.durationSeconds:.2f}s: requests={usage.requests}, "
         f"tool_calls={usage.toolCalls}, input_tokens={usage.inputTokens}, "
@@ -366,7 +366,7 @@ def run_agent_sync(
         run_config = config or AgentRunConfig()
         agent_name = name or "unnamed"
         usage_limits = get_usage_limits(run_config)
-        logger.info(
+        logger.debug(
             f"Starting agent {agent_name}: model={_model_name(model)}, "
             f"tools={len(tools)}, request_limit={run_config.requestLimit}, "
             f"tool_call_limit={run_config.toolCallLimit}, retries={run_config.retries}, "
@@ -450,7 +450,7 @@ async def run_agent_async(
     run_config = config or AgentRunConfig()
     agent_name = name or "unnamed"
     usage_limits = get_usage_limits(run_config)
-    logger.info(
+    logger.debug(
         f"Starting agent {agent_name}: model={_model_name(model)}, "
         f"tools={len(tools)}, request_limit={run_config.requestLimit}, "
         f"tool_call_limit={run_config.toolCallLimit}, retries={run_config.retries}, "

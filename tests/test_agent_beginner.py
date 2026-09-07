@@ -1,5 +1,7 @@
 """Beginner RNA entry point and exact completed-result access."""
 
+from tests.agent_examples import example
+
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,12 +10,12 @@ import pytest
 
 pytest.importorskip("pydantic_ai")
 
-from scarf.agent import analyze_rna
-from scarf.agent.orchestrator import api
+from scarf.agent import AnalysisError, AutomatedWorkflowResult, analyze_rna
+from scarf.agent.orchestrator import api, journal
 from scarf.agent.orchestrator.models import (
     AutomatedWorkflowConfig,
     AutomatedWorkflowRequest,
-    AutomatedWorkflowResult,
+    FinalAnalysisHandoff,
     OrchestrationRequestRecord,
     artifact_model_to_ref,
 )
@@ -21,34 +23,31 @@ from scarf.agent.types import ArtifactReferenceModel
 
 
 def _completed_result(root: Path) -> AutomatedWorkflowResult:
-    result = AutomatedWorkflowResult.get_example()
-    assert result.finalAnalysis is not None and result.workflowRun is not None
-    final = result.finalAnalysis.model_copy(
-        update={
-            "handoffId": "",
-            "umap": ArtifactReferenceModel(
-                assay="RNA", kind="embedding", artifactId="6" * 64
-            ),
-            "markers": ArtifactReferenceModel(
-                assay="RNA", kind="marker_table", artifactId="7" * 64
-            ),
-        }
-    ).with_handoff_id()
-    values = result.model_dump(mode="json")
-    values.update(
+    return AutomatedWorkflowResult(
+        status="completed",
+        currentStage="analysis_finalization",
         zarrPath=str(root),
-        finalAnalysis=final.model_dump(mode="json"),
-        finalHandoffId=final.handoffId,
+        workspace="analysis",
+        workflowRunId="workflow-1",
     )
-    values["workflowRun"]["workspace"] = "analysis"
-    return AutomatedWorkflowResult.model_validate(values)
 
 
-def test_analyze_rna_passes_one_request_and_effective_budget(
+def _final_analysis() -> FinalAnalysisHandoff:
+    final = example(FinalAnalysisHandoff)
+    final.umap = ArtifactReferenceModel(
+        assay="RNA", kind="embedding", artifactId="6" * 64
+    )
+    final.markers = ArtifactReferenceModel(
+        assay="RNA", kind="marker_table", artifactId="7" * 64
+    )
+    return final
+
+
+def test_analyze_rna_passes_one_request_and_bounded_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called: dict[str, Any] = {}
-    outcome = AutomatedWorkflowResult(status="abstained", notes=["Missing context"])
+    outcome = _completed_result(Path("study.zarr"))
 
     class Orchestrator:
         def __init__(self, model: Any, *, config: AutomatedWorkflowConfig) -> None:
@@ -67,12 +66,18 @@ def test_analyze_rna_passes_one_request_and_effective_budget(
         study_objective="Identify stable populations.",
         assay="counts",
         zarr_path=Path("study.zarr"),
-        max_candidates=40,
     )
     assert result is outcome
     assert called["model"] is model
-    assert called["config"].inputPolicy == "unattended"
-    assert called["config"].maxCandidateEvaluations == 40
+    config = called["config"]
+    assert config.inputPolicy == "unattended"
+    assert config.screeningCells == 50_000
+    assert config.maxScreeningCells == 100_000
+    assert config.maxScreeningEvaluations == 12
+    assert config.maxTotalScreeningEvaluations == 24
+    assert config.maxFullGraphs == 4
+    assert config.maxFullPartitions == 8
+    assert config.maxFullRepairs == 1
     request = called["request"]
     assert request.sourcePath == "study.h5ad"
     assert request.zarrPath == "study.zarr"
@@ -81,9 +86,59 @@ def test_analyze_rna_passes_one_request_and_effective_budget(
     assert request.ingestDirections == {}
 
 
+@pytest.mark.parametrize("status", ["failed", "abstained", "needsInput"])
+def test_beginner_failure_raises_with_resumable_result(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    outcome = AutomatedWorkflowResult.model_validate(
+        {
+            "status": status,
+            "currentStage": "experimental_context",
+            "zarrPath": "study.zarr",
+            "workflowRunId": "workflow-1",
+            "notes": ["Capture identity is unresolved"],
+        }
+    )
+    monkeypatch.setattr(
+        api,
+        "AgentOrchestrator",
+        lambda *_args, **_kwargs: SimpleNamespace(run=lambda _request: outcome),
+    )
+    with pytest.raises(AnalysisError, match="Capture identity is unresolved") as error:
+        analyze_rna(
+            "study.zarr",
+            model=object(),
+            study_context="Human blood.",
+            study_objective="Identify stable populations.",
+        )
+    assert error.value.result is outcome
+    assert "Resume workflow 'workflow-1' in 'study.zarr'" in str(error.value)
+
+
+def test_beginner_rejects_removed_candidate_control() -> None:
+    with pytest.raises(TypeError, match="max_candidates"):
+        analyze_rna(
+            "study.zarr",
+            model=object(),
+            study_context="Human blood.",
+            study_objective="Identify stable populations.",
+            **{"max_candidates": 1},
+        )
+
+
 @pytest.mark.parametrize(
     "obsolete",
     [
+        "maxRefinedCandidatesPerAssay",
+        "maxHarmonyCandidatesPerAssay",
+        "runConfoundedHarmonyDiagnostic",
+        "maxCandidateEvaluations",
+        "maxIdentityFeatures",
+        "hvgCandidateCounts",
+        "pcaCandidateDimensions",
+        "graphNeighborCandidates",
+        "leidenResolutionCandidates",
+        "maxRevisions",
         "maxCandidateBranches",
         "primaryInitialCandidates",
         "secondaryInitialCandidates",
@@ -98,54 +153,31 @@ def test_legacy_config_and_saved_requests_fail_explicitly(obsolete: str) -> None
     old_config = {obsolete: 1}
     with pytest.raises(ValueError, match="Create a new single-RNA workflow"):
         AutomatedWorkflowConfig.model_validate(old_config)
-    saved = OrchestrationRequestRecord.get_example().model_dump(mode="json")
+    saved = OrchestrationRequestRecord(
+        inputIdentity={},
+        modelIdentity="test",
+        request=example(AutomatedWorkflowRequest),
+    ).model_dump(mode="json")
     saved["config"].update(old_config)
     with pytest.raises(ValueError, match="cannot be resumed or regenerated"):
         OrchestrationRequestRecord.model_validate(saved)
 
 
 @pytest.mark.parametrize(
-    "field,values",
+    "limits",
     [
-        ("hvgCandidateCounts", (1,)),
-        ("hvgCandidateCounts", (2, 1000)),
-        ("pcaCandidateDimensions", (1,)),
-        ("graphNeighborCandidates", (1,)),
-        ("leidenResolutionCandidates", (float("nan"),)),
-        ("leidenResolutionCandidates", (float("inf"),)),
-        ("leidenResolutionCandidates", (float("-inf"),)),
+        {"screeningCells": 19},
+        {"screeningCells": 100, "maxScreeningCells": 99},
+        {"maxScreeningEvaluations": 3},
+        {"maxScreeningEvaluations": 12, "maxTotalScreeningEvaluations": 11},
+        {"maxFullGraphs": 0},
+        {"maxFullPartitions": 0},
+        {"maxFullRepairs": 2},
     ],
 )
-def test_config_rejects_impossible_candidates_before_execution(
-    field: str, values: tuple[int | float, ...]
-) -> None:
-    with pytest.raises(ValueError, match=field):
-        AutomatedWorkflowConfig.model_validate({field: values})
-
-
-def test_config_minimum_candidates_meet_the_sequential_planner_contract() -> None:
-    from scarf.agent.parameter_tuning.hvg import effective_hvg_candidate_counts
-    from scarf.agent.parameter_tuning.sequential import SequentialRnaTuningPlanner
-
-    config = AutomatedWorkflowConfig(
-        hvgCandidateCounts=(3,),
-        pcaCandidateDimensions=(2,),
-        graphNeighborCandidates=(2,),
-        leidenResolutionCandidates=(0.25,),
-    )
-    selected_features = effective_hvg_candidate_counts(3, config.hvgCandidateCounts)
-    planner = SequentialRnaTuningPlanner(
-        workflow_run_id="minimum-candidates",
-        assay="RNA",
-        n_cells=3,
-        n_features=selected_features[0],
-        harmony_authorized=False,
-        dimension_candidates=config.pcaCandidateDimensions,
-        neighbor_candidates=config.graphNeighborCandidates,
-        resolution_candidates=config.leidenResolutionCandidates,
-    )
-    assert planner.dimensions == (2,)
-    assert planner.neighbors == (2,)
+def test_impossible_work_limits_fail_before_execution(limits: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        AutomatedWorkflowConfig.model_validate(limits)
 
 
 @pytest.mark.parametrize(
@@ -159,46 +191,58 @@ def test_config_minimum_candidates_meet_the_sequential_planner_contract() -> Non
     ],
 )
 def test_request_rejects_unsupported_routing(routing: dict[str, Any]) -> None:
-    values = AutomatedWorkflowRequest.get_example().model_dump(mode="json")
+    values = example(AutomatedWorkflowRequest).model_dump(mode="json")
     with pytest.raises(ValueError):
         AutomatedWorkflowRequest.model_validate({**values, **routing})
 
 
-def test_result_helpers_reopen_read_only_with_exact_refs_and_workspace(
+def test_result_helpers_resolve_exact_journal_refs_and_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import scarf.datastore.datastore as datastore_module
+    from scarf.agent import _plots
 
     result = _completed_result(tmp_path)
+    final = _final_analysis()
     original = result.model_dump(mode="json")
-    opened: list[tuple[str, dict[str, Any]]] = []
+    opened: list[tuple[str, str, str | None]] = []
+    snapshots: list[tuple[Any, str]] = []
     plotted: list[dict[str, Any]] = []
     markers: list[dict[str, Any]] = []
     plot_result, marker_table = object(), object()
+    store = SimpleNamespace(
+        get_markers=lambda **options: markers.append(options) or marker_table
+    )
 
-    def open_store(path: str, **kwargs: Any) -> Any:
-        opened.append((path, kwargs))
-        return SimpleNamespace(
-            plots=SimpleNamespace(
-                embedding=lambda **options: plotted.append(options) or plot_result
-            ),
-            get_markers=lambda **options: markers.append(options) or marker_table,
-        )
+    def open_store(path: str, run_id: str, *, workspace: str | None) -> Any:
+        opened.append((path, run_id, workspace))
+        return store
 
-    monkeypatch.setattr(datastore_module, "DataStore", open_store)
-    assert result.plot_embedding(frame="none") is plot_result
+    def snapshot(target: Any, run_id: str) -> dict[str, Any]:
+        snapshots.append((target, run_id))
+        return {"status": "completed", "finalAnalysis": final.model_dump(mode="json")}
+
+    def plot(target: Any, **options: Any) -> Any:
+        assert target is store
+        plotted.append(options)
+        return plot_result
+
+    monkeypatch.setattr(journal, "open_analysis_store", open_store)
+    monkeypatch.setattr(journal, "analysis_snapshot", snapshot)
+    monkeypatch.setattr(_plots, "plot_final_umap", plot)
+    assert result.plot_embedding(figsize=(8, 5)) is plot_result
     assert result.get_markers(group_id="2", min_score=0.5) is marker_table
-    assert all(path == str(tmp_path) for path, _ in opened)
-    assert all(options["zarr_mode"] == "r" for _, options in opened)
-    assert all(options["workspace"] == "analysis" for _, options in opened)
-    final = result.finalAnalysis
-    assert final is not None and final.umap is not None
-    assert final.clusters is not None and final.markers is not None
+    assert opened == [(str(tmp_path), "workflow-1", "analysis")] * 2
+    assert snapshots == [(store, "workflow-1")] * 2
+    assert final.umap is not None and final.clusters is not None
+    assert final.cellSelection is not None and final.graph is not None
+    assert final.markers is not None
     assert plotted == [
         {
-            "layout": artifact_model_to_ref(final.umap),
-            "color_by": artifact_model_to_ref(final.clusters),
-            "frame": "none",
+            "umap": artifact_model_to_ref(final.umap),
+            "clusters": artifact_model_to_ref(final.clusters),
+            "cell_selection": artifact_model_to_ref(final.cellSelection),
+            "graph": artifact_model_to_ref(final.graph),
+            "figsize": (8, 5),
         }
     ]
     assert markers == [
@@ -210,42 +254,57 @@ def test_result_helpers_reopen_read_only_with_exact_refs_and_workspace(
         }
     ]
     assert result.model_dump(mode="json") == original
-    with pytest.raises(ValueError, match="completed analysis layout"):
+    assert "finalAnalysis" not in original
+    assert "workflowRun" not in original
+    with pytest.raises(ValueError, match="exact completed cluster map"):
         result.plot_embedding(layout=artifact_model_to_ref(final.umap))
+    with pytest.raises(ValueError, match="exact completed cluster map"):
+        result.plot_embedding(color_by="condition")
 
 
 @pytest.mark.parametrize("method", ["plot_embedding", "get_markers", "report"])
 def test_result_helpers_explain_noncompleted_outcome(method: str) -> None:
     result = AutomatedWorkflowResult(notes=["Input file is missing"])
-    with pytest.raises(RuntimeError, match="failed at ingest.*Input file is missing"):
+    with pytest.raises(
+        AnalysisError, match="failed during ingest.*Input file is missing"
+    ):
         getattr(result, method)()
 
 
-def test_result_report_reuses_existing_path_and_generates_only_if_missing(
+def test_result_report_regenerates_from_exact_saved_analysis(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import scarf.agent.report.generator as generator
 
     result = _completed_result(tmp_path)
-    assert result.workflowRun is not None
-    expected = (
-        tmp_path
-        / "analysis/agents/runs"
-        / result.workflowRun.workflowRunId
-        / "report/index.html"
-    )
-    generated: list[tuple[str, str, str | None]] = []
+    final = _final_analysis()
+    store = object()
+    expected = tmp_path / "analysis/agents/orchestrations/workflow-1/report/index.html"
+    generated: list[tuple[Any, str]] = []
 
-    def generate(target: str, run_id: str, *, workspace: str | None) -> Path:
-        generated.append((target, run_id, workspace))
-        expected.parent.mkdir(parents=True)
+    def open_store(path: str, run_id: str, *, workspace: str | None) -> Any:
+        assert (path, run_id, workspace) == (str(tmp_path), "workflow-1", "analysis")
+        return store
+
+    def generate(target: Any, run_id: str) -> Path:
+        generated.append((target, run_id))
+        expected.parent.mkdir(parents=True, exist_ok=True)
         expected.write_text("<html>Analysis</html>", encoding="utf-8")
         return expected
 
+    monkeypatch.setattr(journal, "open_analysis_store", open_store)
+    monkeypatch.setattr(
+        journal,
+        "analysis_snapshot",
+        lambda *_args: {
+            "status": "completed",
+            "finalAnalysis": final.model_dump(mode="json"),
+        },
+    )
     monkeypatch.setattr(generator, "generate_agent_report", generate)
     assert result.report() == expected
     assert result.report() == expected
-    assert generated == [(str(tmp_path), result.workflowRun.workflowRunId, "analysis")]
+    assert generated == [(store, "workflow-1")] * 2
 
 
 @pytest.mark.parametrize("workspace", [None, "analysis"])
@@ -256,21 +315,10 @@ def test_legacy_saved_config_blocks_resume_and_report_without_changing_artifacts
 
     import numpy as np
 
-    from scarf.agent import generate_agent_report
     from scarf.agent import record_io
-    from scarf.agent.data_enrichment.contracts import DataEnrichmentReport
-    from scarf.agent.orchestrator import AgentOrchestrator, journal
-    from scarf.agent.orchestrator.models import (
-        AutomatedWorkflowResumeRequest,
-        FinalAnalysisHandoff,
-        NativeAnalysisHandoff,
-    )
-    from scarf.agent.persistence.reports import (
-        create_agent_workflow,
-        finalize_agent_workflow,
-        save_agent_report,
-    )
-    from scarf.agent.persistence.contracts import AgentInvocation
+    from scarf.agent.orchestrator import AgentOrchestrator
+    from scarf.agent.orchestrator.models import AutomatedWorkflowResumeRequest
+    from scarf.agent.report import generate_agent_report
     from scarf.datastore.datastore import DataStore
     from tests.agent_orchestrator_store import create_store
 
@@ -288,7 +336,6 @@ def test_legacy_saved_config_blocks_resume_and_report_without_changing_artifacts
     features = store.select_all_features(from_assay="RNA")
     normalized = store.run_normalization(cells, features)
     original_values = np.asarray(store.load_artifact(normalized)["data"][:])
-    workflow = create_agent_workflow(store, workflow_run_id="legacy-config")
     prefix = journal._ensure_orchestration_store(store)
     request = AutomatedWorkflowRequest(
         sourcePath=str(path),
@@ -299,10 +346,11 @@ def test_legacy_saved_config_blocks_resume_and_report_without_changing_artifacts
         primaryAssay="RNA",
     )
     old_config = AutomatedWorkflowConfig().model_dump(mode="json")
-    old_config.pop("maxCandidateEvaluations")
     old_config["maxCandidateBranches"] = 24
     payload = OrchestrationRequestRecord(
-        workflowRunId=workflow.workflowRunId,
+        inputIdentity={},
+        modelIdentity="test",
+        workflowRunId="legacy-config",
         request=request,
         requestSha256=journal._sha256_model(request),
     ).model_dump(mode="json")
@@ -315,57 +363,24 @@ def test_legacy_saved_config_blocks_resume_and_report_without_changing_artifacts
             {key: value for key, value in payload.items() if key != "contentSha256"}
         )
     ).hexdigest()
-    request_key = journal._request_key(prefix, workflow.workflowRunId)
+    request_key = journal._request_key(prefix, "legacy-config")
     original_request = record_io.display_json_bytes(payload)
     journal._write_key_once(store.zw, request_key, original_request)
 
-    message = "start a new workflow.*Older saved request/config shapes"
+    message = "Unsupported saved agent workflow.*cannot be resumed or regenerated"
+    resume_request = AutomatedWorkflowResumeRequest(
+        zarrPath=str(path), workflowRunId="legacy-config", workspace=workspace
+    )
+    orchestrator = AgentOrchestrator(object())
     with pytest.raises(ValueError, match=message):
-        AgentOrchestrator(object()).resume(
-            AutomatedWorkflowResumeRequest(
-                zarrPath=str(path),
-                workflowRunId=workflow.workflowRunId,
-                workspace=workspace,
-            )
-        )
-    save_agent_report(
-        store,
-        workflow.workflowRunId,
-        DataEnrichmentReport.get_example(),
-        invocation=AgentInvocation(
-            agentName="data_enrichment", inputs={"fromAssay": "RNA"}
-        ),
-    )
-    workflow = finalize_agent_workflow(
-        store, workflow.workflowRunId, status="completed"
-    )
-    final = FinalAnalysisHandoff(
-        workflowRunId=workflow.workflowRunId,
-        primaryAssay="RNA",
-        markerAssay="RNA",
-        cellSelection=ArtifactReferenceModel.from_artifact_ref(cells),
-        nativeAnalyses=[
-            NativeAnalysisHandoff(
-                assay="RNA",
-                normalized=ArtifactReferenceModel.from_artifact_ref(normalized),
-            )
-        ],
-    ).with_handoff_id()
-    terminal = AutomatedWorkflowResult(
-        status="completed",
-        currentStage="analysis_finalization",
-        zarrPath=str(path),
-        workflowRun=workflow,
-        reportReferences=list(workflow.reports),
-        finalAnalysis=final,
-        finalHandoffId=final.handoffId,
-        decisionRunId=workflow.workflowRunId,
-    )
-    terminal.contentSha256 = journal._record_checksum(terminal)
-    journal._persist_terminal_result(store, prefix, workflow, terminal)
+        orchestrator.load_request_for_resume(resume_request)
+    failed = orchestrator.resume(resume_request)
+    assert failed.status == "failed"
+    assert failed.workflowRunId == "legacy-config"
+    assert any("Unsupported saved agent workflow" in note for note in failed.notes)
 
     with pytest.raises(ValueError, match=message):
-        generate_agent_report(path, workflow.workflowRunId, workspace=workspace)
+        generate_agent_report(path, "legacy-config", workspace=workspace)
 
     reopened = DataStore(
         str(path),

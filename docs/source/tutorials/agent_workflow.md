@@ -17,125 +17,72 @@ kernelspec:
 
 # Choose and explain RNA analysis settings
 
-Scarf computes evidence about your data, the agent chooses between bounded alternatives, and
-Scarf executes the selected settings. Start with a dataset, study context, and a configured
-Pydantic AI model:
+Give Scarf a dataset, a configured Pydantic AI model, a study-context paragraph, and an objective.
+Scarf computes the evidence, the agent evaluates a few consequential choices, and Scarf executes
+the selected analysis.
 
 ```python
 from scarf.agent import analyze_rna
 
 result = analyze_rna(
     "study.h5ad",
-    zarr_path="study.zarr",
     model=model,
-    study_context="Human blood from one healthy donor, with no treatment comparison.",
+    study_context="Human blood from one healthy donor; no treatment comparison.",
     study_objective="Identify stable major immune-cell populations.",
-    max_candidates=50,
+    zarr_path="study.zarr",
 )
-if result.status != "completed":
-    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
-
 result.plot_embedding()
 markers = result.get_markers()
 report_path = result.report()
 ```
 
-This release analyzes one RNA assay. Stores may contain other modalities; pass `assay="counts"`
-when more than one RNA assay is available. Automated multimodal integration and hypothesis testing
-are outside this workflow. Markers are descriptive evidence. The optional agent dependency is
-installed with `uv pip install "scarf[agent]"`.
+`analyze_rna` returns a completed result or raises `AnalysisError`. You do not need to inspect a
+status field to catch an unsuccessful beginner run. Install the optional dependency with
+`uv pip install "scarf[agent]"`.
 
-`max_candidates` limits reserved candidate slots across the initial analysis and any feature-policy
-revision. Each pass reserves all configured alternatives before screening, including conditional
-candidates that may not execute. The defaults reserve 25 slots for the baseline and another 25
-if a feature-policy revision runs. The default limit of 50 admits both passes; a smaller limit
-never shrinks the candidate lists. An insufficient remaining budget stops admission of that pass.
-The limit does not count actual executions or bound runtime or provider tokens. The result
-methods use the completed analysis directly and reopen its store read-only; they do not retrain
-UMAP or copy results into live metadata. `report()` returns a local path without opening a browser.
+This release analyzes one RNA assay. Other modalities can remain in the store; they do not enter
+this workflow. Pass `assay="RNA2"` when several RNA assays exist. Automated integration, HTO
+assignment, and biological significance or differential-expression hypothesis execution are
+outside this workflow. Experimental Context still explores covariate patterns and possible
+explanations of the study design.
 
-The executable example below uses the advanced `AgentOrchestrator` interface to keep a teaching
-run small and reproducible. That interface also supports explicit candidate lists, workspaces,
-provider limits, and resumable checkpoints.
+The result opens its exact saved workspace and artifacts read-only. Its cluster-map helper shows
+at most 50,000 cells with full population counts. Marker statistics use the complete selected
+cohort. `report()` returns a local HTML path without opening a browser or rerunning an analysis.
+The {doc}`../reference/api/agent` page describes the small public interface and advanced controls.
 
-Repository developers can also run `notebook/agent_workflow_new.ipynb` on the full abdominal
-adipose cohort or `notebook/agent_workflow_new_short.ipynb` on its reproducible 2,000-cell smoke
-sample. Both use unattended input policy and keep runtime files beside the notebooks.
+## A reproducible teaching analysis
 
-```{mermaid}
-flowchart LR
-    A[Input dataset and study context] --> B[Ingest]
-    B --> C[Data Enrichment]
-    C --> E[Experimental Context]
-    E --> F[Preprocessing plan]
-    F --> G[RNA preprocessing]
-    G --> H[Parameter Tuning]
-    H --> I[Feature-policy review]
-    I --> J[Optional revised preprocessing and tuning]
-    J --> K[Analysis review]
-    K --> L[UMAP, clusters, and markers]
-    L --> M[Persisted reports and local HTML]
-```
-
-The committed documentation build uses one scripted Pydantic AI `FunctionModel`. It exercises the
-real tools, validators, preprocessing, candidate execution, finalization, persistence, and report
-generation without an API key. It does not assign biological identities; that remains a separate
-`BiologicalInterpretationAgent` call after finalization. A live-provider configuration is shown at
-the end.
-
-## 1. Download the raw teaching dataset
-
-Install the optional agent dependencies before running this workflow outside the documentation
-environment:
-
-```console
-uv pip install "scarf[agent]"
-```
-
-The documentation run converts a raw H5 file into a separate teaching store. The explicit
-`overwrite` direction is safe here because `agent_workflow.zarr` is a disposable derived target
-owned by this tutorial. Omit it in ordinary work unless replacing that exact destination is
-intentional.
+The executable example uses the real analysis operations and a local scripted `FunctionModel`.
+The script chooses among observed partitions by seed stability, then marker coherence. This makes
+the example reproducible without an API key. It is a teaching policy, not a substitute for a model
+that interprets the supplied diagnostic images and study-specific biology.
 
 ```{code-cell} ipython3
-from contextlib import redirect_stdout
-from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import pandas as pd
 import scarf
-from scarf.agent import (
-    AgentOrchestrator,
-    AgentRunConfig,
-    AutomatedWorkflowConfig,
-    AutomatedWorkflowRequest,
-    DecisionSelection,
-    load_agent_report,
-    load_agent_workflow,
-)
+from scarf.agent import analyze_rna
 
 scarf.configure_output(level="WARNING", progress=False)
-
 source_path = scarf.cytebase.connect("scarf_docs").download(
-    "tenx_5K_pbmc_rnaseq/data.h5",
-    destination="scarf_datasets",
+    "tenx_5K_pbmc_rnaseq/data.h5", destination="scarf_datasets",
 )[0]
-zarr_path = source_path.with_name("agent_workflow.zarr")
-
+teaching_directory = TemporaryDirectory(prefix="scarf-agent-teaching-")
+zarr_path = Path(teaching_directory.name) / "analysis.zarr"
 study_context = (
-    "This is a human 10x Genomics 5K PBMC 3-prime gene-expression dataset "
-    "from peripheral blood collected from one healthy donor. The goal is "
-    "unsupervised identification and characterization of the major immune-cell "
-    "populations. No treatment comparison, technical batch covariate, paired "
-    "modality, or independent replication metadata is available. Do not invent "
-    "absent design variables or report treatment effects."
+    "Human 10x Genomics 5K PBMC 3-prime gene expression from peripheral blood, "
+    "collected from one healthy donor. No treatment comparison, trusted technical "
+    "batch column, paired modality, or independent replication metadata is available. "
+    "Do not invent missing design variables or report treatment effects."
 )
-
-{"source": source_path.name, "destination": zarr_path.name}
+source_path.name
 ```
 
-The hidden setup below routes each model request by its available tools. Every structured response
-is assembled from the exact tool result, so a fabricated assay, feature family, candidate, cluster,
-or evidence identifier still fails the production validator.
+The hidden provider fixture assembles responses from actual tool results. Invented assay names,
+feature families, candidates, and evidence identifiers still fail the production validators.
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
@@ -143,6 +90,7 @@ or evidence identifier still fails the production validator.
 import json
 from typing import Any
 
+from IPython import get_ipython
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -151,12 +99,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from scarf.agent.biological_interpretation import (
-    BiologicalInterpretationReport,
-    ClusterCompositionEvidence,
-    ClusterInterpretation,
-    ClusterMarkerBatchEvidence,
-)
 from scarf.agent.data_enrichment import (
     AssayFeatureInspectionBatch,
     DataEnrichmentReport,
@@ -168,6 +110,10 @@ from scarf.agent.experimental_context import (
     CovariateEvidence,
     ExperimentalContextDecision,
 )
+
+notebook_shell = get_ipython()
+if notebook_shell is not None:
+    notebook_shell.run_line_magic("matplotlib", "inline")
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
     values = []
@@ -206,12 +152,12 @@ def _structured_output(info: AgentInfo, value: Any) -> ModelResponse:
     return _tool_call(info.output_tools[0].name, payload)
 
 
-def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
+def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
     state = {
         "enrichment": 0,
         "context": 0,
         "parameter": 0,
-        "biology": 0,
+        "assessments": [],
         "requests": 0,
     }
 
@@ -222,7 +168,14 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
         state["requests"] += 1
         tools = {tool.name for tool in info.function_tools}
 
-        if "inspect_assay_features_batch" in tools or state["enrichment"] == 1:
+        if (
+            "inspect_assay_features_batch" in tools
+            or state["enrichment"] == 1
+            or any(
+                tool.parameters_json_schema.get("title") == "DataEnrichmentReport"
+                for tool in info.output_tools
+            )
+        ):
             if state["enrichment"] == 0:
                 state["enrichment"] = 1
                 return _tool_call("inspect_assay_features_batch")
@@ -274,14 +227,13 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
                 DataEnrichmentReport(
                     status="done",
                     studyContextSummary=StudyContextSummary(
-                        organismReferences=["human"],
+                        organismReferences=["Human"],
                         tissueReferences=["peripheral blood"],
                         experimentalReferences=[
-                            "10x Genomics 5K PBMC 3-prime gene-expression dataset"
+                            "10x Genomics 5K PBMC 3-prime gene expression"
                         ],
                         analysisIntentReferences=[
-                            "unsupervised identification and characterization of "
-                            "the major immune-cell populations"
+                            "Discover stable major immune-cell populations."
                         ],
                     ),
                     policies=policies,
@@ -294,7 +246,10 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
                 "analyze_experimental_design",
                 "score_current_representation",
             }
-        ) or state["context"] in {1, 2}:
+        ) or state["context"] in {1, 2} or any(
+            tool.parameters_json_schema.get("title") == "ExperimentalContextDecision"
+            for tool in info.output_tools
+        ):
             if state["context"] == 0:
                 state["context"] = 1
                 return _tool_call("inspect_cell_covariates")
@@ -335,87 +290,84 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
                 ),
             )
 
-        if tools.intersection(
-            {"inspect_cluster_composition", "inspect_cluster_markers_batch"}
-        ) or state["biology"]:
-            if state["biology"] == 0:
-                state["biology"] = 1
-                return _tool_call("inspect_cluster_composition")
-            if state["biology"] == 1:
-                composition = _tool_result(
-                    messages,
-                    "inspect_cluster_composition",
-                    ClusterCompositionEvidence,
-                )
-                state["biology"] = 2
-                return _tool_call(
-                    "inspect_cluster_markers_batch",
-                    {"cluster_ids": list(composition.clusterCounts)},
-                )
-
-            marker_batch = _tool_result(
-                messages,
-                "inspect_cluster_markers_batch",
-                ClusterMarkerBatchEvidence,
-            )
-            interpretations = []
-            for cluster in marker_batch.clusters:
-                if cluster.evidenceId and cluster.markers:
-                    marker = cluster.markers[0]
-                    marker_name = marker.featureName or marker.featureId
-                    interpretations.append(
-                        ClusterInterpretation(
-                            clusterId=cluster.clusterId,
-                            proposedIdentity=f"{marker_name}-high RNA state",
-                            identityIsHypothesis=True,
-                            confidence="low",
-                            rationale=(
-                                "The returned marker panel is led by "
-                                f"{marker_name}."
-                            ),
-                            evidenceIds=[cluster.evidenceId],
-                        )
-                    )
-            state["biology"] = 3
-            return _structured_output(
-                info,
-                BiologicalInterpretationReport(
-                    status="done",
-                    clusterInterpretations=interpretations,
-                    evidenceIds=[item.evidenceIds[0] for item in interpretations],
-                    limitations=[
-                        "The scripted documentation model returns marker-linked "
-                        "hypotheses, not validated cell identities."
-                    ],
-                    stopReason=(
-                        "Every cluster with returned marker evidence was reviewed."
-                    ),
-                ),
-            )
-
         prompt = _prompt_text(messages)
         if any(
-            tool.parameters_json_schema.get("title")
-            == "AnalysisVisualAdjudication"
+            tool.parameters_json_schema.get("title") == "TuningAction"
             for tool in info.output_tools
         ):
-            payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
-            return _structured_output(
-                info,
-                {
-                    "status": "acceptable",
-                    "selectedCandidateId": payload["selectedCandidateId"],
-                    "rationale": (
-                        "The bounded diagnostic board agrees with the registered "
-                        "numeric evidence."
-                    ),
-                },
-            )
+            evidence, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+            candidates = [
+                item for item in evidence["candidates"]
+                if item["status"] == "done" and item["eligible"]
+            ]
+            if not candidates:
+                raise AssertionError("The teaching run has no supported partition")
 
-        decision, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+            def measured(item, name):
+                value = item["metrics"].get(name)
+                return float(value) if value is not None else 0.0
+
+            selected = max(
+                candidates,
+                key=lambda item: (
+                    measured(item, "seedStability"),
+                    measured(item, "markerCoherence"),
+                ),
+            )
+            metrics = selected["metrics"]
+            genes = list(dict.fromkeys(
+                gene for names in metrics.get("topMarkerGenes", {}).values()
+                for gene in names
+            ))[:8]
+            quantitative = (
+                f"Compared {len(candidates)} observed partitions; selected resolution "
+                f"{selected['parameters']['leidenResolution']}, with seed stability "
+                f"{metrics.get('seedStability')} and marker coherence "
+                f"{metrics.get('markerCoherence')}."
+            )
+            qualitative = (
+                "The saved marker preview contains " + ", ".join(genes) + "."
+                if genes else "The saved marker preview is empty; cell identities remain unresolved."
+            )
+            action = {
+                "action": "accept",
+                "selectedCandidateId": selected["candidateId"],
+                "correctionNeed": "notApplicable",
+                "assessedDomains": evidence["assessedDomains"],
+                "evidenceIds": [
+                    f"candidate:{selected['candidateId']}",
+                    *list(evidence["imageHashes"])[:1],
+                    "studyContract", "qcPolicy", "samplingCoverage", "featureEvidence",
+                ],
+                "quantitativeFindings": [quantitative],
+                "qualitativeFindings": [qualitative],
+                "objectivePreservation": (
+                    "Preserve the single-donor population structure and retain marker "
+                    "uncertainty; no batch or treatment comparison is supported."
+                ),
+                "rationale": (
+                    "The teaching policy selects the observed partition with the "
+                    "greatest seed stability, using marker coherence to break ties. "
+                    + quantitative
+                ),
+            }
+            state["assessments"].append({
+                "selection": action,
+                "alternatives": [{
+                    "resolution": item["parameters"]["leidenResolution"],
+                    "clusters": item["metrics"].get("nClusters"),
+                    "seed_stability": item["metrics"].get("seedStability"),
+                    "marker_coherence": item["metrics"].get("markerCoherence"),
+                    "selected": item["candidateId"] == selected["candidateId"],
+                } for item in candidates],
+            })
+            return _structured_output(info, action)
+
+        payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        decision = payload["spec"]
         evidence_by_class = {}
         evidence_class_by_id = {}
-        for item in decision["evidence"]:
+        for item in payload["evidence"]["evidence"]:
             evidence_by_class.setdefault(
                 item["evidenceClass"],
                 item["evidenceId"],
@@ -445,10 +397,10 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
         state["parameter"] += 1
         return _structured_output(
             info,
-            DecisionSelection(
+            dict(
                 selectedOptionId=selected["optionId"],
                 evidenceIds=evidence_ids,
-                rationale="Select the registered metric-preferred option.",
+                rationale=f"Use the offered {selected['label']} policy with its required observed evidence.",
                 confidence="high",
             ),
         )
@@ -457,305 +409,122 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
 
 ```
 
-## 2. Configure a bounded teaching search
-
-This run uses one HVG count and singleton PCA, neighbor, and clustering-resolution lists, with
-no refinement or Harmony. Each tuning pass still evaluates four stage candidates: PCA, the native
-correction baseline, neighbors, and clustering. Including the HVG screen and selection evaluations,
-the executor reserves seven evaluations per pass. The limit of fourteen permits a second pass
-after a feature-policy revision. This is a small sequential search. QC comparisons, stability
-diagnostics, provider requests, and finalization have separate costs.
-
 ```{code-cell} ipython3
 model, model_state = _scripted_workflow_model()
-config = AutomatedWorkflowConfig(
-    inputPolicy="unattended",
-    maxRefinedCandidatesPerAssay=0,
-    maxHarmonyCandidatesPerAssay=0,
-    maxCandidateEvaluations=14,
-    hvgCandidateCounts=(1000,),
-    pcaCandidateDimensions=(20,),
-    graphNeighborCandidates=(21,),
-    leidenResolutionCandidates=(1.0,),
-    minClusterCells=2,
-    agentRunConfig=AgentRunConfig(
-        requestLimit=5,
-        toolCallLimit=5,
-    ),
+result = analyze_rna(
+    source_path,
+    model=model,
+    study_context=study_context,
+    study_objective="Discover stable major immune-cell populations.",
+    zarr_path=zarr_path,
 )
-orchestrator = AgentOrchestrator(model, config=config)
-request = AutomatedWorkflowRequest(
-    sourcePath=str(source_path),
-    zarrPath=str(zarr_path),
-    studyContext=study_context,
-    studyObjective="Discover stable major immune-cell populations.",
-    primaryAssay="RNA",
-    markerAssay="RNA",
-    analysisAssays=["RNA"],
-    ingestDirections={"overwrite": True, "defaultAssay": "RNA"},
-)
+{"status": result.status}
+```
 
+## See what was chosen and why
+
+The starting graph is compared at four clustering resolutions: 0.5, 0.75, 1.0, and 1.25.
+These partitions share the same cells, features, and graph. The table below contains the exact
+observations offered to the scripted provider, followed by its recorded explanation.
+
+```{code-cell} ipython3
+assessment = model_state["assessments"][-1]
+pd.DataFrame(assessment["alternatives"])
+```
+
+```{code-cell} ipython3
+selection = assessment["selection"]
 {
-    "candidate_evaluation_limit": config.maxCandidateEvaluations,
-    "refinement_candidates": config.maxRefinedCandidatesPerAssay,
-    "harmony_candidates": config.maxHarmonyCandidatesPerAssay,
-    "input_policy": config.inputPolicy,
+    "why": selection["rationale"],
+    "marker_evidence": selection["qualitativeFindings"],
+    "biology_to_preserve": selection["objectivePreservation"],
 }
 ```
 
-## 3. Run without an interactive checkpoint
+A live model can keep the observed settings or request one registered comparison to resolve a
+specific concern. It must explain the expected improvement and which biology should be preserved.
+A metric rank alone does not authorize correction or deletion of a biological program. Batch
+correction requires both a supported design and a matched comparison of native and corrected
+representations. Confounded technical and biological variables cannot license correction.
 
-The unattended policy lets registered rules resolve model deferrals. Genuine unresolved evidence
-becomes an explicit abstention or failure rather than a pause. The documentation captures the
-normal report-path printout so its output does not contain a random workflow identifier.
+## Inspect the analysis
+
+The result fixes the saved layout and cluster labels. Display options include `figsize`, `show`,
+`seed`, and a lower `max_points` display cap; they change only the picture.
 
 ```{code-cell} ipython3
-with redirect_stdout(StringIO()):
-    result = orchestrator.run(request)
-
-if (
-    result.status != "completed"
-    or result.finalAnalysis is None
-    or result.preprocessingPlan is None
-    or result.workflowRun is None
-    or result.zarrPath is None
-):
-    raise RuntimeError(f"Unexpected workflow result: {result.status}, {result.notes}")
-
-plan = result.preprocessingPlan
-{
-    "status": result.status,
-    "stage": result.currentStage,
-    "primary_assay": plan.primaryAssay,
-    "marker_assay": plan.markerAssay,
-    "cell_qc": plan.cellQc.action,
-    "routes": [
-        {
-            "assay": assay.assay,
-            "features": assay.featureMethod,
-            "reduction": assay.reductionMethod,
-        }
-        for assay in plan.assays
-    ],
-}
+result.plot_embedding(figsize=(9, 6))
 ```
 
-The workflow persists the exact preprocessing plan, decisions, report handoffs, and final artifact
-references before returning.
-
-## 4. Inspect the persisted workflow
-
-The returned workflow identity resolves the durable record. Reopening it does not execute an
-analysis stage.
-
 ```{code-cell} ipython3
-persisted_workflow = load_agent_workflow(
-    result.zarrPath,
-    result.workflowRun.workflowRunId,
-    workspace=result.workflowRun.workspace,
-)
-
-{
-    "status": persisted_workflow.status,
-    "stage": result.currentStage,
-    "agent_reports": [ref.agentName for ref in result.reportReferences],
-    "model_requests": model_state["requests"],
-    "graph_method": result.finalAnalysis.graphMethod,
-    "marker_assay": result.finalAnalysis.markerAssay,
-}
-```
-
-The single scripted provider handles every model-driven orchestrator stage. Deterministic
-operations, such as RNA preprocessing, candidate execution, promotion, UMAP, clustering,
-marker search, and persistence, do not require separate model requests.
-
-## 5. Review parameter evidence and agent reports
-
-The parameter agent receives executor-produced metrics for candidates that have already run. It
-does not generate Scarf code. Each candidate follows the explicit reduction, optional Harmony,
-ANN, neighbours, connectivity, Leiden, and metric chain. The final selected branch is replayed with
-state updates and checked against the evaluated immutable references.
-
-```{code-cell} ipython3
-reports = {
-    reference.agentName: load_agent_report(result.zarrPath, reference)
-    for reference in result.reportReferences
-}
-parameter_report = reports["parameter_tuning"]
-
-candidate_metrics = []
-for assay, assay_report in parameter_report.assayReports.items():
-    for index, evaluation in enumerate(assay_report.evaluations, start=1):
-        candidate_metrics.append(
-            {
-                "assay": assay,
-                "candidate": index,
-                "dimensions": evaluation.parameters.dimensions,
-                "resolution": evaluation.parameters.leidenResolution,
-                "neighbors": evaluation.parameters.neighborsK,
-                "eligible": evaluation.eligible,
-                "clusters": evaluation.metrics.nClusters,
-                "smallest_cluster": evaluation.metrics.minClusterCells,
-                "graph_silhouette": evaluation.metrics.graphSilhouetteMedian,
-            }
-        )
-
-{
-    "candidates": candidate_metrics,
-    "stop_reason": parameter_report.stopReason,
-    "report_statuses": {
-        name: report.status for name, report in reports.items()
-    },
-}
-```
-
-This teaching run demonstrates the successive parameter decisions with one option per stage.
-The default configuration compares explicit HVG, PCA, neighbor, and resolution lists and may execute one evidence-driven
-refinement. Harmony is added only when the exact Experimental Context handoff authorizes a matched
-comparison.
-
-## 6. Plot the exact final UMAP and inspect markers
-
-The result uses its final UMAP and cluster artifacts directly. Display options are forwarded to
-Scarf's plotting API. Exact artifact references remain available in `result.finalAnalysis` for
-advanced workflows and Biological Interpretation.
-
-```{code-cell} ipython3
-final = result.finalAnalysis
-if (
-    final.cellSelection is None
-    or final.clusters is None
-    or final.umap is None
-    or final.markers is None
-):
-    raise RuntimeError("The completed final handoff is missing required artifacts")
-
-result.plot_embedding(
-    legend_loc="on_data",
-    frame="none",
-)
-```
-
-UMAP is a presentation artifact. The tuning agent compares graph and metadata metrics, not visual
-appearance, and the orchestrator does not train several UMAPs to choose the most attractive one.
-
-```{code-cell} ipython3
-marker_table = result.get_markers(
-    group_id=None,
-    min_score=-1,
-    min_frac_exp=-1,
-)
+marker_table = result.get_markers()
 marker_table.sort_values(
-    ["group_id", "score"],
-    ascending=[True, False],
+    ["group_id", "score"], ascending=[True, False],
 ).groupby("group_id", sort=True).head(2)[
     ["group_id", "feature_name", "score", "frac_exp"]
 ].head(12)
 ```
 
-Marker scores are cell-level descriptive evidence. They are not replicate-aware differential
-expression, and the scripted identities remain hypotheses.
-
-## 7. Find the local HTML report
-
-A completed local workflow first persists its terminal result and then writes a replaceable HTML
-view under `agents/runs/<workflowRunId>/report/index.html`. `result.report()` returns that path,
-generating the view from saved results if it is missing. It opens directly on the analysis and
-does not train another UMAP. Advanced callers can use `generate_agent_report()` to explicitly
-regenerate an existing view.
+These markers describe clusters. Replicate-aware differential expression and validated cell
+identities require additional analysis.
 
 ```{code-cell} ipython3
 report_path = result.report()
-display_path = str(report_path.relative_to(Path(result.zarrPath).parent)).replace(
-    result.workflowRun.workflowRunId,
-    "<workflowRunId>",
-)
-
-{
-    "report": display_path,
-    "exists": report_path.is_file(),
-    "final_artifact_kinds": {
-        "selection": final.cellSelection.kind,
-        "clusters": final.clusters.kind,
-        "umap": final.umap.kind,
-        "markers": final.markers.kind,
-    },
-}
+{"report": report_path.name, "exists": report_path.is_file()}
 ```
 
-## Pauses, failures, and other input formats
+The single report page opens on the final map, population counts, and decisions. Alternatives and
+recorded measurements sit beside each choice; marker findings and material limitations remain
+visible. There is no separate technical-report application.
 
-With `inputPolicy="pause"`, `needsInput` keeps the workflow running. Inspect every returned
-question and supply only grounded answers through `AutomatedWorkflowResumeRequest`.
-`inputPolicy="unattended"` returns an explicit abstention or failure when evidence cannot be
-resolved safely. `failed` and `abandoned` are terminal. An ingest ambiguity can occur before a
-persisted workflow exists; update `ingestDirections` and call `run()` again in that case. A running
-workflow can also be finalized as abandoned with `orchestrator.cancel()`.
+## Large datasets and saved work
 
-For another new local H5 or H5AD input, provide a destination that does not yet exist:
+Above 50,000 retained cells, candidate settings are screened on an immutable uniform sample.
+Insufficient representation can trigger one enlargement to 100,000 cells. The sample is a tuning
+cohort, not a new final cohort: the selected settings are executed and assessed on all QC-retained
+cells before finalization. Sample measurements do not prove that rare populations or batch
+correction will transfer. If sample coverage is inadequate, the workflow assesses a bounded
+full-cohort baseline instead of deleting poorly represented groups.
 
-```python
-request = AutomatedWorkflowRequest(
-    sourcePath="study.h5ad",
-    zarrPath="study.zarr",
-    studyContext="One paragraph describing the study, design, and analysis intent.",
-    studyObjective="Discover stable populations relevant to the study.",
-)
-result = AgentOrchestrator(
-    model,
-    config=AutomatedWorkflowConfig(inputPolicy="unattended"),
-).run(request)
-if result.status != "completed":
-    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
-```
+The default advanced limits permit 12 candidate evaluations per screening sample, 24 across
+screening samples, four full-cohort graphs, eight full-cohort partitions, and one targeted repair.
+They count distinct admitted work, including failed attempts. Reuse of a complete exact artifact
+does not spend another slot. These limits do not promise an elapsed time: ingest, QC, diagnostics,
+markers, and one final UMAP also have costs.
 
-For an existing Zarr input, omit `zarrPath` or set it to the same location. Its current `I`
-selection is preserved and snapshotted. A workspace may be supplied only for an existing Zarr
-input.
+One orchestration history owns the request, evidence, decisions, and final artifact references.
+An identical call reuses a completed result or resumes matching interrupted work. Changed data,
+metadata roles, model identity, or configuration cannot silently reinterpret that history. Older
+agent runs with the previous saved-state contract must be restarted; their numerical artifacts
+remain readable through the ordinary Scarf APIs.
 
-## Use a live model
+## Failure handling and advanced control
 
-Replace the scripted model with one supported Pydantic AI model. Keep credentials in environment
-variables and never place them in a notebook or datastore:
+Use the exception's result address when an unattended analysis needs investigation:
 
 ```python
-import os
+from scarf.agent import AnalysisError, analyze_rna
 
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
-
-model = OpenAIChatModel(
-    os.environ["SCARF_AGENT_MODEL"],
-    provider=OpenAIProvider(
-        base_url=os.environ["SCARF_AGENT_BASE_URL"],
-        api_key=os.environ["SCARF_AGENT_API_KEY"],
-    ),
-)
-
-orchestrator = AgentOrchestrator(
-    model,
-    config=AutomatedWorkflowConfig(
-        inputPolicy="unattended",
-        runConfoundedHarmonyDiagnostic=True,
-    ),
-)
-result = orchestrator.run(
-    AutomatedWorkflowRequest(
-        sourcePath="study.h5ad",
-        zarrPath="study.zarr",
-        studyContext=(
-            "Human single-cell study with three biological replicates per "
-            "condition; donor is the unit of inference and library is technical."
-        ),
-        studyObjective=(
-            "Discover stable populations while preserving the condition structure."
-        ),
+try:
+    result = analyze_rna(
+        "study.zarr", model=model,
+        study_context="The observed study design and metadata roles.",
+        study_objective="The biological structure that should be retained.",
     )
-)
-if result.status != "completed":
-    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
+except AnalysisError as error:
+    print(error)
+    print(error.result.notes)
+    raise
 ```
 
-Provider output remains provisional. Scarf validates evidence identifiers, operations, artifact
-lineage, and resume state, but it cannot establish that a biologically plausible interpretation is
-true.
+Advanced callers can import `AgentOrchestrator` and its request/configuration models from
+`scarf.agent.orchestrator`, set an existing-store workspace, and use `inputPolicy="pause"` for
+explicit questions. The advanced result still carries status and resume information. Supply only
+grounded answers to the saved questions. A work limit pauses or fails the analysis; it does not
+turn an unsupported candidate into an accepted result.
+
+For live analysis, replace the `FunctionModel` with your configured Pydantic AI model and use the
+same `analyze_rna` call. Scarf sends diagnostic images when the model supports them. Other models
+assess the structured marker, loading-gene, and numerical evidence, with that limitation recorded
+in the report. Credentials belong in the provider configuration, not in a study paragraph or
+saved analysis record.

@@ -1,5 +1,6 @@
 """Experimental-context quality-control evidence assembly."""
 
+import json
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -616,6 +617,7 @@ def _directed_capture_source(
         deps.directions.get("physicalCaptureColumn"),
         qc_directions.get("physicalCaptureColumn"),
         qc_directions.get("captureColumn"),
+        deps.captureProposal.column if deps.captureProposal is not None else None,
     ]
     specified = [value for value in candidates if value is not None]
     if not specified:
@@ -656,6 +658,19 @@ def _directed_pooled_reference_captures(
         "pooledReferenceCaptures",
         deps.directions.get("pooledReferenceCaptures"),
     )
+    proposed = (
+        deps.captureProposal.referenceCaptures
+        if deps.captureProposal is not None
+        else []
+    )
+    if proposed:
+        if raw is not None and (
+            not isinstance(raw, list | tuple) or list(raw) != proposed
+        ):
+            raise ValueError(
+                "Reference proposal conflicts with caller reference captures"
+            )
+        raw = proposed
     if raw is None:
         return None
     if not isinstance(raw, list | tuple) or any(
@@ -849,6 +864,45 @@ def _capture_design_safety(
                 "preservesIndependentUnitCoverage": preserves_units,
             }
         )
+    from .comparisons import combination_labels
+
+    for columns in deps.protectedCombinations:
+        label = json.dumps(columns, separators=(",", ":"))
+        try:
+            combined = combination_labels(deps.cells, columns)
+        except ValueError:
+            safety.append(
+                {
+                    "conditionColumns": columns,
+                    "preservesConditionCoverage": False,
+                    "preservesIndependentUnitCoverage": False,
+                    "reason": "missingProtectedCombination",
+                }
+            )
+            continue
+        joint_groups = np.unique(combined)
+        coverage = set(np.unique(combined[after])) == set(joint_groups)
+        units = {
+            record.get("independentUnit") or record.get("observationUnit")
+            for record in characterization.coefficients
+            if record.get("name") in columns
+        }
+        units.discard(None)
+        independent_safe = coverage and bool(units)
+        for unit in units:
+            values = np.asarray(deps.cells.fetch(unit))
+            independent_safe = independent_safe and all(
+                len(np.unique(values[after & (combined == group)])) >= 2
+                for group in joint_groups
+            )
+        safety.append(
+            {
+                "conditionColumns": columns,
+                "combination": label,
+                "preservesConditionCoverage": coverage,
+                "preservesIndependentUnitCoverage": independent_safe,
+            }
+        )
     return (
         safety,
         bool(safety) and all(item["preservesConditionCoverage"] for item in safety),
@@ -949,6 +1003,73 @@ def _capture_failure_models(
     return output
 
 
+def _design_retention(
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization | None,
+    active: np.ndarray,
+    keep: np.ndarray,
+) -> dict[str, Any]:
+    """Check exact categorical conditions, units, and protected joint groups."""
+    cells = deps.cells if deps.cells is not None else deps.store.cells
+    retention_columns: list[str] = []
+    if characterization is not None:
+        kinds = {
+            record["name"]: record.get("kind") for record in characterization.columns
+        }
+        for coefficient in characterization.coefficients:
+            name = coefficient.get("name")
+            for value in (
+                name if kinds.get(name) == "categorical" else None,
+                coefficient.get("observationUnit"),
+                coefficient.get("independentUnit"),
+            ):
+                if isinstance(value, str) and value in cells.columns:
+                    retention_columns.append(value)
+    retained_by_column: dict[str, dict[str, int]] = {}
+    unsafe_groups: list[str] = []
+    retained = np.asarray(keep, dtype=bool) & np.asarray(active, dtype=bool)
+    for column in dict.fromkeys(retention_columns):
+        labels = np.asarray(cells.fetch(column))
+        if labels.shape != retained.shape:
+            raise ValueError(
+                f"QC retention column {column!r} does not align with cellSelection"
+            )
+        counts: dict[str, int] = {}
+        for raw_label in np.unique(labels[np.asarray(active, dtype=bool)]):
+            label = raw_label.item() if isinstance(raw_label, np.generic) else raw_label
+            key = label.decode("utf-8") if isinstance(label, bytes) else str(label)
+            count = int((retained & (labels == raw_label)).sum())
+            counts[key] = count
+            if count == 0:
+                unsafe_groups.append(f"{column}={key}")
+        retained_by_column[column] = counts
+    from .comparisons import combination_labels
+
+    retained_by_combination: dict[str, dict[str, int]] = {}
+    for columns in deps.protectedCombinations:
+        key = json.dumps(columns, separators=(",", ":"))
+        try:
+            labels = combination_labels(cells, columns)
+        except ValueError:
+            unsafe_groups.append(f"combination:{key}:missingValues")
+            continue
+        counts = {
+            str(label): int((retained & (labels == label)).sum())
+            for label in np.unique(labels[np.asarray(active, dtype=bool)])
+        }
+        retained_by_combination[key] = counts
+        unsafe_groups.extend(
+            f"combination:{key}={label}"
+            for label, count in counts.items()
+            if count == 0
+        )
+    return {
+        "retainedCellsByColumn": retained_by_column,
+        "retainedCellsByCombination": retained_by_combination,
+        "unsafeRetentionGroups": sorted(unsafe_groups),
+    }
+
+
 def _registered_profile_evidence(
     projection: RegisteredQcProjection,
     *,
@@ -1007,35 +1128,6 @@ def _registered_profile_evidence(
         capture_labels=capture_labels,
         metric_sources=metric_sources,
     )
-    cells = deps.cells if deps.cells is not None else deps.store.cells
-    retention_columns: list[str] = []
-    if characterization is not None:
-        for coefficient in characterization.coefficients:
-            for value in (
-                coefficient.get("name"),
-                coefficient.get("observationUnit"),
-                coefficient.get("independentUnit"),
-            ):
-                if isinstance(value, str) and value in cells.columns:
-                    retention_columns.append(value)
-    retained_by_column: dict[str, dict[str, int]] = {}
-    unsafe_groups: list[str] = []
-    retained = np.asarray(projection.keep, dtype=bool) & np.asarray(active, dtype=bool)
-    for column in dict.fromkeys(retention_columns):
-        labels = np.asarray(cells.fetch(column))
-        if labels.shape != retained.shape:
-            raise ValueError(
-                f"QC retention column {column!r} does not align with cellSelection"
-            )
-        counts: dict[str, int] = {}
-        for raw_label in np.unique(labels[np.asarray(active, dtype=bool)]):
-            label = raw_label.item() if isinstance(raw_label, np.generic) else raw_label
-            key = label.decode("utf-8") if isinstance(label, bytes) else str(label)
-            count = int((retained & (labels == raw_label)).sum())
-            counts[key] = count
-            if count == 0:
-                unsafe_groups.append(f"{column}={key}")
-        retained_by_column[column] = counts
     return CellQcProfileEvidence(
         profileId=profile_id,
         action=action,
@@ -1059,8 +1151,7 @@ def _registered_profile_evidence(
         ),
         activeCellsByCapture=projection.captureSizes,
         sampleRetainedCells=projection.retainedByCapture,
-        retainedCellsByColumn=retained_by_column,
-        unsafeRetentionGroups=sorted(unsafe_groups),
+        **_design_retention(deps, characterization, active, projection.keep),
         flaggedCells=projection.flagCounts,
         metricFlaggedCells=projection.metricFlagCounts,
         failedCaptureCandidates=list(projection.failedCaptureCandidates),
@@ -1170,46 +1261,19 @@ def _global_qc_profile(
         return None
     metric_sources = list(metric_sources or [])
     source_concordance = list(source_concordance or [])
-    executable_values: dict[str, np.ndarray] = {}
     for name, values in values_by_attr.items():
         selected = np.asarray(values)[active]
         if selected.size and np.all(selected == selected[0]):
-            attribute_notes.append(f"Ignored constant QC metric {name!r}")
-            continue
+            attribute_notes.append(
+                f"Scarf default global QC is unavailable: constant metric {name!r} produces non-finite Gaussian bounds"
+            )
+            return None
         low, high = gaussian_quantile_bounds(selected, 0.01, 0.99)
         if not np.isfinite([low, high]).all():
             attribute_notes.append(
-                f"Ignored QC metric {name!r} with non-finite Gaussian bounds"
+                f"Scarf default global QC is unavailable: metric {name!r} produces non-finite Gaussian bounds"
             )
-            continue
-        executable_values[name] = values
-    if not executable_values:
-        return None
-    executable_names = set(executable_values)
-    metadata_names = set(metadata_attributes)
-    metadata_attributes = [
-        name for name in metadata_attributes if name in executable_names
-    ]
-    artifact_metrics = [
-        source
-        for source in artifact_metrics
-        if qc_metric_execution_name(
-            source.name,
-            artifact_id=source.artifact.artifactId,
-            collides_with_metadata=source.name in metadata_names,
-        )
-        in executable_names
-    ]
-    metric_sources = [
-        source for source in metric_sources if source.executionName in executable_names
-    ]
-    retained_source_ids = {source.sourceId for source in metric_sources}
-    source_concordance = [
-        comparison
-        for comparison in source_concordance
-        if comparison.leftSourceId in retained_source_ids
-        and comparison.rightSourceId in retained_source_ids
-    ]
+            return None
     capture_column: str | None = None
     capture_artifact: NamedArtifactSource | None = None
     capture_labels: np.ndarray | None = None
@@ -1218,7 +1282,7 @@ def _global_qc_profile(
     try:
         projection = project_auto_filter_profile(
             "globalGaussian",
-            values_by_metric=executable_values,
+            values_by_metric=values_by_attr,
             active=active,
             sample_labels=capture_labels,
             grouping_proven=capture is not None,
@@ -1255,6 +1319,7 @@ def _global_qc_profile(
         retainedFraction=projection.retainedCells / active_cells,
         activeCellsByCapture=projection.captureSizes,
         sampleRetainedCells=projection.retainedByCapture,
+        **_design_retention(deps, characterization, active, projection.keep),
         flaggedCells=projection.flagCounts,
         metricFlaggedCells=projection.metricFlagCounts,
         failedCaptureCandidates=list(projection.failedCaptureCandidates),
@@ -1398,6 +1463,7 @@ def _sample_qc_profiles(
                 retainedFraction=projection.retainedCells / active_cells,
                 activeCellsByCapture=projection.captureSizes,
                 sampleRetainedCells=projection.retainedByCapture,
+                **_design_retention(deps, characterization, active, projection.keep),
                 flaggedCells=projection.flagCounts,
                 metricFlaggedCells=projection.metricFlagCounts,
                 failedCaptureCandidates=(
@@ -1435,11 +1501,9 @@ def _offered_qc_profiles(
         if driver is not None
         else ["No RNA or ATAC assay is eligible to drive automatic cell QC"]
     )
-    registered_only = deps.directions.get("registeredQcOnly") is True
-    profiles = (
-        []
-        if registered_only
-        else [
+    profiles: list[CellQcProfileEvidence] = []
+    if driver is None or active_cells == 0:
+        profiles.append(
             CellQcProfileEvidence(
                 profileId=skip_id,
                 action="skip",
@@ -1451,23 +1515,7 @@ def _offered_qc_profiles(
                 notes=skip_notes,
                 evidenceId=f"qcProfile:{skip_id}",
             )
-        ]
-    )
-    if driver is None or active_cells == 0:
-        if registered_only:
-            profiles.append(
-                CellQcProfileEvidence(
-                    profileId=skip_id,
-                    action="skip",
-                    driverAssay=driver_assay,
-                    driverAssayType=driver_type,
-                    activeCells=active_cells,
-                    retainedCells=active_cells,
-                    retainedFraction=1.0 if active_cells else 0.0,
-                    notes=skip_notes,
-                    evidenceId=f"qcProfile:{skip_id}",
-                )
-            )
+        )
         deps.qcProfiles = {profile.profileId: profile for profile in profiles}
         return profiles
 
@@ -1503,59 +1551,57 @@ def _offered_qc_profiles(
     )
     deps.qcMetricSources = metric_sources
     deps.qcSourceConcordance = source_concordance
-    if not registered_only:
-        profiles = [
-            CellQcProfileEvidence(
-                profileId=skip_id,
-                action="skip",
-                driverAssay=driver_assay,
-                driverAssayType=driver_type,
-                captureColumn=capture_column,
-                captureArtifact=capture_artifact,
-                metricSources=metric_sources,
-                sourceConcordance=source_concordance,
-                activeCells=active_cells,
-                retainedCells=active_cells,
-                retainedFraction=1.0,
-                activeCellsByCapture=capture_sizes,
-                sampleRetainedCells=capture_sizes,
-                notes=[*skip_notes, *attribute_notes],
-                evidenceId=f"qcProfile:{skip_id}",
-            )
-        ]
+    profiles = [
+        CellQcProfileEvidence(
+            profileId=skip_id,
+            action="skip",
+            driverAssay=driver_assay,
+            driverAssayType=driver_type,
+            captureColumn=capture_column,
+            captureArtifact=capture_artifact,
+            metricSources=metric_sources,
+            sourceConcordance=source_concordance,
+            activeCells=active_cells,
+            retainedCells=active_cells,
+            retainedFraction=1.0,
+            activeCellsByCapture=capture_sizes,
+            sampleRetainedCells=capture_sizes,
+            notes=[*skip_notes, *attribute_notes],
+            evidenceId=f"qcProfile:{skip_id}",
+        )
+    ]
 
-    if not registered_only:
-        global_profile = _global_qc_profile(
+    global_profile = _global_qc_profile(
+        deps,
+        driver,
+        active,
+        active_cells,
+        values_by_attr,
+        valid_metadata_attributes,
+        artifact_metrics,
+        attribute_notes,
+        characterization=characterization,
+        metric_sources=metric_sources,
+        source_concordance=source_concordance,
+        capture=capture,
+    )
+    if global_profile is not None:
+        profiles.append(global_profile)
+    profiles.extend(
+        _sample_qc_profiles(
             deps,
+            characterization,
             driver,
             active,
             active_cells,
             values_by_attr,
             valid_metadata_attributes,
             artifact_metrics,
-            attribute_notes,
-            characterization=characterization,
-            metric_sources=metric_sources,
-            source_concordance=source_concordance,
-            capture=capture,
+            metric_sources,
+            source_concordance,
+            capture,
         )
-        if global_profile is not None:
-            profiles.append(global_profile)
-        profiles.extend(
-            _sample_qc_profiles(
-                deps,
-                characterization,
-                driver,
-                active,
-                active_cells,
-                values_by_attr,
-                valid_metadata_attributes,
-                artifact_metrics,
-                metric_sources,
-                source_concordance,
-                capture,
-            )
-        )
+    )
     profiles.extend(
         _registered_qc_profiles(
             deps,
@@ -1571,5 +1617,7 @@ def _offered_qc_profiles(
         )
     )
 
+    for profile in profiles:
+        profile.notes = list(dict.fromkeys([*attribute_notes, *profile.notes]))
     deps.qcProfiles = {profile.profileId: profile for profile in profiles}
     return profiles

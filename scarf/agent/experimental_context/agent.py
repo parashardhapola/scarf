@@ -13,7 +13,7 @@ from .._deps import AGENT_INSTALL_HINT
 from ..config import AgentRunConfig
 from ..config.agent_exec import run_agent_sync
 from ..tools import artifact_reference, core_artifact_reference
-from ..types import AgentRunInfo, StageStatus
+from ..types import StageStatus
 from .characterization import _SelectionBoundCells, characterize_covariates
 from .contracts import (
     CellQcPlan,
@@ -36,9 +36,7 @@ from .tools import (
     score_current_representation,
 )
 from .validation import (
-    _deterministic_experimental_context_decision,
     failed_experimental_context_result,
-    pending_experimental_context_result,
     validate_experimental_context,
 )
 
@@ -46,7 +44,7 @@ if TYPE_CHECKING:
     from ...datastore.pipeline_run import PipelineRun
 
 try:
-    from pydantic_ai import ModelRetry, Tool, UnexpectedModelBehavior
+    from pydantic_ai import Tool, UnexpectedModelBehavior
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
 
@@ -61,13 +59,11 @@ class ExperimentalContextAgent:
         model: Any,
         *,
         config: AgentRunConfig | None = None,
-        unattended: bool = False,
     ) -> None:
         self.model = model
-        self.unattended = unattended
         self.config = (config or AgentRunConfig()).with_limits(
             request_limit=9,
-            tool_call_limit=5,
+            tool_call_limit=6,
             output_token_limit=32768,
             timeout_seconds=600.0,
         )
@@ -78,19 +74,38 @@ class ExperimentalContextAgent:
             provided read-only tools and return the structured decision schema.
 
             Call inspect_cell_covariates exactly once. Then call
-            analyze_experimental_design exactly once with all explicit domains,
-            all biological coefficients, every unit of inference, and the complete
-            exact batch-column set being considered. You may call
+            analyze_experimental_design with all explicit domains, all biological
+            coefficients, every unit of inference, and the complete exact batch
+            column set. Nominate up to eight comparisons that explain the study
+            objective: single variables, two-column joint effects, or associations
+            within categorical strata. A comparison uses at most three observed
+            columns and a justified observation/independent unit. You may make one
+            follow-up call with at most four new or revised comparisons after
+            reading the first evidence. Never split the exact batch-column set.
+            A donor can carry biological variation and also be the explicitly
+            declared independent unit; these roles do not conflict. Keep its
+            biological protection when specifying its unit role. Do not replace
+            independent donors with cells or samples to obtain a supported result.
+            Protect objective-relevant pairs of categorical biological variables
+            with protectCombination. The tools report unsupported designs,
+            missingness, replication, and sparse strata; do not turn these into
+            negative findings. Explain unsupported requested comparisons in the
+            final rationale; a proposed comparison is not a completed analysis.
+            Continuous conditioning and expression hypothesis
+            testing are unsupported. You may call
             score_current_representation at most once when an exact supplied graph
-            can add evidence. Do not split metadata, coefficients, or batch columns across
-            calls, and do not repeat a tool call. Pass batch_columns as a JSON array,
-            including when the array contains exactly one column. Each tool is
-            removed after it succeeds, so include the complete decision context in
-            its single call.
+            can add evidence. Pass batch_columns as a JSON array, including a
+            singleton. Capture proposals must name an exact observed column and
+            quote the study statement identifying it as a physical capture. An
+            optional reference pool also needs an exact quote identifying the
+            observed reference captures. Sample uniqueness is not capture proof.
+            Leave unresolved capture provenance explicit. Copy the supported
+            capture and protected combinations into the final decision.
 
             The tools return bounded cell-QC profiles projected against the exact
             shared cell selection. Do not choose a profile and leave cellQc blank.
-            A later audited checkpoint selects one registered profile. Never author
+            A later audited checkpoint compares the Scarf default with eligible
+            alternatives and selects one exact policy. Never author
             or alter numeric quality bounds. RNA is the preferred QC driver and
             ATAC is the fallback. ADT and HTO never drive automatic cell filtering.
             An exact HTO identity artifact may be used as grouping evidence. It is
@@ -108,6 +123,11 @@ class ExperimentalContextAgent:
             LISI evaluates a representation; it does not identify which metadata
             column is a batch. Recommend evaluateHarmony, not application, because
             Parameter Tuning must compare exact uncorrected and corrected artifacts.
+            Current Harmony preservation metrics support categorical biology.
+            A continuous protected variable has unavailable preservation evidence.
+            Keep this limitation explicit; it does not prove correction unnecessary.
+            Later matched acceptance must reject unavailable required protection,
+            and unresolved essential evidence requires input or abstention.
 
             Cite only evidenceIds returned by tools. Ask for input when study
             design cannot be resolved. The study objective is authoritative: use
@@ -327,59 +347,13 @@ class ExperimentalContextAgent:
             )
         except UnexpectedModelBehavior as exc:
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            if self.unattended:
-                try:
-                    decision = _deterministic_experimental_context_decision(deps)
-                except (
-                    ModelRetry,
-                    RuntimeError,
-                    TypeError,
-                    ValueError,
-                ) as fallback_exc:
-                    return failed_experimental_context_result(
-                        deps,
-                        error=exc,
-                        fallback_error=fallback_exc,
-                        model_name=str(model_name),
-                    )
-                run_info = AgentRunInfo(
-                    agentName="experimental_context_deterministic",
-                    modelName=str(model_name),
-                )
-            else:
-                return pending_experimental_context_result(
-                    deps,
-                    error=exc,
-                    model_name=str(model_name),
-                )
-        else:
-            decision = ExperimentalContextDecision.model_validate(execution.output)
-            run_info = execution.runInfo
-        if self.unattended and (
-            decision.needsInput or decision.batchCorrection.action == "needsInput"
-        ):
-            try:
-                decision = _deterministic_experimental_context_decision(deps)
-            except (ModelRetry, RuntimeError, TypeError, ValueError) as fallback_exc:
-                model_name = getattr(
-                    self.model, "model_name", type(self.model).__name__
-                )
-                return failed_experimental_context_result(
-                    deps,
-                    error=RuntimeError(
-                        "The model returned an unresolved experimental-context decision"
-                    ),
-                    fallback_error=fallback_exc,
-                    model_name=str(model_name),
-                )
-            run_info = AgentRunInfo(
-                agentName="experimental_context_deterministic",
-                modelName=getattr(
-                    self.model,
-                    "model_name",
-                    type(self.model).__name__,
-                ),
+            return failed_experimental_context_result(
+                deps,
+                error=exc,
+                model_name=str(model_name),
             )
+        decision = ExperimentalContextDecision.model_validate(execution.output)
+        run_info = execution.runInfo
         characterization = deps.characterization
         if characterization is None:
             characterization = characterize_covariates(
@@ -421,6 +395,18 @@ class ExperimentalContextAgent:
             htoIdentityArtifacts=deps.htoIdentityArtifacts,
             batchSafety=list(deps.batchSafety.values()),
             currentRepresentation=deps.currentRepresentation,
-            notes=[*characterization.notes, *decision.needsInput],
+            notes=[
+                *characterization.notes,
+                *decision.needsInput,
+                *(
+                    [
+                        "Matched preservation evidence is unavailable for continuous variables: "
+                        + ", ".join(decision.unsupportedProtection)
+                        + ". A safe design does not by itself authorize correction."
+                    ]
+                    if decision.unsupportedProtection
+                    else []
+                ),
+            ],
             runInfo=run_info,
         )

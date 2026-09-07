@@ -21,8 +21,7 @@ from .tools import (
 )
 from .validation import (
     _SUPPORTED_SPECIES,
-    deterministic_data_enrichment_report,
-    pending_data_enrichment_report,
+    failed_data_enrichment_report,
     validate_data_enrichment_report,
 )
 
@@ -104,10 +103,8 @@ class DataEnrichmentAgent:
         model: Any,
         *,
         config: AgentRunConfig | None = None,
-        unattended: bool = False,
     ) -> None:
         self.model = model
-        self.unattended = unattended
         self.config = (config or AgentRunConfig()).with_limits(
             request_limit=8,
             tool_call_limit=5,
@@ -249,31 +246,12 @@ class DataEnrichmentAgent:
                 ),
             )
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
-            if set(deps.inspections) != set(deps.assays):
-                raise
             model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            if self.unattended:
-                return deterministic_data_enrichment_report(
-                    deps,
-                    error=exc,
-                    model_name=str(model_name),
-                )
-            return pending_data_enrichment_report(
-                deps,
-                error=exc,
-                model_name=str(model_name),
+            return failed_data_enrichment_report(
+                deps, error=exc, model_name=str(model_name)
             )
         report = DataEnrichmentReport.model_validate(execution.output)
         report = validate_data_enrichment_report(deps, report)
-        if self.unattended and report.status == "needsInput":
-            model_name = getattr(self.model, "model_name", type(self.model).__name__)
-            return deterministic_data_enrichment_report(
-                deps,
-                error=RuntimeError(
-                    "The model returned an unresolved data-enrichment policy"
-                ),
-                model_name=str(model_name),
-            )
         report.runInfo = execution.runInfo
         logger.info(
             "Data Enrichment Agent completed: "

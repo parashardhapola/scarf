@@ -11,7 +11,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from scipy.sparse import csr_matrix
 
-from scarf.agent import CovariateCharacterization, characterize_covariates
+from scarf.agent.experimental_context.contracts import CovariateCharacterization
+from scarf.agent.experimental_context.characterization import characterize_covariates
 from scarf.agent.experimental_context.characterization import (
     _Run,
     _assign_domain,

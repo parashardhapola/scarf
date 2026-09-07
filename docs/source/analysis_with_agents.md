@@ -97,83 +97,73 @@ Before the first mutating operation, make a short execution record containing:
 
 Update this record before changing the cohort, inputs, or decision criteria.
 This prospective boundary makes unintended writes and retrospective justifications visible.
-`AgentOrchestrator` persists the immutable request, effective configuration, stage attempts,
-agent-report handoffs, and artifact references. The caller still owns the scientific question and
+`AgentOrchestrator` keeps one authoritative stage history containing the immutable request,
+effective configuration, evidence, decisions, checks, and final artifact references. The caller still owns the scientific question and
 unit of inference.
 
 ### When to use the automated agent workflow
 
-Use `analyze_rna` when the input is a supported dataset path and the caller can supply one
-study-context paragraph and one study objective. The automated workflow supports one RNA assay;
-other modalities may coexist in the store but are not analyzed. Automated multimodal integration
-and hypothesis testing are deferred. Use the ordinary Scarf APIs for those analyses.
-The orchestrator owns a fixed stage order: ingest,
-Data Enrichment, Experimental Context, preprocessing planning and
-execution, Parameter Tuning, feature-policy review with optional revised preprocessing and tuning,
-analysis review, and analysis finalization. The model does not write exploratory code or choose
-arbitrary `DataStore` calls. It selects only validated policies and candidate identifiers from
-bounded evidence; executor-owned public operations create and pass exact immutable artifact
-references.
-
-`BiologicalInterpretationAgent` is a separate bounded facade for interpreting finalized cluster
-and marker artifacts. It is not an automatic stage of `AgentOrchestrator`.
+Use `analyze_rna` with a dataset, a configured model, study context, and a study objective.
+The workflow analyzes one RNA assay, even when other modalities coexist in the store. Pass
+`assay` explicitly when several RNA assays exist. Automated integration, HTO assignment, and
+biological significance or differential-expression hypothesis execution are outside this
+workflow; ordinary Scarf APIs remain available for them. Experimental Context still explores
+individual and joint covariate patterns and possible explanations of the study design.
 
 ```python
 from scarf.agent import analyze_rna
 
 result = analyze_rna(
     "study.h5ad",
-    zarr_path="study.zarr",
     model=model,
-    study_context="One paragraph describing the study and analysis intent.",
+    study_context="One paragraph describing the study design and metadata roles.",
     study_objective="Discover stable populations relevant to the study.",
-    max_candidates=50,
+    zarr_path="study.zarr",
 )
-if result.status != "completed":
-    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
-
 result.plot_embedding()
 markers = result.get_markers()
 report_path = result.report()
 ```
 
-Pass `assay` when the store has multiple RNA assays. The result helpers reopen the saved
-workspace read-only and use exact final artifacts. `report()` returns the existing local HTML
-path or generates the missing view, without opening a browser.
+The beginner call returns a completed result or raises `AnalysisError`. Its result address is
+available as `error.result` when work remains unresolved. There is no separate candidate-budget
+argument on this interface. Advanced callers import the orchestrator and configuration from
+`scarf.agent.orchestrator` for explicit workspaces, numerical limits, and resumable pauses.
+See {doc}`reference/api/agent` for that boundary.
 
-The parameter screen uses granular public operations for each authorized branch rather than
-invoking `ds.pipeline.run()` for every candidate. This keeps normalization, reduction, neighbours,
-graph, clustering, metrics, promotion, UMAP, and marker artifacts explicit and enforces their order
-through lineage. `ds.pipeline.run()` remains the fixed baseline recipe described below.
+The model first interprets observed study metadata and proposes at most eight objective-led
+design comparisons, with one follow-up round of at most four. Comparisons may use a single
+explanatory variable, a joint categorical group, or conditioning within categorical strata.
+Continuous conditioning bins and regression adjustments are not invented. Continuous biological
+variables without a supported preservation measure remain explicitly unresolved.
 
-`analyze_rna` runs unattended; its `study_objective` is required. `max_candidates` limits reserved
-candidate slots across the workflow. Before screening, each pass reserves every configured
-alternative, including conditional candidates that may not execute. Defaults reserve 25 slots
-for the baseline and another 25 if a feature-policy revision runs; the default limit of 50 admits
-both passes. A smaller limit never shrinks the candidate lists. A pass larger than the remaining
-budget fails before screening. This controls admission, not actual execution counts, elapsed time,
-QC diagnostics, or provider usage. Use `AgentOrchestrator` with
-`AutomatedWorkflowConfig` for explicit candidate lists, workspaces, and provider limits.
-Its `inputPolicy="pause"` permits a running workflow to return
-`needsInput`; resume only that exact workflow with `AutomatedWorkflowResumeRequest` and its
-persisted question identifiers. `inputPolicy="unattended"` resolves bounded model deferrals through
-registered policy and turns genuinely unresolved evidence into an explicit abstention or failure
-instead of waiting for a person. It does not authorize invented metadata or unsafe batch
-correction. `runConfoundedHarmonyDiagnostic=True` permits a matched diagnostic branch, but Harmony
-still cannot be selected unless the design and preservation gates accept it.
+Scarf starts from its RNA settings and four partitions of the same graph. The model reviews
+quantitative diagnostics, marker and loading-gene evidence, and supplied images before accepting
+or requesting one registered experiment. The model cannot generate executable analysis code or
+arbitrary `DataStore` calls. Batch correction requires both an eligible design and measured need;
+acceptance additionally requires a matched native/corrected comparison preserving protected
+biology, including supported joint groups. Unsafe or unknown designs cannot license correction.
 
-The repository notebooks `notebook/agent_workflow_new.ipynb` and
-`notebook/agent_workflow_new_short.ipynb` demonstrate the unattended full-cohort and sampled smoke
-test configurations. The short notebook creates a deterministic library-stratified H5AD beside
-the source data and labels its result as a smoke test. A completed local workflow persists its
-terminal result and then creates a replaceable HTML report. `generate_agent_report()` can
-regenerate that derived view without training new analysis artifacts.
+Large inputs use an immutable uniform screening cohort of 50,000 cells, with one possible
+enlargement to 100,000. Coverage and rare-population concerns can require a full-cohort baseline.
+Screening selects settings; it does not replace the final QC-retained cohort. Selected settings
+are executed and assessed on the full cohort. The default numerical limits admit at most 12
+screening evaluations per sample and 24 in total, four full-cohort graphs, eight full-cohort
+partitions, and one targeted full-cohort repair. Reused exact work is not charged again. Limits
+bound numerical work rather than promise elapsed time or provider cost.
 
-Configuration compatibility is explicit: `maxCandidateEvaluations` replaces
-`maxCandidateBranches`, and obsolete initial-candidate, integration, assay-count, and stability
-controls are rejected. Saved workflows with the old configuration shape cannot resume or
-regenerate reports in this release. Create a new workflow with explicit candidate lists; saved
-analysis artifacts remain readable through ordinary Scarf artifact APIs. No records are migrated.
+All saved execution and decisions belong to the orchestration stage history. Identical calls
+reuse completed work or resume matching interrupted work; changed inputs and identity checks
+prevent silent reuse of stale evidence. The result's plot and marker methods use the exact saved
+workspace and artifacts read-only. The cluster map displays at most 50,000 cells while retaining
+full counts and provenance. `report()` returns or regenerates one local analysis summary from
+saved evidence, with no new model calls or numerical analysis.
+
+This release deliberately breaks the earlier agent imports and persistence contracts. The root
+agent facade exports only `analyze_rna`, `AutomatedWorkflowResult`, and `AnalysisError`. Old agent
+runs must be restarted; their numerical artifacts remain readable through ordinary Scarf APIs.
+There are no implicit migrations. Standalone scientific agent APIs remain in their concrete
+packages, such as `scarf.agent.biological_interpretation`.
 
 ### When to use the pipeline
 
@@ -299,9 +289,10 @@ Classify the problem before retrying:
 
 In a granular workflow, retry the lowest failed stage. A failed pipeline run is not resumable;
 start a new run, which can reuse matching complete artifacts from the earlier attempt. An automated
-agent workflow resumes only while it is running after `needsInput`. Failed and abandoned
-orchestrations are terminal, while completed stages in a valid running workflow are checked and
-reused on resume.
+agent workflow validates its exact request and stage history before reusing completed work or
+resuming an interruption. Explicit questions require grounded answers through the advanced
+resume interface. A changed dataset, model identity, or configuration cannot be silently attached
+to an older history.
 
 ## Progress and deterministic comparisons
 
@@ -330,7 +321,8 @@ A useful handoff reports:
 
 Artifact provenance records how Scarf produced a result.
 It does not replace this study-level reasoning record.
-For an automated run, `AutomatedWorkflowResult.finalAnalysis` provides the exact final artifact
-handoff and `reportReferences` identifies the persisted agent reports. The generated local HTML
-report is a replaceable presentation of those durable records, not an additional source of truth.
+For an automated run, the result's plotting, markers, and report helpers resolve the exact final
+artifacts from the authoritative stage history. The result is a small address, not a second saved
+copy of requests, reports, decisions, or finalization state. The HTML report is a replaceable
+presentation of that history.
 See {doc}`index` for the implemented methods and current boundaries.

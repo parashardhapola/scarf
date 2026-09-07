@@ -1,5 +1,7 @@
 """RNA selection, early rejection, and immutable resume boundaries."""
 
+from tests.agent_examples import example
+
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,10 +24,13 @@ from scarf.agent.orchestrator import (
 )
 from scarf.agent.orchestrator import context as context_module
 from scarf.agent.orchestrator import journal, main as main_module
-from scarf.agent.orchestrator.models import PreprocessedAssayHandoff, WorkflowStageName
+from scarf.agent.orchestrator.models import (
+    OrchestrationRequestRecord,
+    PreprocessedAssayHandoff,
+    WorkflowIdentity,
+    WorkflowStageName,
+)
 from scarf.agent.orchestrator.rna import selected_rna_assay
-from scarf.agent.persistence.contracts import AgentInvocation
-from scarf.agent.persistence.reports import create_agent_workflow
 from scarf.datastore.datastore import DataStore
 from scarf.storage.budget import ResourceBudget
 from scarf.storage.schema import create_zarr_count_assay
@@ -113,18 +118,18 @@ def test_mixed_store_enriches_only_selected_second_rna(
     result = AgentOrchestrator(object()).run(_request(str(path), primaryAssay="RNA2"))
     assert result.status == "failed"
     assert inspected == [["RNA2"]]
-    assert result.workflowRun is not None
+    assert result.workflowRunId is not None
     root = zarr.open_group(str(path), mode="r")
     prefix = "agents/orchestrations"
     record = journal._read_model(
         root,
-        journal._request_key(prefix, result.workflowRun.workflowRunId),
-        main_module.OrchestrationRequestRecord,
+        journal._request_key(prefix, result.workflowRunId),
+        OrchestrationRequestRecord,
     )
     assert record.request.analysisAssays == ["RNA2"]
     assert record.request.primaryAssay == record.request.markerAssay == "RNA2"
     assert not journal._stage_outcomes(
-        root, prefix, result.workflowRun.workflowRunId, "hto_demultiplexing"
+        root, prefix, result.workflowRunId, "rna_quality_metrics"
     )
 
 
@@ -202,13 +207,21 @@ def test_resume_rejects_unsupported_saved_route_before_writable_open(
     path = create_store(tmp_path / "resume.zarr")
     store = DataStore(str(path), default_assay="RNA", min_features_per_cell=-1)
     orchestrator = AgentOrchestrator(object())
-    workflow = create_agent_workflow(store)
+    workflow = WorkflowIdentity("resume-rna")
     record = orchestrator.initialize_request(
-        store, workflow, _request(str(path), zarrPath=str(path))
+        store,
+        workflow,
+        _request(
+            str(path),
+            zarrPath=str(path),
+            primaryAssay="RNA",
+            markerAssay="RNA",
+            analysisAssays=["RNA"],
+        ),
     )
     prefix = journal._ensure_orchestration_store(store)
     stage: WorkflowStageName = (
-        "hto_demultiplexing"
+        "rna_quality_metrics"
         if route == "hto"
         else "data_enrichment"
         if route == "enrichment_modality"
@@ -222,13 +235,12 @@ def test_resume_rejects_unsupported_saved_route_before_writable_open(
     if route == "hto":
         outputs["htoIdentityArtifacts"] = [{"name": "HTO_identity"}]
     elif route == "enrichment_modality":
-        report = DataEnrichmentReport.get_example()
+        report = example(DataEnrichmentReport)
         report.policies[0].assayModality = "ADT"
         _, reference = journal._save_stage_report(
             store,
             started,
             report,
-            invocation=AgentInvocation(agentName="data_enrichment"),
             expected_type=DataEnrichmentReport,
         )
         references.append(reference)

@@ -7,7 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from scarf.agent import FeatureCharacterization, characterize_features
+from scarf.agent.data_enrichment.characterization import (
+    FeatureCharacterization,
+    characterize_features,
+)
 from scarf.agent.data_enrichment.characterization import (
     _assist_species,
     _load_or_fetch_reference,

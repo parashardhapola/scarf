@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from scarf.agent import ingest
+from scarf.agent.ingest import ingest
 from scarf.agent.ingest.manifest import inspect_h5ad_manifest
 
 

@@ -43,6 +43,50 @@ type ContrastSampleStatistic = Literal["mean", "median", "fraction"]
 type ContrastStatus = Literal["licensed", "blocked", "needsInput"]
 
 
+class CovariateProposal(AgentDataModel):
+    """One objective-led comparison of observed metadata, without expression tests."""
+
+    response: str
+    explanatoryColumns: list[str] = Field(min_length=1, max_length=2)
+    conditionedOn: str | None = None
+    observationUnit: str
+    independentUnit: str | None = None
+    rationale: str = Field(min_length=1)
+    protectCombination: bool = False
+
+    @model_validator(mode="after")
+    def validate_columns(self) -> "CovariateProposal":
+        columns = [self.response, *self.explanatoryColumns]
+        if self.conditionedOn is not None:
+            columns.append(self.conditionedOn)
+        if len(columns) > 3 or len(columns) != len(set(columns)):
+            raise ValueError("A comparison requires at most three distinct columns")
+        if any(not value.strip() for value in [*columns, self.observationUnit]):
+            raise ValueError(
+                "Comparison columns and observation unit must be non-empty"
+            )
+        if self.protectCombination and len(self.explanatoryColumns) != 2:
+            raise ValueError("A protected combination requires two explanatory columns")
+        return self
+
+
+class CovariateComparison(AgentDataModel):
+    proposal: CovariateProposal
+    status: Literal["computed", "unsupported"]
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)
+    evidenceId: str
+
+
+class CaptureProposal(AgentDataModel):
+    """An exact capture column and optional references supported by study prose."""
+
+    column: str
+    provenanceQuote: str = Field(min_length=1)
+    referenceCaptures: list[str] = Field(default_factory=list, max_length=32)
+    referenceProvenanceQuote: str = ""
+
+
 class CovariateCharacterization(AgentDataModel):
     status: StageStatus
     cellSelection: ArtifactReferenceModel | None = None
@@ -60,23 +104,12 @@ class CovariateCharacterization(AgentDataModel):
     designStructures: list[dict[str, Any]] = Field(default_factory=list)
     pairedCoverage: list[dict[str, Any]] = Field(default_factory=list)
     coefficientEstimability: list[dict[str, Any]] = Field(default_factory=list)
+    comparisons: list[CovariateComparison] = Field(default_factory=list)
+    captureProvenance: CaptureProposal | None = None
 
     @classmethod
     def get_blank(cls) -> "CovariateCharacterization":
         return cls(status="failed")
-
-    @classmethod
-    def get_example(cls) -> "CovariateCharacterization":
-        return cls(
-            status="done",
-            cellSelection=ArtifactReferenceModel(
-                scope="datastore",
-                kind="cell_selection",
-                artifactId="c" * 64,
-            ),
-            notes=["Cell covariates and confounding were characterized."],
-            columns=[{"name": "batch", "domain": "technical"}],
-        )
 
 
 class InferenceUnit(AgentDataModel):
@@ -88,10 +121,6 @@ class InferenceUnit(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "InferenceUnit":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "InferenceUnit":
-        return cls(observationUnit="sample", independentUnit="donor")
 
 
 class BatchCorrectionPlan(AgentDataModel):
@@ -107,28 +136,6 @@ class BatchCorrectionPlan(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "BatchCorrectionPlan":
         return cls(action="needsInput")
-
-    @classmethod
-    def get_example(cls) -> "BatchCorrectionPlan":
-        return cls(
-            action="evaluateHarmony",
-            batchColumns=["batch"],
-            preserveColumns=["cell_type", "treatment"],
-            metricsRequired=[
-                "iLISI",
-                "cLISI",
-                "graphConnectivity",
-            ],
-            rationale=(
-                "Batch is technical and crossed with treatment, so compare an exact "
-                "Harmony candidate while protecting biological labels."
-            ),
-            evidenceIds=[
-                "column:batch",
-                "estimability:treatment",
-                "batchEstimability:treatment:batch",
-            ],
-        )
 
 
 class NamedArtifactSource(AgentDataModel):
@@ -148,17 +155,6 @@ class NamedArtifactSource(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "NamedArtifactSource":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "NamedArtifactSource":
-        return cls(
-            name="RNA_percentMito",
-            artifact=ArtifactReferenceModel(
-                assay="RNA",
-                kind="quality_metric",
-                artifactId="1" * 64,
-            ),
-        )
 
 
 class QcMetricSourceEvidence(AgentDataModel):
@@ -468,6 +464,7 @@ class CellQcProfileEvidence(AgentDataModel):
     activeCellsByCapture: dict[str, int] = Field(default_factory=dict)
     sampleRetainedCells: dict[str, int] = Field(default_factory=dict)
     retainedCellsByColumn: dict[str, dict[str, int]] = Field(default_factory=dict)
+    retainedCellsByCombination: dict[str, dict[str, int]] = Field(default_factory=dict)
     unsafeRetentionGroups: list[str] = Field(default_factory=list)
     flaggedCells: dict[str, int] = Field(default_factory=dict)
     metricFlaggedCells: dict[str, dict[str, int]] = Field(default_factory=dict)
@@ -522,23 +519,6 @@ class CellQcProfileEvidence(AgentDataModel):
     def get_blank(cls) -> "CellQcProfileEvidence":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "CellQcProfileEvidence":
-        return cls(
-            profileId="cellQc:RNA:globalMad5",
-            action="registeredMad",
-            registeredProfile="globalMad5",
-            driverAssay="RNA",
-            driverAssayType="RNA",
-            attributes=["RNA_nCounts", "RNA_nFeatures"],
-            artifactMetrics=[NamedArtifactSource.get_example()],
-            parameters={"nMads": 5.0},
-            activeCells=100,
-            retainedCells=96,
-            retainedFraction=0.96,
-            evidenceId="qcProfile:cellQc:RNA:globalMad5",
-        )
-
 
 class CellQcPlan(AgentDataModel):
     """A validated selection from the bounded cell-QC profiles."""
@@ -572,23 +552,6 @@ class CellQcPlan(AgentDataModel):
     def get_blank(cls) -> "CellQcPlan":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "CellQcPlan":
-        evidence = CellQcProfileEvidence.get_example()
-        return cls(
-            action=evidence.action,
-            registeredProfile=evidence.registeredProfile,
-            profileId=evidence.profileId,
-            driverAssay=evidence.driverAssay,
-            driverAssayType=evidence.driverAssayType,
-            sampleColumn=evidence.sampleColumn,
-            sampleArtifact=evidence.sampleArtifact,
-            attributes=evidence.attributes,
-            artifactMetrics=evidence.artifactMetrics,
-            rationale="Use the bounded global profile for the RNA assay.",
-            evidenceIds=[evidence.evidenceId],
-        )
-
 
 class ExperimentalContextDecision(AgentDataModel):
     """Model-authored choices that are revalidated against the datastore."""
@@ -596,6 +559,10 @@ class ExperimentalContextDecision(AgentDataModel):
     columnDomains: dict[str, ColumnDomain] = Field(default_factory=dict)
     coefficientsOfInterest: list[str] = Field(default_factory=list)
     unitsOfInference: dict[str, InferenceUnit] = Field(default_factory=dict)
+    protectedCombinations: list[list[str]] = Field(default_factory=list)
+    physicalCaptureColumn: str | None = None
+    pooledReferenceCaptures: list[str] = Field(default_factory=list)
+    unsupportedProtection: list[str] = Field(default_factory=list)
     batchCorrection: BatchCorrectionPlan = Field(
         default_factory=BatchCorrectionPlan.get_blank
     )
@@ -607,27 +574,6 @@ class ExperimentalContextDecision(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ExperimentalContextDecision":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ExperimentalContextDecision":
-        return cls(
-            columnDomains={
-                "batch": "technical",
-                "sample": "design",
-                "donor": "design",
-                "treatment": "biological",
-            },
-            coefficientsOfInterest=["treatment"],
-            unitsOfInference={"treatment": InferenceUnit.get_example()},
-            batchCorrection=BatchCorrectionPlan.get_example(),
-            rationale="Treatment is the primary between-sample contrast.",
-            evidenceIds=[
-                "column:batch",
-                "column:donor",
-                "column:sample",
-                "column:treatment",
-            ],
-        )
 
 
 class RepresentationEvaluation(AgentDataModel):
@@ -646,33 +592,6 @@ class RepresentationEvaluation(AgentDataModel):
     def get_blank(cls) -> "RepresentationEvaluation":
         return cls()
 
-    @classmethod
-    def get_example(cls) -> "RepresentationEvaluation":
-        return cls(
-            available=True,
-            assay="RNA",
-            cellSelection=ArtifactReferenceModel(
-                scope="datastore",
-                kind="cell_selection",
-                artifactId="c" * 64,
-            ),
-            neighbors=ArtifactReferenceModel(
-                assay="RNA",
-                kind="neighbors",
-                artifactId="a" * 64,
-            ),
-            connectivityMap=ArtifactReferenceModel(
-                assay="RNA",
-                kind="connectivity_map",
-                artifactId="b" * 64,
-            ),
-            metrics={"iLISI:batch": 0.71, "cLISI:cell_type": 0.94},
-            evidenceIds=[
-                "metric:iLISI:batch:assay:RNA:neighbors:example-neighbors",
-                "metric:cLISI:cell_type:assay:RNA:neighbors:example-neighbors",
-            ],
-        )
-
 
 class CovariateEvidence(AgentDataModel):
     """One deterministic covariate characterization returned by a tool."""
@@ -688,33 +607,6 @@ class CovariateEvidence(AgentDataModel):
     htoIdentityColumns: list[str] = Field(default_factory=list)
     htoIdentityArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
     evidenceIds: list[str] = Field(default_factory=list)
-
-    @classmethod
-    def get_example(cls) -> "CovariateEvidence":
-        return cls(
-            characterization=CovariateCharacterization(
-                status="done",
-                notes=["Example deterministic covariate characterization"],
-            ),
-            qcProfiles=[CellQcProfileEvidence.get_example()],
-            htoIdentityColumns=["sample_id"],
-            htoIdentityArtifacts=[
-                NamedArtifactSource(
-                    name="HTO_htoIdentity",
-                    artifact=ArtifactReferenceModel(
-                        assay="HTO",
-                        kind="hto_identity",
-                        artifactId="2" * 64,
-                    ),
-                )
-            ],
-            evidenceIds=[
-                "column:batch",
-                CellQcProfileEvidence.get_example().evidenceId,
-                "htoIdentity:sample_id",
-                f"htoIdentityArtifact:HTO_htoIdentity:{'2' * 64}",
-            ],
-        )
 
 
 class ExperimentalContextResult(AgentDataModel):
@@ -745,35 +637,6 @@ class ExperimentalContextResult(AgentDataModel):
             status="needsInput",
             decision=ExperimentalContextDecision.get_blank(),
             characterization=CovariateCharacterization(status="needsInput"),
-        )
-
-    @classmethod
-    def get_example(cls) -> "ExperimentalContextResult":
-        representation = RepresentationEvaluation.get_example()
-        return cls(
-            status="done",
-            decision=ExperimentalContextDecision.get_example(),
-            characterization=CovariateCharacterization(
-                status="done",
-                notes=["Example deterministic design characterization"],
-            ),
-            cellSelection=representation.cellSelection,
-            qcProfiles=[CellQcProfileEvidence.get_example()],
-            qualityMetricArtifacts=[NamedArtifactSource.get_example()],
-            htoIdentityColumns=["sample_id"],
-            htoIdentityArtifacts=[
-                NamedArtifactSource(
-                    name="HTO_htoIdentity",
-                    artifact=ArtifactReferenceModel(
-                        assay="HTO",
-                        kind="hto_identity",
-                        artifactId="2" * 64,
-                    ),
-                )
-            ],
-            batchSafety=[BatchSafetyEvidence.get_example()],
-            currentRepresentation=representation,
-            runInfo=AgentRunInfo.get_example(),
         )
 
     def to_parameter_tuning_handoff(self) -> ExperimentalTuningHandoff:
@@ -902,6 +765,10 @@ class ExperimentalContextDependencies(AgentDataModel):
     directions: dict[str, Any] = Field(default_factory=dict)
     evidenceIds: set[str] = Field(default_factory=set)
     characterization: CovariateCharacterization | None = None
+    designRounds: int = 0
+    comparisons: list[CovariateComparison] = Field(default_factory=list)
+    protectedCombinations: list[list[str]] = Field(default_factory=list)
+    captureProposal: CaptureProposal | None = None
     batchSafety: dict[str, BatchSafetyEvidence] = Field(default_factory=dict)
     qcProfiles: dict[str, CellQcProfileEvidence] = Field(default_factory=dict)
     qcMetricSources: list[QcMetricSourceEvidence] = Field(default_factory=list)
@@ -918,16 +785,6 @@ class ExperimentalContextDependencies(AgentDataModel):
     @classmethod
     def get_blank(cls) -> "ExperimentalContextDependencies":
         return cls()
-
-    @classmethod
-    def get_example(cls) -> "ExperimentalContextDependencies":
-        return cls(
-            studyContext="Case-control study with samples nested in donors.",
-            studyObjective=(
-                "Discover populations while preserving the case-control contrast."
-            ),
-            directions={"columnDomains": {"batch": "technical"}},
-        )
 
 
 def characterization_evidence(
@@ -952,4 +809,9 @@ def characterization_evidence(
             technical = pair.get("technical")
             if isinstance(technical, str):
                 evidence_ids.add(f"confounding:{coefficient}:{technical}")
+    evidence_ids.update(item.evidenceId for item in characterization.comparisons)
+    if characterization.captureProvenance is not None:
+        evidence_ids.add(
+            f"captureProvenance:{characterization.captureProvenance.column}"
+        )
     return evidence_ids

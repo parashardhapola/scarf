@@ -1,69 +1,44 @@
-"""Final analysis and biological interpretation workflow stages."""
+"""Validate the selected full RNA analysis and compute its final layout."""
 
-import json
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from collections.abc import Sequence
+from typing import Any
 
 from ...datastore.datastore import DataStore
+from ...graph.feature_projection import graph_cell_selection
 from ...utils.logging import logger
-from ..biological_interpretation.agent import BiologicalInterpretationAgent
-from ..biological_interpretation.contracts import (
-    BiologicalContext,
-    BiologicalInterpretationReport,
-)
-from ..data_enrichment.contracts import DataEnrichmentReport
-from ..experimental_context.contracts import ExperimentalContextResult
-from ..experimental_context.study import StudyContract
-from ..parameter_tuning.agent import ParameterTuningAgent
 from ..parameter_tuning.contracts import ParameterTuningReport
-from ..persistence.contracts import (
-    AgentInvocation,
-    AgentReportReference,
-    AgentWorkflowRun,
-)
-from ..persistence.decisions import (
-    complete_decision_workflow,
-    load_latest_decision_workflow_snapshot,
-    save_decision_workflow_snapshot,
-)
-from ..types import ArtifactReferenceModel, ExperimentalBiologyHandoff
+from ..parameter_tuning.selection import promote_parameter_candidate
+from ..types import ArtifactReferenceModel
 from . import journal
 from .models import (
     AutomatedPreprocessingPlan,
     FinalAnalysisHandoff,
-    NativeAnalysisHandoff,
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
     PreprocessedAssayHandoff,
-    ReductionMethod,
-    WorkflowNeedsInput,
-    WorkflowQuestion,
+    StageEvidenceReference,
+    WorkflowIdentity,
     WorkflowStageAttempt,
     WorkflowStageLink,
     artifact_model_to_ref,
 )
+from .rna import selected_store_rna_assay, validate_rna_handoffs, validate_rna_plan
 
 
 class FinalizationStagesMixin:
-    """Finalize layouts, clusters, markers, and biological interpretation."""
-
-    model: Any
+    """Finish one full-cohort RNA representation using its exact saved artifacts."""
 
     def analysis_finalization_stage(
         self,
         store: DataStore,
-        workflow: AgentWorkflowRun,
+        workflow: WorkflowIdentity,
         request_record: OrchestrationRequestRecord,
         parents: Sequence[WorkflowStageLink],
         plan: AutomatedPreprocessingPlan,
         preprocessed: Sequence[PreprocessedAssayHandoff],
         tuning_report: ParameterTuningReport,
-        tuning_reference: AgentReportReference,
-        study_contract: StudyContract,
+        tuning_reference: StageEvidenceReference,
         *,
-        experimental: ExperimentalContextResult | None = None,
-        analysis_review_evidence: Mapping[str, Any] | None = None,
-        answers: Mapping[str, Any] | None = None,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, FinalAnalysisHandoff]:
         prefix = journal._ensure_orchestration_store(store)
@@ -76,27 +51,9 @@ class FinalizationStagesMixin:
             parents,
         )
         if existing is not None:
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: reusing finalized analysis"
-            )
-            handoff = FinalAnalysisHandoff.model_validate(
+            logger.info("Reusing the validated final RNA analysis")
+            return existing, FinalAnalysisHandoff.model_validate(
                 existing.outputs["finalAnalysis"]
-            )
-            persisted = journal.load_final_analysis_handoff(
-                store,
-                prefix,
-                workflow.workflowRunId,
-                handoff.handoffId,
-            )
-            if persisted != handoff:
-                raise ValueError("Finalization outcome and handoff journal differ")
-            return existing, handoff
-        if tuning_report.cellSelection is None:
-            raise ValueError("Parameter Tuning lacks an exact cell selection")
-        cell_selection = tuning_report.cellSelection
-        if any(value.cellSelection != cell_selection for value in preprocessed):
-            raise ValueError(
-                "Finalization inputs do not share the selected tuning cells"
             )
         started = journal._start_attempt(
             store.zw,
@@ -110,386 +67,93 @@ class FinalizationStagesMixin:
                 "preprocessedAssays": [
                     value.model_dump(mode="json") for value in preprocessed
                 ],
-                "cellSelection": cell_selection.model_dump(mode="json"),
-                "finalClusters": (
-                    tuning_report.finalClusterArtifact.model_dump(mode="json")
-                    if tuning_report.finalClusterArtifact is not None
-                    else None
-                ),
-                "analysisReviewEvidence": dict(analysis_review_evidence or {}),
             },
             resume_record=resume_record,
         )
-        artifacts: dict[str, ArtifactReferenceModel] = {"cellSelection": cell_selection}
-        actions: list[str] = []
+        artifacts: dict[str, ArtifactReferenceModel] = {}
         operations: list[dict[str, Any]] = []
-        logger.info(
-            f"Workflow {workflow.workflowRunId}: finalizing "
-            f"{len(preprocessed)} native analysis route(s) and markers from "
-            f"assay {plan.markerAssay!r}"
-        )
         try:
-            if (
-                tuning_report.status != "done"
-                or tuning_report.finalClusterArtifact is None
-            ):
-                raise ValueError("Parameter Tuning has no finalized cluster branch")
-            if plan.primaryAssay != plan.markerAssay or len(preprocessed) != 1:
+            assay_name = selected_store_rna_assay(store, request_record.request)
+            validate_rna_plan(plan, assay_name)
+            validate_rna_handoffs(preprocessed, assay_name)
+            handoff = preprocessed[0]
+            cells = handoff.cellSelection
+            if cells is None or cells != tuning_report.cellSelection:
                 raise ValueError(
-                    "Decision-driven v1 finalization requires exactly one RNA assay"
+                    "Finalization requires the original full-cohort selection, not sampled cells"
                 )
-            if tuning_report.recommendedIntegrationId is not None:
-                raise ValueError(
-                    "Decision-driven v1 cannot finalize an integrated SNN or WNN graph"
-                )
-            preprocessed_assay = preprocessed[0]
-            if preprocessed_assay.assayType != "RNA":
-                raise ValueError("Automated finalization supports RNA only")
-            if preprocessed_assay.assay != plan.primaryAssay:
-                raise ValueError("The final RNA assay does not match preprocessing")
-            if (
-                preprocessed_assay.normalized is None
-                or preprocessed_assay.markerFeatures is None
-            ):
+            if handoff.normalized is None or handoff.markerFeatures is None:
                 raise ValueError(
                     "Finalization requires exact normalized and marker features"
                 )
-            tuning_agent = ParameterTuningAgent(
-                self.model,
-                config=request_record.config.agentRunConfig,
-            )
-            native_analyses, native_umaps = self.finalize_native_analyses(
-                store,
-                tuning_agent,
-                request_record,
-                tuning_report,
-                {preprocessed_assay.assay: preprocessed_assay},
-                artifacts,
-                actions,
-                operations,
-            )
-            if len(native_analyses) != 1:
-                raise ValueError("Decision-driven v1 requires one native analysis")
-            graph_method, final_graph, final_initialization, final_umap = (
-                self.finalize_selected_graph(
-                    store,
-                    plan,
-                    tuning_report,
-                    native_analyses,
-                    native_umaps,
-                    actions,
-                    operations,
-                )
-            )
-            native = native_analyses[0]
-            if native.clusters is None:
-                raise ValueError("Selected native analysis lacks clusters")
-            final_clusters = native.clusters
-            if artifact_model_to_ref(final_clusters) != artifact_model_to_ref(
-                tuning_report.finalClusterArtifact
+            if (
+                tuning_report.status != "done"
+                or tuning_report.recommendedIntegrationId is not None
+                or tuning_report.assayReports
             ):
                 raise ValueError(
-                    "Finalization changed the selected cluster artifact identity"
+                    "Finalization requires a completed single-RNA recommendation"
                 )
-
-            assay_report = tuning_report.assayReports.get(
-                plan.primaryAssay,
-                tuning_report,
-            )
-            selected = next(
-                (
-                    evaluation
-                    for evaluation in assay_report.evaluations
-                    if evaluation.candidateId == assay_report.recommendedCandidateId
-                ),
-                None,
-            )
-            if selected is None or selected.status != "done" or not selected.eligible:
-                raise ValueError("Final tuning selected an ineligible RNA candidate")
-            marker_record = selected.artifacts.get("markerTable")
-            if marker_record is None:
-                marker_ref = store.run_marker_search(
-                    artifact_model_to_ref(final_clusters),
-                    from_assay=plan.markerAssay,
-                    features=artifact_model_to_ref(preprocessed_assay.markerFeatures),
-                    invalidate_cache=False,
-                )
-                marker_model = ArtifactReferenceModel.from_artifact_ref(marker_ref)
-                actions.append("run_final_marker_search")
-                operations.append(
-                    {
-                        "operation": "run_marker_search",
-                        "clusters": final_clusters.model_dump(mode="json"),
-                        "features": preprocessed_assay.markerFeatures.model_dump(
-                            mode="json"
-                        ),
-                        "artifact": marker_model.model_dump(mode="json"),
-                    }
-                )
-            else:
-                marker_model = ArtifactReferenceModel.model_validate(
-                    marker_record.model_dump()
-                )
-                store.load_artifact(artifact_model_to_ref(marker_model))
-                actions.append("reuse_selected_marker_table")
-            artifacts["markers"] = marker_model
-
-            limitations = list(
-                dict.fromkeys([*plan.limitations, *tuning_report.limitations])
-            )
-            doublet_scores = [
-                ArtifactReferenceModel.model_validate(artifact.model_dump())
-                for name, artifact in sorted(selected.artifacts.items())
-                if name.startswith("doubletScore:")
-            ]
-            doublet_score_selections = [
-                ArtifactReferenceModel.model_validate(artifact.model_dump())
-                for name, artifact in sorted(selected.artifacts.items())
-                if name.startswith("doubletCellSelection:")
-            ]
-            if len(doublet_scores) != len(doublet_score_selections):
-                raise ValueError(
-                    "Advisory doublet scores lack exact cell-selection lineage"
-                )
-            doublet_limitations = [
-                warning
-                for warning in selected.warnings
-                if "doublet" in warning.lower()
-                or "physical capture identity" in warning.lower()
-            ]
-            limitations.extend(doublet_limitations)
-            if doublet_scores:
-                for index, doublet_model in enumerate(doublet_scores):
-                    store.load_artifact(artifact_model_to_ref(doublet_model))
-                    artifacts[f"doubletScore{index}"] = doublet_model
-                    doublet_selection = doublet_score_selections[index]
-                    store.load_artifact(artifact_model_to_ref(doublet_selection))
-                    artifacts[f"doubletScoreSelection{index}"] = doublet_selection
-                actions.append("reuse_advisory_doublet_scores")
-                operations.append(
-                    {
-                        "operation": "reuse_advisory_doublet_scores",
-                        "artifacts": [
-                            value.model_dump(mode="json") for value in doublet_scores
-                        ],
-                        "cellSelections": [
-                            value.model_dump(mode="json")
-                            for value in doublet_score_selections
-                        ],
-                    }
-                )
-            elif any(
-                warning.startswith("Advisory doublet scoring was not run for assay ")
-                for warning in doublet_limitations
-            ):
-                actions.append("record_unavailable_advisory_doublet_scores")
-                operations.append(
-                    {
-                        "operation": "record_unavailable_advisory_doublet_scores",
-                        "limitations": doublet_limitations,
-                    }
-                )
-            else:
-                raise ValueError(
-                    "Selected cluster evidence lacks advisory doublet scores"
-                )
-
-            final_analysis = FinalAnalysisHandoff(
-                workflowRunId=workflow.workflowRunId,
-                primaryAssay=plan.primaryAssay,
-                markerAssay=plan.markerAssay,
-                cellSelection=cell_selection,
-                nativeAnalyses=native_analyses,
-                graph=final_graph,
-                graphMethod=graph_method,
-                clusters=final_clusters,
-                embeddingInitialization=final_initialization,
-                umap=final_umap,
-                markerFeatures=preprocessed_assay.markerFeatures,
-                markers=marker_model,
-                doubletScores=doublet_scores,
-                doubletScoreSelections=doublet_score_selections,
-                doubletEvidence={
-                    "scoreQuantiles": dict(selected.metrics.doubletScoreQuantiles),
-                    "scoreByCapture": {
-                        capture: dict(summary)
-                        for capture, summary in (
-                            selected.metrics.doubletScoreByCapture.items()
-                        )
-                    },
-                    "captureCoverage": (selected.metrics.doubletCaptureCoverage),
-                    "maximumClusterConcentration": (
-                        selected.metrics.doubletHighScoreConcentration
-                    ),
-                    "policy": (
-                        "scoreAndFlagWithoutRemoval"
-                        if doublet_scores
-                        else "unavailable"
-                    ),
-                    "limitations": doublet_limitations,
-                },
-                markerEvidence={
-                    "coherence": selected.metrics.markerCoherence,
-                    "specificityMedian": (selected.metrics.markerSpecificityMedian),
-                    "specificityByCluster": dict(
-                        selected.metrics.markerSpecificityByCluster
-                    ),
-                    "aucByCluster": dict(selected.metrics.markerAucByCluster),
-                    "topFeaturesByCluster": {
-                        cluster: list(features)
-                        for cluster, features in (
-                            selected.metrics.topMarkerGenes.items()
-                        )
-                    },
-                    "defaultAndContextFamilyEnrichment": dict(
-                        selected.metrics.markerFamilyEnrichment
-                    ),
-                    "protectedFamilies": list(selected.metrics.protectedMarkerFamilies),
-                },
-                analysisEvidence={
-                    "analysisReview": dict(analysis_review_evidence or {}),
-                    **(
-                        {
-                            "contrastPlans": [
-                                value.model_dump(mode="json")
-                                for value in getattr(
-                                    experimental,
-                                    "contrastPlans",
-                                    [],
-                                )
-                            ]
-                        }
-                        if experimental is not None
-                        else {}
-                    ),
-                },
-                parameterReport=tuning_reference,
-                limitations=list(dict.fromkeys(limitations)),
-            ).with_handoff_id()
-            journal.save_final_analysis_handoff(store, prefix, final_analysis)
-            actions.append("persist_final_analysis_handoff")
-            operations.append(
-                {
-                    "operation": "persist_final_analysis_handoff",
-                    "handoffId": final_analysis.handoffId,
-                    "artifacts": {
-                        name: value.model_dump(mode="json")
-                        for name, value in artifacts.items()
-                    },
-                }
-            )
-
-            decision_snapshot = load_latest_decision_workflow_snapshot(
+            if journal.read_stage_evidence(
+                store, tuning_reference
+            ) != tuning_report.model_dump(mode="json"):
+                raise ValueError("Final tuning differs from its committed evidence")
+            selected = promote_parameter_candidate(
                 store,
-                workflow.workflowRunId,
-                workspace=request_record.request.workspace,
+                report=tuning_report,
+                normalized=artifact_model_to_ref(handoff.normalized),
             )
-            decision_workflow = decision_snapshot.workflow
-            if decision_workflow.status == "completed":
-                if decision_workflow.finalHandoffId != final_analysis.handoffId:
+            if selected.parameters.reductionMethod != "pca":
+                raise ValueError(
+                    "RNA finalization requires the selected PCA representation"
+                )
+            selected_artifacts = {
+                name: ArtifactReferenceModel.model_validate(
+                    value.model_dump(mode="json")
+                )
+                for name, value in selected.artifacts.items()
+            }
+            required = {"pca", "connectivityMap", "clusters", "markerTable"}
+            if not required.issubset(selected_artifacts):
+                raise ValueError(
+                    f"Final candidate lacks required artifacts: {sorted(required - selected_artifacts.keys())}"
+                )
+            graph = selected_artifacts["connectivityMap"]
+            clusters = selected_artifacts["clusters"]
+            markers = selected_artifacts["markerTable"]
+            if tuning_report.finalClusterArtifact is None or artifact_model_to_ref(
+                clusters
+            ) != artifact_model_to_ref(tuning_report.finalClusterArtifact):
+                raise ValueError("Finalization changed the selected cluster artifact")
+            cells_ref = artifact_model_to_ref(cells)
+            graph_ref = artifact_model_to_ref(graph)
+            if graph_cell_selection(store.zw, graph_ref) != cells_ref:
+                raise ValueError(
+                    "Selected graph does not contain the full-cohort selection"
+                )
+            for label, ref in (("clusters", clusters), ("markers", markers)):
+                status = store.inspect_artifact(artifact_model_to_ref(ref))
+                if not status.complete or ref.assay != assay_name:
                     raise ValueError(
-                        "Completed decision ledger references another final handoff"
+                        f"Final {label} are incomplete or belong to another assay"
                     )
-                completed_snapshot = decision_snapshot
-            else:
-                completed_workflow = complete_decision_workflow(
-                    decision_workflow,
-                    final_analysis.handoffId,
+                inputs = status.inputs or {}
+                if inputs.get("cell_selection") != cells_ref.to_dict():
+                    raise ValueError(f"Final {label} use a different cell selection")
+                parent_key, parent = (
+                    ("graph", graph) if label == "clusters" else ("clusters", clusters)
                 )
-                completed_snapshot = save_decision_workflow_snapshot(
-                    store,
-                    completed_workflow,
-                    workspace=request_record.request.workspace,
-                )
-            outcome = journal._complete_attempt(
-                started,
-                status="done",
-                artifacts=artifacts,
-                outputs={
-                    "finalAnalysis": final_analysis.model_dump(mode="json"),
-                    "handoffId": final_analysis.handoffId,
-                    "decisionSnapshotSha256": (completed_snapshot.contentSha256),
-                    "operations": operations,
-                },
-                actions=actions,
-                notes=final_analysis.limitations,
-            )
-            journal._save_outcome(store.zw, prefix, outcome)
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: finalized "
-                f"handoff={final_analysis.handoffId!r}, "
-                f"markerAssay={plan.markerAssay!r}"
-            )
-            return outcome, final_analysis
-        except Exception as exc:
-            outcome = journal.finish_exception(
-                store,
-                prefix,
-                workflow,
-                started,
-                exc,
-                artifacts=artifacts,
-                actions=actions,
-                outputs={
-                    "operations": operations,
-                },
-            )
-            return outcome, FinalAnalysisHandoff.get_blank()
-
-    def finalize_native_analyses(
-        self,
-        store: DataStore,
-        agent: ParameterTuningAgent,
-        request_record: OrchestrationRequestRecord,
-        tuning_report: ParameterTuningReport,
-        preprocessed_by_assay: Mapping[str, PreprocessedAssayHandoff],
-        artifacts: dict[str, ArtifactReferenceModel],
-        actions: list[str],
-        operations: list[dict[str, Any]],
-    ) -> tuple[
-        list[NativeAnalysisHandoff],
-        dict[
-            str,
-            tuple[ArtifactReferenceModel, ArtifactReferenceModel],
-        ],
-    ]:
-        native_handoffs: list[NativeAnalysisHandoff] = []
-        native_umaps: dict[
-            str,
-            tuple[ArtifactReferenceModel, ArtifactReferenceModel],
-        ] = {}
-        for assay, assay_report in tuning_report.assayReports.items():
-            logger.info(
-                f"Finalizing native analysis for assay {assay!r} with candidate "
-                f"{assay_report.recommendedCandidateId!r}"
-            )
-            preprocessed_assay = preprocessed_by_assay[assay]
-            normalized = preprocessed_assay.normalized
-            if normalized is None or preprocessed_assay.cellSelection is None:
-                raise ValueError(
-                    f"Assay {assay!r} lacks normalization or cell selection"
-                )
-            native_selection = preprocessed_assay.cellSelection.model_dump(mode="json")
-            promoted = agent.promote(
-                store,
-                report=assay_report,
-                normalized=artifact_model_to_ref(normalized),
-                identity_feature_limit=request_record.config.maxIdentityFeatures,
-            )
-            reduction_key = promoted.parameters.reductionMethod
-            reduction_record = promoted.artifacts[reduction_key]
-            reduction_ref = artifact_model_to_ref(
-                ArtifactReferenceModel.model_validate(reduction_record.model_dump())
-            )
+                if inputs.get(parent_key) != artifact_model_to_ref(parent).to_dict():
+                    raise ValueError(
+                        f"Final {label} do not match the selected {parent_key}"
+                    )
+            for ref in selected_artifacts.values():
+                store.load_artifact(artifact_model_to_ref(ref))
             initialization_ref = store.build_embedding_initialization(
-                reduction_ref,
-                n_centroids=min(1000, preprocessed_assay.nCells),
+                artifact_model_to_ref(selected_artifacts["pca"]),
+                n_centroids=min(1000, handoff.nCells),
                 rand_state=4466,
                 invalidate_cache=False,
-            )
-            graph_record = promoted.artifacts["connectivityMap"]
-            graph_ref = artifact_model_to_ref(
-                ArtifactReferenceModel.model_validate(graph_record.model_dump())
             )
             umap_ref = store.run_umap(
                 graph_ref,
@@ -498,474 +162,98 @@ class FinalizationStagesMixin:
                 random_seed=4444,
                 invalidate_cache=False,
             )
-            promoted_artifacts = {
-                name: ArtifactReferenceModel.model_validate(value.model_dump())
-                for name, value in promoted.artifacts.items()
-            }
-            umap_model = ArtifactReferenceModel.from_artifact_ref(umap_ref)
-            initialization_model = ArtifactReferenceModel.from_artifact_ref(
+            initialization = ArtifactReferenceModel.from_artifact_ref(
                 initialization_ref
             )
-            native_umaps[assay] = (initialization_model, umap_model)
+            umap = ArtifactReferenceModel.from_artifact_ref(umap_ref)
             operations.extend(
                 [
                     {
-                        "operation": "promote_parameter_candidate",
-                        "assay": assay,
-                        "candidate": promoted.parameters.model_dump(mode="json"),
-                        "normalized": normalized.model_dump(mode="json"),
-                        "cellSelection": native_selection,
-                        "identityFeatureLimit": (
-                            request_record.config.maxIdentityFeatures
-                        ),
-                        "artifacts": {
-                            name: value.model_dump(mode="json")
-                            for name, value in promoted_artifacts.items()
-                        },
-                    },
-                    {
                         "operation": "build_embedding_initialization",
-                        "assay": assay,
-                        "reduction": ArtifactReferenceModel.model_validate(
-                            reduction_record.model_dump()
-                        ).model_dump(mode="json"),
-                        "cellSelection": native_selection,
-                        "nCentroids": min(1000, preprocessed_assay.nCells),
-                        "randomSeed": 4466,
-                        "invalidateCache": False,
-                        "artifact": initialization_model.model_dump(mode="json"),
+                        "artifact": initialization.model_dump(mode="json"),
                     },
-                    {
-                        "operation": "run_umap",
-                        "assay": assay,
-                        "graph": promoted_artifacts["connectivityMap"].model_dump(
-                            mode="json"
-                        ),
-                        "initialization": initialization_model.model_dump(mode="json"),
-                        "cellSelection": native_selection,
-                        "parallel": False,
-                        "randomSeed": 4444,
-                        "invalidateCache": False,
-                        "artifact": umap_model.model_dump(mode="json"),
-                    },
+                    {"operation": "run_umap", "artifact": umap.model_dump(mode="json")},
                 ]
             )
-            native_handoffs.append(
-                NativeAnalysisHandoff(
-                    assay=assay,
-                    reductionMethod=cast(
-                        ReductionMethod, promoted.parameters.reductionMethod
-                    ),
-                    featureSelection=preprocessed_assay.graphFeatures,
-                    markerFeatures=preprocessed_assay.markerFeatures,
-                    normalized=normalized,
-                    reduction=promoted_artifacts[reduction_key],
-                    batchCorrection=promoted_artifacts.get("harmony"),
-                    annIndex=promoted_artifacts["annIndex"],
-                    embeddingInitialization=initialization_model,
-                    neighbors=promoted_artifacts["neighbors"],
-                    graph=promoted_artifacts["connectivityMap"],
-                    clusters=promoted_artifacts["clusters"],
-                    umap=umap_model,
+            doublet_scores = [
+                value
+                for name, value in sorted(selected_artifacts.items())
+                if name.startswith("doubletScore:")
+            ]
+            doublet_selections = [
+                value
+                for name, value in sorted(selected_artifacts.items())
+                if name.startswith("doubletCellSelection:")
+            ]
+            if len(doublet_scores) != len(doublet_selections):
+                raise ValueError("Advisory doublet scores lack exact selection lineage")
+            limitations = list(
+                dict.fromkeys([*plan.limitations, *tuning_report.limitations])
+            )
+            doublet_limitations = [
+                warning
+                for warning in selected.warnings
+                if "doublet" in warning.lower()
+                or "physical capture identity" in warning.lower()
+            ]
+            if not doublet_scores and not any(
+                warning.startswith("Advisory doublet scoring was not run for assay ")
+                for warning in doublet_limitations
+            ):
+                raise ValueError(
+                    "Selected cluster evidence lacks advisory doublet scores"
                 )
-            )
+            limitations.extend(doublet_limitations)
+            artifacts.update(selected_artifacts)
             artifacts.update(
-                {
-                    f"{assay}_{name}": value
-                    for name, value in {
-                        **promoted_artifacts,
-                        "embeddingInitialization": initialization_model,
-                        "umap": umap_model,
-                    }.items()
-                }
+                cellSelection=cells,
+                normalized=handoff.normalized,
+                graph=graph,
+                clusters=clusters,
+                markers=markers,
+                markerFeatures=handoff.markerFeatures,
+                embeddingInitialization=initialization,
+                umap=umap,
             )
-            actions.extend([f"promote_native:{assay}", f"run_native_umap:{assay}"])
-            logger.info(f"Finalized native UMAP and clusters for assay {assay!r}")
-        return native_handoffs, native_umaps
-
-    def finalize_selected_graph(
-        self,
-        store: DataStore,
-        plan: AutomatedPreprocessingPlan,
-        tuning_report: ParameterTuningReport,
-        native_handoffs: Sequence[NativeAnalysisHandoff],
-        native_umaps: Mapping[
-            str,
-            tuple[ArtifactReferenceModel, ArtifactReferenceModel],
-        ],
-        actions: list[str],
-        operations: list[dict[str, Any]],
-    ) -> tuple[
-        Literal["native", "snn", "wnn"],
-        ArtifactReferenceModel,
-        ArtifactReferenceModel,
-        ArtifactReferenceModel,
-    ]:
-        if tuning_report.cellSelection is None:
-            raise ValueError("Final graph selection lacks an exact cell selection")
-        if tuning_report.recommendedIntegrationId is not None:
-            raise ValueError(
-                "Automated RNA finalization cannot use an integrated graph"
-            )
-        graph_assay = tuning_report.graphAssay
-        if graph_assay is None:
-            raise ValueError("Native final selection lacks graphAssay")
-        native = next(value for value in native_handoffs if value.assay == graph_assay)
-        if native.graph is None:
-            raise ValueError("Native final selection lacks graph artifact")
-        final_initialization, final_umap = native_umaps[graph_assay]
-        logger.info(
-            f"Reusing native graph and UMAP from assay {graph_assay!r} as final"
-        )
-        return "native", native.graph, final_initialization, final_umap
-
-    def biological_interpretation_stage(
-        self,
-        store: DataStore,
-        workflow: AgentWorkflowRun,
-        request_record: OrchestrationRequestRecord,
-        parents: Sequence[WorkflowStageLink],
-        enrichment: DataEnrichmentReport,
-        experimental: ExperimentalContextResult,
-        tuning_report: ParameterTuningReport,
-        final_analysis: FinalAnalysisHandoff,
-        enrichment_reference: AgentReportReference,
-        experimental_reference: AgentReportReference,
-        tuning_reference: AgentReportReference,
-        answers: Mapping[str, Any],
-        *,
-        resume_record: OrchestrationResumeRecord | None = None,
-    ) -> WorkflowStageAttempt:
-        prefix = journal._ensure_orchestration_store(store)
-        existing = journal._validated_done_outcome(
-            store,
-            prefix,
-            workflow.workflowRunId,
-            "biological_interpretation",
-            request_record,
-            parents,
-        )
-        if existing is not None:
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: reusing Biological "
-                "Interpretation report"
-            )
-            journal.load_stage_report(store, existing, BiologicalInterpretationReport)
-            return existing
-        requested_coefficient = answers.get("primaryCoefficient")
-        if not isinstance(requested_coefficient, str) or not requested_coefficient:
-            directed = request_record.request.experimentalDirections.get(
-                "primaryCoefficient"
-            )
-            requested_coefficient = directed if isinstance(directed, str) else None
-        coefficients = list(experimental.decision.coefficientsOfInterest)
-        logger.info(
-            f"Workflow {workflow.workflowRunId}: Biological Interpretation has "
-            f"{len(coefficients)} validated coefficient option(s)"
-        )
-        if final_analysis.cellSelection is None:
-            raise ValueError("Final analysis lacks an exact cell selection")
-        started = journal._start_attempt(
-            store.zw,
-            prefix,
-            workflow.workflowRunId,
-            "biological_interpretation",
-            request_record,
-            parents,
-            inputs={
-                "studyContext": request_record.request.studyContext,
-                "studyContextSummary": enrichment.studyContextSummary.model_dump(
-                    mode="json"
-                ),
-                "experimentalContextReport": experimental_reference.model_dump(
-                    mode="json"
-                ),
-                "finalAnalysis": final_analysis.model_dump(mode="json"),
-                "cellSelection": final_analysis.cellSelection.model_dump(mode="json"),
-                "primaryCoefficient": requested_coefficient,
-                "biologicalInterpretation": answers.get("biologicalInterpretation"),
-            },
-            resume_record=resume_record,
-        )
-        if requested_coefficient is None and len(coefficients) > 1:
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: Biological Interpretation "
-                "requires a primary coefficient selection"
+            final = FinalAnalysisHandoff(
+                workflowRunId=workflow.workflowRunId,
+                primaryAssay=assay_name,
+                markerAssay=assay_name,
+                cellSelection=cells,
+                graph=graph,
+                clusters=clusters,
+                embeddingInitialization=initialization,
+                umap=umap,
+                markerFeatures=handoff.markerFeatures,
+                markers=markers,
+                doubletScores=doublet_scores,
+                doubletScoreSelections=doublet_selections,
+                limitations=list(dict.fromkeys(limitations)),
             )
             outcome = journal._complete_attempt(
                 started,
-                status="needsInput",
-                artifacts={"cellSelection": final_analysis.cellSelection},
-                needs_input=WorkflowNeedsInput(
-                    questions=[
-                        WorkflowQuestion(
-                            questionId="primaryCoefficient",
-                            question=(
-                                "Which validated coefficient should constrain "
-                                "treatment observations?"
-                            ),
-                            options=coefficients,
-                            evidenceIds=list(experimental.decision.evidenceIds),
-                        )
-                    ]
-                ),
-                notes=[
-                    "Cluster identities can be interpreted after one treatment "
-                    "coefficient is selected"
-                ],
+                status="done",
+                artifacts=artifacts,
+                outputs={
+                    "finalAnalysis": final.model_dump(mode="json"),
+                    "operations": operations,
+                },
+                actions=["reuse_validated_full_cohort", "run_final_umap"],
+                notes=final.limitations,
             )
             journal._save_outcome(store.zw, prefix, outcome)
-            return outcome
-        try:
-            experimental_handoff: ExperimentalBiologyHandoff | None = None
-            if coefficients:
-                experimental_handoff = experimental.to_biological_handoff(
-                    requested_coefficient
-                ).model_copy(update={"cellSelection": final_analysis.cellSelection})
-            tuning_handoff = tuning_report.to_biological_handoff()
-            if tuning_handoff.cellSelection != final_analysis.cellSelection:
-                raise ValueError(
-                    "Biological handoffs do not share the final cell selection"
-                )
-            marker_policy = next(
-                (
-                    value
-                    for value in enrichment.policies
-                    if value.assay == final_analysis.markerAssay
-                ),
-                None,
-            )
-            summary = enrichment.studyContextSummary
-            biological_context = BiologicalContext(
-                organism=(
-                    marker_policy.organismName
-                    if marker_policy is not None
-                    and marker_policy.organismName != "unknown"
-                    else ""
-                ),
-                studyContext=request_record.request.studyContext,
-                tissue=", ".join(summary.tissueReferences),
-                cellTypeReferences=list(summary.cellTypeReferences),
-                experimentalDetails=[
-                    *summary.experimentalReferences,
-                    *final_analysis.limitations,
-                ],
-                treatmentQuestion=str(
-                    request_record.request.experimentalDirections.get(
-                        "treatmentQuestion", ""
-                    )
-                ),
-            )
-            biological_answer = answers.get("biologicalInterpretation")
-            if isinstance(biological_answer, str) and biological_answer.strip():
-                biological_context = biological_context.model_copy(
-                    update={
-                        "experimentalDetails": [
-                            *biological_context.experimentalDetails,
-                            biological_answer.strip(),
-                        ]
-                    }
-                )
-            elif isinstance(biological_answer, Mapping):
-                biological_context = biological_context.model_copy(
-                    update={
-                        "experimentalDetails": [
-                            *biological_context.experimentalDetails,
-                            json.dumps(dict(biological_answer), sort_keys=True),
-                        ]
-                    }
-                )
-            if (
-                final_analysis.clusters is None
-                or final_analysis.markers is None
-                or final_analysis.markerFeatures is None
-            ):
-                raise ValueError("Final analysis lacks clusters or marker artifacts")
-            recovered = journal._recover_persisted_stage_report(
-                store,
-                started,
-                agent_name="biological_interpretation",
-                expected_type=BiologicalInterpretationReport,
-            )
-            if recovered is not None:
-                recovered_report, reference = recovered
-                report = cast(BiologicalInterpretationReport, recovered_report)
-                recovery_actions = [
-                    "recover_persisted_biological_interpretation_report"
-                ]
-            else:
-                recovery_actions = []
-                logger.info(
-                    f"Workflow {workflow.workflowRunId}: invoking Biological "
-                    "Interpretation"
-                )
-                agent = BiologicalInterpretationAgent(
-                    self.model,
-                    config=request_record.config.agentRunConfig,
-                )
-                report = agent.run(
-                    store,
-                    cluster=artifact_model_to_ref(final_analysis.clusters),
-                    biological_context=biological_context,
-                    from_assay=final_analysis.markerAssay,
-                    graph_assay=tuning_handoff.graphAssay,
-                    marker_assay_type=(
-                        marker_policy.assayModality
-                        if marker_policy is not None
-                        else None
-                    ),
-                    tuning_handoff=tuning_handoff,
-                    experimental_handoff=experimental_handoff,
-                    marker=artifact_model_to_ref(final_analysis.markers),
-                    marker_features=artifact_model_to_ref(
-                        final_analysis.markerFeatures
-                    ),
-                    allow_marker_search=False,
-                )
-                if marker_policy is not None and marker_policy.assayModality == "ATAC":
-                    atac_limitation = (
-                        "ATAC peak markers are descriptive, so all cell identities "
-                        "remain low-confidence hypotheses."
-                    )
-                    report = report.model_copy(
-                        update={
-                            "clusterInterpretations": [
-                                value.model_copy(
-                                    update={
-                                        "identityIsHypothesis": True,
-                                        "confidence": "low",
-                                    }
-                                )
-                                for value in report.clusterInterpretations
-                            ],
-                            "limitations": list(
-                                dict.fromkeys([*report.limitations, atac_limitation])
-                            ),
-                        }
-                    )
-                parent_reports = [
-                    journal._report_link(enrichment_reference),
-                    journal._report_link(experimental_reference),
-                    journal._report_link(tuning_reference),
-                ]
-                saved_report, reference = journal._save_stage_report(
-                    store,
-                    started,
-                    report,
-                    invocation=AgentInvocation(
-                        agentName="biological_interpretation",
-                        parentReports=parent_reports,
-                        inputs={
-                            "biologicalContext": biological_context.model_dump(
-                                mode="json"
-                            ),
-                            "cellSelection": (
-                                final_analysis.cellSelection.model_dump(mode="json")
-                            ),
-                            "markerAssay": final_analysis.markerAssay,
-                            "graphAssay": tuning_handoff.graphAssay,
-                            "markerAssayType": (
-                                marker_policy.assayModality
-                                if marker_policy is not None
-                                else None
-                            ),
-                            "allowMarkerSearch": False,
-                            "studyContextSummary": summary.model_dump(mode="json"),
-                            "experimentalContextReport": (
-                                experimental_reference.model_dump(mode="json")
-                            ),
-                        },
-                        artifacts={
-                            "cellSelection": final_analysis.cellSelection,
-                            "clusters": final_analysis.clusters,
-                            "markers": final_analysis.markers,
-                            "markerFeatures": final_analysis.markerFeatures,
-                        },
-                        runConfig=agent.config,
-                        experimentalBiologyHandoff=experimental_handoff,
-                        tuningBiologyHandoff=tuning_handoff,
-                    ),
-                    expected_type=BiologicalInterpretationReport,
-                )
-                report = cast(BiologicalInterpretationReport, saved_report)
             logger.info(
-                f"Workflow {workflow.workflowRunId}: Biological Interpretation "
-                f"returned status={report.status!r}, clusters="
-                f"{len(report.clusterInterpretations)}, treatments="
-                f"{len(report.treatmentObservations)}"
+                f"Final RNA analysis: {selected.metrics.nClusters} populations; descriptive markers saved"
             )
-            if report.status == "needsInput":
-                needs_input = report.needsInput
-                assert needs_input is not None
-                outcome = journal._complete_attempt(
-                    started,
-                    status="needsInput",
-                    report_references=[reference],
-                    artifacts={
-                        "cellSelection": final_analysis.cellSelection,
-                        "clusters": final_analysis.clusters,
-                        "markers": final_analysis.markers,
-                    },
-                    actions=recovery_actions,
-                    needs_input=WorkflowNeedsInput(
-                        questions=[
-                            WorkflowQuestion(
-                                questionId="biologicalInterpretation",
-                                question=needs_input.question,
-                                options=list(needs_input.requiredInputs),
-                                evidenceIds=list(needs_input.evidenceIds),
-                            )
-                        ]
-                    ),
-                    notes=report.limitations,
-                )
-            elif report.status == "failed":
-                outcome = journal._complete_attempt(
-                    started,
-                    status="failed",
-                    report_references=[reference],
-                    artifacts={
-                        "cellSelection": final_analysis.cellSelection,
-                        "clusters": final_analysis.clusters,
-                        "markers": final_analysis.markers,
-                    },
-                    actions=recovery_actions,
-                    error="; ".join(report.limitations)
-                    or "Biological Interpretation failed",
-                )
-            else:
-                outcome = journal._complete_attempt(
-                    started,
-                    status="done",
-                    report_references=[reference],
-                    artifacts={
-                        "cellSelection": final_analysis.cellSelection,
-                        "clusters": final_analysis.clusters,
-                        "markers": final_analysis.markers,
-                    },
-                    actions=recovery_actions,
-                    outputs={
-                        "clusterCount": len(report.clusterInterpretations),
-                        "treatmentObservationCount": len(report.treatmentObservations),
-                    },
-                    notes=report.limitations,
-                )
-            journal._save_outcome(store.zw, prefix, outcome)
-            logger.info(
-                f"Workflow {workflow.workflowRunId}: Biological Interpretation "
-                f"outcome status={outcome.status!r}"
-            )
-            if outcome.status == "failed":
-                journal.finalize_failed(
-                    store, workflow, outcome.error or "biology failed"
-                )
-            return outcome
+            return outcome, final
         except Exception as exc:
-            return journal.finish_exception(
+            outcome = journal.finish_exception(
                 store,
                 prefix,
                 workflow,
                 started,
                 exc,
-                artifacts={"cellSelection": final_analysis.cellSelection},
+                artifacts=artifacts,
+                outputs={"operations": operations},
             )
+            return outcome, FinalAnalysisHandoff.get_blank()
