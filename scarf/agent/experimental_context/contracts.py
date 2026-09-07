@@ -892,6 +892,7 @@ class ExperimentalContextDependencies(AgentDataModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     store: Any = Field(default=None, exclude=True)
+    qcAssay: str | None = Field(default=None, exclude=True)
     cells: Any = Field(default=None, exclude=True)
     neighbors: Any = Field(default=None, exclude=True)
     connectivityMap: Any = Field(default=None, exclude=True)

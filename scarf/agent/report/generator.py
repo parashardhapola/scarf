@@ -23,7 +23,6 @@ from .contracts import _latest, _mapping, _selected_qc_profile
 from .plots import _collect_final_artifacts, _collect_hvg_plots
 from .rendering import (
     _render_analysis_document,
-    _render_index_document,
     _render_technical_document,
 )
 
@@ -47,8 +46,8 @@ def generate_agent_report(
 ) -> Path:
     """Generate a local HTML report for one completed automated workflow.
 
-    The report directory contains a landing page, an analysis summary, and
-    technical details. The returned path points to the landing ``index.html``.
+    The returned ``index.html`` opens the analysis and its decisions directly,
+    with a secondary link to the technical details.
     Existing derived report files may be replaced; immutable agent and
     orchestration records are only read.
     """
@@ -138,15 +137,15 @@ def generate_agent_report(
         "defaultFeatureInventories": default_feature_inventories,
     }
     documents = (
-        ("analysis.html", _render_analysis_document(payload)),
         ("technical.html", _render_technical_document(payload)),
-        ("index.html", _render_index_document(payload)),
+        ("index.html", _render_analysis_document(payload)),
     )
     destination = report_dir / "index.html"
     for filename, document in documents:
         written = _write_report_page(report_dir, filename, document)
         if filename == "index.html":
             destination = written
+    (report_dir / "analysis.html").unlink(missing_ok=True)
     logger.info(
         f"Generated HTML report for agent workflow {workflow_run_id}: {destination}"
     )

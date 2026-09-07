@@ -156,7 +156,7 @@ def test_orchestration_model_validation_edges() -> None:
                 "studyObjective": "objective",
                 "pairedAssays": ["RNA", "RNA"],
             },
-            "pairedAssays must be unique",
+            "pairedAssays is unsupported",
         ),
         (
             {
@@ -165,7 +165,7 @@ def test_orchestration_model_validation_edges() -> None:
                 "studyObjective": "objective",
                 "pairedAssays": ["RNA"],
             },
-            "at least two",
+            "pairedAssays is unsupported",
         ),
     )
     for values, message in invalid_requests:

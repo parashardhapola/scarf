@@ -236,33 +236,12 @@ strong { font-weight: 400; }
   text-transform: uppercase;
 }
 .metric-value { font-size: .95rem; font-weight: 400; overflow-wrap: anywhere; }
-.report-choice-grid, .summary-grid, .interpretation-grid {
+.summary-grid, .interpretation-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   gap: 1rem;
   min-width: 0;
   max-width: 100%;
-}
-.report-choice {
-  display: flex;
-  min-width: 0;
-  min-height: 14rem;
-  flex-direction: column;
-  border: 1px solid var(--black);
-  padding: 1.5rem;
-  color: var(--black);
-  text-decoration: none;
-}
-.report-choice:hover, .report-choice:focus-visible {
-  border-color: var(--blue);
-}
-.report-choice h2 { margin-bottom: .75rem; }
-.report-choice p { max-width: 36rem; }
-.report-choice-action {
-  margin-top: auto;
-  padding-top: 1.5rem;
-  color: var(--blue);
-  font-weight: 400;
 }
 .summary-card, .interpretation-card {
   min-width: 0;
@@ -1159,9 +1138,8 @@ def _render_metrics(metrics: Sequence[tuple[str, Any]]) -> str:
 
 def _render_report_navigation(active_page: str) -> str:
     links = (
-        ("index", "index.html", "Report home"),
-        ("analysis", "analysis.html", "Analysis summary"),
-        ("technical", "technical.html", "Technical details"),
+        ("analysis", "index.html", "Analysis summary"),
+        ("technical", "technical.html", "Methods and evidence"),
     )
     return '<nav class="report-nav" aria-label="Report pages">{}</nav>'.format(
         "".join(
@@ -1574,15 +1552,12 @@ def _render_filtering_evidence(
                 "state": "selected" if is_selected else "rejected",
                 "metrics": metrics,
                 "reason": (
-                    "Preserved every reviewed cell and all recorded study groups."
-                    if is_selected
-                    else (
-                        f"Removed {removed:,} additional cells without stronger "
-                        "support."
-                        if removed
-                        else "Produced the same retained cell set without improving "
-                        "the selected rule."
+                    str(
+                        cell_qc.get("rationale")
+                        or "Selected the registered QC profile shown above."
                     )
+                    if is_selected
+                    else "An alternative registered QC profile with the measured retention shown above."
                 ),
             }
         )
@@ -2222,7 +2197,7 @@ def _render_batch_evidence(
         outcome=outcome,
         introduction=(
             "Selection required measured technical improvement without material "
-            "loss of protected tissue, T2D, donor, or sex structure. A diagnostic "
+            "loss of the recorded protected study structure. A diagnostic "
             "run could still be completed when the design was not licensed for "
             "corrected-result selection."
         ),
@@ -2690,54 +2665,6 @@ def _analysis_limitations(payload: Mapping[str, Any]) -> list[str]:
             "records the reason."
         )
     return limitations
-
-
-def _render_index_document(payload: Mapping[str, Any]) -> str:
-    workflow_result = _mapping(payload.get("workflowResult"))
-    plan = _mapping(workflow_result.get("preprocessingPlan"))
-    cluster_counts = _mapping(payload.get("clusterCounts"))
-    total_cells = sum(int(value) for value in cluster_counts.values())
-    objective, _organisms, _tissues = _study_overview(payload)
-    assays = _report_assays(plan)
-    metrics = _render_metrics(
-        (
-            ("Cells analyzed", total_cells or None),
-            ("Cell groups", len(cluster_counts) or None),
-            ("Data analyzed", _format_text_list(assays) or None),
-        )
-    )
-    body = f"""  <p class="eyebrow">Completed analysis</p>
-  <h1>Choose the level of detail.</h1>
-  <p class="lead">{html.escape(objective)}</p>
-  {metrics}
-
-  <section class="section">
-    <div class="report-choice-grid">
-      <a class="report-choice" href="analysis.html">
-        <p class="eyebrow">Recommended</p>
-        <h2>Analysis summary</h2>
-        <p>See the main findings, selected decisions, visual results, and limitations in plain language.</p>
-        <span class="report-choice-action">Open analysis summary →</span>
-      </a>
-      <a class="report-choice" href="technical.html">
-        <p class="eyebrow">Methods and provenance</p>
-        <h2>Technical details</h2>
-        <p>Review complete parameters, comparisons, execution records, artifact references, and structured report data.</p>
-        <span class="report-choice-action">Open technical details →</span>
-      </a>
-    </div>
-  </section>
-
-  <aside class="product-callout">
-    <p><strong>ScarfWeb</strong><br>Distributed, secure infrastructure for intuitive secondary analysis, browser-native.</p>
-    <a class="pill" href="https://www.nygen.io/products/scarfweb" target="_blank" rel="noopener noreferrer">Explore ScarfWeb</a>
-  </aside>
-"""
-    return _render_report_shell(
-        title="Scarf analysis report",
-        active_page="index",
-        body=body,
-    )
 
 
 def _render_analysis_document(payload: Mapping[str, Any]) -> str:

@@ -52,6 +52,7 @@ from .ingest import (
 )
 from .orchestrator import (
     AgentOrchestrator,
+    analyze_rna,
     AssayPreprocessingPlan,
     AutomatedPreprocessingPlan,
     AutomatedWorkflowConfig,
@@ -190,6 +191,7 @@ __all__ = [
     "VerificationCheck",
     "VerificationRecord",
     "characterize_covariates",
+    "analyze_rna",
     "characterize_features",
     "check_runtime",
     "create_agent_workflow",

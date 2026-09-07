@@ -1,9 +1,14 @@
-from collections.abc import Sequence
-from typing import Any
+import hashlib
+import json
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, cast
 
 import numpy as np
 
 from ...metrics import graph_connectivity
+from ...metadata.rows import iter_metadata_column_blocks
 from ...storage.refs import ArtifactRef
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
@@ -27,6 +32,52 @@ except ImportError as exc:
 
 _RANDOM_SEED = 4444
 _PCA_RANDOM_SEED = 4466
+
+_METRIC_CACHE: ContextVar[dict[tuple[Any, ...], Any] | None] = ContextVar(
+    "scarf_candidate_metric_cache", default=None
+)
+
+
+@contextmanager
+def candidate_metric_cache() -> Iterator[None]:
+    """Reuse exact-input metrics only for the current orchestration stage."""
+    token = _METRIC_CACHE.set({})
+    try:
+        yield
+    finally:
+        _METRIC_CACHE.reset(token)
+
+
+def _cached_candidate_metric[T](key: tuple[Any, ...], compute: Callable[[], T]) -> T:
+    cache = _METRIC_CACHE.get()
+    if cache is None:
+        return compute()
+    if key not in cache:
+        cache[key] = compute()
+    return cast(T, cache[key])
+
+
+def _metric_metadata_key(store: Any, column: str) -> str | None:
+    """Fingerprint live metric inputs so edits cannot reuse stale evidence."""
+    if _METRIC_CACHE.get() is None:
+        return None
+    return _metadata_column_fingerprint(store.cells, column)
+
+
+def _metadata_column_fingerprint(metadata: Any, column: str) -> str:
+    """Hash metadata values in bounded blocks, including scalar type identity."""
+    digest = hashlib.sha256()
+    for block in iter_metadata_column_blocks(metadata, column):
+        digest.update(str(block.dtype).encode())
+        digest.update(str(block.shape).encode())
+        digest.update(
+            json.dumps(
+                [(type(value).__name__, repr(value)) for value in block.tolist()]
+            ).encode()
+            if block.dtype.hasobject
+            else block.tobytes()
+        )
+    return digest.hexdigest()
 
 
 def _final_graph_options(
@@ -300,9 +351,9 @@ def _collect_cluster_structure_metrics(
             membership_group["values"],
             name="values",
         )
-        mean, median, p10, by_cluster, sample_size = _bounded_membership_summary(
-            membership_values,
-            cluster_values,
+        mean, median, p10, by_cluster, sample_size = _cached_candidate_metric(
+            (id(store), "membership_summary", membership_ref, cluster_ref),
+            lambda: _bounded_membership_summary(membership_values, cluster_values),
         )
         metrics.membershipStrengthMean = mean
         metrics.membershipStrengthMedian = median
@@ -317,7 +368,10 @@ def _collect_cluster_structure_metrics(
     try:
         graph_group = store.load_artifact(graph_ref)
         graph_edges = as_zarr_array(graph_group["edges"], name="edges")
-        connectivity = float(graph_connectivity(graph_edges, cluster_values))
+        connectivity = _cached_candidate_metric(
+            (id(store), "cluster_connectivity", graph_ref, cluster_ref),
+            lambda: float(graph_connectivity(graph_edges, cluster_values)),
+        )
         if np.isfinite(connectivity):
             metrics.clusterConnectivity = connectivity
             evidence_ids.append(f"candidate:{candidate_id}:clusterConnectivity")
@@ -369,11 +423,21 @@ def _collect_parameter_candidate_metrics(
     )
 
     try:
-        graph_scores = store.metric_graph_silhouette(
-            neighbors_ref,
-            cluster_ref,
-            random_seed=_RANDOM_SEED,
-            sample_size=11,
+        graph_scores = _cached_candidate_metric(
+            (
+                id(store),
+                "graph_silhouette",
+                neighbors_ref,
+                cluster_ref,
+                _RANDOM_SEED,
+                11,
+            ),
+            lambda: store.metric_graph_silhouette(
+                neighbors_ref,
+                cluster_ref,
+                random_seed=_RANDOM_SEED,
+                sample_size=11,
+            ),
         )
         if graph_scores is not None:
             finite_scores = np.asarray(graph_scores, dtype=float)
@@ -386,15 +450,28 @@ def _collect_parameter_candidate_metrics(
 
     if candidate.reductionMethod == "pca":
         try:
-            separability = store.metric_cluster_separability(
-                reduction_ref,
-                {cluster_column: cluster_ref},
-                random_seed=_RANDOM_SEED,
+
+            def separability_values() -> dict[str, Any]:
+                separability = store.metric_cluster_separability(
+                    reduction_ref,
+                    {cluster_column: cluster_ref},
+                    random_seed=_RANDOM_SEED,
+                )
+                table = separability.clustering_scores
+                rows = table.loc[table["clustering"] == cluster_column]
+                return dict(rows.iloc[0]) if len(rows) else {}
+
+            row = _cached_candidate_metric(
+                (
+                    id(store),
+                    "cluster_separability",
+                    reduction_ref,
+                    cluster_ref,
+                    _RANDOM_SEED,
+                ),
+                separability_values,
             )
-            table = separability.clustering_scores
-            rows = table.loc[table["clustering"] == cluster_column]
-            if len(rows):
-                row = rows.iloc[0]
+            if row:
                 for field_name, column_name, evidence_name in (
                     ("pcaSilhouette", "silhouette_score", "pcaSilhouette"),
                     ("macroF1", "macro_f1_mean", "macroF1"),
@@ -411,10 +488,20 @@ def _collect_parameter_candidate_metrics(
     for column in deps.batchColumns:
         try:
             score = float(
-                store.metric_proportional_batch_mixing(
-                    column,
-                    neighbors_ref,
-                    perplexity=perplexity,
+                _cached_candidate_metric(
+                    (
+                        id(store),
+                        "batch_mixing",
+                        neighbors_ref,
+                        column,
+                        _metric_metadata_key(store, column),
+                        perplexity,
+                    ),
+                    lambda: store.metric_proportional_batch_mixing(
+                        column,
+                        neighbors_ref,
+                        perplexity=perplexity,
+                    ),
                 )
             )
             if np.isfinite(score):
@@ -427,11 +514,22 @@ def _collect_parameter_candidate_metrics(
         scores: dict[str, float] = {}
         try:
             clisi = float(
-                store.metric_clisi(
-                    column,
-                    neighbors_ref,
-                    perplexity=None,
-                    scale=True,
+                _cached_candidate_metric(
+                    (
+                        id(store),
+                        "clisi",
+                        neighbors_ref,
+                        column,
+                        _metric_metadata_key(store, column),
+                        None,
+                        True,
+                    ),
+                    lambda: store.metric_clisi(
+                        column,
+                        neighbors_ref,
+                        perplexity=None,
+                        scale=True,
+                    ),
                 )
             )
             if np.isfinite(clisi):
@@ -441,9 +539,18 @@ def _collect_parameter_candidate_metrics(
             warnings.append(f"cLISI for {column!r} unavailable: {exc}")
         try:
             connectivity = float(
-                store.metric_graph_connectivity(
-                    column,
-                    graph_ref,
+                _cached_candidate_metric(
+                    (
+                        id(store),
+                        "protected_connectivity",
+                        graph_ref,
+                        column,
+                        _metric_metadata_key(store, column),
+                    ),
+                    lambda: store.metric_graph_connectivity(
+                        column,
+                        graph_ref,
+                    ),
                 )
             )
             if np.isfinite(connectivity):

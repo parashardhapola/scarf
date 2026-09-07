@@ -1,4 +1,4 @@
-"""Ingest, enrichment, HTO, and experimental-context workflow stages."""
+"""Ingest, RNA enrichment, quality metrics, and experimental-context stages."""
 
 import re
 from collections.abc import Mapping, Sequence
@@ -36,6 +36,11 @@ from .models import (
     WorkflowStageAttempt,
     WorkflowStageLink,
     artifact_model_to_ref,
+)
+from .rna import (
+    selected_store_rna_assay,
+    validate_rna_context,
+    validate_rna_directions,
 )
 
 
@@ -196,6 +201,7 @@ class ContextStagesMixin:
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, DataEnrichmentReport]:
+        selected = selected_store_rna_assay(store, request_record.request)
         prefix = journal._ensure_orchestration_store(store)
         existing = journal._validated_done_outcome(
             store,
@@ -210,9 +216,18 @@ class ContextStagesMixin:
                 f"Workflow {workflow.workflowRunId}: reusing Data Enrichment report"
             )
             report = journal.load_stage_report(store, existing, DataEnrichmentReport)
-            return existing, cast(DataEnrichmentReport, report)
+            report = cast(DataEnrichmentReport, report)
+            if (
+                len(report.policies) != 1
+                or report.policies[0].assay != selected
+                or report.policies[0].assayModality != "RNA"
+            ):
+                raise ValueError(
+                    "Saved enrichment includes unsupported assays; start a new RNA workflow."
+                )
+            return existing, report
         request = request_record.request
-        selected_assays = request.analysisAssays or list(store.assay_names)
+        selected_assays = [selected]
         logger.info(
             f"Workflow {workflow.workflowRunId}: Data Enrichment will inspect "
             f"{len(selected_assays)} assay(s)"
@@ -401,6 +416,15 @@ class ContextStagesMixin:
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> WorkflowStageAttempt:
+        selected = selected_store_rna_assay(store, request_record.request)
+        if (
+            len(enrichment.policies) != 1
+            or enrichment.policies[0].assay != selected
+            or enrichment.policies[0].assayModality != "RNA"
+        ):
+            raise ValueError(
+                "Quality metrics require enrichment of only the selected RNA assay"
+            )
         prefix = journal._ensure_orchestration_store(store)
         existing = journal._validated_done_outcome(
             store,
@@ -416,24 +440,21 @@ class ContextStagesMixin:
                 "qualityMetricArtifacts",
                 "quality_metric",
             )
-            self._named_stage_artifacts(
+            hto_sources = self._named_stage_artifacts(
                 existing,
                 "htoIdentityArtifacts",
                 "hto_identity",
             )
+            if hto_sources:
+                raise ValueError(
+                    "Saved automatic HTO processing is unsupported; start a new RNA workflow."
+                )
             logger.info(
-                f"Workflow {workflow.workflowRunId}: reusing HTO demultiplexing stage"
+                f"Workflow {workflow.workflowRunId}: reusing RNA quality metrics"
             )
             return existing
         cell_selection_ref = artifact_model_to_ref(cell_selection)
-        eligible_hto = sum(
-            policy.assayModality == "HTO" and policy.demultiplexEligible
-            for policy in enrichment.policies
-        )
-        logger.info(
-            f"Workflow {workflow.workflowRunId}: HTO stage found "
-            f"{eligible_hto} eligible assay(s)"
-        )
+        logger.info(f"Workflow {workflow.workflowRunId}: computing RNA quality metrics")
         started = journal._start_attempt(
             store.zw,
             prefix,
@@ -556,39 +577,6 @@ class ContextStagesMixin:
                             }
                         )
                         actions.append(f"compute_{action_suffix}:{policy.assay}")
-                if policy.assayModality != "HTO" or not policy.demultiplexEligible:
-                    continue
-                identity_ref = store.run_hto_demultiplexing(
-                    cell_selection_ref,
-                    from_assay=policy.assay,
-                    random_seed=0,
-                    invalidate_cache=False,
-                )
-                identity_model = ArtifactReferenceModel.from_artifact_ref(identity_ref)
-                artifact_name = f"{policy.assay}_htoIdentity"
-                if artifact_name in artifacts:
-                    raise ValueError(
-                        f"Duplicate generated artifact name {artifact_name!r}"
-                    )
-                source = NamedArtifactSource(
-                    name=artifact_name,
-                    artifact=identity_model,
-                )
-                artifacts[artifact_name] = identity_model
-                cast(list[dict[str, Any]], outputs["htoIdentityArtifacts"]).append(
-                    source.model_dump(mode="json")
-                )
-                cast(list[dict[str, Any]], outputs["operations"]).append(
-                    {
-                        "operation": "run_hto_demultiplexing",
-                        "assay": policy.assay,
-                        "cellSelection": cell_selection.model_dump(mode="json"),
-                        "randomSeed": 0,
-                        "invalidateCache": False,
-                        "artifact": identity_model.model_dump(mode="json"),
-                    }
-                )
-                actions.append(f"demultiplex_hto:{policy.assay}")
             outcome = journal._complete_attempt(
                 started,
                 status="done",
@@ -598,9 +586,7 @@ class ContextStagesMixin:
             )
             journal._save_outcome(store.zw, prefix, outcome)
             logger.info(
-                f"Workflow {workflow.workflowRunId}: HTO stage produced "
-                f"{len(cast(list[dict[str, Any]], outputs['htoIdentityArtifacts']))} "
-                "identity artifact(s)"
+                f"Workflow {workflow.workflowRunId}: RNA quality metrics completed"
             )
             return outcome
         except Exception as exc:
@@ -629,6 +615,11 @@ class ContextStagesMixin:
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, ExperimentalContextResult]:
+        selected = selected_store_rna_assay(store, request_record.request)
+        if hto_identity_artifacts:
+            raise ValueError(
+                "Automatic HTO identities are unsupported by the RNA workflow"
+            )
         prefix = journal._ensure_orchestration_store(store)
         context_artifacts = self._experimental_context_artifacts(
             cell_selection,
@@ -652,6 +643,7 @@ class ContextStagesMixin:
                 store, existing, ExperimentalContextResult
             )
             resolved_report = cast(ExperimentalContextResult, report)
+            validate_rna_context(resolved_report, selected)
             if existing.artifacts != context_artifacts:
                 raise ValueError(
                     "Persisted Experimental Context stage artifacts are stale"
@@ -694,6 +686,7 @@ class ContextStagesMixin:
             directions.update(dict(supplied_directions))
         elif isinstance(supplied_directions, str) and supplied_directions.strip():
             directions["callerAnswer"] = supplied_directions.strip()
+        validate_rna_directions(directions)
         if request_record.request.authorLabelPolicy == "holdout":
             held_out_columns = sorted(
                 column
@@ -910,6 +903,7 @@ class ContextStagesMixin:
                     )
                     report = agent.run(
                         store,
+                        qc_assay=selected,
                         study_context=request_record.request.studyContext,
                         study_objective=request_record.request.studyObjective,
                         cell_selection=cell_selection_ref,
@@ -953,6 +947,8 @@ class ContextStagesMixin:
                 raise ValueError(
                     "Experimental Context returned a different cell selection"
                 )
+            if report.status == "done":
+                validate_rna_context(report, selected)
             if report.qualityMetricArtifacts != list(quality_metric_artifacts):
                 raise ValueError(
                     "Experimental Context returned different quality metric artifacts"

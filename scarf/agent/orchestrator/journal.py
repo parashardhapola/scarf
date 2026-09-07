@@ -224,7 +224,14 @@ def _read_model(
     try:
         return model_type.model_validate_json(raw)
     except ValueError as exc:
-        raise ValueError(f"Malformed orchestration record {key!r}") from exc
+        hint = (
+            "; recreate the request with the current AutomatedWorkflowConfig "
+            "and start a new workflow. Older saved request/config shapes are "
+            "unsupported and are not migrated"
+            if model_type is OrchestrationRequestRecord
+            else ""
+        )
+        raise ValueError(f"Malformed orchestration record {key!r}{hint}") from exc
 
 
 def _write_model_once(group: zarr.Group, key: str, value: AgentDataModel) -> None:
@@ -345,10 +352,9 @@ def _save_outcome(
         f"artifacts={len(outcome.artifacts)}, actions={len(outcome.actions)}"
     )
     if outcome.status == "failed":
-        error_kind = (outcome.error or "unknown error").partition(":")[0]
         logger.error(
-            f"Workflow {outcome.workflowRunId}: stage={outcome.stage!r} "
-            f"failed ({error_kind}; {details}; {elapsed_seconds:.1f}s)"
+            f"Stage {outcome.stage!r} failed: "
+            f"{outcome.error or 'unknown error'} ({elapsed_seconds:.1f}s)"
         )
     elif outcome.status == "needsInput":
         question_count = (
@@ -369,6 +375,23 @@ def _save_outcome(
             f"Workflow {outcome.workflowRunId}: completed stage={outcome.stage!r} "
             f"({details}; {elapsed_seconds:.1f}s)"
         )
+    if (
+        outcome.status == "done"
+        and "reuse_baseline_preprocessing" not in outcome.actions
+    ):
+        assays = outcome.outputs.get("assays")
+        if isinstance(assays, list):
+            count = sum(
+                len(assay.get("featureCandidateEvaluations", []))
+                for assay in assays
+                if isinstance(assay, Mapping)
+            )
+            logger.info(f"HVG comparison: {count} actual candidate evaluations.")
+        if "candidateCount" in outcome.outputs:
+            logger.info(
+                "Parameter tuning: "
+                f"{outcome.outputs['candidateCount']} actual candidate evaluations."
+            )
 
 
 def _stage_outcomes(

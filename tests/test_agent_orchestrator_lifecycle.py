@@ -399,7 +399,7 @@ def test_resume_does_not_mutate_constructor_configuration(
 ) -> None:
     orchestrator, paused, path = _start_paused_workflow(tmp_path, monkeypatch)
     assert paused.workflowRun is not None
-    constructor_config = AutomatedWorkflowConfig(primaryInitialCandidates=2)
+    constructor_config = AutomatedWorkflowConfig(maxCandidateEvaluations=25)
     orchestrator.config = constructor_config
 
     completed = orchestrator.resume(

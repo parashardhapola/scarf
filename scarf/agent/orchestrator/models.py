@@ -1,8 +1,11 @@
 """Public data models for resumable automated agent workflows."""
 
 import hashlib
+import math
 import re
-from typing import Any, Literal
+from collections.abc import Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -15,6 +18,12 @@ from ..experimental_context.study import AuthorLabelPolicy, StudyContract
 from ..ingest.manifest import DatasetManifest
 from ..persistence.contracts import AgentReportReference, AgentWorkflowRun
 from ..types import AgentDataModel, ArtifactReferenceModel
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from ...datastore.datastore import DataStore
+    from ...plotting._figure import PlotResult
 
 type AutomatedWorkflowStatus = Literal[
     "completed",
@@ -418,16 +427,12 @@ class AutomatedWorkflowConfig(AgentDataModel):
         default="pause",
         exclude_if=lambda value: value == "pause",
     )
-    primaryInitialCandidates: int = Field(default=11, ge=1)
-    secondaryInitialCandidates: int = Field(default=3, ge=1)
     maxRefinedCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
     maxHarmonyCandidatesPerAssay: int = Field(default=1, ge=0, le=1)
     runConfoundedHarmonyDiagnostic: bool = False
-    integrationResolutionCandidates: int = Field(default=3, ge=1)
-    maxCandidateBranches: int = Field(default=24, ge=1)
+    maxCandidateEvaluations: int = Field(default=50, ge=1)
     minClusterCells: int = Field(default=20, ge=1)
     maxIdentityFeatures: int = Field(default=64, ge=2)
-    maxGraphAssays: int = Field(default=3, ge=1)
     hvgCandidateCounts: tuple[int, ...] = (1000, 2000, 4000)
     pcaCandidateDimensions: tuple[int, ...] = (10, 20, 30, 50)
     graphNeighborCandidates: tuple[int, ...] = (11, 21, 41)
@@ -439,39 +444,65 @@ class AutomatedWorkflowConfig(AgentDataModel):
         1.25,
         1.5,
     )
-    leidenSeeds: tuple[int, ...] = (0, 1, 2)
-    clusterSubsamples: int = Field(default=2, ge=0, le=5)
-    clusterSubsampleFraction: float = Field(default=0.8, gt=0.0, lt=1.0)
     maxRevisions: int = Field(default=2, ge=0, le=2)
     allowDownloads: bool = False
     cacheDir: str | None = None
     agentRunConfig: AgentRunConfig = Field(default_factory=AgentRunConfig)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_obsolete_configuration(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            obsolete = sorted(
+                set(value)
+                & {
+                    "primaryInitialCandidates",
+                    "secondaryInitialCandidates",
+                    "integrationResolutionCandidates",
+                    "maxCandidateBranches",
+                    "maxGraphAssays",
+                    "leidenSeeds",
+                    "clusterSubsamples",
+                    "clusterSubsampleFraction",
+                }
+            )
+            if obsolete:
+                raise ValueError(
+                    "Unsupported legacy workflow configuration fields: "
+                    + ", ".join(obsolete)
+                    + ". Create a new single-RNA workflow configuration with "
+                    "explicit candidate lists and maxCandidateEvaluations. "
+                    "Saved workflows using these fields cannot be resumed or "
+                    "regenerated with this release; their analysis artifacts "
+                    "remain available through Scarf's artifact APIs."
+                )
+        return value
+
     @model_validator(mode="after")
     def validate_candidate_registry(self) -> "AutomatedWorkflowConfig":
-        integer_fields = (
-            "hvgCandidateCounts",
-            "pcaCandidateDimensions",
-            "graphNeighborCandidates",
-        )
-        for field_name in integer_fields:
+        integer_minimums = {
+            "hvgCandidateCounts": 3,
+            "pcaCandidateDimensions": 2,
+            "graphNeighborCandidates": 2,
+        }
+        for field_name, minimum in integer_minimums.items():
             values = getattr(self, field_name)
-            if not values or any(value < 1 for value in values):
-                raise ValueError(f"{field_name} must contain positive integers")
+            if not values or any(value < minimum for value in values):
+                raise ValueError(
+                    f"{field_name} must contain integers of at least {minimum}"
+                )
             if len(values) != len(set(values)) or tuple(sorted(values)) != values:
                 raise ValueError(f"{field_name} must be sorted and unique")
         resolutions = self.leidenResolutionCandidates
         if (
             not resolutions
-            or any(value <= 0 for value in resolutions)
+            or any(not math.isfinite(value) or value <= 0 for value in resolutions)
             or len(resolutions) != len(set(resolutions))
             or tuple(sorted(resolutions)) != resolutions
         ):
             raise ValueError(
-                "leidenResolutionCandidates must be positive, sorted, and unique"
+                "leidenResolutionCandidates must be finite, positive, sorted, and unique"
             )
-        if not self.leidenSeeds or len(self.leidenSeeds) != len(set(self.leidenSeeds)):
-            raise ValueError("leidenSeeds must be non-empty and unique")
         return self
 
     @classmethod
@@ -509,10 +540,9 @@ class AutomatedWorkflowRequest(AgentDataModel):
             raise ValueError("studyObjective must be non-empty")
         if len(set(self.analysisAssays)) != len(self.analysisAssays):
             raise ValueError("analysisAssays must be unique")
-        if len(set(self.pairedAssays)) != len(self.pairedAssays):
-            raise ValueError("pairedAssays must be unique")
-        if self.pairedAssays and len(self.pairedAssays) < 2:
-            raise ValueError("pairedAssays must contain at least two assays")
+        from .rna import validate_rna_request_fields
+
+        validate_rna_request_fields(self)
         return self
 
     @classmethod
@@ -584,6 +614,99 @@ class AutomatedWorkflowResult(AgentDataModel):
     needsInput: WorkflowNeedsInput | None = None
     notes: list[str] = Field(default_factory=list)
     contentSha256: str = ""
+
+    def _completed_analysis(self) -> FinalAnalysisHandoff:
+        if self.status != "completed":
+            detail = "; ".join(self.notes)
+            raise RuntimeError(
+                f"Analysis did not complete: {self.status} at {self.currentStage}"
+                + (f" ({detail})" if detail else "")
+            )
+        if self.finalAnalysis is None or self.workflowRun is None or not self.zarrPath:
+            raise RuntimeError(
+                "Completed analysis is missing its store or final handoff"
+            )
+        return self.finalAnalysis
+
+    def _analysis_store(self) -> "DataStore":
+        from ...datastore.datastore import DataStore
+
+        final = self._completed_analysis()
+        assert self.workflowRun is not None and self.zarrPath is not None
+        return DataStore(
+            self.zarrPath,
+            default_assay=final.primaryAssay,
+            min_features_per_cell=-1,
+            mito_pattern="",
+            ribo_pattern="",
+            zarr_mode="r",
+            workspace=self.workflowRun.workspace,
+        )
+
+    def plot_embedding(self, **kwargs: Any) -> "PlotResult":
+        """Plot the final UMAP, colored by the selected clusters by default.
+
+        Display options are forwarded to ``DataStore.plots.embedding``. The
+        persisted layout is fixed; no new embedding is computed.
+        """
+        final = self._completed_analysis()
+        if final.umap is None or final.clusters is None:
+            raise RuntimeError("Completed analysis is missing its UMAP or clusters")
+        if "layout" in kwargs or "run" in kwargs:
+            raise ValueError("plot_embedding uses the completed analysis layout")
+        kwargs.setdefault("color_by", artifact_model_to_ref(final.clusters))
+        return self._analysis_store().plots.embedding(
+            layout=artifact_model_to_ref(final.umap),
+            **kwargs,
+        )
+
+    def get_markers(
+        self,
+        *,
+        group_id: str | int | None = None,
+        min_score: float = 0.25,
+        min_frac_exp: float = 0.2,
+    ) -> "pd.DataFrame":
+        """Read the final marker table with Scarf's standard marker filters."""
+        final = self._completed_analysis()
+        if final.markers is None:
+            raise RuntimeError("Completed analysis is missing its marker table")
+        return self._analysis_store().get_markers(
+            marker=artifact_model_to_ref(final.markers),
+            group_id=group_id,
+            min_score=min_score,
+            min_frac_exp=min_frac_exp,
+        )
+
+    def report(self) -> Path:
+        """Return the local HTML report, generating it if it is missing."""
+        from ..report.artifacts import _local_root
+        from ..report.generator import generate_agent_report
+
+        self._completed_analysis()
+        assert self.workflowRun is not None and self.zarrPath is not None
+        root = _local_root(self.zarrPath)
+        workspace = self.workflowRun.workspace
+        active_root = root if workspace is None else (root / workspace).resolve()
+        if not active_root.is_relative_to(root):
+            raise ValueError("Workflow workspace resolves outside the analysis store")
+        report_path = (
+            active_root
+            / "agents"
+            / "runs"
+            / self.workflowRun.workflowRunId
+            / "report"
+            / "index.html"
+        ).resolve()
+        if not report_path.is_relative_to(active_root):
+            raise ValueError("Agent report path resolves outside the analysis store")
+        if report_path.is_file():
+            return report_path
+        return generate_agent_report(
+            self.zarrPath,
+            self.workflowRun.workflowRunId,
+            workspace=workspace,
+        )
 
     @model_validator(mode="after")
     def validate_terminal_handoff(self) -> "AutomatedWorkflowResult":

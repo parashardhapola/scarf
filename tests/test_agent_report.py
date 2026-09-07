@@ -652,9 +652,8 @@ def test_public_report_generates_branded_readable_html_and_relative_plots(
     immutable_record.write_bytes(b'{"immutable":true}\n')
 
     report_path = generate_agent_report(root, "report-workflow")
-    analysis_path = report_path.with_name("analysis.html")
+    analysis_path = report_path
     technical_path = report_path.with_name("technical.html")
-    landing_markup = report_path.read_text(encoding="utf-8")
     analysis_markup = analysis_path.read_text(encoding="utf-8")
     technical_markup = technical_path.read_text(encoding="utf-8")
 
@@ -663,18 +662,14 @@ def test_public_report_generates_branded_readable_html_and_relative_plots(
     assert analysis_path.is_file()
     assert technical_path.is_file()
     assert immutable_record.read_bytes() == b'{"immutable":true}\n'
-    for markup in (landing_markup, analysis_markup, technical_markup):
+    for markup in (analysis_markup, technical_markup):
         assert 'href="index.html"' in markup
-        assert 'href="analysis.html"' in markup
+        assert 'href="analysis.html"' not in markup
         assert 'href="technical.html"' in markup
         assert 'href="https://www.nygen.io/"' in markup
         assert ">Nygen Analytics</a>" in markup
-    assert 'href="https://www.nygen.io/products/scarfweb"' in landing_markup
-    assert (
-        "Distributed, secure infrastructure for intuitive secondary analysis, "
-        "browser-native."
-    ) in landing_markup
-    assert "Choose the level of detail" in landing_markup
+    assert "Choose the level of detail" not in analysis_markup
+    assert not report_path.with_name("analysis.html").exists()
 
     assert "Analysis decision tree" in analysis_markup
     assert '<div class="decision-tree"' in analysis_markup
@@ -894,13 +889,37 @@ def test_report_uses_workspace_path_and_can_be_regenerated(
     second = generate_agent_report(root, "report-workflow", workspace="analysis")
 
     assert second == first
-    second_landing = second.read_text(encoding="utf-8")
-    second_analysis = second.with_name("analysis.html").read_text(encoding="utf-8")
+    second_analysis = second.read_text(encoding="utf-8")
+    assert not second.with_name("analysis.html").exists()
     second_technical = second.with_name("technical.html").read_text(encoding="utf-8")
-    assert "Choose the level of detail" in second_landing
+    assert "Choose the level of detail" not in second_analysis
     assert "Analysis decision tree" in second_analysis
     assert "Regenerated context" in second_technical
     assert second_technical != first_technical
+
+
+def test_filtering_report_explains_removed_cells_using_the_recorded_rationale() -> None:
+    experimental = {
+        "qcProfiles": [
+            {
+                "profileId": "selected-qc",
+                "registeredProfile": "globalMad5",
+                "activeCells": 100,
+                "retainedCells": 90,
+            }
+        ]
+    }
+    plan = {
+        "cellQc": {
+            "profileId": "selected-qc",
+            "rationale": "Remove low-quality cells while retaining the study groups.",
+        }
+    }
+    markup = report_rendering._render_filtering_evidence(experimental, plan)
+    assert "90 of 100" in markup
+    assert "Removed: 10" in markup
+    assert plan["cellQc"]["rationale"] in markup
+    assert "Preserved every reviewed cell" not in markup
 
 
 def test_report_remains_available_when_optional_plots_fail(
@@ -914,7 +933,7 @@ def test_report_remains_available_when_optional_plots_fail(
     )
 
     report_path = generate_agent_report(root, "report-workflow")
-    analysis_markup = report_path.with_name("analysis.html").read_text(encoding="utf-8")
+    analysis_markup = report_path.read_text(encoding="utf-8")
     technical_markup = report_path.with_name("technical.html").read_text(
         encoding="utf-8"
     )

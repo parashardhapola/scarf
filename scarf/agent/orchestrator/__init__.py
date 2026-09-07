@@ -1,6 +1,7 @@
 """Public facade for automated Scarf agent orchestration."""
 
 from .main import AgentOrchestrator
+from .api import analyze_rna
 from .models import (
     AssayPreprocessingPlan,
     AutomatedPreprocessingPlan,
@@ -20,6 +21,7 @@ from .models import (
 
 __all__ = [
     "AgentOrchestrator",
+    "analyze_rna",
     "AssayPreprocessingPlan",
     "AutomatedPreprocessingPlan",
     "AutomatedWorkflowConfig",

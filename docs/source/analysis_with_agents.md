@@ -103,9 +103,12 @@ unit of inference.
 
 ### When to use the automated agent workflow
 
-Use `AgentOrchestrator` when the input is a supported dataset path and the caller can supply one
-study-context paragraph and one study objective. The orchestrator owns a fixed stage order: ingest,
-Data Enrichment, optional HTO demultiplexing, Experimental Context, preprocessing planning and
+Use `analyze_rna` when the input is a supported dataset path and the caller can supply one
+study-context paragraph and one study objective. The automated workflow supports one RNA assay;
+other modalities may coexist in the store but are not analyzed. Automated multimodal integration
+and hypothesis testing are deferred. Use the ordinary Scarf APIs for those analyses.
+The orchestrator owns a fixed stage order: ingest,
+Data Enrichment, Experimental Context, preprocessing planning and
 execution, Parameter Tuning, feature-policy review with optional revised preprocessing and tuning,
 analysis review, and analysis finalization. The model does not write exploratory code or choose
 arbitrary `DataStore` calls. It selects only validated policies and candidate identifiers from
@@ -116,35 +119,42 @@ references.
 and marker artifacts. It is not an automatic stage of `AgentOrchestrator`.
 
 ```python
-from scarf.agent import (
-    AgentOrchestrator,
-    AutomatedWorkflowConfig,
-    AutomatedWorkflowRequest,
-)
+from scarf.agent import analyze_rna
 
-orchestrator = AgentOrchestrator(
-    model,
-    config=AutomatedWorkflowConfig(
-        inputPolicy="unattended",
-        runConfoundedHarmonyDiagnostic=True,
-    ),
+result = analyze_rna(
+    "study.h5ad",
+    zarr_path="study.zarr",
+    model=model,
+    study_context="One paragraph describing the study and analysis intent.",
+    study_objective="Discover stable populations relevant to the study.",
+    max_candidates=50,
 )
-result = orchestrator.run(
-    AutomatedWorkflowRequest(
-        sourcePath="study.h5ad",
-        zarrPath="study.zarr",
-        studyContext="One paragraph describing the study and analysis intent.",
-        studyObjective="Discover stable populations relevant to the study.",
-    )
-)
+if result.status != "completed":
+    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
+
+result.plot_embedding()
+markers = result.get_markers()
+report_path = result.report()
 ```
+
+Pass `assay` when the store has multiple RNA assays. The result helpers reopen the saved
+workspace read-only and use exact final artifacts. `report()` returns the existing local HTML
+path or generates the missing view, without opening a browser.
 
 The parameter screen uses granular public operations for each authorized branch rather than
 invoking `ds.pipeline.run()` for every candidate. This keeps normalization, reduction, neighbours,
 graph, clustering, metrics, promotion, UMAP, and marker artifacts explicit and enforces their order
 through lineage. `ds.pipeline.run()` remains the fixed baseline recipe described below.
 
-`studyObjective` is required. `inputPolicy="pause"` permits a running workflow to return
+`analyze_rna` runs unattended; its `study_objective` is required. `max_candidates` limits reserved
+candidate slots across the workflow. Before screening, each pass reserves every configured
+alternative, including conditional candidates that may not execute. Defaults reserve 25 slots
+for the baseline and another 25 if a feature-policy revision runs; the default limit of 50 admits
+both passes. A smaller limit never shrinks the candidate lists. A pass larger than the remaining
+budget fails before screening. This controls admission, not actual execution counts, elapsed time,
+QC diagnostics, or provider usage. Use `AgentOrchestrator` with
+`AutomatedWorkflowConfig` for explicit candidate lists, workspaces, and provider limits.
+Its `inputPolicy="pause"` permits a running workflow to return
 `needsInput`; resume only that exact workflow with `AutomatedWorkflowResumeRequest` and its
 persisted question identifiers. `inputPolicy="unattended"` resolves bounded model deferrals through
 registered policy and turns genuinely unresolved evidence into an explicit abstention or failure
@@ -158,6 +168,12 @@ test configurations. The short notebook creates a deterministic library-stratifi
 the source data and labels its result as a smoke test. A completed local workflow persists its
 terminal result and then creates a replaceable HTML report. `generate_agent_report()` can
 regenerate that derived view without training new analysis artifacts.
+
+Configuration compatibility is explicit: `maxCandidateEvaluations` replaces
+`maxCandidateBranches`, and obsolete initial-candidate, integration, assay-count, and stability
+controls are rejected. Saved workflows with the old configuration shape cannot resume or
+regenerate reports in this release. Create a new workflow with explicit candidate lists; saved
+analysis artifacts remain readable through ordinary Scarf artifact APIs. No records are migrated.
 
 ### When to use the pipeline
 

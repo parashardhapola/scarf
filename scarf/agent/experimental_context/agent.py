@@ -137,6 +137,7 @@ class ExperimentalContextAgent:
         connectivity_map: ArtifactRef | None = None,
         quality_metric_artifacts: Sequence[NamedArtifactSource] = (),
         hto_identity_artifacts: Sequence[NamedArtifactSource] = (),
+        qc_assay: str | None = None,
     ) -> ExperimentalContextResult:
         """Inspect one datastore and return a validated experimental-context report."""
         study_context = (study_context or "").strip()
@@ -196,7 +197,7 @@ class ExperimentalContextAgent:
         quality_sources = _derive_missing_percentage_artifacts(
             store,
             cell_selection=cell_selection,
-            driver=_qc_driver(store),
+            driver=_qc_driver(store, qc_assay),
             quality_sources=quality_metric_artifacts,
         )
         hto_sources = list(hto_identity_artifacts)
@@ -235,6 +236,7 @@ class ExperimentalContextAgent:
         )
         deps = ExperimentalContextDependencies(
             store=store,
+            qcAssay=qc_assay,
             cells=_SelectionBoundCells(
                 store.zw,
                 store.cells,

@@ -1,5 +1,5 @@
 ---
-description: Run Scarf's resumable automated agent orchestrator on a 5K PBMC dataset.
+description: Choose, explain, and execute RNA analysis settings with Scarf agents.
 jupytext:
   cell_metadata_filter: tags
   text_representation:
@@ -15,12 +15,48 @@ kernelspec:
 
 (agent_workflow)=
 
-# Run the automated agent workflow
+# Choose and explain RNA analysis settings
 
-This tutorial sends a 10x H5 dataset, one study-context paragraph, and one study objective to
-`AgentOrchestrator`. The orchestrator owns the exact operation order, persists every handoff, and
-returns exact final artifact references. Its agents select from executor-authorized operations and
-parameters. They do not write exploratory code.
+Scarf computes evidence about your data, the agent chooses between bounded alternatives, and
+Scarf executes the selected settings. Start with a dataset, study context, and a configured
+Pydantic AI model:
+
+```python
+from scarf.agent import analyze_rna
+
+result = analyze_rna(
+    "study.h5ad",
+    zarr_path="study.zarr",
+    model=model,
+    study_context="Human blood from one healthy donor, with no treatment comparison.",
+    study_objective="Identify stable major immune-cell populations.",
+    max_candidates=50,
+)
+if result.status != "completed":
+    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
+
+result.plot_embedding()
+markers = result.get_markers()
+report_path = result.report()
+```
+
+This release analyzes one RNA assay. Stores may contain other modalities; pass `assay="counts"`
+when more than one RNA assay is available. Automated multimodal integration and hypothesis testing
+are outside this workflow. Markers are descriptive evidence. The optional agent dependency is
+installed with `uv pip install "scarf[agent]"`.
+
+`max_candidates` limits reserved candidate slots across the initial analysis and any feature-policy
+revision. Each pass reserves all configured alternatives before screening, including conditional
+candidates that may not execute. The defaults reserve 25 slots for the baseline and another 25
+if a feature-policy revision runs. The default limit of 50 admits both passes; a smaller limit
+never shrinks the candidate lists. An insufficient remaining budget stops admission of that pass.
+The limit does not count actual executions or bound runtime or provider tokens. The result
+methods use the completed analysis directly and reopen its store read-only; they do not retrain
+UMAP or copy results into live metadata. `report()` returns a local path without opening a browser.
+
+The executable example below uses the advanced `AgentOrchestrator` interface to keep a teaching
+run small and reproducible. That interface also supports explicit candidate lists, workspaces,
+provider limits, and resumable checkpoints.
 
 Repository developers can also run `notebook/agent_workflow_new.ipynb` on the full abdominal
 adipose cohort or `notebook/agent_workflow_new_short.ipynb` on its reproducible 2,000-cell smoke
@@ -30,10 +66,9 @@ sample. Both use unattended input policy and keep runtime files beside the noteb
 flowchart LR
     A[Input dataset and study context] --> B[Ingest]
     B --> C[Data Enrichment]
-    C --> D[HTO demultiplexing when present]
-    D --> E[Experimental Context]
+    C --> E[Experimental Context]
     E --> F[Preprocessing plan]
-    F --> G[Modality preprocessing]
+    F --> G[RNA preprocessing]
     G --> H[Parameter Tuning]
     H --> I[Feature-policy review]
     I --> J[Optional revised preprocessing and tuning]
@@ -54,7 +89,7 @@ Install the optional agent dependencies before running this workflow outside the
 environment:
 
 ```console
-pip install "scarf[agent]"
+uv pip install "scarf[agent]"
 ```
 
 The documentation run converts a raw H5 file into a separate teaching store. The explicit
@@ -74,11 +109,9 @@ from scarf.agent import (
     AutomatedWorkflowConfig,
     AutomatedWorkflowRequest,
     DecisionSelection,
-    generate_agent_report,
     load_agent_report,
     load_agent_workflow,
 )
-from scarf.agent.orchestrator import artifact_model_to_ref
 
 scarf.configure_output(level="WARNING", progress=False)
 
@@ -424,23 +457,26 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, int]]:
 
 ```
 
-## 2. Configure one bounded teaching branch
+## 2. Configure a bounded teaching search
 
-The production defaults screen eleven candidates for the primary assay and may request one
-refinement. This documentation run uses one native RNA candidate, no refinement, and no Harmony.
-The smaller search exercises the same executor and persistence path while keeping the build
-bounded. Harmony would be eligible only if Experimental Context returned exact safe batch evidence.
+This run uses one HVG count and singleton PCA, neighbor, and clustering-resolution lists, with
+no refinement or Harmony. Each tuning pass still evaluates four stage candidates: PCA, the native
+correction baseline, neighbors, and clustering. Including the HVG screen and selection evaluations,
+the executor reserves seven evaluations per pass. The limit of fourteen permits a second pass
+after a feature-policy revision. This is a small sequential search. QC comparisons, stability
+diagnostics, provider requests, and finalization have separate costs.
 
 ```{code-cell} ipython3
 model, model_state = _scripted_workflow_model()
 config = AutomatedWorkflowConfig(
     inputPolicy="unattended",
-    primaryInitialCandidates=1,
-    secondaryInitialCandidates=1,
     maxRefinedCandidatesPerAssay=0,
     maxHarmonyCandidatesPerAssay=0,
-    integrationResolutionCandidates=1,
-    maxCandidateBranches=1,
+    maxCandidateEvaluations=14,
+    hvgCandidateCounts=(1000,),
+    pcaCandidateDimensions=(20,),
+    graphNeighborCandidates=(21,),
+    leidenResolutionCandidates=(1.0,),
     minClusterCells=2,
     agentRunConfig=AgentRunConfig(
         requestLimit=5,
@@ -460,7 +496,7 @@ request = AutomatedWorkflowRequest(
 )
 
 {
-    "initial_candidates": config.primaryInitialCandidates,
+    "candidate_evaluation_limit": config.maxCandidateEvaluations,
     "refinement_candidates": config.maxRefinedCandidatesPerAssay,
     "harmony_candidates": config.maxHarmonyCandidatesPerAssay,
     "input_policy": config.inputPolicy,
@@ -530,7 +566,7 @@ persisted_workflow = load_agent_workflow(
 ```
 
 The single scripted provider handles every model-driven orchestrator stage. Deterministic
-operations, such as HTO routing, preprocessing, candidate execution, promotion, UMAP, clustering,
+operations, such as RNA preprocessing, candidate execution, promotion, UMAP, clustering,
 marker search, and persistence, do not require separate model requests.
 
 ## 5. Review parameter evidence and agent reports
@@ -573,17 +609,16 @@ for assay, assay_report in parameter_report.assayReports.items():
 }
 ```
 
-This one-candidate teaching run demonstrates execution and selection, not a broad parameter search.
-The default configuration evaluates more initial candidates and may execute one evidence-driven
+This teaching run demonstrates the successive parameter decisions with one option per stage.
+The default configuration compares explicit HVG, PCA, neighbor, and resolution lists and may execute one evidence-driven
 refinement. Harmony is added only when the exact Experimental Context handoff authorizes a matched
 comparison.
 
 ## 6. Plot the exact final UMAP and inspect markers
 
-`FinalAnalysisHandoff` separates graph ownership from marker-assay ownership and contains the exact
-selection, graph, clusters, UMAP, and marker references that can be passed to Biological
-Interpretation. The plotting call consumes those references directly; no coordinates or labels are
-copied into live metadata columns.
+The result uses its final UMAP and cluster artifacts directly. Display options are forwarded to
+Scarf's plotting API. Exact artifact references remain available in `result.finalAnalysis` for
+advanced workflows and Biological Interpretation.
 
 ```{code-cell} ipython3
 final = result.finalAnalysis
@@ -595,24 +630,7 @@ if (
 ):
     raise RuntimeError("The completed final handoff is missing required artifacts")
 
-final_store = scarf.DataStore(
-    result.zarrPath,
-    default_assay=final.primaryAssay,
-    min_features_per_cell=-1,
-    mito_pattern="",
-    ribo_pattern="",
-    zarr_mode="r",
-    workspace=result.workflowRun.workspace,
-    nthreads=2,
-)
-cell_selection_ref = artifact_model_to_ref(final.cellSelection)
-cluster_ref = artifact_model_to_ref(final.clusters)
-umap_ref = artifact_model_to_ref(final.umap)
-marker_ref = artifact_model_to_ref(final.markers)
-
-final_store.plots.embedding(
-    layout=umap_ref,
-    color_by=cluster_ref,
+result.plot_embedding(
     legend_loc="on_data",
     frame="none",
 )
@@ -622,8 +640,7 @@ UMAP is a presentation artifact. The tuning agent compares graph and metadata me
 appearance, and the orchestrator does not train several UMAPs to choose the most attractive one.
 
 ```{code-cell} ipython3
-marker_table = final_store.get_markers(
-    marker=marker_ref,
+marker_table = result.get_markers(
     group_id=None,
     min_score=-1,
     min_frac_exp=-1,
@@ -639,19 +656,16 @@ marker_table.sort_values(
 Marker scores are cell-level descriptive evidence. They are not replicate-aware differential
 expression, and the scripted identities remain hypotheses.
 
-## 7. Open or regenerate the local HTML report
+## 7. Find the local HTML report
 
 A completed local workflow first persists its terminal result and then writes a replaceable HTML
-view under `agents/runs/<workflowRunId>/report/index.html`. Calling
-`generate_agent_report()` regenerates that view from the persisted workflow and existing analysis
-artifacts. It does not train another UMAP.
+view under `agents/runs/<workflowRunId>/report/index.html`. `result.report()` returns that path,
+generating the view from saved results if it is missing. It opens directly on the analysis and
+does not train another UMAP. Advanced callers can use `generate_agent_report()` to explicitly
+regenerate an existing view.
 
 ```{code-cell} ipython3
-report_path = generate_agent_report(
-    result.zarrPath,
-    result.workflowRun.workflowRunId,
-    workspace=result.workflowRun.workspace,
-)
+report_path = result.report()
 display_path = str(report_path.relative_to(Path(result.zarrPath).parent)).replace(
     result.workflowRun.workflowRunId,
     "<workflowRunId>",
@@ -661,10 +675,10 @@ display_path = str(report_path.relative_to(Path(result.zarrPath).parent)).replac
     "report": display_path,
     "exists": report_path.is_file(),
     "final_artifact_kinds": {
-        "selection": cell_selection_ref.kind,
-        "clusters": cluster_ref.kind,
-        "umap": umap_ref.kind,
-        "markers": marker_ref.kind,
+        "selection": final.cellSelection.kind,
+        "clusters": final.clusters.kind,
+        "umap": final.umap.kind,
+        "markers": final.markers.kind,
     },
 }
 ```
@@ -691,6 +705,8 @@ result = AgentOrchestrator(
     model,
     config=AutomatedWorkflowConfig(inputPolicy="unattended"),
 ).run(request)
+if result.status != "completed":
+    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
 ```
 
 For an existing Zarr input, omit `zarrPath` or set it to the same location. Its current `I`
@@ -736,6 +752,8 @@ result = orchestrator.run(
         ),
     )
 )
+if result.status != "completed":
+    raise RuntimeError(f"{result.status}: {'; '.join(result.notes)}")
 ```
 
 Provider output remains provisional. Scarf validates evidence identifiers, operations, artifact

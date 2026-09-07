@@ -37,6 +37,7 @@ from scarf.agent.experimental_context import (
     CovariateEvidence,
     ExperimentalContextDecision,
 )
+from scarf.agent.experimental_context.contracts import ContrastPlan
 from scarf.agent.parameter_tuning import ParameterTuningReport
 from scarf.agent.persistence import load_agent_record
 from scarf.agent.orchestrator import (
@@ -399,6 +400,7 @@ def test_orchestrator_package_preserves_the_public_facade() -> None:
     assert agent_module.AgentOrchestrator is orchestrator_module.AgentOrchestrator
     assert orchestrator_module.__all__ == [
         "AgentOrchestrator",
+        "analyze_rna",
         "AssayPreprocessingPlan",
         "AutomatedPreprocessingPlan",
         "AutomatedWorkflowConfig",
@@ -465,6 +467,12 @@ def test_rna_h5ad_completes_public_automated_workflow(
     model, state = _rna_workflow_model()
     phase_calls: list[str] = []
     execute_parameter_phase = tuning_module.execute_parameter_phase
+    pca_diagnostic_calls: list[ArtifactRef] = []
+    augment_pca = tuning_module.augment_pca_evaluations
+
+    def track_pca_diagnostics(*args: Any, **kwargs: Any) -> Any:
+        pca_diagnostic_calls.append(kwargs["feature_selection"])
+        return augment_pca(*args, **kwargs)
 
     def track_parameter_phase(*args: Any, **kwargs: Any) -> Any:
         phase_calls.append(kwargs["plan"].phase)
@@ -475,15 +483,17 @@ def test_rna_h5ad_completes_public_automated_workflow(
         "execute_parameter_phase",
         track_parameter_phase,
     )
+    monkeypatch.setattr(tuning_module, "augment_pca_evaluations", track_pca_diagnostics)
     orchestrator = AgentOrchestrator(
         model,
         config=AutomatedWorkflowConfig(
-            primaryInitialCandidates=1,
-            secondaryInitialCandidates=1,
+            hvgCandidateCounts=(1000,),
+            pcaCandidateDimensions=(10,),
+            graphNeighborCandidates=(11,),
+            leidenResolutionCandidates=(0.75,),
             maxRefinedCandidatesPerAssay=0,
             maxHarmonyCandidatesPerAssay=0,
-            integrationResolutionCandidates=1,
-            maxCandidateBranches=1,
+            maxCandidateEvaluations=14,
             minClusterCells=2,
         ),
     )
@@ -498,6 +508,23 @@ def test_rna_h5ad_completes_public_automated_workflow(
         primaryAssay="RNA",
         markerAssay="RNA",
         analysisAssays=["RNA"],
+    )
+    finalize_stage = orchestrator.analysis_finalization_stage
+
+    def finalize_with_unresolved_contrast(*args: Any, **kwargs: Any) -> Any:
+        kwargs["experimental"] = kwargs["experimental"].model_copy(
+            update={
+                "contrastPlans": [
+                    ContrastPlan.get_blank().model_copy(
+                        update={"coefficient": "condition", "status": "needsInput"}
+                    )
+                ]
+            }
+        )
+        return finalize_stage(*args, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator, "analysis_finalization_stage", finalize_with_unresolved_contrast
     )
     paused = orchestrator.run(request)
 
@@ -514,22 +541,38 @@ def test_rna_h5ad_completes_public_automated_workflow(
         option_id for option_id in question.options if option_id != "pcaPrefix:defer"
     )
     pca_calls_before_resume = phase_calls.count("pcaPrefix")
-    result = orchestrator.resume(
-        AutomatedWorkflowResumeRequest(
-            zarrPath=str(target),
-            workflowRunId=paused.workflowRun.workflowRunId,
-            answers={
-                question.questionId: {
-                    "decisionId": question.decisionId,
-                    "optionId": selected_option,
-                    "rationale": "Use the completed registered PCA evidence.",
-                }
-            },
-        )
+    pca_diagnostics_before_resume = list(pca_diagnostic_calls)
+    resume_request = AutomatedWorkflowResumeRequest(
+        zarrPath=str(target),
+        workflowRunId=paused.workflowRun.workflowRunId,
+        answers={
+            question.questionId: {
+                "decisionId": question.decisionId,
+                "optionId": selected_option,
+                "rationale": "Use the completed registered PCA evidence.",
+            }
+        },
     )
+    editable = DataStore(
+        str(target),
+        default_assay="RNA",
+        min_features_per_cell=-1,
+        mito_pattern="",
+        ribo_pattern="",
+    )
+    original_counts = editable.cells.fetch_all("RNA_nCounts")
+    changed_counts = original_counts.copy()
+    changed_counts[0] += 1
+    editable.cells.insert("RNA_nCounts", changed_counts, overwrite=True)
+    with pytest.raises(ValueError, match="Tuning metadata changed"):
+        orchestrator.resume(resume_request)
+    assert phase_calls.count("pcaPrefix") == pca_calls_before_resume
+    editable.cells.insert("RNA_nCounts", original_counts, overwrite=True)
+    result = orchestrator.resume(resume_request)
 
     assert result.status == "completed", result.notes
     assert phase_calls.count("pcaPrefix") == pca_calls_before_resume
+    assert pca_diagnostic_calls == pca_diagnostics_before_resume
     assert state["pca_prompts"] == 1
     assert result.currentStage == "analysis_finalization"
     assert result.workflowRun is not None
@@ -573,6 +616,10 @@ def test_rna_h5ad_completes_public_automated_workflow(
     assert final.embeddingInitialization is not None
     assert final.umap is not None
     assert final.markers is not None
+    assert final.statisticalTests == []
+    assert final.analysisEvidence["contrastPlans"][0]["status"] == "needsInput"
+    assert final.analysisEvidence["contrastPlans"][0]["coefficient"] == "condition"
+    assert "hypothesisTests" not in final.analysisEvidence
     assert len(final.doubletScores) == 1
     assert final.cellSelection.kind == "cell_selection"
     assert final.clusters.kind == "cluster_labels"

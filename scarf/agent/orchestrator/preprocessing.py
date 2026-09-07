@@ -61,7 +61,10 @@ from ..parameter_tuning.diagnostics import (
     augment_cluster_evaluations,
     augment_pca_evaluations,
 )
-from ..parameter_tuning.execution import execute_parameter_candidate
+from ..parameter_tuning.execution import (
+    candidate_metric_cache,
+    execute_parameter_candidate,
+)
 from ..parameter_tuning.hvg import (
     HvgRanking,
     compare_hvg_ranking_to_default,
@@ -70,6 +73,7 @@ from ..parameter_tuning.hvg import (
 from ..persistence.contracts import AgentWorkflowRun
 from ..types import ArtifactReferenceModel
 from . import journal
+from .budget import reserve_candidate_pass
 from .decisions import DecisionStagesMixin
 from .models import (
     AssayPreprocessingPlan,
@@ -77,13 +81,19 @@ from .models import (
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
     PreprocessedAssayHandoff,
-    ReductionMethod,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,
     WorkflowStageLink,
     WorkflowStageName,
     artifact_model_to_ref,
+)
+
+from .rna import (
+    selected_store_rna_assay,
+    validate_rna_context,
+    validate_rna_handoffs,
+    validate_rna_plan,
 )
 
 
@@ -606,6 +616,8 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, AutomatedPreprocessingPlan]:
+        selected = selected_store_rna_assay(store, request_record.request)
+        validate_rna_context(experimental, selected)
         prefix = journal._ensure_orchestration_store(store)
         existing = journal._validated_done_outcome(
             store,
@@ -619,9 +631,11 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             logger.info(
                 f"Workflow {workflow.workflowRunId}: reusing preprocessing plan"
             )
-            return existing, AutomatedPreprocessingPlan.model_validate(
+            cached_plan = AutomatedPreprocessingPlan.model_validate(
                 existing.outputs["preprocessingPlan"]
             )
+            validate_rna_plan(cached_plan, selected)
+            return existing, cached_plan
         if experimental.cellSelection is None:
             raise ValueError("Experimental Context lacks an exact cell selection")
         cell_qc_artifacts = self._cell_qc_candidate_artifacts(experimental.qcProfiles)
@@ -666,17 +680,7 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                 ingest_outcome,
                 cell_qc,
             )
-            graph_plans = [value for value in plan.assays if value.graphEligible]
-            if (
-                len(graph_plans) != 1
-                or graph_plans[0].assayType != "RNA"
-                or plan.pairedAssays
-                or plan.primaryAssay != graph_plans[0].assay
-                or plan.markerAssay != graph_plans[0].assay
-            ):
-                raise ValueError(
-                    "The automated decision workflow accepts one unpaired RNA assay"
-                )
+            validate_rna_plan(plan, selected)
             plan = plan.model_copy(update={"cellQualityPayload": cell_payload})
             feature_payload, feature_decision_snapshot = (
                 self._resolve_feature_policy_decision(
@@ -775,15 +779,21 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         ingest_outcome: WorkflowStageAttempt,
         cell_qc: CellQcPlan,
     ) -> AutomatedPreprocessingPlan:
+        del ingest_outcome
         request = request_record.request
         store_summary = store.summary()
-        summaries = {value.name: value for value in store_summary.assays}
-        policies = {value.assay: value for value in enrichment.policies}
-        inspections = {value.assay: value for value in enrichment.inspections}
-        selected_names = request.analysisAssays or list(store.assay_names)
-        assay_plans: list[AssayPreprocessingPlan] = []
-        graph_assays: list[str] = []
-        limitations: list[str] = list(enrichment.limitations)
+        selected = selected_store_rna_assay(store, request)
+        summary = next(
+            value for value in store_summary.assays if value.name == selected
+        )
+        policy = next(
+            (value for value in enrichment.policies if value.assay == selected), None
+        )
+        inspection = next(
+            (value for value in enrichment.inspections if value.assay == selected), None
+        )
+        if policy is not None and policy.assayModality != "RNA":
+            raise ValueError("Enrichment policy does not match the selected RNA assay")
         selected_qc_profile = next(
             (
                 value
@@ -797,111 +807,25 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             if selected_qc_profile is not None and selected_qc_profile.retainedCells > 0
             else store_summary.active_cells
         )
-        effective_min_cells = min(20, max(1, projected_cells // 10))
-        for assay_name in selected_names:
-            summary = summaries[assay_name]
-            policy = policies.get(assay_name)
-            modality = (
-                policy.assayModality
-                if policy is not None
-                else (
-                    summary.assay_type
-                    if summary.assay_type in {"RNA", "ATAC", "ADT", "HTO"}
-                    else "unsupported"
-                )
-            )
-            plan = self.build_assay_preprocessing_plan(
-                store,
-                request_record,
-                assay_name,
-                summary,
-                policy,
-                inspections.get(assay_name),
-                modality,
-                effective_min_cells,
-            )
-            if plan.graphEligible:
-                graph_assays.append(assay_name)
-            if modality == "unsupported":
-                limitations.extend(plan.limitations)
-            assay_plans.append(plan)
-        if not graph_assays:
-            raise ValueError("No supported graph-bearing assay remains")
-        if len(graph_assays) > request_record.config.maxGraphAssays:
-            raise ValueError(
-                "Too many graph-bearing assays; provide analysisAssays to select at "
-                f"most {request_record.config.maxGraphAssays}"
-            )
-        modality_counts: dict[str, int] = {}
-        for name in graph_assays:
-            modality_counts[summaries[name].assay_type] = (
-                modality_counts.get(summaries[name].assay_type, 0) + 1
-            )
-        duplicate_modalities = sorted(
-            name for name, count in modality_counts.items() if count > 1
+        assay_plan = self.build_assay_preprocessing_plan(
+            store,
+            request_record,
+            selected,
+            summary,
+            policy,
+            inspection,
+            "RNA",
+            min(20, max(1, projected_cells // 10)),
         )
-        if duplicate_modalities and not request.analysisAssays:
-            raise ValueError(
-                "Multiple same-kind biological assays require explicit "
-                f"analysisAssays selection: {duplicate_modalities}"
-            )
-        primary = request.primaryAssay
-        if primary is not None and primary not in graph_assays:
-            raise ValueError("primaryAssay must name a graph-bearing selected assay")
-        if primary is None:
-            primary = next(
-                (
-                    name
-                    for modality in ("RNA", "ADT", "ATAC")
-                    for name in graph_assays
-                    if summaries[name].assay_type == modality
-                ),
-                graph_assays[0],
-            )
-        if request.markerAssay is not None:
-            if request.markerAssay not in graph_assays:
-                raise ValueError("markerAssay must name a graph-bearing selected assay")
-            marker_assay = request.markerAssay
-        else:
-            marker_assay = next(
-                (
-                    name
-                    for modality in ("RNA", "ADT", "ATAC")
-                    for name in graph_assays
-                    if summaries[name].assay_type == modality
-                ),
-                primary,
-            )
-        if request.pairedAssays:
-            paired = list(request.pairedAssays)
-            unknown_paired = sorted(set(paired) - set(graph_assays))
-            if unknown_paired:
-                raise ValueError(
-                    f"pairedAssays contains non-graph assays: {unknown_paired}"
-                )
-            if primary not in paired:
-                raise ValueError("pairedAssays must include the primary assay")
-        elif (
-            len(graph_assays) > 1
-            and ingest_outcome.outputs.get("pairingProvenance")
-            == "singleSourceSharedCellAxis"
-        ):
-            paired = list(graph_assays)
-        else:
-            paired = []
-            if len(graph_assays) > 1:
-                limitations.append(
-                    "Multimodal integration skipped because pairing provenance "
-                    "was not supplied"
-                )
+        if not assay_plan.graphEligible:
+            raise ValueError("RNA requires at least three features for PCA")
         final_plan = AutomatedPreprocessingPlan(
-            primaryAssay=primary,
-            markerAssay=marker_assay,
+            primaryAssay=selected,
+            markerAssay=selected,
             cellSelection=experimental.cellSelection,
             cellQc=cell_qc,
-            assays=assay_plans,
-            pairedAssays=paired,
-            limitations=list(dict.fromkeys(limitations)),
+            assays=[assay_plan],
+            limitations=list(dict.fromkeys(enrichment.limitations)),
         )
         checksum = hashlib.sha256(
             record_io.canonical_json_bytes(
@@ -921,188 +845,52 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         modality: str,
         effective_min_cells: int,
     ) -> AssayPreprocessingPlan:
-        excluded: list[str] = []
-        evidence_ids: list[str] = []
-        if policy is not None:
-            excluded = list(
-                dict.fromkeys(
-                    [
-                        *policy.excludeFeatures,
-                        *policy.artificialFeatures,
-                        *(
-                            reference.featureId
-                            for reference in policy.exactControlFeatures
-                        ),
-                        *(
-                            reference.featureName
-                            for reference in policy.exactControlFeatures
-                        ),
-                    ]
-                )
-            )
-            evidence_ids = list(policy.evidenceIds)
-        if modality == "RNA":
-            graph_eligible = summary.total_features >= 3
-            proposed_families = (
-                list(policy.excludeFamilies) if policy is not None else []
-            )
-            return AssayPreprocessingPlan(
-                assay=assay_name,
-                assayType=summary.assay_type,
-                role="graph" if graph_eligible else "unsupported",
-                graphEligible=graph_eligible,
-                markerEligible=graph_eligible,
-                featureMethod="hvg" if graph_eligible else "none",
-                reductionMethod="pca" if graph_eligible else "none",
-                featureParameters={
-                    "topN": min(2000, summary.total_features),
-                    "minCells": effective_min_cells,
-                    "excludeFamilies": [],
-                    "proposedExcludeFamilies": proposed_families,
-                    "protectFamilies": (
-                        list(policy.protectFamilies) if policy is not None else []
-                    ),
-                    "species": (
-                        inspection.species if inspection is not None else "unknown"
-                    ),
-                    "defaultFeatureInventory": (
-                        inspection.defaultFeatureInventory.model_dump(mode="json")
-                        if inspection is not None
-                        and inspection.defaultFeatureInventory is not None
-                        else None
-                    ),
-                },
-                normalizationParameters={
-                    "logTransform": True,
-                    "renormalizeSubset": True,
-                },
-                reductionParameters={"dimensions": min(50, summary.total_features - 1)},
-                exactExcludedFeatures=(
-                    list(policy.artificialFeatures) if policy is not None else []
-                ),
-                evidenceIds=evidence_ids,
-                limitations=(
-                    []
-                    if graph_eligible
-                    else ["RNA requires at least three features for PCA"]
-                ),
-            )
-        if modality == "ATAC":
-            graph_eligible = summary.total_features >= 3
-            return AssayPreprocessingPlan(
-                assay=assay_name,
-                assayType=summary.assay_type,
-                role="graph" if graph_eligible else "unsupported",
-                graphEligible=graph_eligible,
-                markerEligible=graph_eligible,
-                featureMethod="prevalentPeaks" if graph_eligible else "none",
-                reductionMethod="lsi" if graph_eligible else "none",
-                featureParameters={"topN": min(25000, summary.total_features)},
-                normalizationParameters={
-                    "logTransform": False,
-                    "renormalizeSubset": False,
-                },
-                reductionParameters={"dimensions": 50, "skipFirst": True},
-                evidenceIds=evidence_ids,
-                limitations=list(
-                    dict.fromkeys(
-                        [
-                            *(
-                                []
-                                if graph_eligible
-                                else [
-                                    "ATAC requires at least three peak features for LSI"
-                                ]
-                            ),
-                            *(
-                                [
-                                    "ATAC feature coordinates are not uniformly "
-                                    "valid chrom:start-end intervals; the genome "
-                                    "build remains unknown"
-                                ]
-                                if policy is not None
-                                and policy.peakCoordinateStatus
-                                in {"partial", "invalid"}
-                                else []
-                            ),
-                        ]
-                    )
-                ),
-            )
-        if modality == "ADT":
-            assay = store.get_assay(assay_name)
-            feature_ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
-            feature_names = np.asarray(assay.feats.fetch_all("names")).astype(str)
-            excluded = (
-                list(
-                    dict.fromkeys(
-                        value
-                        for reference in policy.exactControlFeatures
-                        for value in (reference.featureId, reference.featureName)
-                        if value
-                    )
-                )
-                if policy is not None
-                else []
-            )
-            excluded_values = {value for value in excluded if value}
-            panel_mask = ~np.isin(feature_ids, list(excluded_values))
-            panel_mask &= ~np.isin(feature_names, list(excluded_values))
-            selected_count = int(panel_mask.sum())
-            graph_eligible = selected_count >= 2
-            reduction = (
-                "identity"
-                if graph_eligible
-                and selected_count <= request_record.config.maxIdentityFeatures
-                else ("pca" if graph_eligible else "none")
-            )
-            return AssayPreprocessingPlan(
-                assay=assay_name,
-                assayType=summary.assay_type,
-                role="graph" if graph_eligible else "unsupported",
-                graphEligible=graph_eligible,
-                markerEligible=graph_eligible,
-                featureMethod="panel" if graph_eligible else "none",
-                reductionMethod=cast(ReductionMethod, reduction),
-                normalizationParameters={
-                    "logTransform": False,
-                    "renormalizeSubset": False,
-                },
-                reductionParameters={
-                    "dimensions": (
-                        selected_count
-                        if reduction == "identity"
-                        else min(15, max(2, selected_count - 1))
-                    )
-                },
-                exactExcludedFeatures=excluded,
-                evidenceIds=evidence_ids,
-                limitations=(
-                    [
-                        "ADT control inventory was truncated; only exact observed "
-                        "control features were excluded"
-                    ]
-                    if inspection is not None and inspection.modalityEvidence.truncated
-                    else []
-                ),
-            )
-        if modality == "HTO":
-            return AssayPreprocessingPlan(
-                assay=assay_name,
-                assayType=summary.assay_type,
-                role="hto",
-                graphEligible=False,
-                markerEligible=False,
-                featureMethod="none",
-                reductionMethod="none",
-                evidenceIds=evidence_ids,
-            )
-        message = f"Unsupported assay {assay_name!r} ({summary.assay_type})"
+        del store, request_record
+        if modality != "RNA" or summary.assay_type != "RNA":
+            raise ValueError("Automated preprocessing supports RNA only")
+        evidence_ids = list(policy.evidenceIds) if policy is not None else []
+        graph_eligible = summary.total_features >= 3
+        proposed_families = list(policy.excludeFamilies) if policy is not None else []
         return AssayPreprocessingPlan(
             assay=assay_name,
             assayType=summary.assay_type,
-            role="unsupported",
-            limitations=[message],
+            role="graph" if graph_eligible else "unsupported",
+            graphEligible=graph_eligible,
+            markerEligible=graph_eligible,
+            featureMethod="hvg" if graph_eligible else "none",
+            reductionMethod="pca" if graph_eligible else "none",
+            featureParameters={
+                "topN": min(2000, summary.total_features),
+                "minCells": effective_min_cells,
+                "excludeFamilies": [],
+                "proposedExcludeFamilies": proposed_families,
+                "protectFamilies": (
+                    list(policy.protectFamilies) if policy is not None else []
+                ),
+                "species": (
+                    inspection.species if inspection is not None else "unknown"
+                ),
+                "defaultFeatureInventory": (
+                    inspection.defaultFeatureInventory.model_dump(mode="json")
+                    if inspection is not None
+                    and inspection.defaultFeatureInventory is not None
+                    else None
+                ),
+            },
+            normalizationParameters={
+                "logTransform": True,
+                "renormalizeSubset": True,
+            },
+            reductionParameters={"dimensions": min(50, summary.total_features - 1)},
+            exactExcludedFeatures=(
+                list(policy.artificialFeatures) if policy is not None else []
+            ),
+            evidenceIds=evidence_ids,
+            limitations=(
+                []
+                if graph_eligible
+                else ["RNA requires at least three features for PCA"]
+            ),
         )
 
     def preprocessing_stage(
@@ -1123,7 +911,30 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         list[PreprocessedAssayHandoff],
         AutomatedPreprocessingPlan,
     ]:
+        selected = selected_store_rna_assay(store, request_record.request)
+        validate_rna_plan(plan, selected)
+        validate_rna_context(experimental, selected)
         prefix = journal._ensure_orchestration_store(store)
+        try:
+            candidate_budget = reserve_candidate_pass(
+                store, prefix, workflow, request_record, stage_name
+            )
+        except ValueError as exc:
+            rejected = journal._start_attempt(
+                store.zw,
+                prefix,
+                workflow.workflowRunId,
+                stage_name,
+                request_record,
+                parents,
+                inputs={"candidateBudgetRejected": True},
+                resume_record=resume_record,
+            )
+            return (
+                journal.finish_exception(store, prefix, workflow, rejected, exc),
+                [],
+                plan,
+            )
         existing = journal._validated_done_outcome(
             store,
             prefix,
@@ -1136,16 +947,16 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             logger.info(
                 f"Workflow {workflow.workflowRunId}: reusing preprocessing artifacts"
             )
-            return (
-                existing,
-                [
-                    PreprocessedAssayHandoff.model_validate(value)
-                    for value in existing.outputs["assays"]
-                ],
-                AutomatedPreprocessingPlan.model_validate(
-                    existing.outputs["resolvedPreprocessingPlan"]
-                ),
+            cached_handoffs = [
+                PreprocessedAssayHandoff.model_validate(value)
+                for value in existing.outputs["assays"]
+            ]
+            cached_plan = AutomatedPreprocessingPlan.model_validate(
+                existing.outputs["resolvedPreprocessingPlan"]
             )
+            validate_rna_plan(cached_plan, selected)
+            validate_rna_handoffs(cached_handoffs, selected)
+            return existing, cached_handoffs, cached_plan
         if plan.cellSelection is None:
             raise ValueError("Preprocessing plan lacks an exact cell selection")
         if experimental.cellSelection != plan.cellSelection:
@@ -1163,6 +974,7 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             inputs={
                 "preprocessingPlan": plan.model_dump(mode="json"),
                 "cellSelection": plan.cellSelection.model_dump(mode="json"),
+                "candidateBudget": candidate_budget,
             },
             resume_record=resume_record,
         )
@@ -1222,35 +1034,37 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     "Executed cell-QC retention differs from the selected profile"
                 )
             logger.info(
-                f"Workflow {workflow.workflowRunId}: preprocessing retained "
-                f"{active_cells} active cell(s)"
+                f"QC: compared {len(experimental.qcProfiles)} policies; retained "
+                f"{active_cells:,}/{selected_profile.activeCells:,} cells "
+                f"({selected_profile.retainedFraction:.0%})."
             )
             if active_cells < 3:
                 raise ValueError("Preprocessing requires at least three active cells")
             handoffs: list[PreprocessedAssayHandoff] = []
-            for assay_plan in plan.assays:
-                if not assay_plan.graphEligible:
-                    continue
-                logger.info(
-                    f"Workflow {workflow.workflowRunId}: preprocessing assay "
-                    f"{assay_plan.assay!r} via {assay_plan.featureMethod}/"
-                    f"{assay_plan.reductionMethod}"
-                )
-                handoffs.append(
-                    self.preprocess_assay(
-                        store,
-                        assay_plan,
-                        cell_selection=cell_selection,
-                        cell_selection_model=cell_selection_model,
-                        active_cells=active_cells,
-                        request_record=request_record,
-                        study_contract=study_contract,
-                        answers=answers,
-                        actions=actions,
-                        operations=operations,
-                        artifacts=artifacts,
+            with candidate_metric_cache():
+                for assay_plan in plan.assays:
+                    if not assay_plan.graphEligible:
+                        continue
+                    logger.info(
+                        f"Workflow {workflow.workflowRunId}: preprocessing assay "
+                        f"{assay_plan.assay!r} via {assay_plan.featureMethod}/"
+                        f"{assay_plan.reductionMethod}"
                     )
-                )
+                    handoffs.append(
+                        self.preprocess_assay(
+                            store,
+                            assay_plan,
+                            cell_selection=cell_selection,
+                            cell_selection_model=cell_selection_model,
+                            active_cells=active_cells,
+                            request_record=request_record,
+                            study_contract=study_contract,
+                            answers=answers,
+                            actions=actions,
+                            operations=operations,
+                            artifacts=artifacts,
+                        )
+                    )
             resolved_plan = self._plan_with_selected_hvg_counts(
                 plan,
                 handoffs,
@@ -1663,10 +1477,10 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     qc_columns=[
                         value
                         for value in (
-                            "RNA_nCounts",
-                            "RNA_nFeatures",
-                            "RNA_percentMito",
-                            "RNA_percentRibo",
+                            f"{assay_plan.assay}_nCounts",
+                            f"{assay_plan.assay}_nFeatures",
+                            f"{assay_plan.assay}_percentMito",
+                            f"{assay_plan.assay}_percentRibo",
                         )
                         if value in store.cells.columns
                     ],
@@ -2271,61 +2085,6 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
                     f"{assay_plan.assay}_detected_features": (
                         ArtifactReferenceModel.from_artifact_ref(detected)
                     ),
-                }
-            )
-        elif assay_plan.featureMethod == "prevalentPeaks":
-            actual_top_n = min(
-                int(assay_plan.featureParameters["topN"]),
-                assay.feats.N - 1,
-            )
-            graph_features = store.select_prevalent_peaks(
-                cell_selection,
-                from_assay=assay_plan.assay,
-                top_n=actual_top_n,
-                invalidate_cache=False,
-            )
-            marker_features = graph_features
-            actions.append(f"select_prevalent_peaks:{assay_plan.assay}")
-            operations.append(
-                {
-                    "operation": "select_prevalent_peaks",
-                    "assay": assay_plan.assay,
-                    "cellSelection": cell_selection_model.model_dump(mode="json"),
-                    "topN": actual_top_n,
-                    "invalidateCache": False,
-                    "artifact": ArtifactReferenceModel.from_artifact_ref(
-                        graph_features
-                    ).model_dump(mode="json"),
-                }
-            )
-        elif assay_plan.featureMethod == "panel":
-            mask = np.ones(assay.feats.N, dtype=bool)
-            ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
-            names = np.asarray(assay.feats.fetch_all("names")).astype(str)
-            excluded = set(assay_plan.exactExcludedFeatures)
-            if excluded:
-                mask &= ~np.isin(ids, list(excluded))
-                mask &= ~np.isin(names, list(excluded))
-            if int(mask.sum()) < 2:
-                raise ValueError(
-                    f"ADT assay {assay_plan.assay!r} has fewer than two non-control features"
-                )
-            graph_features = store.set_feature_selection(
-                from_assay=assay_plan.assay,
-                mask=mask,
-                invalidate_cache=False,
-            )
-            marker_features = graph_features
-            actions.append(f"select_adt_panel:{assay_plan.assay}")
-            operations.append(
-                {
-                    "operation": "set_feature_selection",
-                    "assay": assay_plan.assay,
-                    "selectedFeatures": int(mask.sum()),
-                    "exactExcludedFeatures": sorted(excluded),
-                    "artifact": ArtifactReferenceModel.from_artifact_ref(
-                        graph_features
-                    ).model_dump(mode="json"),
                 }
             )
         else:

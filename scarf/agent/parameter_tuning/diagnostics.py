@@ -1,5 +1,6 @@
 """Deterministic representation and partition evidence for RNA decisions."""
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -30,6 +31,7 @@ from ...storage.selections import read_stored_selection_indices
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
 from .contracts import ArtifactRecord, ParameterCandidateEvaluation
+from .execution import _cached_candidate_metric, _metadata_column_fingerprint
 from .selection import annotate_candidate_dominance
 
 _PCA_DIAGNOSTIC_ARRAYS = (
@@ -68,6 +70,43 @@ class AdvisoryDoubletScores:
     capture_coverage: float | None = None
     capture_column: str | None = None
     limitations: tuple[str, ...] = ()
+
+
+def restore_advisory_doublets(
+    evaluation: ParameterCandidateEvaluation,
+    *,
+    capture_column: str | None,
+) -> AdvisoryDoubletScores:
+    """Restore the exact doublet inputs from an augmented phase evaluation."""
+    score_keys = sorted(
+        (key for key in evaluation.artifacts if key.startswith("doubletScore:")),
+        key=lambda key: int(key.split(":", 1)[1]),
+    )
+    if score_keys != [f"doubletScore:{index}" for index in range(len(score_keys))]:
+        raise ValueError("Persisted doublet score inventory is incomplete")
+    captures = tuple(evaluation.metrics.doubletScoreByCapture)
+    if len(captures) != len(score_keys):
+        raise ValueError("Persisted doublet capture summaries do not align")
+    return AdvisoryDoubletScores(
+        scores=tuple(_artifact_ref(evaluation, key) for key in score_keys),
+        cell_selections=tuple(
+            _artifact_ref(evaluation, f"doubletCellSelection:{index}")
+            for index in range(len(score_keys))
+        ),
+        native_graph=_artifact_ref(evaluation, "doubletNativeGraph"),
+        native_clusters=_artifact_ref(evaluation, "doubletNativeClusters"),
+        capture_values=captures,
+        score_summaries=tuple(
+            dict(evaluation.metrics.doubletScoreByCapture[capture])
+            for capture in captures
+        ),
+        score_quantiles=dict(evaluation.metrics.doubletScoreQuantiles),
+        capture_coverage=evaluation.metrics.doubletCaptureCoverage,
+        capture_column=capture_column,
+        limitations=tuple(
+            warning for warning in evaluation.warnings if "doublet" in warning.lower()
+        ),
+    )
 
 
 def _artifact_ref(
@@ -515,6 +554,108 @@ def _write_pca_diagnostic(
     reduction_group = store.load_artifact(reduction)
     coordinates = as_zarr_array(reduction_group["data"], name="data")
     loadings = as_zarr_array(reduction_group["loadings"], name="loadings")
+    dimensions = int(coordinates.shape[1])
+    top_n = min(20, len(selected_indices))
+    if loadings.shape != (len(selected_indices), dimensions):
+        raise ValueError("PCA loadings do not align with selected features")
+    planned = plan_artifact(
+        store.zw,
+        scope="assay",
+        assay=reduction.assay,
+        kind="feature_summary",
+        operation="diagnose_pca_representation",
+        parameters={
+            "family_names": list(family_masks),
+            "covariate_columns": list(covariate_columns),
+            "covariate_roles": list(covariate_roles),
+            "top_loading_count": top_n,
+            "family_mask_fingerprints": {
+                family: hashlib.sha256(
+                    np.asarray(mask, dtype=bool).tobytes()
+                ).hexdigest()
+                for family, mask in family_masks.items()
+            },
+            "covariate_fingerprints": {
+                column: _metadata_column_fingerprint(store.cells, column)
+                for column in covariate_columns
+            },
+            "adjacent_neighbor_overlap": adjacent_overlap,
+            "explained_variance_basis": "scaled_nonconstant_features",
+        },
+        inputs={
+            "reduction": reduction,
+            "neighbors": neighbors,
+            "feature_selection": feature_selection,
+        },
+        execution_options={},
+        invalidate_cache=False,
+        required_arrays=(
+            ArrayRequirement(
+                "component_variance", shape=(dimensions,), dtype=np.float64
+            ),
+            ArrayRequirement(
+                "explained_variance_ratio", shape=(dimensions,), dtype=np.float64
+            ),
+            ArrayRequirement(
+                "top_loading_feature_indices", shape=(dimensions, top_n), dtype=np.int64
+            ),
+            ArrayRequirement(
+                "top_loading_values", shape=(dimensions, top_n), dtype=np.float64
+            ),
+            ArrayRequirement(
+                "family_enrichment",
+                shape=(len(family_masks), dimensions),
+                dtype=np.float64,
+            ),
+            ArrayRequirement(
+                "covariate_association",
+                shape=(len(covariate_columns), dimensions),
+                dtype=np.float64,
+            ),
+            ArrayRequirement("adjacent_neighbor_overlap", shape=(1,), dtype=np.float64),
+        ),
+        required_attributes=(
+            AttributeRequirement("family_names", expected_types=(list,)),
+            AttributeRequirement("covariate_columns", expected_types=(list,)),
+            AttributeRequirement("covariate_roles", expected_types=(list,)),
+            AttributeRequirement("payload_fingerprint", expected_types=(str,)),
+        ),
+    )
+    if planned.reused:
+        group = store.load_artifact(planned.ref)
+        if (
+            fingerprint_stored_arrays(group, _PCA_DIAGNOSTIC_ARRAYS)
+            != group.attrs["payload_fingerprint"]
+        ):
+            raise ValueError("Stored PCA diagnostic payload fingerprint does not match")
+        return (
+            planned.ref,
+            np.asarray(
+                as_zarr_array(group["component_variance"], name="component_variance")[:]
+            ),
+            np.asarray(
+                as_zarr_array(
+                    group["explained_variance_ratio"], name="explained_variance_ratio"
+                )[:]
+            ),
+            np.asarray(
+                as_zarr_array(
+                    group["top_loading_feature_indices"],
+                    name="top_loading_feature_indices",
+                )[:]
+            ),
+            np.asarray(
+                as_zarr_array(group["top_loading_values"], name="top_loading_values")[:]
+            ),
+            np.asarray(
+                as_zarr_array(group["family_enrichment"], name="family_enrichment")[:]
+            ),
+            np.asarray(
+                as_zarr_array(
+                    group["covariate_association"], name="covariate_association"
+                )[:]
+            ),
+        )
     component_variance = _component_variance(coordinates)
     total_scaled_variance = _scaled_total_variance(
         store,
@@ -562,38 +703,6 @@ def _write_pca_diagnostic(
         "covariate_association": associations,
         "adjacent_neighbor_overlap": overlap_array,
     }
-    planned = plan_artifact(
-        store.zw,
-        scope="assay",
-        assay=reduction.assay,
-        kind="feature_summary",
-        operation="diagnose_pca_representation",
-        parameters={
-            "family_names": list(family_masks),
-            "covariate_columns": list(covariate_columns),
-            "covariate_roles": list(covariate_roles),
-            "top_loading_count": top_indices.shape[1],
-            "adjacent_neighbor_overlap": adjacent_overlap,
-            "explained_variance_basis": "scaled_nonconstant_features",
-        },
-        inputs={
-            "reduction": reduction,
-            "neighbors": neighbors,
-            "feature_selection": feature_selection,
-        },
-        execution_options={},
-        invalidate_cache=False,
-        required_arrays=tuple(
-            ArrayRequirement(name, shape=values.shape, dtype=values.dtype)
-            for name, values in payload.items()
-        ),
-        required_attributes=(
-            AttributeRequirement("family_names", expected_types=(list,)),
-            AttributeRequirement("covariate_columns", expected_types=(list,)),
-            AttributeRequirement("covariate_roles", expected_types=(list,)),
-            AttributeRequirement("payload_fingerprint", expected_types=(str,)),
-        ),
-    )
     if not planned.reused:
         group = start_artifact(store.zw, planned)
         for name, values in payload.items():
@@ -1416,11 +1525,19 @@ def augment_cluster_evaluations(
         if alternative.shape != labels.shape:
             raise ValueError("Alternate-seed clusters do not align with the candidate")
         seed_stability = float(adjusted_rand_score(labels, alternative))
-        graph = store.load_graph(graph_ref)
-        subsample_stability = _subsample_partition_stability(
-            graph,
-            labels,
-            evaluation.parameters.leidenResolution,
+        subsample_stability = _cached_candidate_metric(
+            (
+                id(store),
+                "subsample_stability",
+                graph_ref,
+                clusters_ref,
+                evaluation.parameters.leidenResolution,
+            ),
+            lambda: _subsample_partition_stability(
+                store.load_graph(graph_ref),
+                labels,
+                evaluation.parameters.leidenResolution,
+            ),
         )
 
         marker_ref = store.run_marker_search(
@@ -1641,7 +1758,7 @@ def augment_cluster_evaluations(
                         doublet_evidence.native_clusters
                     ),
                 }
-                if doublet_evidence is not None and doublet_evidence.scores
+                if doublet_evidence is not None
                 else {}
             ),
         }

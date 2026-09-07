@@ -185,6 +185,7 @@ def test_agent_facade_exports_remain_stable() -> None:
         "WorkflowQuestion",
         "WorkflowStageAttempt",
         "WorkflowStageLink",
+        "analyze_rna",
         "characterize_covariates",
         "characterize_features",
         "check_runtime",

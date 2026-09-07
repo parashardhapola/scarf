@@ -10,6 +10,7 @@ from typing import Any, cast
 import zarr
 
 from ...datastore.datastore import DataStore
+from ...datastore.summary import summarize_zarr_readonly
 from ...storage.stores import zarr_root_path
 from ...utils.logging import logger
 from .. import record_io
@@ -45,6 +46,12 @@ from .models import (
     WorkflowStageName,
 )
 from .preprocessing import PreprocessingStagesMixin
+from .rna import (
+    selected_rna_assay,
+    validate_rna_directions,
+    validate_rna_request_fields,
+    validate_saved_rna_history,
+)
 from .tuning import TuningStagesMixin
 
 
@@ -80,7 +87,7 @@ class AgentOrchestrator(
     TuningStagesMixin,
     FinalizationStagesMixin,
 ):
-    """Run one bounded, persisted workflow through the four Scarf agents."""
+    """Run one bounded, persisted single-RNA analysis workflow."""
 
     def __init__(
         self,
@@ -93,6 +100,21 @@ class AgentOrchestrator(
 
     def run(self, request: AutomatedWorkflowRequest) -> AutomatedWorkflowResult:
         """Ingest the request and continue until completion or a persisted pause."""
+        result = self._run(request)
+        if result.status == "failed":
+            logger.error(
+                f"RNA analysis failed during {result.currentStage}: "
+                + "; ".join(
+                    result.notes or ["See the saved stage outcome for details."]
+                )
+            )
+        return result
+
+    def _run(self, request: AutomatedWorkflowRequest) -> AutomatedWorkflowResult:
+        try:
+            validate_rna_request_fields(request)
+        except ValueError as exc:
+            return AutomatedWorkflowResult(notes=[str(exc)])
         format_name = detect_format(request.sourcePath)
         dataset_manifest: DatasetManifest | None = None
         logger.info(
@@ -232,29 +254,28 @@ class AgentOrchestrator(
             }
             request = request.model_copy(update={"ingestDirections": ingest_directions})
 
-        if format_name == "zarr" and request.workspace is not None:
+        if format_name == "zarr":
             zarr_path = str(Path(request.sourcePath).resolve())
             effective_request = request.model_copy(update={"zarrPath": zarr_path})
             try:
-                store = self.open_store(zarr_path, effective_request)
-            except (KeyError, RuntimeError, TypeError, ValueError) as exc:
-                logger.error(
-                    "Opening the automated workflow workspace failed "
-                    f"({type(exc).__name__})"
+                summary = summarize_zarr_readonly(
+                    zarr_path,
+                    workspace=request.workspace,
                 )
+            except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
                 return AutomatedWorkflowResult(
                     status="failed",
                     currentStage="ingest",
                     zarrPath=zarr_path,
-                    notes=[f"Opening the requested workspace failed: {exc}"],
+                    notes=[f"Opening the requested RNA store failed: {exc}"],
                 )
             ingest_result = IngestResult(
                 status="done",
                 format="zarr",
                 zarrPath=zarr_path,
-                assayNames=list(store.assay_names),
-                summary=store.summary().to_dict(),
-                actions=["summarize_zarr_workspace"],
+                assayNames=[assay.name for assay in summary.assays],
+                summary=summary.to_dict(),
+                actions=["summarize_zarr"],
             )
         else:
             ingest_result = ingest(
@@ -308,8 +329,44 @@ class AgentOrchestrator(
                 notes=list(ingest_result.notes),
             )
 
-        if not (format_name == "zarr" and request.workspace is not None):
+        try:
+            selected = selected_rna_assay(
+                effective_request,
+                {
+                    value["name"]: value["assay_type"]
+                    for value in (ingest_result.summary or {}).get("assays", [])
+                },
+            )
+            effective_request = effective_request.model_copy(
+                update={
+                    "primaryAssay": selected,
+                    "markerAssay": selected,
+                    "analysisAssays": [selected],
+                }
+            )
             store = self.open_store(ingest_result.zarrPath, effective_request)
+        except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            terminal = (
+                finalize_agent_workflow(
+                    ingest_result.zarrPath,
+                    ingest_result.workflowRun.workflowRunId,
+                    status="failed",
+                    message=str(exc),
+                    workspace=request.workspace,
+                )
+                if ingest_result.workflowRun is not None
+                else None
+            )
+            return AutomatedWorkflowResult(
+                zarrPath=ingest_result.zarrPath,
+                workflowRun=terminal,
+                notes=[str(exc)],
+            )
+        ignored = [name for name in store.assay_names if name != selected]
+        logger.info(
+            f"RNA analysis: selected assay {selected!r}"
+            + (f"; ignored other assays {ignored}" if ignored else "")
+        )
         workflow = ingest_result.workflowRun or create_agent_workflow(store)
         logger.info(
             f"Continuing automated workflow {workflow.workflowRunId} with "
@@ -337,6 +394,23 @@ class AgentOrchestrator(
         request: AutomatedWorkflowResumeRequest,
     ) -> AutomatedWorkflowResult:
         """Resume a running workflow after validating its immutable request."""
+        result = self._resume(request)
+        if result.status == "failed":
+            logger.error(
+                f"RNA analysis failed during {result.currentStage}: "
+                + "; ".join(
+                    result.notes or ["See the saved stage outcome for details."]
+                )
+            )
+        return result
+
+    def _resume(
+        self,
+        request: AutomatedWorkflowResumeRequest,
+    ) -> AutomatedWorkflowResult:
+        directions = request.answers.get("experimentalDirections")
+        if isinstance(directions, Mapping):
+            validate_rna_directions(directions)
         logger.info(
             f"Resuming automated workflow {request.workflowRunId} with "
             f"{len(request.answers)} answer field(s)"
@@ -692,6 +766,12 @@ class AgentOrchestrator(
             raise ValueError("Stored orchestration config checksum is invalid")
         if record.contentSha256 != journal._record_checksum(record):
             raise ValueError("Stored orchestration request envelope is invalid")
+        summary = summarize_zarr_readonly(request.zarrPath, workspace=request.workspace)
+        selected = selected_rna_assay(
+            record.request,
+            {assay.name: assay.assay_type for assay in summary.assays},
+        )
+        validate_saved_rna_history(active, prefix, request.workflowRunId, selected)
         store = self.open_store(request.zarrPath, record.request)
         return record, store
 

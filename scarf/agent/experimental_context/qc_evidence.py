@@ -59,9 +59,20 @@ def _persisted_assay_type(store: Any, assay_name: str) -> str:
     return assay_name if assay_name in {"RNA", "ATAC", "ADT", "HTO"} else "Assay"
 
 
-def _qc_driver(store: Any) -> tuple[str, CellQcDriverType] | None:
-    """Choose the first RNA assay, otherwise the first ATAC assay."""
+def _qc_driver(
+    store: Any, selected_assay: str | None = None
+) -> tuple[str, CellQcDriverType] | None:
+    """Use an explicit QC assay, otherwise the first RNA or ATAC assay."""
     assay_names = [str(name) for name in getattr(store, "assay_names", [])]
+    if selected_assay is not None:
+        if selected_assay not in assay_names:
+            raise ValueError(f"Unknown QC assay {selected_assay!r}")
+        selected_type = _persisted_assay_type(store, selected_assay)
+        if selected_type == "RNA":
+            return selected_assay, "RNA"
+        if selected_type == "ATAC":
+            return selected_assay, "ATAC"
+        raise ValueError("The selected QC assay must have persisted RNA or ATAC type")
     for assay_type in ("RNA", "ATAC"):
         for assay_name in assay_names:
             if _persisted_assay_type(store, assay_name) == assay_type:
@@ -1412,7 +1423,7 @@ def _offered_qc_profiles(
     """Project bounded QC profiles against the exact shared cell selection."""
     active_cells = _active_cell_count(deps)
     active = np.ones(active_cells, dtype=bool)
-    driver = _qc_driver(deps.store)
+    driver = _qc_driver(deps.store, deps.qcAssay)
     driver_assay = driver[0] if driver is not None else None
     driver_type = driver[1] if driver is not None else None
     skip_id = _qc_profile_id(
