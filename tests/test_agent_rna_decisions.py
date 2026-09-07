@@ -1,5 +1,7 @@
 """Tests for deterministic RNA decision definitions and compilation."""
 
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
@@ -9,15 +11,19 @@ from scarf.agent.decisions.kernel import (
     EvidenceBundle,
 )
 from scarf.agent.decisions.rna import (
+    CellQualityExecutorPayload,
     ClusterExecutorPayload,
     CorrectionOutcomeExecutorPayload,
+    FeaturePolicyExecutorPayload,
     GraphExecutorPayload,
     HvgExecutorPayload,
+    HvgRankingExecutorPayload,
     PcaPrefixExecutorPayload,
     RNA_DECISION_TRANSITION_GRAPH,
     RnaDecisionCompilationError,
     RnaDecisionGateError,
     RnaDecisionRegistry,
+    RnaExecutorOption,
     RnaDecisionTransition,
     RnaDecisionTransitionGraph,
     build_cell_quality_decision,
@@ -28,9 +34,11 @@ from scarf.agent.decisions.rna import (
     build_feature_policy_decision,
     build_graph_k_decision,
     build_hvg_count_decision,
+    build_hvg_ranking_decision,
     build_pca_prefix_decision,
     build_qc_grouping_decision,
     compile_rna_decision,
+    require_option_evidence,
 )
 
 
@@ -136,6 +144,329 @@ def test_cell_quality_registry_offers_only_eligible_pooled_reference() -> None:
     assert "cellQuality:captureMad5" in definition.spec.option_by_id()
     assert "cellQuality:captureMad3Sensitivity" in definition.spec.option_by_id()
     assert "cellQuality:pooledReferenceMad5" in definition.spec.option_by_id()
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="retainWithFlags",
+                lowerCountMad=5.0,
+                groupByCapture=False,
+                pooledReference=False,
+                sensitivityOnly=False,
+            ),
+            "cannot define removal thresholds",
+        ),
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="retainWithFlags",
+                groupByCapture=True,
+                pooledReference=False,
+                sensitivityOnly=False,
+            ),
+            "cannot enable filtering modes",
+        ),
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="globalMad5",
+                lowerCountMad=5.0,
+                lowerFeatureMad=None,
+                upperMitoMad=5.0,
+                groupByCapture=False,
+                pooledReference=False,
+                sensitivityOnly=False,
+            ),
+            "require all three MAD thresholds",
+        ),
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="captureMad5",
+                lowerCountMad=5.0,
+                lowerFeatureMad=5.0,
+                upperMitoMad=5.0,
+                groupByCapture=False,
+                pooledReference=False,
+                sensitivityOnly=False,
+            ),
+            "Capture profiles and groupByCapture",
+        ),
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="globalMad5",
+                lowerCountMad=5.0,
+                lowerFeatureMad=5.0,
+                upperMitoMad=5.0,
+                groupByCapture=False,
+                pooledReference=True,
+                sensitivityOnly=False,
+            ),
+            "pooledReferenceMad5 and pooledReference",
+        ),
+        (
+            lambda: CellQualityExecutorPayload(
+                profile="globalMad5",
+                lowerCountMad=5.0,
+                lowerFeatureMad=5.0,
+                upperMitoMad=5.0,
+                groupByCapture=False,
+                pooledReference=False,
+                sensitivityOnly=True,
+            ),
+            "captureMad3Sensitivity and sensitivityOnly",
+        ),
+        (
+            lambda: FeaturePolicyExecutorPayload(
+                policy="excludeEligibleBundle",
+                excludedFamilies=["ribosomal", "ribosomal"],
+            ),
+            "must not contain duplicates",
+        ),
+        (
+            lambda: FeaturePolicyExecutorPayload(
+                policy="keepAll",
+                excludedFamilies=["ribosomal"],
+            ),
+            "keepAll cannot exclude",
+        ),
+        (
+            lambda: FeaturePolicyExecutorPayload(
+                policy="excludeScarfDefaults",
+                useScarfDefaultBlacklist=False,
+            ),
+            "requires only the Scarf default blacklist",
+        ),
+        (
+            lambda: FeaturePolicyExecutorPayload(
+                policy="excludeEligibleBundle",
+            ),
+            "requires gene families",
+        ),
+        (
+            lambda: FeaturePolicyExecutorPayload(
+                policy="excludeEligibleBundle",
+                excludedFamilies=["ribosomal"],
+                useScarfDefaultBlacklist=True,
+            ),
+            "cannot silently add",
+        ),
+        (
+            lambda: CorrectionOutcomeExecutorPayload(
+                outcome="acceptHarmony",
+                useHarmony=False,
+            ),
+            "must agree",
+        ),
+        (
+            lambda: RnaExecutorOption(
+                checkpoint="cellQuality",
+                optionId=" invalid ",
+                payload=CellQualityExecutorPayload(
+                    profile="retainWithFlags",
+                    groupByCapture=False,
+                    pooledReference=False,
+                    sensitivityOnly=False,
+                ),
+            ),
+            "without surrounding whitespace",
+        ),
+        (
+            lambda: RnaDecisionTransition(
+                fromCheckpoint="cellQuality",
+                onStatus="apply",
+            ),
+            "exactly one checkpoint or terminal",
+        ),
+    ],
+)
+def test_rna_payload_contracts_reject_inconsistent_modes(
+    factory: Callable[[], object],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        factory()
+
+
+def test_rna_definition_and_transition_contracts_reject_registry_drift() -> None:
+    definition = build_pca_prefix_decision(
+        evidence_bundle_id="bundle:pca",
+        matrix_rank=20,
+    )
+    values = definition.model_dump()
+    values["spec"]["checkpoint"] = "cellQuality"
+    with pytest.raises(ValidationError, match="checkpoint must match"):
+        type(definition).model_validate(values)
+
+    values = definition.model_dump()
+    values["executorOptions"][1]["optionId"] = values["executorOptions"][0]["optionId"]
+    with pytest.raises(ValidationError, match="duplicate option IDs"):
+        type(definition).model_validate(values)
+
+    values = definition.model_dump()
+    values["executorOptions"][0]["checkpoint"] = "cellQuality"
+    with pytest.raises(ValidationError, match="registry checkpoint"):
+        type(definition).model_validate(values)
+
+    with pytest.raises(KeyError, match="Unknown option ID"):
+        definition.executor_option("pcaPrefix:unknown")
+
+    with pytest.raises(ValidationError, match="v1 RNA checkpoint order"):
+        RnaDecisionTransitionGraph(
+            orderedNodes=tuple(reversed(RNA_DECISION_TRANSITION_GRAPH.orderedNodes)),
+        )
+    transition = RnaDecisionTransition(
+        fromCheckpoint="cellQuality",
+        onStatus="apply",
+        toCheckpoint="featurePolicy",
+    )
+    with pytest.raises(ValidationError, match="unique checkpoint/status triggers"):
+        RnaDecisionTransitionGraph(transitions=[transition, transition])
+
+
+def test_rna_builders_reject_empty_duplicate_and_out_of_range_inventories() -> None:
+    invalid_calls: list[tuple[Callable[[], object], str]] = [
+        (
+            lambda: build_cell_quality_decision(
+                evidence_bundle_id="bundle:cellQuality",
+                available_profiles=["globalMad5", "globalMad5"],
+            ),
+            "must not contain duplicates",
+        ),
+        (
+            lambda: build_cell_quality_decision(
+                evidence_bundle_id="bundle:cellQuality",
+                available_profiles=[],
+            ),
+            "At least one cell-quality profile",
+        ),
+        (
+            lambda: build_hvg_count_decision(
+                evidence_bundle_id="bundle:hvg",
+                eligible_feature_count=1,
+                ranking_mode="global",
+            ),
+            "at least two eligible genes",
+        ),
+        (
+            lambda: build_hvg_count_decision(
+                evidence_bundle_id="bundle:hvg",
+                eligible_feature_count=100,
+                ranking_mode="global",
+                candidate_counts=[True],
+            ),
+            "positive integers",
+        ),
+        (
+            lambda: build_feature_policy_decision(
+                evidence_bundle_id="bundle:features",
+                proposed_exclusion_families=["ribosomal", "ribosomal"],
+                dominant_families=["ribosomal"],
+                protected_families=[],
+            ),
+            "must not contain duplicates",
+        ),
+        (
+            lambda: build_pca_prefix_decision(
+                evidence_bundle_id="bundle:pca",
+                matrix_rank=1,
+            ),
+            "matrix rank of at least two",
+        ),
+        (
+            lambda: build_pca_prefix_decision(
+                evidence_bundle_id="bundle:pca",
+                matrix_rank=20,
+                candidate_dimensions=[],
+            ),
+            "At least one PCA candidate",
+        ),
+        (
+            lambda: build_graph_k_decision(
+                evidence_bundle_id="bundle:graph",
+                n_cells=2,
+            ),
+            "at least three cells",
+        ),
+        (
+            lambda: build_graph_k_decision(
+                evidence_bundle_id="bundle:graph",
+                n_cells=20,
+                candidate_neighbors=[],
+            ),
+            "At least one graph candidate",
+        ),
+        (
+            lambda: build_cluster_partition_decision(
+                evidence_bundle_id="bundle:cluster",
+                metric_preferred_option_id="clusterResolution:balanced",
+                resolution_candidates=[0.5, 0.5],
+            ),
+            "unique values",
+        ),
+        (
+            lambda: build_cluster_partition_decision(
+                evidence_bundle_id="bundle:cluster",
+                metric_preferred_option_id="clusterResolution:unknown",
+                resolution_candidates=[0.5],
+            ),
+            "must be a registered resolution option",
+        ),
+    ]
+
+    for call, message in invalid_calls:
+        with pytest.raises(RnaDecisionGateError, match=message):
+            call()
+
+
+def test_qc_grouping_offers_licensed_capture_and_pooled_modes() -> None:
+    definition = build_qc_grouping_decision(
+        evidence_bundle_id="bundle:cellQuality",
+        physical_capture_eligible=True,
+        pooled_reference_eligible=True,
+    )
+
+    assert [option.optionId for option in definition.spec.options] == [
+        "qcGrouping:global",
+        "qcGrouping:physicalCapture",
+        "qcGrouping:pooledReference",
+        "qcGrouping:defer",
+    ]
+    assert [
+        definition.executor_option(option_id).payload.groupingMode
+        for option_id in (
+            "qcGrouping:global",
+            "qcGrouping:physicalCapture",
+            "qcGrouping:pooledReference",
+        )
+    ] == ["global", "physicalCapture", "pooledReference"]
+
+
+def test_hvg_ranking_and_correction_need_build_all_licensed_options() -> None:
+    ranking = build_hvg_ranking_decision(
+        evidence_bundle_id="bundle:hvg-ranking",
+        batch_aware_eligible=True,
+    )
+    assert [option.optionId for option in ranking.spec.options] == [
+        "hvgRanking:global",
+        "hvgRanking:batchAware",
+        "hvgRanking:defer",
+    ]
+    batch_payload = ranking.executor_option("hvgRanking:batchAware").payload
+    assert isinstance(batch_payload, HvgRankingExecutorPayload)
+    assert batch_payload.rankingMode == "batchAware"
+
+    correction = build_correction_need_decision(
+        evidence_bundle_id="bundle:correction-need",
+        license="safe",
+    )
+    assert [(option.optionId, option.status) for option in correction.spec.options] == [
+        ("correctionNeed:needed", "apply"),
+        ("correctionNeed:notNeeded", "skip"),
+        ("correctionNeed:indeterminate", "defer"),
+    ]
+    assert correction.executor_option("correctionNeed:needed").payload.need == "needed"
+    assert correction.spec.baselineOptionId == "correctionNeed:notNeeded"
 
 
 def test_hvg_counts_are_capped_and_numeric_values_stay_in_payloads() -> None:
@@ -303,6 +634,84 @@ def test_graph_candidates_are_capped_and_deduplicated() -> None:
     assert payload.neighborsK == 14
 
 
+def test_custom_numeric_candidate_grids_are_capped_and_deduplicated() -> None:
+    hvg = build_hvg_count_decision(
+        evidence_bundle_id="bundle:hvg",
+        eligible_feature_count=3000,
+        ranking_mode="global",
+        candidate_counts=[750, 2000, 9000, 750],
+    )
+    assert [option.optionId for option in hvg.spec.options] == [
+        "hvgCount:n750",
+        "hvgCount:standard",
+        "hvgCount:n3000",
+        "hvgCount:defer",
+    ]
+    assert hvg.executor_option("hvgCount:n3000").payload.topN == 3000
+
+    pca = build_pca_prefix_decision(
+        evidence_bundle_id="bundle:pca",
+        matrix_rank=15,
+        candidate_dimensions=[7, 20, 7],
+    )
+    assert [option.optionId for option in pca.spec.options] == [
+        "pcaPrefix:n7",
+        "pcaPrefix:n15",
+        "pcaPrefix:defer",
+    ]
+    assert pca.executor_option("pcaPrefix:n15").payload.dimensions == 15
+
+    graph = build_graph_k_decision(
+        evidence_bundle_id="bundle:graph",
+        n_cells=13,
+        candidate_neighbors=[3, 50, 3],
+    )
+    assert [option.optionId for option in graph.spec.options] == [
+        "graphScale:k3",
+        "graphScale:k12",
+        "graphScale:defer",
+    ]
+    assert graph.executor_option("graphScale:k12").payload.neighborsK == 12
+
+    cluster = build_cluster_partition_decision(
+        evidence_bundle_id="bundle:cluster",
+        metric_preferred_option_id="clusterResolution:balanced",
+        resolution_candidates=[0.4, 0.75],
+    )
+    assert cluster.executor_option(
+        "clusterResolution:r0p4"
+    ).payload.leidenResolution == pytest.approx(0.4)
+    assert cluster.spec.baselineOptionId == "clusterResolution:balanced"
+
+
+def test_custom_candidate_grids_reject_empty_or_invalid_values() -> None:
+    with pytest.raises(RnaDecisionGateError, match="HVG candidate"):
+        build_hvg_count_decision(
+            evidence_bundle_id="bundle:hvg",
+            eligible_feature_count=3000,
+            ranking_mode="global",
+            candidate_counts=[],
+        )
+    with pytest.raises(RnaDecisionGateError, match="PCA candidate"):
+        build_pca_prefix_decision(
+            evidence_bundle_id="bundle:pca",
+            matrix_rank=20,
+            candidate_dimensions=[True],
+        )
+    with pytest.raises(RnaDecisionGateError, match="Graph candidates"):
+        build_graph_k_decision(
+            evidence_bundle_id="bundle:graph",
+            n_cells=20,
+            candidate_neighbors=[1],
+        )
+    with pytest.raises(RnaDecisionGateError, match="cluster resolution"):
+        build_cluster_partition_decision(
+            evidence_bundle_id="bundle:cluster",
+            metric_preferred_option_id="clusterResolution:balanced",
+            resolution_candidates=[],
+        )
+
+
 def test_clustering_uses_fixed_resolutions_and_requires_override_evidence() -> None:
     definition = build_cluster_partition_decision(
         evidence_bundle_id="bundle:cluster",
@@ -417,6 +826,86 @@ def test_registry_requires_ordered_definitions_and_transition_coverage() -> None
 
     with pytest.raises(ValidationError, match="checkpoint order"):
         RnaDecisionRegistry(definitions=[features, cell_quality])
+
+
+def test_registry_and_transition_lookup_reject_incomplete_inventories() -> None:
+    cell_quality = build_cell_quality_decision(
+        evidence_bundle_id="bundle:cellQuality",
+        available_profiles=["retainWithFlags", "globalMad5"],
+    )
+    duplicate_id = cell_quality.model_copy(
+        update={
+            "checkpoint": "featurePolicy",
+            "spec": cell_quality.spec.model_copy(
+                update={"checkpoint": "featurePolicy"},
+            ),
+            "executorOptions": [
+                option.model_copy(update={"checkpoint": "featurePolicy"})
+                for option in cell_quality.executorOptions
+            ],
+        }
+    )
+    with pytest.raises(ValidationError, match="decision IDs must be unique"):
+        RnaDecisionRegistry(definitions=[cell_quality, duplicate_id])
+
+    duplicate_checkpoint = cell_quality.model_copy(
+        update={
+            "spec": cell_quality.spec.model_copy(
+                update={"decisionId": "otherCellQuality"},
+            )
+        }
+    )
+    with pytest.raises(ValidationError, match="checkpoints must be unique"):
+        RnaDecisionRegistry(definitions=[cell_quality, duplicate_checkpoint])
+
+    incomplete_graph = RnaDecisionTransitionGraph(
+        transitions=[
+            RnaDecisionTransition(
+                fromCheckpoint="cellQuality",
+                onStatus="apply",
+                toCheckpoint="featurePolicy",
+            )
+        ]
+    )
+    with pytest.raises(ValidationError, match="No transition for cellQuality/skip"):
+        RnaDecisionRegistry(
+            definitions=[cell_quality],
+            transitionGraph=incomplete_graph,
+        )
+    with pytest.raises(KeyError, match="No RNA transition"):
+        incomplete_graph.resolve("cellQuality", "abstain")
+    with pytest.raises(KeyError, match="No RNA decision definition"):
+        RnaDecisionRegistry().definition("cellQuality")
+
+
+def test_compile_requires_exact_verification_reference() -> None:
+    definition = build_pca_prefix_decision(
+        evidence_bundle_id="bundle:pca",
+        matrix_rank=20,
+    )
+    bundle = _bundle("pcaPrefix", "bundle:pca", ["geometric", "technical"])
+    record = _record(definition, bundle, "pcaPrefix:standard")
+    record = record.model_copy(update={"verificationId": "verification:other"})
+
+    with pytest.raises(
+        RnaDecisionCompilationError,
+        match="deterministic verification ID",
+    ):
+        compile_rna_decision(definition, bundle, record)
+
+
+def test_option_evidence_binding_rejects_unknown_and_scalar_requirements() -> None:
+    definition = build_pca_prefix_decision(
+        evidence_bundle_id="bundle:pca",
+        matrix_rank=20,
+    )
+    with pytest.raises(ValueError, match="unknown options"):
+        require_option_evidence(definition, {"pcaPrefix:invented": ["evidence:x"]})
+    with pytest.raises(TypeError, match="sequences of IDs"):
+        require_option_evidence(
+            definition,
+            {"pcaPrefix:standard": "evidence:x"},
+        )
 
 
 def test_definition_rejects_executor_inventory_drift() -> None:
