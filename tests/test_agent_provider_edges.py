@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from scarf.storage.refs import ArtifactRef
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai import ModelRetry, UnexpectedModelBehavior
 
 import scarf.agent.biological_interpretation.tools as biological_tools
@@ -37,7 +38,10 @@ from scarf.agent.experimental_context import (
     CellQcProfileEvidence,
     ExperimentalContextDependencies,
 )
-from scarf.agent.experimental_context.contracts import CovariateCharacterization
+from scarf.agent.experimental_context.contracts import (
+    CovariateCharacterization,
+    CovariateProposal,
+)
 
 
 def test_data_enrichment_cache_rollback_and_pending_branches(
@@ -227,6 +231,44 @@ def test_experimental_context_rejects_invalid_batches_and_preserves_failed_evide
     assert failed.qcProfiles == [observed]
     assert failed.decision.batchCorrection.action == "needsInput"
     assert failed.runInfo.agentName == "experimental_context_failed"
+
+
+@pytest.mark.parametrize("validation_failure", [False, True])
+def test_context_failure_preserves_actionable_cause_without_argument_payload(
+    validation_failure: bool,
+) -> None:
+    deps = ExperimentalContextDependencies(
+        cellSelection=ArtifactRef(
+            scope="datastore", kind="cell_selection", artifact_id="c" * 64
+        )
+    )
+    try:
+        if validation_failure:
+            CovariateProposal(
+                response="tissue",
+                explanatoryColumns=["tissue", "condition"],
+                observationUnit="sample",
+                independentUnit="donor",
+                rationale="PRIVATE STUDY TEXT MUST NOT APPEAR IN ERROR NOTES",
+            )
+        else:
+            raise ModelRetry("Unknown batch column 'missing_batch'")
+    except (ValidationError, ModelRetry) as cause:
+        error = UnexpectedModelBehavior("Design tool retry limit reached")
+        error.__cause__ = cause
+    result = experimental_validation.failed_experimental_context_result(
+        deps, error=error, model_name="test-model"
+    )
+    notes = " ".join(result.notes)
+    assert result.status == "failed"
+    assert result.decision.batchCorrection.action == "needsInput"
+    assert "Design tool retry limit reached" in notes
+    if validation_failure:
+        assert "Invalid tool arguments" in notes
+        assert "tissue" in notes
+    else:
+        assert "Unknown batch column 'missing_batch'" in notes
+    assert "PRIVATE STUDY TEXT" not in notes
 
 
 def test_agent_execution_logs_nested_failures_for_sync_and_async_runners(

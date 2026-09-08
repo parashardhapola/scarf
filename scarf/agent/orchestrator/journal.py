@@ -515,7 +515,7 @@ def _validated_done_outcome(
     request_record: OrchestrationRequestRecord,
     parent_attempts: Sequence[WorkflowStageLink],
     *,
-    required_status: Literal["done", "needsInput"] = "done",
+    required_status: Literal["done", "needsInput", "failed"] = "done",
 ) -> WorkflowStageAttempt | None:
     """Return the newest lineage-matching stage whose persisted outputs resolve."""
 

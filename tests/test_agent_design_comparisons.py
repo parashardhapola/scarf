@@ -7,7 +7,16 @@ import numpy as np
 import pandas as pd
 import pytest
 from pydantic import ValidationError
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import Tool
 
 from scarf.agent.experimental_context import tools
 from scarf.agent.experimental_context import qc_evidence
@@ -315,8 +324,167 @@ def test_unsupported_explanation_does_not_discard_protected_biology() -> None:
 
 
 def test_proposals_cannot_exceed_three_columns() -> None:
-    with pytest.raises(ValidationError, match="three distinct"):
+    with pytest.raises(ValidationError, match="three distinct measured") as caught:
         _proposal(conditionedOn="age")
+    message = str(caught.value)
+    assert "response='response'" in message
+    assert "explanatoryColumns=['treatment', 'time']" in message
+    assert "conditionedOn='age'" in message
+    assert "set conditionedOn=null" in message
+    assert "joint explanation within strata is unsupported" in message
+
+
+@pytest.mark.parametrize(
+    ("explanatory", "condition"),
+    [(["treatment"], None), (["treatment", "time"], None), (["treatment"], "time")],
+)
+def test_proposal_measurement_limit_excludes_observation_and_independent_units(
+    explanatory: list[str], condition: str | None
+) -> None:
+    proposal = _proposal(
+        explanatoryColumns=explanatory,
+        conditionedOn=condition,
+        observationUnit="sample",
+        independentUnit="donor",
+    )
+    assert proposal.explanatoryColumns == explanatory
+    assert proposal.conditionedOn == condition
+    assert proposal.independentUnit == "donor"
+    assert _proposal(independentUnit="sample").independentUnit == "sample"
+
+
+@pytest.mark.parametrize(
+    ("changes", "repeated"),
+    [
+        ({"explanatoryColumns": ["treatment", "treatment"]}, "treatment"),
+        ({"explanatoryColumns": ["response"]}, "response"),
+        (
+            {"explanatoryColumns": ["treatment"], "conditionedOn": "response"},
+            "response",
+        ),
+        (
+            {"explanatoryColumns": ["treatment"], "conditionedOn": "treatment"},
+            "treatment",
+        ),
+    ],
+)
+def test_proposal_duplicate_errors_identify_the_repeated_measurement(
+    changes: dict[str, object], repeated: str
+) -> None:
+    with pytest.raises(
+        ValidationError, match="Comparison columns must be distinct"
+    ) as caught:
+        _proposal(**changes)
+    message = str(caught.value)
+    assert f"repeated columns ['{repeated}']" in message
+    assert "A column cannot explain itself" in message
+    assert "at most three" not in message
+
+
+@pytest.mark.parametrize(
+    ("invalid_changes", "correction_hint"),
+    [
+        ({"conditionedOn": "age"}, "set conditionedOn=null"),
+        ({"explanatoryColumns": ["response", "time"]}, "repeated columns ['response']"),
+    ],
+)
+def test_design_tool_schema_and_retry_correct_proposals_before_computation(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_changes: dict[str, object],
+    correction_hint: str,
+) -> None:
+    cells, characterization = _design()
+    batch_columns = ["batch_a", "batch_b"]
+    for batch, values in zip(batch_columns, ["treatment", "time"], strict=True):
+        cells.frame[batch] = cells.frame[values]
+        cells.columns.append(batch)
+        characterization.columns.append(
+            {"name": batch, "kind": "categorical", "domain": "technical"}
+        )
+    deps = _deps(cells)
+    deps.characterization = characterization
+    scans: list[dict[str, object]] = []
+    safety_columns: list[list[str]] = []
+    batch_safety = tools._batch_safety_evidence
+
+    def characterize(*_args: object, **kwargs: object) -> CovariateCharacterization:
+        scans.append(kwargs)
+        return characterization
+
+    def record_batch_safety(*args: object, **kwargs: object) -> object:
+        safety_columns.append(kwargs["batch_columns"])
+        return batch_safety(*args, **kwargs)
+
+    monkeypatch.setattr(tools, "characterize_covariates", characterize)
+    monkeypatch.setattr(tools, "_offered_qc_profiles", lambda *_args: [])
+    monkeypatch.setattr(tools, "_batch_safety_evidence", record_batch_safety)
+    requests = 0
+
+    async def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        schema = info.function_tools[0].parameters_json_schema
+        proposal_schema = schema["$defs"]["CovariateProposal"]
+        properties = proposal_schema["properties"]
+        assert (
+            "joint comparison within strata is unsupported"
+            in proposal_schema["description"]
+        )
+        assert (
+            "conditionedOn must be null"
+            in properties["explanatoryColumns"]["description"]
+        )
+        assert "does not count" in properties["observationUnit"]["description"]
+        assert "does not count" in properties["independentUnit"]["description"]
+        assert "must differ" in properties["response"]["description"]
+        request = requests
+        requests += 1
+        if request == 1:
+            retry_parts = [
+                part
+                for message in messages
+                for part in message.parts
+                if isinstance(part, RetryPromptPart)
+            ]
+            assert correction_hint in str(retry_parts[-1].content)
+            assert scans == []
+            assert deps.designRounds == 0
+        if request < 2:
+            proposal = _proposal().model_dump()
+            if request == 0:
+                proposal.update(invalid_changes)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="analyze_experimental_design",
+                        args={
+                            "column_domains": {
+                                batch: "technical" for batch in batch_columns
+                            },
+                            "coefficients_of_interest": [],
+                            "units_of_inference": {},
+                            "batch_columns": batch_columns,
+                            "proposals": [proposal],
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart("Comparison evidence computed.")])
+
+    agent = Agent(
+        FunctionModel(reply),
+        deps_type=ExperimentalContextDependencies,
+        tools=[Tool(tools.analyze_experimental_design, max_retries=3)],
+    )
+    result = agent.run_sync("Compare the observed study design.", deps=deps)
+    assert result.output == "Comparison evidence computed."
+    assert requests == 3
+    assert len(scans) == 1
+    assert deps.designRounds == 1
+    assert deps.toolCalls == ["analyze_experimental_design"]
+    assert safety_columns == [batch_columns]
+    assert len(deps.comparisons) == 1
+    assert deps.comparisons[0].status == "computed"
+    assert deps.comparisons[0].proposal == _proposal()
 
 
 def test_combinations_preserve_typed_values_and_reject_missing() -> None:

@@ -655,6 +655,34 @@ class ContextStagesMixin:
                     *existing_exclusion_list,
                 }
             )
+        retry_inputs: dict[str, Any] = {}
+        failed = journal._validated_done_outcome(
+            store,
+            prefix,
+            workflow.workflowRunId,
+            "experimental_context",
+            request_record,
+            parents,
+            required_status="failed",
+        )
+        if failed is not None and "retryAfterFailedReport" in failed.inputs:
+            # A later persistence or validation error must keep the same retry
+            # identity so its already committed decision remains recoverable.
+            retry_inputs["retryAfterFailedReport"] = failed.inputs[
+                "retryAfterFailedReport"
+            ]
+        if failed is not None and failed.reportReferences:
+            failed_report = journal.load_stage_report(
+                store, failed, ExperimentalContextResult
+            )
+            if cast(ExperimentalContextResult, failed_report).status == "failed":
+                # A failed model report is evidence of an attempt, not a decision
+                # to replay. Keep it immutable and address the retry separately.
+                # A committed successful retry still has a stable recovery key.
+                retry_inputs["retryAfterFailedReport"] = failed.reportReferences[
+                    0
+                ].model_dump(mode="json")
+                logger.info("Retrying experimental context after the previous failure")
         started = journal._start_attempt(
             store.zw,
             prefix,
@@ -663,6 +691,7 @@ class ContextStagesMixin:
             request_record,
             parents,
             inputs={
+                **retry_inputs,
                 "studyContext": request_record.request.studyContext,
                 "studyObjective": request_record.request.studyObjective,
                 "cellSelection": cell_selection.model_dump(mode="json"),

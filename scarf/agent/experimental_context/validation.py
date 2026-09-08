@@ -26,6 +26,7 @@ from .tools import contrast_plans_from_characterization
 from .requirements import objective_evidence, unmet_objective_requirements
 
 try:
+    from pydantic import ValidationError
     from pydantic_ai import ModelRetry
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
@@ -436,6 +437,18 @@ def failed_experimental_context_result(
         notes=["Deterministic covariate characterization is unavailable."],
     )
     model_detail = str(error).replace("\n", " ").strip()[:500]
+    failure_notes = []
+    cause = error.__cause__
+    if isinstance(cause, ValidationError):
+        details = [
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+            for item in cause.errors(
+                include_url=False, include_input=False, include_context=False
+            )[:8]
+        ]
+        failure_notes.append("Invalid tool arguments: " + "; ".join(details))
+    elif isinstance(cause, ModelRetry):
+        failure_notes.append("Rejected tool arguments: " + str(cause)[:1000])
     return ExperimentalContextResult(
         status="failed",
         decision=ExperimentalContextDecision(
@@ -457,6 +470,7 @@ def failed_experimental_context_result(
         notes=[
             "The model did not produce a validated experimental-context decision.",
             f"Model failure: {model_detail}",
+            *failure_notes,
         ],
         runInfo=AgentRunInfo(
             agentName="experimental_context_failed",

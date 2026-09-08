@@ -78,8 +78,18 @@ class ExperimentalContextAgent:
             coefficients, every unit of inference, and the complete exact batch
             column set. Nominate up to eight comparisons that explain the study
             objective: single variables, two-column joint effects, or associations
-            within categorical strata. A comparison uses at most three observed
-            columns and a justified observation/independent unit. You may make one
+            within categorical strata. Each comparison must have a distinct
+            response and either one or two explanatoryColumns with conditionedOn
+            null, or exactly one explanatory column and one distinct categorical
+            conditionedOn column. These are the at most three measured columns;
+            observationUnit and independentUnit are separate unit fields and do
+            not count toward that limit. Never repeat response among explanatory
+            or conditioning columns. Never append unit identifiers to explanatory
+            columns just to identify replication. A joint explanation within
+            strata is unsupported; separate simpler comparisons do not establish
+            that joint conditional finding. If a tool rejects a proposal, correct
+            the named fields while preserving its scientific question or record
+            the unsupported requirement explicitly. You may make one
             follow-up call with at most four new or revised comparisons after
             reading the first evidence. Never split the exact batch-column set.
             A donor can carry biological variation and also be the explicitly

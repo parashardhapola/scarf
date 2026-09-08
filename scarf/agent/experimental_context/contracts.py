@@ -44,13 +44,54 @@ type ContrastStatus = Literal["licensed", "blocked", "needsInput"]
 
 
 class CovariateProposal(AgentDataModel):
-    """One objective-led comparison of observed metadata, without expression tests."""
+    """Compare at most three distinct measured columns, without expression tests.
 
-    response: str
-    explanatoryColumns: list[str] = Field(min_length=1, max_length=2)
-    conditionedOn: str | None = None
-    observationUnit: str
-    independentUnit: str | None = None
+    Use one response with either one or two explanatory columns and no conditioning,
+    or one response with one explanatory column and one categorical conditioning
+    column. Observation and independent units are separate and do not count toward
+    this limit. A joint comparison within strata is unsupported.
+    """
+
+    response: str = Field(
+        description=(
+            "Exact observed outcome column. It must differ from every explanatory "
+            "and conditioning column; do not compare a column with itself."
+        )
+    )
+    explanatoryColumns: list[str] = Field(
+        min_length=1,
+        max_length=2,
+        description=(
+            "One or two distinct observed columns, each different from response. "
+            "With two explanatory columns, conditionedOn must be null. With a "
+            "conditioning column, supply exactly one explanatory column. Unit "
+            "identifiers belong in observationUnit/independentUnit unless they "
+            "are themselves the explicitly requested scientific comparison."
+        ),
+    )
+    conditionedOn: str | None = Field(
+        default=None,
+        description=(
+            "Optional exact categorical column defining strata, different from "
+            "response and the single explanatory column. Set null for a two-column "
+            "joint explanation. Continuous conditioning is unsupported."
+        ),
+    )
+    observationUnit: str = Field(
+        description=(
+            "Exact observed column identifying the observation unit, such as a "
+            "sample. This unit field does not count toward the three measured "
+            "columns; it does not automatically belong in explanatoryColumns."
+        )
+    )
+    independentUnit: str | None = Field(
+        default=None,
+        description=(
+            "Exact observed independent-unit column, such as donor, or null to "
+            "use observationUnit. It may equal observationUnit and does not count "
+            "toward the three measured columns. Preserve repeated-donor identity."
+        ),
+    )
     rationale: str = Field(min_length=1)
     protectCombination: bool = False
     purpose: Literal["designCoverage", "association", "effectEstimation"] = (
@@ -64,8 +105,29 @@ class CovariateProposal(AgentDataModel):
         columns = [self.response, *self.explanatoryColumns]
         if self.conditionedOn is not None:
             columns.append(self.conditionedOn)
-        if len(columns) > 3 or len(columns) != len(set(columns)):
-            raise ValueError("A comparison requires at most three distinct columns")
+        repeated = sorted({name for name in columns if columns.count(name) > 1})
+        if repeated:
+            raise ValueError(
+                "Comparison columns must be distinct; repeated columns "
+                f"{repeated!r} occur in response={self.response!r}, "
+                f"explanatoryColumns={self.explanatoryColumns!r}, "
+                f"conditionedOn={self.conditionedOn!r}. A column cannot explain "
+                "itself or also define its conditioning strata. Choose the actual "
+                "distinct measured columns. Observation and independent units may "
+                "share names and are not part of this uniqueness check."
+            )
+        if len(columns) > 3:
+            raise ValueError(
+                "A comparison requires at most three distinct measured columns; "
+                f"received response={self.response!r}, "
+                f"explanatoryColumns={self.explanatoryColumns!r}, "
+                f"conditionedOn={self.conditionedOn!r}. With two explanatory "
+                "columns set conditionedOn=null for a joint comparison. A "
+                "within-stratum comparison requires one explanatory column. "
+                "Observation and independent units do not count toward this "
+                "limit. A joint explanation within strata is unsupported; do not "
+                "claim that separate simpler comparisons answer that question."
+            )
         if any(not value.strip() for value in [*columns, self.observationUnit]):
             raise ValueError(
                 "Comparison columns and observation unit must be non-empty"

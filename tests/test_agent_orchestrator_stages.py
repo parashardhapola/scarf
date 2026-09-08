@@ -416,6 +416,122 @@ def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
     assert UnsafeAgent.calls == 1
 
 
+@pytest.mark.parametrize("after_commit", ["none", "interrupt", "exception"])
+def test_failed_context_retries_without_overwriting_or_replaying_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    after_commit: str,
+) -> None:
+    path = create_store(tmp_path / "retry-context.zarr")
+    store = DataStore(str(path), default_assay="RNA", min_features_per_cell=0)
+    workflow = WorkflowIdentity("retry-context")
+    selection = ArtifactReferenceModel.from_artifact_ref(
+        store.snapshot_cell_selection("I")
+    )
+    request = OrchestrationRequestRecord(
+        inputIdentity={},
+        modelIdentity="test-model",
+        workflowRunId=workflow.workflowRunId,
+        config=AutomatedWorkflowConfig(inputPolicy="unattended"),
+        request=AutomatedWorkflowRequest(
+            sourcePath=str(path),
+            zarrPath=str(path),
+            studyContext="Treatment is confounded with batch.",
+            studyObjective="Preserve treatment while discovering populations.",
+        ),
+    )
+    enrichment_ref = _save_input_evidence(
+        store, workflow, request, example(DataEnrichmentReport)
+    )
+    report = example(ExperimentalContextResult).model_copy(
+        update={
+            "characterization": _measured_context_characterization(store, selection),
+            "cellSelection": selection,
+            "cellQc": CellQcPlan(),
+            "qcProfiles": [],
+            "qualityMetricArtifacts": [],
+            "htoIdentityColumns": [],
+            "htoIdentityArtifacts": [],
+        }
+    )
+    report.decision.batchCorrection.action = "unsafe"
+    failed_report = report.model_copy(
+        update={"status": "failed", "notes": ["Invalid design proposal"]}, deep=True
+    )
+    failed_report.decision.batchCorrection.action = "needsInput"
+
+    class RecoveringAgent:
+        calls = 0
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def run(self, *_args: Any, **_kwargs: Any) -> ExperimentalContextResult:
+            type(self).calls += 1
+            return failed_report if self.calls <= 2 else report
+
+    monkeypatch.setattr(context_module, "ExperimentalContextAgent", RecoveringAgent)
+    orchestrator = AgentOrchestrator(object())
+
+    def execute():
+        return orchestrator.experimental_context_stage(
+            store, workflow, request, [], selection, enrichment_ref, [], [], {}
+        )
+
+    first, _ = execute()
+    second, _ = execute()
+    assert first.status == second.status == "failed"
+    assert RecoveringAgent.calls == 2
+    assert first.reportReferences != second.reportReferences
+    assert second.inputs["retryAfterFailedReport"] == first.reportReferences[
+        0
+    ].model_dump(mode="json")
+    original_failure = journal_module.read_stage_evidence(
+        store, first.reportReferences[0]
+    )
+
+    if after_commit != "none":
+        save_outcome = journal_module._save_outcome
+
+        def interrupt(_group, _prefix, outcome):
+            if outcome.status == "done":
+                if after_commit == "exception":
+                    raise RuntimeError(
+                        "persistence failed after committing the decision"
+                    )
+                raise KeyboardInterrupt("interrupted after committing the decision")
+            save_outcome(_group, _prefix, outcome)
+
+        monkeypatch.setattr(journal_module, "_save_outcome", interrupt)
+        if after_commit == "interrupt":
+            with pytest.raises(KeyboardInterrupt, match="committing"):
+                execute()
+        else:
+            exception_outcome, _ = execute()
+            assert exception_outcome.status == "failed"
+            assert exception_outcome.reportReferences == []
+        monkeypatch.setattr(journal_module, "_save_outcome", save_outcome)
+    else:
+        done, _ = execute()
+        assert done.status == "done"
+
+    resumed, resumed_report = execute()
+    assert resumed.status == "done"
+    assert resumed_report.status == "done"
+    assert resumed_report.decision.batchCorrection.action == "unsafe"
+    assert RecoveringAgent.calls == 3
+    if after_commit != "none":
+        assert "recover_persisted_experimental_context_report" in resumed.actions
+    assert (
+        journal_module.read_stage_evidence(store, first.reportReferences[0])
+        == original_failure
+    )
+    assert (
+        journal_module.read_stage_evidence(store, second.reportReferences[0])["status"]
+        == "failed"
+    )
+
+
 def test_explicit_no_inference_skip_resolves_context_without_provider_rerun(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

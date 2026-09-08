@@ -431,6 +431,12 @@ async def analyze_experimental_design(
         units_of_inference: Observation and independent units for each coefficient.
         batch_columns: Exact technical columns proposed for Harmony evaluation.
         proposals: Up to eight initial or four follow-up objective-led comparisons.
+            Each uses distinct response/explanatory/conditioning columns: one or
+            two explanatory columns without conditioning, or one explanatory
+            column with one categorical conditioning column. Observation and
+            independent units do not count toward the three-column limit.
+            Joint explanations within strata are unsupported. Do not discard a
+            scientific question or a unit identity just to fit this schema.
         capture_proposal: Exact capture and baseline identities supported by study prose.
     """
     logger.info(
