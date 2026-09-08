@@ -118,6 +118,18 @@ class AgentUsageInfo(AgentDataModel):
     totalTokens: int = 0
     requests: int = 0
     toolCalls: int = 0
+    availability: Literal["reported", "partial", "unavailable"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+class AgentValidationRetry(AgentDataModel):
+    """A rejected response or tool call and the feedback supplied for repair."""
+
+    source: Literal["output", "tool", "schema"]
+    requestIndex: int = 0
+    message: str
+    response: dict[str, Any] | str | None = None
 
 
 class AgentRunInfo(AgentDataModel):
@@ -127,6 +139,14 @@ class AgentRunInfo(AgentDataModel):
     durationSeconds: float = 0.0
     usage: AgentUsageInfo = Field(default_factory=AgentUsageInfo)
     toolCalls: list[ToolCallInfo] = Field(default_factory=list)
+    status: Literal["done", "failed"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    validationRetries: list[AgentValidationRetry] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
+    errorType: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    error: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AgentExecutionResult(AgentDataModel):

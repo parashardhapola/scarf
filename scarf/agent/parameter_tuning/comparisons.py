@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from collections import Counter
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import Field
 import numpy as np
@@ -43,6 +43,91 @@ class ComparisonTradeoff(AgentDataModel):
     preferredValue: float = Field(allow_inf_nan=False)
     alternativeValue: float = Field(allow_inf_nan=False)
     interpretation: str = Field(min_length=1)
+
+
+def comparison_advantages(coverage: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Enumerate exact measured counterevidence for each observed preference."""
+    settings = coverage["candidateSettings"]
+    axes: dict[str, set[str]] = {}
+    for comparison in coverage["comparisons"]:
+        identifiers = axes.setdefault(comparison["axis"], set())
+        identifiers.add(comparison["baselineCandidateId"])
+        if comparison["status"] == "completed":
+            identifiers.add(comparison["alternativeCandidateId"])
+    rows = []
+    metrics = get_args(ComparisonTradeoff.model_fields["metric"].annotation)
+    for axis, identifiers in sorted(axes.items()):
+        for preferred_id in sorted(identifiers):
+            preferred = settings[preferred_id]["metrics"]
+            for alternative_id in sorted(identifiers - {preferred_id}):
+                alternative = settings[alternative_id]["metrics"]
+                for metric in metrics:
+                    left, right = preferred.get(metric), alternative.get(metric)
+                    if (
+                        isinstance(left, (int, float))
+                        and not isinstance(left, bool)
+                        and isinstance(right, (int, float))
+                        and not isinstance(right, bool)
+                        and np.isfinite(left)
+                        and np.isfinite(right)
+                        and right > left
+                    ):
+                        rows.append(
+                            {
+                                "axis": axis,
+                                "preferredCandidateId": preferred_id,
+                                "alternativeCandidateId": alternative_id,
+                                "metric": metric,
+                                "preferredValue": float(left),
+                                "alternativeValue": float(right),
+                                "difference": float(right - left),
+                            }
+                        )
+    return rows
+
+
+def bind_comparison_measurements(
+    coverage: Mapping[str, Any], action: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Attach measured values to model-authored interpretations, never rationales."""
+    inventory = {
+        (
+            row["axis"],
+            row["preferredCandidateId"],
+            row["alternativeCandidateId"],
+            row["metric"],
+        ): row
+        for row in comparison_advantages(coverage)
+    }
+    conclusions = []
+    for conclusion in action.get("comparisonConclusions", []):
+        tradeoffs = []
+        for interpretation in conclusion.get("tradeoffs", []):
+            key = (
+                conclusion["axis"],
+                conclusion["preferredCandidateId"],
+                interpretation["alternativeCandidateId"],
+                interpretation["metric"],
+            )
+            measured = inventory.get(key)
+            if measured is None:
+                raise ValueError(
+                    f"Tradeoff does not identify an observed advantage: {key!r}"
+                )
+            values = {
+                field: measured[field]
+                for field in ("preferredValue", "alternativeValue")
+            }
+            if any(
+                interpretation.get(field) is not None and interpretation[field] != value
+                for field, value in values.items()
+            ):
+                raise ValueError(
+                    f"Tradeoff must use exact preferred and alternative measurements for {key!r}: {values!r}"
+                )
+            tradeoffs.append({**interpretation, **values})
+        conclusions.append({**conclusion, "tradeoffs": tradeoffs})
+    return {**action, "comparisonConclusions": conclusions}
 
 
 class PopulationConcern(AgentDataModel):
@@ -349,6 +434,8 @@ def validate_comparison_review(
             raise ValueError(
                 "Conclude every required comparison axis before combining or accepting"
             )
+        inventory = comparison_advantages(coverage)
+        tradeoff_errors: list[str] = []
         for axis, ids in axis_candidates.items():
             conclusion = by_axis[axis]
             if not ids.issubset(conclusion.candidateIds) or not set(
@@ -361,30 +448,27 @@ def validate_comparison_review(
                 raise ValueError(
                     "A comparison preference must name its observed candidate"
                 )
-            preferred = settings[conclusion.preferredCandidateId]["metrics"]
             required_tradeoffs = {
-                (identifier, metric): (float(preferred[metric]), float(value))
-                for identifier in ids - {conclusion.preferredCandidateId}
-                for metric, value in settings[identifier]["metrics"].items()
-                if metric
-                in {
-                    "seedStability",
-                    "subsampleStability",
-                    "markerCoherence",
-                    "markerSpecificityMedian",
-                    "macroF1",
-                }
-                and isinstance(value, (int, float))
-                and isinstance(preferred.get(metric), (int, float))
-                and value > preferred[metric]
+                (row["alternativeCandidateId"], row["metric"]): (
+                    row["preferredValue"],
+                    row["alternativeValue"],
+                )
+                for row in inventory
+                if row["axis"] == axis
+                and row["preferredCandidateId"] == conclusion.preferredCandidateId
             }
             supplied = {
                 (row.alternativeCandidateId, row.metric): row
                 for row in conclusion.tradeoffs
             }
-            if not required_tradeoffs.keys() <= supplied.keys():
-                raise ValueError(
-                    "The comparison preference must explain each observed alternative's better stability, marker or separability measurement"
+            prefix = f"{axis}, preferred {conclusion.preferredCandidateId}"
+            if len(supplied) != len(conclusion.tradeoffs):
+                tradeoff_errors.append(f"{prefix}: duplicate tradeoff entries")
+            for key in sorted(required_tradeoffs.keys() - supplied.keys()):
+                left, right = required_tradeoffs[key]
+                tradeoff_errors.append(
+                    f"{prefix}: explain alternative {key[0]} on {key[1]} "
+                    f"(preferred={left!r}, alternative={right!r})"
                 )
             for key, row in supplied.items():
                 if (
@@ -392,9 +476,15 @@ def validate_comparison_review(
                     or (row.preferredValue, row.alternativeValue)
                     != required_tradeoffs[key]
                 ):
-                    raise ValueError(
-                        "Comparison tradeoffs must quote the exact preferred and alternative measurements"
+                    tradeoff_errors.append(
+                        f"{prefix}: use exact preferred and alternative measurements "
+                        f"for {key!r}; expected {required_tradeoffs.get(key)!r}"
                     )
+        if tradeoff_errors:
+            raise ValueError(
+                "Explain each observed alternative's better stability, marker or "
+                "separability measurement: " + "; ".join(tradeoff_errors)
+            )
     if action["action"] == "combine":
         if coverage["phase"] != "sensitivity":
             raise ValueError(

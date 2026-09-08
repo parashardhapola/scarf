@@ -1,17 +1,23 @@
 """Read-only Pydantic AI tools for experimental context."""
 
+import hashlib
 import math
+from copy import deepcopy
+from functools import wraps
 from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
+import numpy as np
 
 from ...metadata.queries import reduce_observation_units
 from ...metrics.association import coefficient_estimability
 from ...storage.refs import ArtifactRef
+from ...storage.artifacts import fingerprint_array
 from ...utils.logging import logger
 from .._deps import AGENT_INSTALL_HINT
 from ..tools import artifact_reference, core_artifact_reference
 from ..types import BatchSafetyEvidence, BatchSafetyStatus
+from ..record_io import canonical_json_bytes
 from .characterization import characterize_covariates
 from .comparisons import (
     DESIGN_ROUND_LIMITS,
@@ -40,13 +46,278 @@ from .qc_evidence import (
     _hto_identity_columns,
     _offered_qc_profiles,
 )
-from .requirements import objective_evidence
+from .requirements import objective_evidence, requested_design_questions
 
 try:
     from pydantic_ai import ModelRetry, RunContext
     from pydantic_ai.tools import ToolDefinition
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
+
+
+def compact_context_evidence(evidence: CovariateEvidence) -> dict[str, Any]:
+    """Present design findings; retain detailed policy measurements in the journal."""
+    payload = evidence.model_dump(mode="json")
+    characterization = payload["characterization"]
+    coefficients = {
+        record["name"]: record for record in characterization["coefficients"]
+    }
+    for index, report in enumerate(characterization["confounding"]):
+        source = coefficients.get(report.get("coefficient"), {})
+        for name in list(report):
+            if name in source and report[name] == source[name]:
+                report.pop(name)
+        report["coefficientDetails"] = f"coefficient:{report.get('coefficient')}"
+        report["details"] = f"confounding:{index}"
+    for plan in payload["contrastPlans"]:
+        source = coefficients.get(plan["coefficient"], {})
+        for name in ("replication", "estimability", "pairedCoverage"):
+            if plan[name] == source.get(name):
+                plan.pop(name)
+        plan["coefficientDetails"] = f"coefficient:{plan['coefficient']}"
+    # These tables duplicate the named coefficient records exactly.
+    for name in (
+        "unitLevelCounts",
+        "groupImbalance",
+        "missingness",
+        "designStructures",
+        "pairedCoverage",
+        "coefficientEstimability",
+    ):
+        characterization.pop(name, None)
+    for column in characterization["columns"]:
+        counts = column.get("levelCounts", [])
+        if len(counts) > 8:
+            column["levelCounts"] = counts[:8]
+            column["levelCountsOmitted"] = len(counts) - 8
+            column["details"] = f"column:{column['name']}"
+
+    def omit_examples(value: Any) -> None:
+        if isinstance(value, dict):
+            examples = value.pop("incompleteExamples", None)
+            if examples is not None:
+                value["incompleteExamplesInSavedDetails"] = len(examples)
+            for child in value.values():
+                omit_examples(child)
+        elif isinstance(value, list):
+            for child in value:
+                omit_examples(child)
+
+    omit_examples(characterization)
+    omit_examples(payload["contrastPlans"])
+    for record in characterization["coefficients"]:
+        record.pop("unitLevelCounts", None)
+        record["details"] = f"coefficient:{record['name']}"
+    shared_safety: dict[str, Any] = {}
+    for profile in payload["qcProfiles"]:
+        # The later QC decision receives complete thresholds and retention tables.
+        # Context needs capture provenance, adverse evidence and design constraints.
+        profile.pop("metricSources", None)
+        profile.pop("sourceConcordance", None)
+        profile.pop("resolvedBounds", None)
+        profile["parameters"] = {
+            key: value
+            for key, value in profile["parameters"].items()
+            if key not in {"resolvedBounds", "captureComparisons", "captureSizes"}
+        }
+        profile["details"] = f"qcProfile:{profile['profileId']}"
+        for failure in profile.get("captureFailureEvidence", []):
+            safety = failure.pop("conditionAndUnitSafety", [])
+            for check in safety:
+                if "requiredGroups" in check and "remainingGroups" in check:
+                    check["lostGroups"] = [
+                        group
+                        for group in check["requiredGroups"]
+                        if group not in check["remainingGroups"]
+                    ]
+                for name in (
+                    "requiredGroups",
+                    "remainingGroups",
+                    "observationUnitsByGroup",
+                    "independentUnitsByGroup",
+                    "quantilesBeforeExclusion",
+                    "quantilesAfterExclusion",
+                ):
+                    check.pop(name, None)
+            identity = hashlib.sha256(canonical_json_bytes(safety)).hexdigest()
+            shared_safety[identity] = safety
+            failure["designSafetyRef"] = identity
+            missingness = failure.pop("metricMissingFractions", {})
+            failure["metricMissingness"] = {
+                "measuredSources": len(missingness),
+                "nonzeroOrUnavailable": {
+                    key: value for key, value in missingness.items() if value != 0
+                },
+            }
+    payload["captureDesignSafety"] = shared_safety
+    payload["savedDetails"] = (
+        "inspect_context_evidence returns one exact saved column, coefficient, "
+        "comparison, confounding record, or QC policy/capture. Policy thresholds, "
+        "individual donor examples and complete distributions remain saved; "
+        "summaries are not a substitute for required evidence."
+    )
+    return payload
+
+
+async def inspect_context_evidence(
+    ctx: RunContext[ExperimentalContextDependencies],
+    section: Literal["column", "coefficient", "comparison", "confounding", "qcProfile"],
+    record_id: str,
+    capture: str | None = None,
+) -> dict[str, Any]:
+    """Read one saved evidence record without model calls or recomputation.
+
+    Use a column/coefficient name, comparison evidenceId, zero-based confounding
+    index, or profileId. For capture-level QC detail supply one exact capture.
+    """
+    characterization = ctx.deps.characterization
+    if characterization is None:
+        raise ModelRetry("Inspect covariates before requesting saved evidence")
+    if section == "qcProfile":
+        profile = ctx.deps.qcProfiles.get(record_id)
+        if profile is None:
+            raise ModelRetry("Choose an offered profileId")
+        if capture is not None:
+            failure = next(
+                (
+                    row
+                    for row in profile.captureFailureEvidence
+                    if row.capture == capture
+                ),
+                None,
+            )
+            if failure is None:
+                raise ModelRetry("Choose one capture recorded in this QC profile")
+            bounds = profile.resolvedBounds
+            return {
+                "profileId": record_id,
+                "capture": failure.model_dump(mode="json"),
+                "resolvedBounds": [row for row in bounds if row.get("group") == capture]
+                if isinstance(bounds, list)
+                else deepcopy(bounds),
+            }
+        result = profile.model_dump(mode="json")
+        result.pop("captureFailureEvidence", None)
+        result.pop("metricSources", None)
+        result.pop("sourceConcordance", None)
+        result["parameters"].pop("captureComparisons", None)
+        result["parameters"].pop("resolvedBounds", None)
+        if profile.sampleColumn is not None or profile.sampleArtifact is not None:
+            result.pop("resolvedBounds", None)
+            result["captureDetailsRequired"] = (
+                "Supply one capture to retrieve its exact thresholds and exclusion safety"
+            )
+        return result
+    if capture is not None:
+        raise ModelRetry("A capture can be requested only for a QC profile")
+    if section == "comparison":
+        for comparison in characterization.comparisons:
+            if comparison.evidenceId == record_id:
+                return comparison.model_dump(mode="json")
+    elif section == "confounding":
+        if record_id.isdecimal() and int(record_id) < len(characterization.confounding):
+            return deepcopy(characterization.confounding[int(record_id)])
+    else:
+        records = (
+            characterization.columns
+            if section == "column"
+            else characterization.coefficients
+        )
+        for record in records:
+            if record["name"] == record_id:
+                return deepcopy(record)
+    raise ModelRetry("Choose an exact record from the saved context summary")
+
+
+def model_evidence_tool(function: Any) -> Any:
+    """Keep complete tool results in state and send a deduplicated model view."""
+
+    @wraps(function)
+    async def invoke(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        result = await function(*args, **kwargs)
+        payload = compact_context_evidence(result)
+        context = args[0] if args else kwargs["ctx"]
+        payload["requestedComparisons"] = [
+            {"question": quote, "columns": columns, "conditional": conditional}
+            for quote, columns, conditional in requested_design_questions(
+                context.deps.studyContext,
+                context.deps.studyObjective,
+                [row["name"] for row in result.characterization.columns],
+            )
+        ]
+        return payload
+
+    return invoke
+
+
+def persist_context_evidence(deps: ExperimentalContextDependencies, key: str) -> None:
+    """Commit completed context measurements to the owning stage journal."""
+    if deps.checkpointWrite is not None:
+        deps.checkpointWrite(
+            key,
+            {
+                "state": deps.model_dump(mode="json"),
+                "characterizationInputs": deps.characterizationInputs,
+            },
+        )
+
+
+def restore_context_evidence(deps: ExperimentalContextDependencies) -> bool:
+    """Restore complete evidence rounds without resetting proposal allowances."""
+    if deps.checkpointRead is None:
+        return False
+    restored = False
+    for key in ("inspection", "design1", "design2"):
+        saved = deps.checkpointRead(key)
+        if saved is None:
+            continue
+        state = ExperimentalContextDependencies.model_validate(saved["state"])
+        for name, field in ExperimentalContextDependencies.model_fields.items():
+            if not field.exclude:
+                setattr(deps, name, getattr(state, name))
+        deps.characterizationInputs = saved["characterizationInputs"]
+        restored = True
+    return restored
+
+
+def characterize_context(
+    deps: ExperimentalContextDependencies, directions: dict[str, Any]
+) -> CovariateCharacterization:
+    """Reuse characterization for the exact frozen stage and declared design."""
+    metadata = {}
+    for column in deps.cells.columns:
+        values = np.asarray(deps.cells.fetch(column))
+        metadata[column] = (
+            hashlib.sha256(
+                repr(
+                    [(type(value).__name__, value) for value in values.tolist()]
+                ).encode()
+            ).hexdigest()
+            if values.dtype.hasobject
+            else fingerprint_array(values)
+        )
+    inputs = {
+        "directions": deepcopy(directions),
+        "cellSelection": deps.cellSelection.to_dict(),
+        "studyContext": deps.studyContext,
+        "studyObjective": deps.studyObjective,
+        "metadata": metadata,
+    }
+    if deps.characterization is not None and deps.characterizationInputs == inputs:
+        return deps.characterization
+    result = characterize_covariates(
+        deps.store,
+        cellSelection=deps.cellSelection,
+        studyContext=f"{deps.studyContext}\nStudy objective: {deps.studyObjective}",
+        model=None,
+        directions=directions,
+        groupingArtifacts=_hto_artifact_map(deps),
+        inventory=deps.inventoryData,
+    )
+    if result.status != "failed":
+        deps.characterization = result
+        deps.characterizationInputs = inputs
+    return result
 
 
 def _prepare_experimental_context_tool(
@@ -215,16 +486,7 @@ async def inspect_cell_covariates(
         f"cellSelection={ctx.deps.cellSelection.artifact_id}"
     )
     ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
-    characterization = characterize_covariates(
-        ctx.deps.store,
-        cellSelection=ctx.deps.cellSelection,
-        studyContext=(
-            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
-        ),
-        model=None,
-        directions=ctx.deps.directions,
-        groupingArtifacts=_hto_artifact_map(ctx.deps),
-    )
+    characterization = characterize_context(ctx.deps, ctx.deps.directions)
     ctx.deps.characterization = characterization
     qc_profiles = _offered_qc_profiles(ctx.deps)
     contrast_plans = contrast_plans_from_characterization(characterization)
@@ -247,6 +509,7 @@ async def inspect_cell_covariates(
     )
     ctx.deps.evidenceIds.update(evidence_ids)
     ctx.deps.toolCalls.append("inspect_cell_covariates")
+    persist_context_evidence(ctx.deps, "inspection")
     logger.info(
         "Experimental Context covariate inspection completed: "
         f"status={characterization.status}, "
@@ -538,16 +801,7 @@ async def analyze_experimental_design(
                     f"Batch column {batch_column!r} must be categorical for Harmony"
                 )
 
-    characterization = characterize_covariates(
-        ctx.deps.store,
-        cellSelection=ctx.deps.cellSelection,
-        studyContext=(
-            f"{ctx.deps.studyContext}\nStudy objective: {ctx.deps.studyObjective}"
-        ),
-        model=None,
-        directions=directions,
-        groupingArtifacts=_hto_artifact_map(ctx.deps),
-    )
+    characterization = characterize_context(ctx.deps, directions)
     if characterization.status == "failed":
         rejection = "; ".join(characterization.notes).strip()
         logger.warning(
@@ -634,6 +888,7 @@ async def analyze_experimental_design(
     evidence_ids.update(item.evidenceId for item in batch_safety)
     ctx.deps.evidenceIds.update(evidence_ids)
     ctx.deps.toolCalls.append("analyze_experimental_design")
+    persist_context_evidence(ctx.deps, f"design{ctx.deps.designRounds}")
     safety_counts = {
         status: sum(item.status == status for item in batch_safety)
         for status in ("safe", "unsafe", "notComputed")

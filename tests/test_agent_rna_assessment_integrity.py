@@ -368,3 +368,67 @@ def test_uncertain_correction_can_request_harmony_only_with_safe_design(
             run.review("full", 0, selected, {})
         saved = request.getfixturevalue("memory_checkpoints")
         assert "parameter_tuning/full/review0" not in saved
+
+
+@pytest.mark.parametrize(
+    "comparison",
+    ["missing", "failed", "cells", "features", "parameters", "batch", "matched"],
+)
+def test_safe_not_needed_requires_an_exact_completed_harmony_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    comparison: str,
+) -> None:
+    run, selected = _run(monkeypatch)
+    run.study.correctionLicense = "safe"
+    run.study.technicalBatchColumns = ["batch"]
+    run.batch_columns = ["batch"]
+    selected.metrics.batchMixing = {"batch": 0.8}
+    if comparison != "missing":
+        corrected = selected.model_copy(deep=True)
+        corrected.parameters.candidateId = "matched_harmony"
+        corrected.candidateId = "matched_harmony"
+        corrected.parameters.useHarmony = True
+        corrected.harmonyBatchColumns = ["batch"]
+        corrected.metrics.batchMixing = {"batch": 0.7}
+        setting = run.settings[selected.candidateId].model_copy(deep=True)
+        setting.parameters = corrected.parameters
+        if comparison == "failed":
+            corrected.status = "failed"
+        elif comparison == "cells":
+            corrected.cellSelection.artifactId = "a" * 64
+        elif comparison == "features":
+            setting.features.artifactId = "b" * 64
+        elif comparison == "parameters":
+            corrected.parameters.neighborsK += 1
+        elif comparison == "batch":
+            corrected.harmonyBatchColumns = ["another_batch"]
+        run.evaluations["full"].append(corrected)
+        run.settings[corrected.candidateId] = setting
+
+    def prefer_native(**kwargs: Any) -> Any:
+        action = assess(**{**kwargs, "output_validator": lambda value: value}).output
+        action.correctionNeed = "notNeeded"
+        action.quantitativeFindings = [
+            "Native batch mixing is 0.8; corrected mixing is 0.7."
+        ]
+        action.rationale = (
+            "The observed Harmony comparison worsens batch mixing; retain native."
+        )
+        return SimpleNamespace(output=kwargs["output_validator"](action))
+
+    monkeypatch.setattr(rna_tuning, "run_agent_sync", prefer_native)
+    if comparison == "matched":
+        passed, _ = run.harmony_gate("full", corrected)
+        assert not passed
+        action = run.review("full", 0, selected, {})
+        assert action.action == "accept"
+        assert action.selectedCandidateId == selected.candidateId
+        assert action.correctionNeed == "notNeeded"
+    else:
+        with pytest.raises(
+            ValueError, match="requires a completed, matched Harmony experiment"
+        ):
+            run.review("full", 0, selected, {})
+        saved = request.getfixturevalue("memory_checkpoints")
+        assert "parameter_tuning/full/review0" not in saved

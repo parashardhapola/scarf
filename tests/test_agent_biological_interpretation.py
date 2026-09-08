@@ -902,7 +902,7 @@ def test_agent_waits_for_tools_and_returns_audited_report() -> None:
     }
 
 
-def test_biological_interpretation_falls_back_to_unresolved_hypotheses(
+def test_biological_interpretation_preserves_evidence_without_completed_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeStore()
@@ -938,15 +938,12 @@ def test_biological_interpretation_falls_back_to_unresolved_hypotheses(
         marker=store.marker,
     )
 
-    assert result.status == "done"
-    assert result.runInfo.agentName == "biological_interpretation_fallback"
-    assert {item.clusterId for item in result.clusterInterpretations} == {"0", "1"}
-    assert all(
-        item.proposedIdentity == "unresolved"
-        and item.identityIsHypothesis
-        and item.confidence == "low"
-        for item in result.clusterInterpretations
-    )
+    assert result.status == "failed"
+    assert result.runInfo.agentName == "biological_interpretation_failed"
+    assert result.clusterInterpretations == []
+    assert result.clusterArtifact == artifact_model(store.cluster)
+    assert result.markerArtifact == artifact_model(store.marker)
+    assert result.evidenceIds
     assert result.treatmentObservations == []
     assert marker_retries == [1]
 

@@ -176,6 +176,7 @@ def test_summary_counts_unique_diagnostic_evidence_and_labels_reuse(
     }
     run.history = []
     run.full_repairs = 0
+    run.diagnostic_counts = {}
     messages = []
     monkeypatch.setattr(rna_tuning.logger, "info", messages.append)
     summary = run.summary()
@@ -316,7 +317,8 @@ def test_native_acceptance_requires_resolved_supported_correction_need(
         else "required correction unresolved",
     ):
         run.review("sample0", 0, evaluation, {})
-    assert not any("review0" in key for key in checkpoints)
+    assert "parameter_tuning/sample0/review0" not in checkpoints
+    assert "parameter_tuning/sample0/review0/evidence/visual" in checkpoints
 
 
 @pytest.mark.slow
@@ -409,7 +411,16 @@ def test_required_comparisons_and_resume_reuse_augmented_evidence(
     monkeypatch.setattr(rna_tuning, "partition_comparison_evidence", no_recomputation)
     resumed, resumed_history = runner().run()
     assert resumed == first
-    assert resumed_history == history
+    assert {
+        key: value
+        for key, value in resumed_history.items()
+        if key != "diagnosticOperations"
+    } == {key: value for key, value in history.items() if key != "diagnosticOperations"}
+    measured = history["diagnosticOperations"]["operations"]
+    assert measured["core.primaryNormalization"]["completed"] > 0
+    restored = resumed_history["diagnosticOperations"]["operations"]
+    assert restored["diagnostic.primaryCandidateEvidence"]["restored"] > 0
+    assert all(row["attempted"] == 0 for row in restored.values())
     assert len(model_calls) == expected_calls
 
 
@@ -533,7 +544,7 @@ def test_feature_experiments_preserve_aliases_and_exact_protected_genes(
         )
 
 
-def test_inadequate_screens_fall_back_to_full_baseline_once(
+def test_inadequate_screens_preserve_evidence_without_unaffordable_full_panel(
     checkpoints: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -571,7 +582,6 @@ def test_inadequate_screens_fall_back_to_full_baseline_once(
     monkeypatch.setattr(run, "assess_scope", assess)
     report, summary = run.run()
     assert report.status == "needsInput"
-    assert sampled == [50_000, 100_000]
-    assert [scope for scope, _, _ in assessed] == ["sample0", "sample1", "full"]
-    assert assessed[-1] == ("full", run.cells, None)
+    assert sampled == [20_000, 100_000]
+    assert [scope for scope, _, _ in assessed] == ["sample0", "sample1"]
     assert summary["budget"]["scopes"]["full"]["reserved"]["partitions"] == 0

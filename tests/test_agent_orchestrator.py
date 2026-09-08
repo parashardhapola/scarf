@@ -28,7 +28,6 @@ from scarf.agent.decisions.kernel import DecisionSelection
 from scarf.agent.experimental_context import (
     BatchCorrectionPlan,
     CellQcPlan,
-    CovariateEvidence,
     ExperimentalContextDecision,
 )
 from scarf.agent.parameter_tuning import ParameterTuningReport
@@ -99,6 +98,10 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
                     content = part.content
                     if isinstance(content, model_type):
                         return content
+                    if model_type is dict:
+                        return (
+                            json.loads(content) if isinstance(content, str) else content
+                        )
                     if isinstance(content, str):
                         return model_type.model_validate_json(content)
                     return model_type.model_validate(content)
@@ -184,14 +187,14 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
             context_evidence = tool_result(
                 messages,
                 "analyze_experimental_design",
-                CovariateEvidence,
+                dict,
             )
             profile = next(
                 value
-                for value in context_evidence.qcProfiles
-                if value.registeredProfile is not None
+                for value in context_evidence["qcProfiles"]
+                if value["registeredProfile"] is not None
             )
-            evidence_id = profile.evidenceId
+            evidence_id = profile["evidenceId"]
             decision = ExperimentalContextDecision(
                 batchCorrection=BatchCorrectionPlan(
                     action="skip",

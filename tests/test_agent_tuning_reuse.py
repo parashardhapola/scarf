@@ -247,3 +247,39 @@ def test_restore_doublets_keeps_frozen_artifacts_and_summaries() -> None:
     assert restored.cell_selections == (_cell_selection(),)
     assert restored.capture_values == ("captureA",)
     assert restored.score_quantiles == {"p95": 0.4}
+
+
+def test_revised_design_metrics_reuse_primary_analysis_and_drop_stale_findings() -> (
+    None
+):
+    store = _FakeStore()
+    candidate = ParameterCandidate(candidateId="baseline")
+    deps = ParameterTuningDependencies(
+        store=store,
+        normalized=store.normalized,
+        normalizedShape=store.normalized_shape,
+        cellSelection=store.cell_selection,
+        fromAssay="RNA",
+        candidates={"baseline": candidate},
+        batchColumns=("batch",),
+        preservationColumns=("condition",),
+    )
+    observed = execution.execute_parameter_candidate(deps, "baseline")
+    assert observed.status == "done"
+    observed.metrics.biologicalPreservation["old"] = {"clisi": 1.0}
+    observed.evidenceIds.append("candidate:baseline:clisi:old")
+    observed.warnings.append("cLISI for 'old' unavailable: missing column")
+    before = Counter(name for name, _args, _kwargs in store.calls)
+    deps.preservationColumns = ("age",)
+    deps.columnKinds = {"age": "continuous"}
+    revised = execution.refresh_candidate_design_evidence(deps, observed)
+    after = Counter(name for name, _args, _kwargs in store.calls)
+    assert revised.artifacts == observed.artifacts
+    assert revised.metrics.biologicalPreservation == {}
+    assert not any(":clisi:old" in item for item in revised.evidenceIds)
+    assert not any("'old'" in item for item in revised.warnings)
+    assert any(
+        "continuous column 'age' is unsupported" in item for item in revised.warnings
+    )
+    assert "old" in observed.metrics.biologicalPreservation
+    assert after - before == Counter({"metric_proportional_batch_mixing": 1})

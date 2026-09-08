@@ -140,12 +140,20 @@ variables without a supported preservation measure remain explicitly unresolved.
 Scarf starts from its RNA settings and four partitions of the same graph. The model reviews
 quantitative diagnostics, marker and loading-gene evidence, and supplied images before accepting
 or requesting one registered experiment. The model cannot generate executable analysis code or
-arbitrary `DataStore` calls. Batch correction requires both an eligible design and measured need;
-acceptance additionally requires a matched native/corrected comparison preserving protected
-biology, including supported joint groups. Unsafe or unknown designs cannot license correction.
+arbitrary `DataStore` calls. When the design permits correction, a matched native/Harmony
+evaluation is required even when correction initially appears unnecessary. Accepting correction
+requires measured improvement while preserving protected biology, including supported joint
+groups, and passing the existing doublet checks. Unsafe or unknown designs cannot license
+correction.
 
-Large inputs use an immutable uniform screening cohort of 50,000 cells, with one possible
-enlargement to 100,000. Coverage and rare-population concerns can require a full-cohort baseline.
+New workflows use an immutable uniform screening cohort containing 10% of retained cells,
+rounded up and bounded to 10,000–100,000 cells, never exceeding the retained population.
+One larger nested screen may use up to 100,000 cells when the first is smaller. Existing
+explicit integer screening sizes retain their exact meaning on resume. A compatible interrupted
+run configured for 50,000 screening cells keeps that setting and its matching admitted work;
+it does not switch to the new fractional default. Coverage and
+rare-population concerns can require targeted full-cohort recovery of measured settings;
+a missing screening comparison does not authorize an unbounded full-cohort search.
 Screening selects settings; it does not replace the final QC-retained cohort. Selected settings
 are executed and assessed on the full cohort. Each screening population must compare the
 baseline against 2,000 and 4,000 variable genes, 10 and 30 PCA dimensions, and 21 and 41
@@ -161,8 +169,24 @@ For small cohorts, discovery uses every retained cell; these are full-sized comp
 in the screening allowance. Exact completed artifacts are reused for final validation without
 another admission. Report the analyzed population and diagnostic operations separately; the
 candidate allowance does not bound doublet calculations, elapsed time, or provider cost.
+A proposed recovery panel and its matched native controls must fit together before execution.
+Four corrected resolutions and four native controls consume all eight additional partitions;
+the one-repair limit does not reserve a ninth partition.
 
-Experimental Context records objective evidence requirements before tuning. Repeated donors and
+Advanced history records attempted, completed and failed operation calls separately from metric
+cache hits, saved-evidence restores and confirmed artifact reuse, for each invocation. These
+observed calls differ from counts of unique saved artifacts, and a core operation may itself
+reuse earlier work. Older histories without operation records have unknown counts, not zero.
+
+Experimental Context records objective evidence requirements before tuning. Explicit joint
+or conditional covariate requests remain unresolved when only marginal comparisons were
+nominated. Full study text is retained; compact model views deduplicate shared sources and
+capture-design evidence while complete measurements remain in the stage journal. These
+summaries retain adverse findings, missingness, protected-group loss and design constraints.
+The agent can retrieve one exact saved policy/capture or design record when detailed thresholds
+or donor examples are needed. This lookup performs no scientific recomputation. Completed
+metadata inspection and design rounds are checkpointed before further model requests, so
+interruption does not reset the eight-initial/four-follow-up allowance. Repeated donors and
 incomplete pairing receive descriptive counts and support summaries without treating cells or
 repeated samples as independent replicates. A method that cannot compute an association does
 not establish that an effect is absent or unidentifiable. Essential unresolved evidence blocks
@@ -182,9 +206,13 @@ full counts and provenance. `report()` returns or regenerates one local analysis
 saved evidence, with no new model calls or numerical analysis.
 
 This release deliberately breaks the earlier agent imports and persistence contracts. The root
-agent facade exports only `analyze_rna`, `AutomatedWorkflowResult`, and `AnalysisError`. Old agent
-runs must be restarted; their numerical artifacts remain readable through ordinary Scarf APIs.
-There are no implicit migrations. Standalone scientific agent APIs remain in their concrete
+agent facade exports only `analyze_rna`, `AutomatedWorkflowResult`, and `AnalysisError`. Runs using removed configuration or incompatible saved contracts must be restarted; their
+numerical artifacts remain readable through ordinary Scarf APIs.
+There are no implicit migrations. Compatible histories with newly uncovered objective questions
+receive an explicit context-evidence revision, preserving prior records and artifacts; essential
+unanswered questions still prevent completion. Model attempt records include known provider
+usage, output-validation feedback and failures, with unavailable usage labeled explicitly.
+Standalone scientific agent APIs remain in their concrete
 packages, such as `scarf.agent.biological_interpretation`.
 
 ### When to use the pipeline

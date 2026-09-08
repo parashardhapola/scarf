@@ -4,6 +4,7 @@ import re
 
 from ...features.gene_reference import species_registry
 from ...utils.logging import logger
+from ..config.agent_exec import describe_agent_error
 from ..types import AgentRunInfo
 from .contracts import (
     DataEnrichmentContext,
@@ -53,9 +54,14 @@ def _ground_study_context_summary(
                 if value.strip()
             )
         )
-        if len(combined) > 12:
+        excerpts = [
+            value for value in proposed_values if value.strip() not in exact_supplied
+        ]
+        if len(excerpts) > 12:
             raise ValueError(
-                f"studyContextSummary.{field_name} may contain at most 12 values"
+                f"studyContextSummary.{field_name} may contain at most 12 proposed excerpts; "
+                f"received {len(excerpts)}. Keep objective-relevant verbatim spans; "
+                "the complete original context and exact caller references remain available."
             )
         supplied = set(exact_supplied)
         invalid = [
@@ -67,7 +73,11 @@ def _ground_study_context_summary(
             raise ValueError(
                 f"Study-context references must be verbatim caller text: {invalid}"
             )
-        oversized = [value for value in combined if len(value) > 240]
+        oversized = [
+            value
+            for value in proposed_values
+            if value not in supplied and len(value) > 240
+        ]
         if oversized:
             raise ValueError("Study-context references may not exceed 240 characters")
         grounded[field_name] = combined
@@ -297,7 +307,11 @@ def failed_data_enrichment_report(
         evidenceIds=sorted({*deps.evidenceIds, *context.evidenceIds}),
         limitations=[
             "No scientific feature policy was selected after model failure.",
-            str(error).replace("\n", " ").strip()[:500],
+            describe_agent_error(error),
         ],
-        runInfo=AgentRunInfo(agentName="data_enrichment_failed", modelName=model_name),
+        runInfo=getattr(
+            error,
+            "agent_run_info",
+            AgentRunInfo(agentName="data_enrichment_failed", modelName=model_name),
+        ),
     )

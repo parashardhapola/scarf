@@ -3,10 +3,12 @@
 import json
 import math
 import re
+from dataclasses import dataclass, field
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
 import numpy as np
+import pandas as pd
 
 from ...metadata.selection import resolve_cell_aligned_artifact
 from ...quality_control.filtering import (
@@ -760,7 +762,7 @@ def _directed_pooled_reference_captures(
 def _provenance_label(value: Any) -> str | None:
     if isinstance(value, np.generic):
         value = value.item()
-    if value is None:
+    if value is None or value is pd.NA or value is pd.NaT:
         return None
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -774,16 +776,46 @@ def _provenance_label(value: Any) -> str | None:
     return str(value)
 
 
-def _ordered_labels(values: np.ndarray, mask: np.ndarray) -> list[str]:
-    output: list[str] = []
-    seen: set[str] = set()
-    for raw in values[mask]:
-        label = _provenance_label(raw)
-        if label is None or label in seen:
-            continue
-        seen.add(label)
-        output.append(label)
-    return output
+@dataclass
+class _QcDesignData:
+    """Frozen metadata shared only while projecting one set of QC policies."""
+
+    cells: Any
+    values: dict[str, np.ndarray] = field(default_factory=dict)
+    labels: dict[str, np.ndarray] = field(default_factory=dict)
+    captureSource: np.ndarray | None = None
+    captures: np.ndarray | None = None
+    units: dict[tuple[str, str, str | None], list[tuple[Any, ...]]] = field(
+        default_factory=dict
+    )
+    exclusions: dict[str, tuple[list[dict[str, Any]], bool, bool]] = field(
+        default_factory=dict
+    )
+    combinations: dict[tuple[str, ...], np.ndarray] = field(default_factory=dict)
+
+    @property
+    def columns(self) -> list[str]:
+        return list(self.cells.columns)
+
+    def fetch(self, column: str) -> np.ndarray:
+        if column not in self.values:
+            self.values[column] = np.asarray(self.cells.fetch(column)).copy()
+        return self.values[column]
+
+    def encoded(self, column: str) -> np.ndarray:
+        if column not in self.labels:
+            self.labels[column] = np.asarray(
+                [_provenance_label(value) for value in self.fetch(column)], dtype=object
+            )
+        return self.labels[column]
+
+    def combined(self, columns: Sequence[str]) -> np.ndarray:
+        from .comparisons import combination_labels
+
+        key = tuple(columns)
+        if key not in self.combinations:
+            self.combinations[key] = combination_labels(self, list(columns))
+        return self.combinations[key]
 
 
 def _capture_design_safety(
@@ -794,19 +826,39 @@ def _capture_design_safety(
 ) -> tuple[list[dict[str, Any]], bool, bool]:
     if characterization is None:
         return [], False, False
-    active = np.ones(len(capture_labels), dtype=bool)
-    normalized = _validated_sample_labels(
-        capture_labels,
-        active,
-        label_name="physical capture labels",
-    )
-    encoded = np.asarray(
-        [
-            value.decode("utf-8") if isinstance(value, bytes) else str(value)
-            for value in normalized
-        ],
-        dtype=object,
-    )
+    data = deps.qcDesignData
+    if not isinstance(data, _QcDesignData):
+        data = _QcDesignData(deps.cells)
+    if data.captureSource is not capture_labels:
+        data = _QcDesignData(deps.cells) if data.captureSource is not None else data
+        active = np.ones(len(capture_labels), dtype=bool)
+        normalized = _validated_sample_labels(
+            capture_labels, active, label_name="physical capture labels"
+        )
+        data.captures = np.asarray(
+            [
+                value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                for value in normalized
+            ],
+            dtype=object,
+        )
+        data.captureSource = capture_labels
+    if capture not in data.exclusions:
+        data.exclusions[capture] = _compute_capture_design_safety(
+            data, characterization, deps.protectedCombinations, capture
+        )
+    return data.exclusions[capture]
+
+
+def _compute_capture_design_safety(
+    data: _QcDesignData,
+    characterization: CovariateCharacterization,
+    protected_combinations: Sequence[Sequence[str]],
+    capture: str,
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    assert data.captures is not None
+    encoded = data.captures
+    kinds = {record["name"]: record.get("kind") for record in characterization.columns}
     after = encoded != capture
     safety: list[dict[str, Any]] = []
     for record in characterization.coefficients:
@@ -817,50 +869,130 @@ def _capture_design_safety(
             not isinstance(coefficient, str)
             or not isinstance(observation, str)
             or record.get("scope") != "betweenUnit"
-            or coefficient not in deps.cells.columns
-            or observation not in deps.cells.columns
         ):
             continue
-        condition_values = np.asarray(deps.cells.fetch(coefficient), dtype=object)
-        observation_values = np.asarray(deps.cells.fetch(observation), dtype=object)
+        if any(
+            name not in data.columns
+            for name in (coefficient, observation, independent)
+            if isinstance(name, str)
+        ):
+            safety.append(
+                {
+                    "coefficient": coefficient,
+                    "reason": "missingDesignColumn",
+                    "preservesConditionCoverage": False,
+                    "preservesIndependentUnitCoverage": False,
+                }
+            )
+            continue
+        condition_values = data.encoded(coefficient)
+        observation_values = data.encoded(observation)
         if (
             condition_values.shape != after.shape
             or observation_values.shape != after.shape
         ):
             raise ValueError("Capture safety columns do not align with cellSelection")
-        required_groups = _ordered_labels(condition_values, active)
-        remaining_groups = _ordered_labels(condition_values, after)
+        if kinds.get(coefficient) not in {"categorical", "continuous"}:
+            safety.append(
+                {
+                    "coefficient": coefficient,
+                    "reason": "unknownCovariateKind",
+                    "preservesConditionCoverage": False,
+                    "preservesIndependentUnitCoverage": False,
+                }
+            )
+            continue
+        if kinds.get(coefficient) == "continuous":
+            values = np.asarray(
+                pd.to_numeric(data.fetch(coefficient), errors="coerce"), dtype=float
+            )
+            observed = np.isfinite(values)
+            matched_after = observed & after
+            safety.append(
+                {
+                    "coefficient": coefficient,
+                    "conditionColumn": coefficient,
+                    "kind": "continuous",
+                    "observationUnit": observation,
+                    "independentUnit": independent,
+                    "matchedRowsBeforeExclusion": int(observed.sum()),
+                    "matchedRowsAfterExclusion": int(matched_after.sum()),
+                    "missingRowsAfterExclusion": int((after & ~observed).sum()),
+                    "quantilesBeforeExclusion": np.quantile(
+                        values[observed], [0, 0.25, 0.5, 0.75, 1]
+                    ).tolist()
+                    if observed.any()
+                    else [],
+                    "quantilesAfterExclusion": np.quantile(
+                        values[matched_after], [0, 0.25, 0.5, 0.75, 1]
+                    ).tolist()
+                    if matched_after.any()
+                    else [],
+                    "independentUnitsAfterExclusion": len(
+                        {
+                            value
+                            for value in data.encoded(independent or observation)[
+                                matched_after
+                            ]
+                            if value is not None
+                        }
+                    ),
+                    "reason": "Continuous distributions and unit support are descriptive; preservation under capture exclusion has not been established.",
+                    "preservesConditionCoverage": False,
+                    "preservesIndependentUnitCoverage": False,
+                }
+            )
+            continue
+        required_groups = [
+            value for value in dict.fromkeys(condition_values) if value is not None
+        ]
+        remaining_groups = [
+            value
+            for value in dict.fromkeys(condition_values[after])
+            if value is not None
+        ]
         preserves_conditions = set(remaining_groups) == set(required_groups)
 
         observation_counts: list[dict[str, Any]] = []
         independent_counts: list[dict[str, Any]] = []
         independent_values: np.ndarray | None = None
         if isinstance(independent, str):
-            if independent not in deps.cells.columns:
-                continue
-            independent_values = np.asarray(
-                deps.cells.fetch(independent),
-                dtype=object,
-            )
+            independent_values = data.encoded(independent)
             if independent_values.shape != after.shape:
                 raise ValueError(
                     "Capture independent-unit column does not align with cellSelection"
                 )
+        unit_key = (coefficient, observation, independent)
+        if unit_key not in data.units:
+            data.units[unit_key] = list(
+                dict.fromkeys(
+                    zip(
+                        encoded,
+                        condition_values,
+                        observation_values,
+                        independent_values
+                        if independent_values is not None
+                        else np.full(len(after), None),
+                        strict=True,
+                    )
+                )
+            )
+        remaining_units = [row for row in data.units[unit_key] if row[0] != capture]
         for group in required_groups:
-            group_mask = np.asarray(
-                [_provenance_label(value) == group for value in condition_values],
-                dtype=bool,
-            )
-            observation_levels = set(
-                _ordered_labels(observation_values, after & group_mask)
-            )
+            observation_levels = {
+                row[2]
+                for row in remaining_units
+                if row[1] == group and row[2] is not None
+            }
             observation_counts.append(
                 {"group": group, "count": len(observation_levels)}
             )
             if independent_values is not None:
-                independent_levels = set(
-                    _ordered_labels(independent_values, after & group_mask)
-                )
+                independent_levels = {
+                    row[3]
+                    for row in remaining_units
+                    if row[1] == group and row[3] is not None
+                }
                 independent_counts.append(
                     {"group": group, "count": len(independent_levels)}
                 )
@@ -878,10 +1010,7 @@ def _capture_design_safety(
         single_group_pairs = 0
         if independent_values is not None:
             pair_groups: dict[str, dict[str, set[str]]] = {}
-            for index in np.flatnonzero(after):
-                pair = _provenance_label(independent_values[index])
-                pair_group = _provenance_label(condition_values[index])
-                observation_value = _provenance_label(observation_values[index])
+            for _, pair_group, observation_value, pair in remaining_units:
                 if pair is None or pair_group is None or observation_value is None:
                     continue
                 pair_groups.setdefault(pair, {}).setdefault(pair_group, set()).add(
@@ -936,13 +1065,11 @@ def _capture_design_safety(
                 "preservesIndependentUnitCoverage": preserves_units,
             }
         )
-    from .comparisons import combination_labels
-
-    for columns in deps.protectedCombinations:
+    for columns in protected_combinations:
         label = json.dumps(columns, separators=(",", ":"))
         try:
-            combined = combination_labels(deps.cells, columns)
-        except ValueError:
+            combined = data.combined(columns)
+        except (KeyError, ValueError):
             safety.append(
                 {
                     "conditionColumns": columns,
@@ -962,9 +1089,19 @@ def _capture_design_safety(
         units.discard(None)
         independent_safe = coverage and bool(units)
         for unit in units:
-            values = np.asarray(deps.cells.fetch(unit))
+            if not isinstance(unit, str) or unit not in data.columns:
+                independent_safe = False
+                continue
+            values = data.encoded(unit)
             independent_safe = independent_safe and all(
-                len(np.unique(values[after & (combined == group)])) >= 2
+                len(
+                    {
+                        value
+                        for value in values[after & (combined == group)]
+                        if value is not None
+                    }
+                )
+                >= 2
                 for group in joint_groups
             )
         safety.append(
@@ -1082,7 +1219,13 @@ def _design_retention(
     keep: np.ndarray,
 ) -> dict[str, Any]:
     """Check exact categorical conditions, units, and protected joint groups."""
-    cells = deps.cells if deps.cells is not None else deps.store.cells
+    cells = (
+        deps.qcDesignData
+        if isinstance(deps.qcDesignData, _QcDesignData)
+        else deps.cells
+        if deps.cells is not None
+        else deps.store.cells
+    )
     retention_columns: list[str] = []
     if characterization is not None:
         kinds = {
@@ -1101,13 +1244,23 @@ def _design_retention(
     unsafe_groups: list[str] = []
     retained = np.asarray(keep, dtype=bool) & np.asarray(active, dtype=bool)
     for column in dict.fromkeys(retention_columns):
-        labels = np.asarray(cells.fetch(column))
+        labels = (
+            cells.encoded(column)
+            if isinstance(cells, _QcDesignData)
+            else np.asarray(
+                [_provenance_label(value) for value in cells.fetch(column)],
+                dtype=object,
+            )
+        )
         if labels.shape != retained.shape:
             raise ValueError(
                 f"QC retention column {column!r} does not align with cellSelection"
             )
         counts: dict[str, int] = {}
-        for raw_label in np.unique(labels[np.asarray(active, dtype=bool)]):
+        present = labels != None  # noqa: E711
+        if (np.asarray(active, dtype=bool) & ~present).any():
+            unsafe_groups.append(f"{column}:missingValues")
+        for raw_label in np.unique(labels[np.asarray(active, dtype=bool) & present]):
             label = raw_label.item() if isinstance(raw_label, np.generic) else raw_label
             key = label.decode("utf-8") if isinstance(label, bytes) else str(label)
             count = int((retained & (labels == raw_label)).sum())
@@ -1121,8 +1274,12 @@ def _design_retention(
     for columns in deps.protectedCombinations:
         key = json.dumps(columns, separators=(",", ":"))
         try:
-            labels = combination_labels(cells, columns)
-        except ValueError:
+            labels = (
+                cells.combined(columns)
+                if isinstance(cells, _QcDesignData)
+                else combination_labels(cells, columns)
+            )
+        except (KeyError, ValueError):
             unsafe_groups.append(f"combination:{key}:missingValues")
             continue
         counts = {
@@ -1557,6 +1714,21 @@ def _sample_qc_profiles(
 def _offered_qc_profiles(
     deps: ExperimentalContextDependencies,
     characterization: CovariateCharacterization | None = None,
+) -> list[CellQcProfileEvidence]:
+    """Share frozen design summaries across policies, never across changed inputs."""
+    previous = deps.qcDesignData
+    deps.qcDesignData = _QcDesignData(
+        deps.cells if deps.cells is not None else deps.store.cells
+    )
+    try:
+        return _project_qc_profiles(deps, characterization)
+    finally:
+        deps.qcDesignData = previous
+
+
+def _project_qc_profiles(
+    deps: ExperimentalContextDependencies,
+    characterization: CovariateCharacterization | None,
 ) -> list[CellQcProfileEvidence]:
     """Project bounded QC profiles against the exact shared cell selection."""
     active_cells = _active_cell_count(deps)

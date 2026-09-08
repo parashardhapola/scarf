@@ -199,8 +199,8 @@ def parameter_tuning_system_prompt(min_cluster_cells: int) -> str:
         comparison must cite evidence from both the selected candidate and that
         comparator. Return only model-owned selection fields. Leave evaluations,
         selectedArtifacts, searchPlan, assayReports, integration fields, final
-        graph fields, and runInfo at their defaults because validation fills them
-        from executor state. Return a concise structured report.
+        graph fields, and runInfo out of the response because validation fills
+        them from executor state. Return a concise structured report.
         """
         )
         .strip()
@@ -336,7 +336,7 @@ def parameter_batch_selection_system_prompt() -> str:
             model-owned selection, rationale, comparison, trade-off, limitation,
             evidence, and stop fields. Leave evaluations, selectedArtifacts,
             searchPlan, nested assayReports, integration fields, final graph fields,
-            and runInfo at their defaults because validation fills them from
+            and runInfo out of the response because validation fills them from
             executor state.
             """
         )
@@ -409,6 +409,8 @@ def final_graph_selection_system_prompt() -> str:
             UMAP appearance, native-neighbor LISI on an integrated graph, and
             absent metric fields are not evidence. Return one comparison for every
             eligible non-selected option, citing evidence from both options.
+            Select an option and explain it; Scarf attaches its exact graph,
+            assay, and execution identities. Do not return those derived fields.
             """
         )
         .strip()

@@ -1846,7 +1846,7 @@ def test_batched_tuning_pauses_after_structured_output_exhaustion(
         primary_assay="RNA",
     )
 
-    assert calls == ["parameter_batch_search_planning", "parameter_tuning_batch"]
+    assert calls == ["parameter_batch_search_planning"]
     assert result.status == "needsInput"
     assert result.recommendedByAssay == {}
     assert result.assayReports["RNA"].confidence == "low"
@@ -1855,7 +1855,7 @@ def test_batched_tuning_pauses_after_structured_output_exhaustion(
     assert result.assayReports["RNA"].needsInput.options == ["baseline", "pca_15"]
     assert result.searchPlan is not None
     assert result.searchPlan.status == "complete"
-    assert result.runInfo.agentName == "parameter_tuning_batch_needs_input"
+    assert result.runInfo.agentName == "parameter_batch_search_planning_needs_input"
 
 
 def test_single_tuning_pauses_after_structured_output_exhaustion(
@@ -1884,7 +1884,7 @@ def test_single_tuning_pauses_after_structured_output_exhaustion(
     assert result.confidence == "low"
     assert result.needsInput is not None
     assert result.needsInput.options == ["baseline", "pca_15"]
-    assert result.runInfo.agentName == "parameter_tuning_needs_input"
+    assert result.runInfo.agentName == "parameter_search_planning_needs_input"
 
 
 def test_pending_parameter_report_does_not_select_without_successful_baseline() -> None:

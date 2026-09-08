@@ -632,6 +632,7 @@ def test_agent_runs_only_read_only_tools_and_returns_a_grounded_report() -> None
     ]
     assert tool_names == {
         "inspect_cell_covariates",
+        "inspect_context_evidence",
         "analyze_experimental_design",
         "score_current_representation",
     }
@@ -1861,7 +1862,7 @@ def test_harmony_requires_resolved_units_and_estimability(
     )
     monkeypatch.setattr(
         module,
-        "characterize_covariates",
+        "characterize_context",
         lambda *_args, **_kwargs: characterization,
     )
     store = _Store()

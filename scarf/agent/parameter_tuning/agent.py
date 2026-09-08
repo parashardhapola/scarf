@@ -528,7 +528,6 @@ def tune_parameters_batch(
         output_token_limit=32768,
         timeout_seconds=600.0,
     )
-    refinement_planning_failed = False
     if any(max_refined_by_assay.values()):
         try:
             logger.info(
@@ -561,7 +560,11 @@ def tune_parameters_batch(
                 "Batched parameter refinement model run failed within its bounds "
                 f"({type(exc).__name__}); pausing without a refinement decision"
             )
-            refinement_planning_failed = True
+            failed_info = getattr(
+                exc,
+                "agent_run_info",
+                AgentRunInfo(agentName="parameter_batch_search_planning_needs_input"),
+            )
             failed_plans = {
                 assay: ParameterSearchPlan(
                     status="complete",
@@ -594,18 +597,19 @@ def tune_parameters_batch(
                     stoppingCriteria=[
                         "Obtain a grounded refinement disposition before selection."
                     ],
-                    runInfo=AgentRunInfo(
-                        agentName="parameter_batch_search_planning_needs_input"
-                    ),
+                    runInfo=failed_info,
                 )
                 for assay in assay_names
             }
             batch_plan = ParameterTuningBatchSearchPlan(
                 assayPlans=failed_plans,
-                runInfo=AgentRunInfo(
-                    agentName="parameter_batch_search_planning_needs_input"
-                ),
+                runInfo=failed_info,
             )
+            return pending_parameter_tuning_batch_report(
+                dependencies,
+                search_plans=batch_plan.assayPlans,
+                primary_assay=resolved_primary,
+            ).model_copy(update={"runInfo": failed_info})
         else:
             if not isinstance(
                 planning_execution.output, ParameterTuningBatchSearchPlan
@@ -695,15 +699,17 @@ def tune_parameters_batch(
             dependencies,
             search_plans=batch_plan.assayPlans,
             primary_assay=resolved_primary,
+        ).model_copy(
+            update={
+                "runInfo": getattr(
+                    exc,
+                    "agent_run_info",
+                    AgentRunInfo(agentName="parameter_tuning_batch_needs_input"),
+                )
+            }
         )
     if not isinstance(selection_execution.output, ParameterTuningReport):
         raise TypeError("Batched parameter tuning returned an unexpected type")
-    if refinement_planning_failed:
-        return pending_parameter_tuning_batch_report(
-            dependencies,
-            search_plans=batch_plan.assayPlans,
-            primary_assay=resolved_primary,
-        )
     report = validate_parameter_tuning_batch_report(
         selection_execution.output,
         dependencies,
@@ -768,7 +774,6 @@ def tune_parameters(
         deps.evaluations[candidate_id] for candidate_id in initial_candidate_ids
     ]
 
-    refinement_planning_failed = False
     if max_refined_candidates == 0:
         logger.info(
             f"Skipping parameter refinement for assay {from_assay!r} because it "
@@ -843,10 +848,17 @@ def tune_parameters(
                 stoppingCriteria=[
                     "Obtain a grounded refinement disposition before selection."
                 ],
-                runInfo=AgentRunInfo(agentName="parameter_search_planning_needs_input"),
+                runInfo=getattr(
+                    exc,
+                    "agent_run_info",
+                    AgentRunInfo(agentName="parameter_search_planning_needs_input"),
+                ),
             )
-            refinement_planning_failed = True
-            plan = failed_plan
+            return pending_parameter_tuning_report(
+                deps,
+                search_plan=failed_plan,
+                agent_name="parameter_search_planning_needs_input",
+            ).model_copy(update={"runInfo": failed_plan.runInfo})
         else:
             if not isinstance(planning_execution.output, ParameterSearchPlan):
                 raise TypeError(
@@ -908,15 +920,17 @@ def tune_parameters(
             deps,
             search_plan=plan,
             agent_name="parameter_tuning_needs_input",
+        ).model_copy(
+            update={
+                "runInfo": getattr(
+                    exc,
+                    "agent_run_info",
+                    AgentRunInfo(agentName="parameter_tuning_needs_input"),
+                )
+            }
         )
     if not isinstance(selection_execution.output, ParameterTuningReport):
         raise TypeError("Parameter tuning agent returned an unexpected output type")
-    if refinement_planning_failed:
-        return pending_parameter_tuning_report(
-            deps,
-            search_plan=plan,
-            agent_name="parameter_tuning_needs_input",
-        )
     report = validate_parameter_tuning_report(
         selection_execution.output,
         deps,

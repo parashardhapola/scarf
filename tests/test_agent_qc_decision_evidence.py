@@ -1,6 +1,7 @@
 """QC choices distinguish reference grouping, measured retention and biology."""
 
 from types import SimpleNamespace
+from copy import deepcopy
 
 import pytest
 
@@ -86,6 +87,7 @@ def test_qc_grouping_compares_the_same_cutoff_method(
     def resolve(_store, _request, definition, bundle, _answers, **kwargs):
         seen["definition"] = definition
         seen["bundle"] = bundle
+        seen["qcEvidence"] = kwargs["qc_evidence"]
         return SimpleNamespace(
             compiled=SimpleNamespace(
                 executorPayload=QcGroupingExecutorPayload(groupingMode="global")
@@ -114,3 +116,88 @@ def test_qc_grouping_compares_the_same_cutoff_method(
     )
     assert "need not be independent biological units or healthy references" in design
     assert "different cutoff methods cannot isolate" in design
+    assert len(seen["qcEvidence"]["policies"]) == len(profiles)
+
+
+def test_qc_handoff_deduplicates_without_losing_any_policy_measurements() -> None:
+    policies = [profile("globalMad5", 90), profile("captureMad5", 95)]
+    for item in policies:
+        item.resolvedBounds = [
+            {"group": "a", "metric": "RNA_percentMito", "upper": 7.125}
+        ]
+        item.activeCellsByCapture = {"a": 100}
+        item.parameters = {
+            "resolvedBounds": deepcopy(item.resolvedBounds),
+            "captureSizes": {"a": 100},
+            "captureComparisons": [
+                {
+                    "capture": "a",
+                    "mitoQuantiles": [1.0, 3.1, 7.125],
+                    "missingFraction": 0.05,
+                }
+            ],
+        }
+        item.retainedCellsByCombination = {
+            'joint:["sex","condition"]': {
+                "F/treated": 0,
+                "M/control": item.retainedCells,
+            }
+        }
+        item.unsafeRetentionGroups = ["The protected joint group F/treated is absent"]
+        item.notes = ["A supported reference pool is unavailable"]
+        item.captureFailureEvidence = [
+            CaptureFailureEvidence(
+                capture="a",
+                activeCells=100,
+                retainedCells=item.retainedCells,
+                retainedFraction=item.retainedCells / 100,
+                conditionAndUnitSafety=[
+                    {
+                        "column": "age",
+                        "kind": "continuous",
+                        "missingFraction": 0.2,
+                        "status": "unsupported",
+                        "quantilesBeforeExclusion": [20, 50, 80],
+                    }
+                ],
+            )
+        ]
+    originals = [item.model_dump(mode="json") for item in policies]
+    payload = PreprocessingStagesMixin._qc_decision_evidence(policies)
+    shared = payload["sharedMeasurements"]
+    assert (
+        payload["policies"][0]["captureFailureEvidence"][0]["conditionAndUnitSafetyRef"]
+        == payload["policies"][1]["captureFailureEvidence"][0][
+            "conditionAndUnitSafetyRef"
+        ]
+    )
+    assert (
+        payload["policies"][0]["parameters"]["captureComparisonsRef"]
+        == payload["policies"][1]["parameters"]["captureComparisonsRef"]
+    )
+    for saved, compact in zip(originals, payload["policies"], strict=True):
+        restored = deepcopy(compact)
+        for name in ("metricSources", "sourceConcordance"):
+            restored[name] = shared[restored.pop(name + "Ref")]
+        parameters = restored["parameters"]
+        parameters["captureComparisons"] = shared[
+            parameters.pop("captureComparisonsRef")
+        ]
+        parameters["resolvedBounds"] = deepcopy(restored["resolvedBounds"])
+        parameters["captureSizes"] = deepcopy(restored["activeCellsByCapture"])
+        for capture in restored["captureFailureEvidence"]:
+            capture["conditionAndUnitSafety"] = shared[
+                capture.pop("conditionAndUnitSafetyRef")
+            ]
+        assert restored == saved
+    assert [item.model_dump(mode="json") for item in policies] == originals
+
+
+def test_qc_handoff_preserves_disagreeing_duplicate_thresholds_for_investigation() -> (
+    None
+):
+    selected = profile("globalMad5", 80)
+    selected.resolvedBounds = {"RNA_percentMito": [0.0, 7.0]}
+    selected.parameters["resolvedBounds"] = {"RNA_percentMito": [0.0, 10.0]}
+    payload = PreprocessingStagesMixin._qc_decision_evidence([selected])["policies"][0]
+    assert payload["resolvedBounds"] != payload["parameters"]["resolvedBounds"]

@@ -1226,7 +1226,12 @@ def test_audited_core_qc_policy_executes_exact_projected_selection(
     )
     orchestrator = AgentOrchestrator(object())
 
-    def resolve(_store, _request, definition, bundle, _answers):
+    def resolve(_store, _request, definition, bundle, _answers, *, qc_evidence):
+        assert (
+            qc_evidence["policies"][0]["resolvedBounds"]
+            == profile.model_dump(mode="json")["resolvedBounds"]
+        )
+        assert qc_evidence["policies"][0]["retainedCells"] == projection.retainedCells
         option = definition.executor_option(f"cellQuality:{policy}")
         assert option.payload.lowerCountMad is None
         assert option.payload.upperMitoMad is None

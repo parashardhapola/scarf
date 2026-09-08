@@ -11,7 +11,11 @@ from .contracts import (
     DesignEvidenceCoverage,
     DesignEvidenceRequirement,
 )
-from .requirements import objective_evidence, unmet_objective_requirements
+from .requirements import (
+    active_batch_safety,
+    objective_evidence,
+    unmet_objective_requirements,
+)
 
 type AuthorLabelPolicy = Literal["holdout", "preservation"]
 type ProcessingGoal = Literal[
@@ -213,7 +217,7 @@ def build_study_contract(
         raise ValueError("Experimental Context must be done before contract creation")
     decision = experimental_result.decision
     batch_plan = decision.batchCorrection
-    batch_safety = list(experimental_result.batchSafety)
+    batch_safety = active_batch_safety(experimental_result)
     conditions = list(decision.coefficientsOfInterest)
     independent_units = _unique(
         unit.independentUnit for unit in decision.unitsOfInference.values()

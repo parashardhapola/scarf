@@ -203,6 +203,11 @@ def panel_run(monkeypatch: pytest.MonkeyPatch) -> rna_tuning.RnaTuningRun:
         return deepcopy(outputs)
 
     monkeypatch.setattr(journal, "load_checkpoint", load)
+    monkeypatch.setattr(
+        journal,
+        "read_checkpoint",
+        lambda store, prefix, workflow, key: deepcopy(saved.get(key)),
+    )
     monkeypatch.setattr(journal, "save_checkpoint", save)
     handoff = example(PreprocessedAssayHandoff)
     handoff.nCells = 100

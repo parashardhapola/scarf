@@ -18,6 +18,7 @@ from ..types import (
 
 try:
     from pydantic import ConfigDict, Field, model_validator
+    from pydantic.json_schema import SkipJsonSchema
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
 
@@ -648,14 +649,14 @@ class ExperimentalContextDecision(AgentDataModel):
     columnDomains: dict[str, ColumnDomain] = Field(default_factory=dict)
     coefficientsOfInterest: list[str] = Field(default_factory=list)
     unitsOfInference: dict[str, InferenceUnit] = Field(default_factory=dict)
-    protectedCombinations: list[list[str]] = Field(default_factory=list)
-    physicalCaptureColumn: str | None = None
-    pooledReferenceCaptures: list[str] = Field(default_factory=list)
-    unsupportedProtection: list[str] = Field(default_factory=list)
+    protectedCombinations: SkipJsonSchema[list[list[str]]] = Field(default_factory=list)
+    physicalCaptureColumn: SkipJsonSchema[str | None] = None
+    pooledReferenceCaptures: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    unsupportedProtection: SkipJsonSchema[list[str]] = Field(default_factory=list)
     batchCorrection: BatchCorrectionPlan = Field(
         default_factory=BatchCorrectionPlan.get_blank
     )
-    cellQc: CellQcPlan = Field(default_factory=CellQcPlan.get_blank)
+    cellQc: SkipJsonSchema[CellQcPlan] = Field(default_factory=CellQcPlan.get_blank)
     rationale: str = ""
     evidenceIds: list[str] = Field(default_factory=list)
     needsInput: list[str] = Field(default_factory=list)
@@ -854,6 +855,11 @@ class ExperimentalContextDependencies(AgentDataModel):
     studyContext: str = ""
     studyObjective: str = ""
     directions: dict[str, Any] = Field(default_factory=dict)
+    characterizationInputs: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    inventoryData: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    qcDesignData: Any = Field(default=None, exclude=True)
+    checkpointRead: Any = Field(default=None, exclude=True)
+    checkpointWrite: Any = Field(default=None, exclude=True)
     evidenceIds: set[str] = Field(default_factory=set)
     characterization: CovariateCharacterization | None = None
     designRounds: int = 0

@@ -5,7 +5,8 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -17,7 +18,7 @@ from ...datastore.datastore import DataStore
 from ...utils.logging import logger
 from .. import record_io
 from ..experimental_context.study import StudyContract
-from ..types import AgentDataModel, ArtifactReferenceModel
+from ..types import AgentDataModel, AgentRunInfo, ArtifactReferenceModel
 from .models import (
     _STAGE_ORDER,
     AutomatedWorkflowConfig,
@@ -45,6 +46,109 @@ def _sha256_model(value: AgentDataModel) -> str:
     return hashlib.sha256(
         record_io.canonical_json_bytes(value.model_dump(mode="json"))
     ).hexdigest()
+
+
+def model_attempt_callback(
+    store: Any,
+    prefix: str,
+    workflow_run_id: str,
+    key: str,
+    inputs: Mapping[str, Any],
+) -> Callable[[AgentRunInfo], None]:
+    """Save provider attempts beside their exact owning scientific evidence."""
+    identity = hashlib.sha256(record_io.canonical_json_bytes(dict(inputs))).hexdigest()
+
+    def save(run_info: AgentRunInfo) -> None:
+        save_checkpoint(
+            store,
+            prefix,
+            workflow_run_id,
+            f"{key}/model_attempts/{uuid.uuid4().hex}",
+            inputs={"evidenceSha256": identity},
+            outputs={
+                "runInfo": run_info.model_dump(mode="json"),
+                "recordedAtNs": time.time_ns(),
+            },
+        )
+
+    return save
+
+
+@contextmanager
+def diagnostic_attempt(
+    store: Any,
+    prefix: str,
+    workflow_run_id: str,
+    inputs: Mapping[str, Any],
+) -> Iterator[dict[str, dict[str, int]]]:
+    """Record observed diagnostic calls, including interrupted and repeated work."""
+    from ..parameter_tuning.execution import diagnostic_work
+
+    key = f"parameter_tuning/diagnostic_attempts/{uuid.uuid4().hex}"
+    identity = dict(inputs)
+    started = time.time_ns()
+    save_checkpoint(
+        store,
+        prefix,
+        workflow_run_id,
+        key + "/started",
+        identity,
+        {"recordedAtNs": started},
+    )
+    with diagnostic_work() as counts:
+        status = "completed"
+        error = None
+        failure: BaseException | None = None
+        try:
+            yield counts
+        except BaseException as exc:
+            failure = exc
+            status = "failed" if isinstance(exc, Exception) else "interrupted"
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            try:
+                logger.info(
+                    f"Diagnostic work: {sum(row['completed'] for row in counts.values())}/"
+                    f"{sum(row['attempted'] for row in counts.values())} "
+                    "observed calls completed/attempted, including "
+                    f"{counts.get('core.doubletDetection', {}).get('attempted', 0)} "
+                    "doublet-scoring calls; "
+                    f"{sum(row['cacheHits'] for row in counts.values())} metric cache hits, "
+                    f"{sum(row['restored'] for row in counts.values())} saved-evidence restores. "
+                    "Composite diagnostics include their underlying calls; these counts "
+                    "do not measure internal rebuilds or simulated-doublet writes."
+                )
+                save_checkpoint(
+                    store,
+                    prefix,
+                    workflow_run_id,
+                    key + "/finished",
+                    identity,
+                    {
+                        "recordedAtNs": time.time_ns(),
+                        "elapsedSeconds": (time.time_ns() - started) / 1e9,
+                        "status": status,
+                        "error": error,
+                        "operations": counts,
+                        "interpretation": (
+                            "Counts are observed agent calls and explicit reuse events. "
+                            "Composite diagnostics include underlying calls; elapsed time "
+                            "covers the tuning invocation, including model waiting. "
+                            "A core call may reuse artifacts or still repeat internal work; "
+                            "internal numerical rebuilds and simulated-doublet writes are "
+                            "not observable from returned references. Historical attempts "
+                            "without these records have unknown operation counts."
+                        ),
+                    },
+                )
+            except BaseException as persistence_error:
+                if failure is None:
+                    raise
+                failure.add_note(
+                    "Saving diagnostic work also failed: "
+                    f"{type(persistence_error).__name__}: {persistence_error}"
+                )
 
 
 def _record_checksum(value: AgentDataModel) -> str:
@@ -861,12 +965,18 @@ def finish_exception(
     outputs: Mapping[str, Any] | None = None,
     notes: Sequence[str] = (),
 ) -> WorkflowStageAttempt:
-    error = f"{type(exc).__name__}: {exc}"
+    from ..config.agent_exec import describe_agent_error
+
+    error = describe_agent_error(exc)
+    saved_outputs = dict(outputs or {})
+    run_info = getattr(exc, "agent_run_info", None)
+    if isinstance(run_info, AgentRunInfo):
+        saved_outputs["runInfo"] = run_info.model_dump(mode="json")
     outcome = _complete_attempt(
         started,
         status="failed",
         artifacts=artifacts,
-        outputs=outputs,
+        outputs=saved_outputs,
         actions=actions,
         notes=notes,
         error=error,
@@ -925,7 +1035,8 @@ def _analysis_review_views(
                 continue
             key = entry.get("checkpointKey", "")
             match = re.fullmatch(
-                r"parameter_tuning/(sample0|sample1|full)/review([0-9]+)(?:/answer)?",
+                r"parameter_tuning/(?:evidence_revisions/[a-f0-9]{64}/)?"
+                r"(sample0|sample1|full)/review([0-9]+)(?:/answer)?",
                 key,
             )
             if match is None or match[1] != entry.get("scope"):
@@ -1043,16 +1154,100 @@ def _analysis_review_views(
     return views
 
 
+def _model_usage(
+    model_attempts: Sequence[Mapping[str, Any]],
+    saved_views: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Count measured invocations once across callbacks and copied report views."""
+    invocations: dict[str, AgentRunInfo] = {}
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Mapping):
+            raw = value.get("runInfo")
+            if isinstance(raw, Mapping):
+                info = AgentRunInfo.model_validate(raw)
+                # Empty, code-created outcomes are not model invocations.
+                if (
+                    info.runId
+                    or info.modelName
+                    or info.status
+                    or any(
+                        (
+                            info.usage.requests,
+                            info.usage.inputTokens,
+                            info.usage.outputTokens,
+                            info.usage.totalTokens,
+                            info.usage.toolCalls,
+                        )
+                    )
+                ):
+                    identity = info.runId or _sha256_model(info)
+                    invocations.setdefault(identity, info)
+            for key, child in value.items():
+                if key != "runInfo":
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    # Invocation callbacks own measured usage; reports can repeat these records.
+    collect(list(model_attempts))
+    collect(list(saved_views))
+    infos = list(invocations.values())
+    partial = sum(info.usage.availability == "partial" for info in infos)
+    unavailable = sum(info.usage.availability == "unavailable" for info in infos)
+    unspecified = sum(info.usage.availability is None for info in infos)
+    known = any(
+        info.usage.inputTokens or info.usage.outputTokens or info.usage.totalTokens
+        for info in infos
+    )
+    return {
+        "invocations": len(infos),
+        "failedInvocations": sum(info.status == "failed" for info in infos),
+        "validationRetries": sum(len(info.validationRetries) for info in infos),
+        "durationSeconds": sum(info.durationSeconds for info in infos),
+        **{
+            field: sum(getattr(info.usage, field) for info in infos)
+            for field in (
+                "requests",
+                "toolCalls",
+                "inputTokens",
+                "outputTokens",
+                "totalTokens",
+            )
+        },
+        "availability": (
+            "reported"
+            if infos and not (partial or unavailable or unspecified)
+            else "partial"
+            if known
+            else "unavailable"
+        ),
+        "partialUsageInvocations": partial,
+        "unavailableUsageInvocations": unavailable,
+        "unspecifiedUsageInvocations": unspecified,
+    }
+
+
 def analysis_snapshot(store: DataStore, workflow_run_id: str) -> dict[str, Any]:
     """Validate one journal and derive its status, final artifacts, and report view."""
     prefix = _orchestration_prefix(store)
     request = read_request(store.zw, prefix, workflow_run_id)
+    outcomes_by_stage = {
+        stage: _stage_outcomes(store.zw, prefix, workflow_run_id, stage)
+        for stage in _STAGE_ORDER
+    }
+    usage_views: list[dict[str, Any]] = [
+        outcome.outputs
+        for outcomes in outcomes_by_stage.values()
+        for outcome in outcomes
+    ]
     stages: list[dict[str, Any]] = []
     parents: list[WorkflowStageLink] = []
     final: dict[str, Any] | None = None
     status = "running"
     for stage in _STAGE_ORDER:
-        outcomes = _stage_outcomes(store.zw, prefix, workflow_run_id, stage)
+        outcomes = outcomes_by_stage[stage]
         matching = [v for v in outcomes if v.parentAttempts == parents]
         if not matching:
             break
@@ -1118,13 +1313,54 @@ def analysis_snapshot(store: DataStore, workflow_run_id: str) -> dict[str, Any]:
     # Decisions belong to this same history and retain their offered evidence.
     checkpoint_prefix = record_io.join_key(prefix, workflow_run_id, "checkpoints")
     decisions: list[dict[str, Any]] = []
+    model_attempts: list[dict[str, Any]] = []
+    diagnostic_attempts: dict[str, dict[str, Any]] = {}
     for path in _list_keys(store.zw, checkpoint_prefix):
-        if "/decisions/" not in path or not path.endswith(".json"):
+        if not path.endswith(".json") or not any(
+            part in path
+            for part in (
+                "/decisions/",
+                "/model_attempts/",
+                "/report/",
+                "/diagnostic_attempts/",
+            )
+        ):
             continue
         key = path[len(checkpoint_prefix) + 1 : -5]
-        value = load_checkpoint(store, prefix, workflow_run_id, key, None)
+        checkpoint = read_checkpoint(store, prefix, workflow_run_id, key)
+        value = checkpoint["outputs"] if checkpoint is not None else None
+        if value is not None:
+            usage_views.append(value)
         if value is not None and "record" in value:
             decisions.append(value)
+        if value is not None and "/model_attempts/" in path:
+            run_info = AgentRunInfo.model_validate(value["runInfo"])
+            model_attempts.append(
+                {
+                    "checkpoint": key,
+                    "recordedAtNs": value.get("recordedAtNs"),
+                    "runInfo": run_info.model_dump(mode="json"),
+                }
+            )
+        if value is not None and "/diagnostic_attempts/" in path:
+            assert checkpoint is not None
+            attempt, _, phase = key.rpartition("/")
+            if phase not in {"started", "finished"}:
+                raise ValueError("Unknown diagnostic attempt checkpoint")
+            entry = diagnostic_attempts.setdefault(
+                attempt, {"checkpoint": attempt, "inputs": checkpoint["inputs"]}
+            )
+            if entry["inputs"] != checkpoint["inputs"]:
+                raise ValueError(
+                    "Diagnostic attempt inputs changed between start and finish"
+                )
+            entry[phase] = value
+
+    if any(
+        "finished" in row and "started" not in row
+        for row in diagnostic_attempts.values()
+    ):
+        raise ValueError("Completed diagnostic attempt has no matching start record")
 
     def contains(value: Any, digest: str) -> bool:
         if isinstance(value, Mapping):
@@ -1174,6 +1410,14 @@ def analysis_snapshot(store: DataStore, workflow_run_id: str) -> dict[str, Any]:
         "status": status,
         "request": request.request.model_dump(mode="json"),
         "stages": stages,
+        "modelAttempts": sorted(
+            model_attempts, key=lambda row: row["recordedAtNs"] or 0
+        ),
+        "modelUsage": _model_usage(model_attempts, usage_views),
+        "diagnosticAttempts": sorted(
+            diagnostic_attempts.values(),
+            key=lambda row: row.get("started", {}).get("recordedAtNs", 0),
+        ),
         "finalAnalysis": final,
         "modelIdentity": request.modelIdentity,
         "analysisReviews": reviews,

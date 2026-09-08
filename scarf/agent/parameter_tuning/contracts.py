@@ -14,6 +14,7 @@ from ..types import (
 
 try:
     from pydantic import Field
+    from pydantic.json_schema import SkipJsonSchema
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
 
@@ -216,11 +217,11 @@ class FinalGraphSelection(AgentDataModel):
 
     status: StageStatus = "needsInput"
     selectedOptionId: str | None = None
-    graphMethod: Literal["native", "snn", "wnn"] | None = None
-    nativeAssay: str | None = None
-    nativeCandidateId: str | None = None
-    integrationId: str | None = None
-    markerAssay: str = ""
+    graphMethod: SkipJsonSchema[Literal["native", "snn", "wnn"] | None] = None
+    nativeAssay: SkipJsonSchema[str | None] = None
+    nativeCandidateId: SkipJsonSchema[str | None] = None
+    integrationId: SkipJsonSchema[str | None] = None
+    markerAssay: SkipJsonSchema[str] = ""
     confidence: TuningConfidence = "low"
     rationale: str = ""
     evidenceIds: list[str] = Field(default_factory=list)
@@ -228,7 +229,7 @@ class FinalGraphSelection(AgentDataModel):
     tradeoffs: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     needsInput: FinalGraphNeedsInput | None = None
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
     @classmethod
     def get_blank(cls) -> "FinalGraphSelection":
@@ -270,7 +271,7 @@ class ParameterSearchPlan(AgentDataModel):
     rationale: str = ""
     evidenceIds: list[str] = Field(default_factory=list)
     stoppingCriteria: list[str] = Field(default_factory=list)
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
     @classmethod
     def get_blank(cls) -> "ParameterSearchPlan":
@@ -281,7 +282,7 @@ class ParameterTuningBatchSearchPlan(AgentDataModel):
     """One bounded refinement plan for every assay in a batched screen."""
 
     assayPlans: dict[str, ParameterSearchPlan] = Field(default_factory=dict)
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
     @classmethod
     def get_blank(cls) -> "ParameterTuningBatchSearchPlan":
@@ -304,11 +305,15 @@ class ParameterTuningReport(AgentDataModel):
     """Grounded recommendation over candidate branches actually executed."""
 
     status: StageStatus = "failed"
-    fromAssay: str = ""
-    cellSelection: ArtifactReferenceModel | None = None
-    evaluations: list[ParameterCandidateEvaluation] = Field(default_factory=list)
+    fromAssay: SkipJsonSchema[str] = ""
+    cellSelection: SkipJsonSchema[ArtifactReferenceModel | None] = None
+    evaluations: SkipJsonSchema[list[ParameterCandidateEvaluation]] = Field(
+        default_factory=list
+    )
     recommendedCandidateId: str | None = None
-    selectedArtifacts: dict[str, ArtifactRecord] = Field(default_factory=dict)
+    selectedArtifacts: SkipJsonSchema[dict[str, ArtifactRecord]] = Field(
+        default_factory=dict
+    )
     confidence: TuningConfidence = "low"
     rationale: str = ""
     evidenceIds: list[str] = Field(default_factory=list)
@@ -317,20 +322,20 @@ class ParameterTuningReport(AgentDataModel):
     limitations: list[str] = Field(default_factory=list)
     stopReason: str = ""
     needsInput: ParameterTuningNeedsInput | None = None
-    searchPlan: ParameterSearchPlan | None = None
+    searchPlan: SkipJsonSchema[ParameterSearchPlan | None] = None
     assayReports: dict[str, "ParameterTuningReport"] = Field(default_factory=dict)
-    recommendedByAssay: dict[str, str] = Field(default_factory=dict)
-    totalCandidates: int = 0
-    integrationEvaluations: list[IntegrationCandidateEvaluation] = Field(
-        default_factory=list
+    recommendedByAssay: SkipJsonSchema[dict[str, str]] = Field(default_factory=dict)
+    totalCandidates: SkipJsonSchema[int] = 0
+    integrationEvaluations: SkipJsonSchema[list[IntegrationCandidateEvaluation]] = (
+        Field(default_factory=list)
     )
-    recommendedIntegrationId: str | None = None
-    finalClusterColumn: str | None = None
-    finalClusterArtifact: ArtifactRecord | None = None
-    graphAssay: str | None = None
-    markerAssay: str | None = None
-    finalSelection: FinalGraphSelection | None = None
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    recommendedIntegrationId: SkipJsonSchema[str | None] = None
+    finalClusterColumn: SkipJsonSchema[str | None] = None
+    finalClusterArtifact: SkipJsonSchema[ArtifactRecord | None] = None
+    graphAssay: SkipJsonSchema[str | None] = None
+    markerAssay: SkipJsonSchema[str | None] = None
+    finalSelection: SkipJsonSchema[FinalGraphSelection | None] = None
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
     @classmethod
     def get_blank(cls) -> "ParameterTuningReport":

@@ -13,6 +13,7 @@ from ...datastore.datastore import DataStore
 from ...datastore.summary import summarize_zarr_readonly
 from ...utils.logging import logger
 from .. import record_io
+from ..config.agent_exec import describe_agent_error
 from ..experimental_context.study import StudyContract, validate_objective_evidence
 from ..ingest import IngestResult, detect_format, ingest
 from ..ingest.manifest import DatasetManifest, inspect_h5ad_manifest
@@ -128,12 +129,23 @@ class AgentOrchestrator(
     ) -> None:
         self.model = model
         self.config = config or AutomatedWorkflowConfig()
+        self._explicit_config_fields = (
+            set(config.model_fields_set) if config is not None else set()
+        )
+
+    def _validate_resume_config(self, saved: AutomatedWorkflowConfig) -> None:
+        """Saved defaults remain authoritative unless a caller overrides them."""
+        if any(
+            getattr(saved, field) != getattr(self.config, field)
+            for field in self._explicit_config_fields
+        ):
+            raise ValueError("Resume execution settings differ from the saved workflow")
 
     def run(self, request: AutomatedWorkflowRequest) -> AutomatedWorkflowResult:
         try:
             result = self._run(request)
         except Exception as exc:
-            result = AutomatedWorkflowResult(notes=[f"{type(exc).__name__}: {exc}"])
+            result = AutomatedWorkflowResult(notes=[describe_agent_error(exc)])
         if result.status != "completed":
             logger.error(
                 f"RNA analysis {result.status} during {result.currentStage}: "
@@ -146,7 +158,7 @@ class AgentOrchestrator(
         try:
             validate_rna_request_fields(request)
         except ValueError as exc:
-            return AutomatedWorkflowResult(notes=[str(exc)])
+            return AutomatedWorkflowResult(notes=[describe_agent_error(exc)])
         reused = self._reuse_or_resume(request)
         if reused is not None:
             return reused
@@ -197,7 +209,9 @@ class AgentOrchestrator(
                 return AutomatedWorkflowResult(
                     status="failed",
                     currentStage="ingest",
-                    notes=[f"CELLxGENE manifest inspection failed: {exc}"],
+                    notes=[
+                        f"CELLxGENE manifest inspection failed: {describe_agent_error(exc)}"
+                    ],
                 )
             if dataset_manifest.declaredBatchColumns:
                 experimental_directions = dict(request.experimentalDirections)
@@ -297,7 +311,9 @@ class AgentOrchestrator(
                     status="failed",
                     currentStage="ingest",
                     zarrPath=zarr_path,
-                    notes=[f"Opening the requested RNA store failed: {exc}"],
+                    notes=[
+                        f"Opening the requested RNA store failed: {describe_agent_error(exc)}"
+                    ],
                 )
             ingest_result = IngestResult(
                 status="done",
@@ -377,7 +393,7 @@ class AgentOrchestrator(
             store = self.open_store(ingest_result.zarrPath, effective_request)
         except (OSError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             return AutomatedWorkflowResult(
-                zarrPath=ingest_result.zarrPath, notes=[str(exc)]
+                zarrPath=ingest_result.zarrPath, notes=[describe_agent_error(exc)]
             )
         ignored = [name for name in store.assay_names if name != selected]
         logger.info(
@@ -446,9 +462,8 @@ class AgentOrchestrator(
             )
         if matches:
             saved = matches[0]
-            if saved.config != self.config or saved.modelIdentity != _model_identity(
-                self.model
-            ):
+            self._validate_resume_config(saved.config)
+            if saved.modelIdentity != _model_identity(self.model):
                 raise ValueError(
                     "The destination contains this request with different model or execution settings; use a new destination or exact advanced workflow"
                 )
@@ -508,8 +523,7 @@ class AgentOrchestrator(
         record = journal.read_request(store.zw, prefix, request.workflowRunId)
         if record.modelIdentity != _model_identity(self.model):
             raise ValueError("Resume model differs from the saved workflow")
-        if record.config != self.config:
-            raise ValueError("Resume execution settings differ from the saved workflow")
+        self._validate_resume_config(record.config)
         selected = selected_store_rna_assay(store, record.request)
         validate_saved_rna_history(store, prefix, request.workflowRunId, selected)
         expected = record.inputIdentity
@@ -530,6 +544,7 @@ class AgentOrchestrator(
     def resume(
         self, request: AutomatedWorkflowResumeRequest
     ) -> AutomatedWorkflowResult:
+        original_config = self.config
         try:
             result = self._resume(request)
         except Exception as exc:
@@ -537,8 +552,10 @@ class AgentOrchestrator(
                 zarrPath=request.zarrPath,
                 workspace=request.workspace,
                 workflowRunId=request.workflowRunId,
-                notes=[f"{type(exc).__name__}: {exc}"],
+                notes=[describe_agent_error(exc)],
             )
+        finally:
+            self.config = original_config
         if result.status != "completed":
             logger.error(
                 f"RNA analysis {result.status} during {result.currentStage}: "
@@ -550,6 +567,7 @@ class AgentOrchestrator(
         self, request: AutomatedWorkflowResumeRequest
     ) -> AutomatedWorkflowResult:
         record, store = self.load_request_for_resume(request)
+        self.config = record.config
         workflow = WorkflowIdentity(record.workflowRunId, record.request.workspace)
         snapshot = journal.analysis_snapshot(store, workflow.workflowRunId)
         if snapshot["status"] == "completed":
@@ -575,7 +593,7 @@ class AgentOrchestrator(
                     update={
                         "status": "failed",
                         "currentStage": "report",
-                        "notes": [str(exc)],
+                        "notes": [describe_agent_error(exc)],
                     }
                 )
             return result
@@ -694,12 +712,25 @@ class AgentOrchestrator(
             latest = (
                 max(starts, key=lambda value: value.startedAtNs) if starts else None
             )
+            if latest is not None and not any(
+                value.attemptId == latest.attemptId
+                for value in journal._stage_outcomes(
+                    store.zw, prefix, workflow.workflowRunId, latest.stage
+                )
+            ):
+                try:
+                    journal.finish_exception(store, prefix, workflow, latest, exc)
+                except Exception as persistence_error:
+                    exc.add_note(
+                        "Saving the failed stage also failed: "
+                        + describe_agent_error(persistence_error)
+                    )
             return AutomatedWorkflowResult(
                 currentStage=latest.stage if latest else "ingest",
                 zarrPath=str(store.zarr_loc),
                 workspace=workflow.workspace,
                 workflowRunId=workflow.workflowRunId,
-                notes=[f"{type(exc).__name__}: {exc}"],
+                notes=[describe_agent_error(exc)],
             )
 
     def _execute_stages(
@@ -932,13 +963,13 @@ class AgentOrchestrator(
         try:
             path = generate_agent_report(store, workflow.workflowRunId)
         except Exception as exc:
-            logger.error(f"Analysis report failed: {type(exc).__name__}: {exc}")
+            logger.error(f"Analysis report failed: {describe_agent_error(exc)}")
             return completed.model_copy(
                 update={
                     "status": "failed",
                     "currentStage": "report",
                     "notes": [
-                        f"Report generation failed: {exc}; the validated analysis is saved and can be resumed."
+                        f"Report generation failed: {describe_agent_error(exc)}; the validated analysis is saved and can be resumed."
                     ],
                 }
             )

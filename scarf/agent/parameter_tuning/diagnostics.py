@@ -37,7 +37,12 @@ from ...storage.selections import read_stored_selection_indices
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
 from .contracts import ArtifactRecord, ParameterCandidateEvaluation
-from .execution import _cached_candidate_metric, _metadata_column_fingerprint
+from .execution import (
+    _cached_candidate_metric,
+    _metadata_column_fingerprint,
+    diagnostic_call,
+    diagnostic_reuse,
+)
 from .selection import annotate_candidate_dominance
 
 _PCA_DIAGNOSTIC_ARRAYS = (
@@ -93,7 +98,7 @@ def restore_advisory_doublets(
     captures = tuple(evaluation.metrics.doubletScoreByCapture)
     if len(captures) != len(score_keys):
         raise ValueError("Persisted doublet capture summaries do not align")
-    return AdvisoryDoubletScores(
+    restored = AdvisoryDoubletScores(
         scores=tuple(_artifact_ref(evaluation, key) for key in score_keys),
         cell_selections=tuple(
             _artifact_ref(evaluation, f"doubletCellSelection:{index}")
@@ -113,6 +118,8 @@ def restore_advisory_doublets(
             warning for warning in evaluation.warnings if "doublet" in warning.lower()
         ),
     )
+    diagnostic_reuse("diagnostic.advisoryDoublets", "restored")
+    return restored
 
 
 def _artifact_ref(
@@ -720,7 +727,7 @@ def _write_pca_diagnostic(
             != group.attrs["payload_fingerprint"]
         ):
             raise ValueError("Stored PCA diagnostic payload fingerprint does not match")
-        return (
+        restored = (
             planned.ref,
             np.asarray(
                 as_zarr_array(group["component_variance"], name="component_variance")[:]
@@ -748,8 +755,14 @@ def _write_pca_diagnostic(
                 )[:]
             ),
         )
-    component_variance = _component_variance(coordinates)
-    total_scaled_variance = _scaled_total_variance(
+        diagnostic_reuse("diagnostic.pca", "artifactReuses")
+        return restored
+    component_variance = diagnostic_call(
+        "metric.pcaVariance", _component_variance, coordinates
+    )
+    total_scaled_variance = diagnostic_call(
+        "metric.pcaScaledVariance",
+        _scaled_total_variance,
         store,
         reduction_status,
         n_rows=int(coordinates.shape[0]),
@@ -761,14 +774,18 @@ def _write_pca_diagnostic(
         0.0,
         1.0,
     )
-    top_indices, top_values, family_enrichment = _top_loadings(
+    top_indices, top_values, family_enrichment = diagnostic_call(
+        "metric.pcaLoadings",
+        _top_loadings,
         loadings,
         selected_indices,
         family_masks,
     )
     covariate_support: dict[str, Any] = {}
     associations = (
-        _covariate_associations(
+        diagnostic_call(
+            "metric.pcaCovariates",
+            _covariate_associations,
             store,
             ArtifactRef(
                 scope=evaluation.cellSelection.scope,
@@ -892,7 +909,9 @@ def augment_pca_evaluations(
         key=lambda value: value.parameters.dimensions,
     ):
         overlap = (
-            _neighbor_overlap(
+            diagnostic_call(
+                "metric.neighborOverlap",
+                _neighbor_overlap,
                 store,
                 _artifact_ref(previous, "neighbors"),
                 _artifact_ref(evaluation, "neighbors"),
@@ -916,7 +935,9 @@ def augment_pca_evaluations(
             _top_values,
             family_enrichment,
             associations,
-        ) = _write_pca_diagnostic(
+        ) = diagnostic_call(
+            "diagnostic.pca",
+            _write_pca_diagnostic,
             store,
             evaluation,
             feature_selection=feature_selection,
@@ -1124,7 +1145,9 @@ def _build_advisory_doublet_scores(
         )
         if values.shape != selection_indices.shape:
             raise ValueError("Doublet scores do not align with their cell selection")
-        summary, sample = _bounded_score_summary(
+        summary, sample = diagnostic_call(
+            "metric.doubletScoreSummary",
+            _bounded_score_summary,
             values,
             maximum_sample_size=max(
                 1,
@@ -1177,7 +1200,9 @@ def _select_capture_cells(
     selected = labels == str(value)
     expected = np.zeros(store.cells.N, dtype=bool)
     expected[active_indices] = selected
-    reference = store.filter_cells(
+    reference = diagnostic_call(
+        "core.captureSelection",
+        store.filter_cells,
         [column],
         [value],
         [value],
@@ -1215,36 +1240,48 @@ def resolve_native_doublet_inputs(
         None,
     )
     if exact_native is not None:
-        return (
+        inputs = (
             _artifact_ref(exact_native, "clusters"),
             _artifact_ref(exact_native, "connectivityMap"),
         )
+        diagnostic_reuse("diagnostic.nativeDoubletInputs", "artifactReuses")
+        return inputs
     if not selected.parameters.useHarmony:
-        return (
+        inputs = (
             _artifact_ref(selected, "clusters"),
             _artifact_ref(selected, "connectivityMap"),
         )
+        diagnostic_reuse("diagnostic.nativeDoubletInputs", "artifactReuses")
+        return inputs
     reduction = _artifact_ref(selected, "pca")
-    ann = store.build_ann_index(
+    ann = diagnostic_call(
+        "core.nativeDoubletAnn",
+        store.build_ann_index,
         reduction,
         ann_metric="l2",
         ann_parallel=False,
         rand_state=4444,
         invalidate_cache=False,
     )
-    neighbors = store.query_neighbors(
+    neighbors = diagnostic_call(
+        "core.nativeDoubletNeighbors",
+        store.query_neighbors,
         ann,
         coordinates=reduction,
         k=parameters.neighborsK,
         invalidate_cache=False,
     )
-    graph = store.build_connectivity_map(
+    graph = diagnostic_call(
+        "core.nativeDoubletGraph",
+        store.build_connectivity_map,
         neighbors,
         local_connectivity=1.0,
         bandwidth=1.5,
         invalidate_cache=False,
     )
-    clusters = store.run_leiden_clustering(
+    clusters = diagnostic_call(
+        "core.nativeDoubletPartition",
+        store.run_leiden_clustering,
         graph,
         resolution=parameters.leidenResolution,
         backend="igraph",
@@ -1301,7 +1338,9 @@ def score_advisory_doublets(
         )
     limitations: list[str] = []
     if capture_column is None or capture_column not in store.cells.columns:
-        score = store.run_doublet_detection(
+        score = diagnostic_call(
+            "core.doubletDetection",
+            store.run_doublet_detection,
             native_clusters,
             native_graph,
             from_assay=assay,
@@ -1356,7 +1395,9 @@ def score_advisory_doublets(
             f"{_MAX_DOUBLET_CAPTURES} values"
         )
     if len(capture_groups) == 1:
-        score = store.run_doublet_detection(
+        score = diagnostic_call(
+            "core.doubletDetection",
+            store.run_doublet_detection,
             native_clusters,
             native_graph,
             from_assay=assay,
@@ -1400,39 +1441,51 @@ def score_advisory_doublets(
                 "selected cells."
             )
             continue
-        normalized = store.run_normalization(
+        normalized = diagnostic_call(
+            "core.captureNormalization",
+            store.run_normalization,
             capture_selection,
             features=feature_selection,
             log_transform=True,
             renormalize_subset=True,
             invalidate_cache=False,
         )
-        reduction = store.run_pca(
+        reduction = diagnostic_call(
+            "core.capturePca",
+            store.run_pca,
             normalized,
             dims=dimensions,
             feat_scaling=True,
             invalidate_cache=False,
         )
-        ann = store.build_ann_index(
+        ann = diagnostic_call(
+            "core.captureAnn",
+            store.build_ann_index,
             reduction,
             ann_metric="l2",
             ann_parallel=False,
             rand_state=4444,
             invalidate_cache=False,
         )
-        neighbors = store.query_neighbors(
+        neighbors = diagnostic_call(
+            "core.captureNeighbors",
+            store.query_neighbors,
             ann,
             coordinates=reduction,
             k=neighbors_k,
             invalidate_cache=False,
         )
-        graph = store.build_connectivity_map(
+        graph = diagnostic_call(
+            "core.captureGraph",
+            store.build_connectivity_map,
             neighbors,
             local_connectivity=1.0,
             bandwidth=1.5,
             invalidate_cache=False,
         )
-        clusters = store.run_leiden_clustering(
+        clusters = diagnostic_call(
+            "core.capturePartition",
+            store.run_leiden_clustering,
             graph,
             resolution=selected.parameters.leidenResolution,
             backend="igraph",
@@ -1442,7 +1495,9 @@ def score_advisory_doublets(
             invalidate_cache=False,
         )
         scores.append(
-            store.run_doublet_detection(
+            diagnostic_call(
+                "core.doubletDetection",
+                store.run_doublet_detection,
                 clusters,
                 graph,
                 from_assay=assay,
@@ -1514,7 +1569,9 @@ def _doublet_concentration(
         summary = (
             evidence.score_summaries[score_index]
             if evidence.score_summaries
-            else _bounded_score_summary(
+            else diagnostic_call(
+                "metric.doubletScoreSummary",
+                _bounded_score_summary,
                 score_values,
                 maximum_sample_size=65_536,
             )[0]
@@ -1778,13 +1835,22 @@ def _subsample_partition_stability(
     selected = np.arange(len(labels)) % 5 != 0
     if int(selected.sum()) < 3:
         selected = np.ones(len(labels), dtype=bool)
-    subsample_labels = leiden_membership(
+    subsample_labels = diagnostic_call(
+        "core.subsamplePartition",
+        leiden_membership,
         graph[selected][:, selected],
         resolution,
         4444,
         backend="igraph",
     )
-    return float(adjusted_rand_score(labels[selected], subsample_labels))
+    return float(
+        diagnostic_call(
+            "metric.partitionAgreement",
+            adjusted_rand_score,
+            labels[selected],
+            subsample_labels,
+        )
+    )
 
 
 def augment_cluster_evaluations(
@@ -1818,7 +1884,9 @@ def augment_cluster_evaluations(
         graph_ref = _artifact_ref(evaluation, "connectivityMap")
         clusters_ref = _artifact_ref(evaluation, "clusters")
         labels = _cluster_labels(store, clusters_ref)
-        alternative_ref = store.run_leiden_clustering(
+        alternative_ref = diagnostic_call(
+            "core.alternateSeedPartition",
+            store.run_leiden_clustering,
             graph_ref,
             resolution=evaluation.parameters.leidenResolution,
             backend="igraph",
@@ -1830,7 +1898,11 @@ def augment_cluster_evaluations(
         alternative = _cluster_labels(store, alternative_ref)
         if alternative.shape != labels.shape:
             raise ValueError("Alternate-seed clusters do not align with the candidate")
-        seed_stability = float(adjusted_rand_score(labels, alternative))
+        seed_stability = float(
+            diagnostic_call(
+                "metric.partitionAgreement", adjusted_rand_score, labels, alternative
+            )
+        )
         subsample_stability = _cached_candidate_metric(
             (
                 id(store),
@@ -1850,7 +1922,9 @@ def augment_cluster_evaluations(
         marker_ref = None
         markers = pd.DataFrame()
         if cluster_count >= 2:
-            marker_ref = store.run_marker_search(
+            marker_ref = diagnostic_call(
+                "core.markers",
+                store.run_marker_search,
                 clusters_ref,
                 from_assay=marker_assay,
                 features=marker_features,
@@ -1939,7 +2013,9 @@ def augment_cluster_evaluations(
             artifact_id=evaluation.cellSelection.artifactId,
         )
         doublet_concentration = (
-            _doublet_concentration(
+            diagnostic_call(
+                "metric.doubletConcentration",
+                _doublet_concentration,
                 store,
                 labels,
                 selection_ref,
@@ -1953,7 +2029,9 @@ def augment_cluster_evaluations(
             for column in independent_unit_columns
             if column in store.cells.columns
             for score in [
-                _cross_unit_support(
+                diagnostic_call(
+                    "metric.crossUnitSupport",
+                    _cross_unit_support,
                     labels,
                     _aligned_metadata(store, selection_ref, column),
                 )
@@ -1963,7 +2041,9 @@ def augment_cluster_evaluations(
         cross_unit_support = min(unit_scores) if unit_scores else None
         technical_association = {
             column: float(
-                normalized_mutual_info_score(
+                diagnostic_call(
+                    "metric.technicalAssociation",
+                    normalized_mutual_info_score,
                     labels,
                     _aligned_metadata(store, selection_ref, column),
                 )

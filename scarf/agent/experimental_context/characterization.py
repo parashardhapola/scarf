@@ -1,6 +1,7 @@
 """Characterize cell covariates and study-design confounding."""
 
 import re
+import hashlib
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -23,6 +24,7 @@ from ...metadata.rows import (
 from ...metadata.selection import resolve_cell_aligned_artifact
 from ...metrics.association import directional_mapping, report_confounding
 from ...storage.refs import ArtifactRef
+from ...storage.artifacts import fingerprint_array
 from ...storage.selections import read_stored_selection_indices
 from ..decisions.selection import DecisionValidationError, decide
 from ..tools import artifact_reference
@@ -59,7 +61,6 @@ _INDEXED_NAME = re.compile(r"(?P<stem>.+?)[-_]?(?P<index>\d+)")
 _ONTOLOGY_SUFFIX = "_ontology_term_id"
 _SAMPLE_LEVELS = 8
 _ASSOCIATION_FLOOR = 0.1
-_CONTEXT_LIMIT = 1200
 _DROP_REASONS = {
     "dropAssayStat": "Scarf assay statistic column",
     "dropProvenance": "analysis-linked column",
@@ -156,7 +157,14 @@ def _bounded_level_counts(
 class _SelectionBoundCells:
     """Read metadata through one validated immutable cell selection."""
 
-    __slots__ = ("_artifact_sources", "_artifact_values", "_indices", "_source")
+    __slots__ = (
+        "_artifact_sources",
+        "_artifact_values",
+        "_indices",
+        "_source",
+        "_metadata_values",
+        "_cache_values",
+    )
 
     def __init__(
         self,
@@ -165,8 +173,11 @@ class _SelectionBoundCells:
         selection: ArtifactRef,
         *,
         artifacts: Mapping[str, ArtifactRef] | None = None,
+        cache_values: bool = False,
     ) -> None:
         self._source = source
+        self._cache_values = cache_values
+        self._metadata_values: dict[str, np.ndarray] = {}
         self._indices = read_stored_selection_indices(
             root,
             selection,
@@ -208,10 +219,16 @@ class _SelectionBoundCells:
     def fetch(self, column: str, key: str = "I") -> np.ndarray:
         if key != "I":
             raise ValueError("A bound metadata view accepts only its stored selection")
-        return self._read(column, self._indices)
+        if not self._cache_values:
+            return self._read(column, self._indices)
+        if column not in self._metadata_values:
+            self._metadata_values[column] = self._read(column, self._indices)
+        return self._metadata_values[column]
 
     def _read(self, column: str, indices: np.ndarray) -> np.ndarray:
-        artifact_values = self._artifact_values.get(column)
+        artifact_values = self._metadata_values.get(column)
+        if artifact_values is None:
+            artifact_values = self._artifact_values.get(column)
         if artifact_values is not None:
             positions = np.searchsorted(self._indices, indices)
             if np.any(positions >= len(self._indices)) or not np.array_equal(
@@ -283,6 +300,7 @@ class _SelectionBoundStore:
             store.cells,
             selection,
             artifacts=artifacts,
+            cache_values=True,
         )
         self.assay_names = store.assay_names
 
@@ -406,17 +424,34 @@ def _profile_column(
     *,
     cell_key: str,
     kind: ColumnKind | None = None,
+    inventory: dict[str, Any] | None = None,
 ) -> _ColumnProfile:
     values = store.cells.fetch(name, key=cell_key)
     resolved_kind = kind or _infer_kind(values)
+    artifact_source = getattr(store.cells, "artifact_source", lambda _name: None)(name)
+    identity = None
+    if inventory is not None:
+        # Metadata are mutable even when the selected cell identities are frozen.
+        value_identity = (
+            hashlib.sha256(
+                "\n".join(
+                    repr((type(value).__name__, value)) for value in values.tolist()
+                ).encode()
+            ).hexdigest()
+            if values.dtype.hasobject
+            else fingerprint_array(values)
+        )
+        identity = (str(values.dtype), value_identity, resolved_kind, artifact_source)
+        saved = inventory.get(name)
+        if saved is not None and saved[0] == identity:
+            return cast(_ColumnProfile, saved[1])
     summary = _summarize(values, resolved_kind)
     digest = column_partition_digest(store.cells, name, cell_key=cell_key)
     level_counts: tuple[dict[str, Any], ...] = ()
     level_counts_truncated = False
     if resolved_kind == "categorical":
         level_counts, level_counts_truncated = _bounded_level_counts(values)
-    artifact_source = getattr(store.cells, "artifact_source", lambda _name: None)(name)
-    return _ColumnProfile(
+    profile = _ColumnProfile(
         kind=resolved_kind,
         summary=summary,
         digest=digest,
@@ -424,6 +459,9 @@ def _profile_column(
         levelCounts=level_counts,
         levelCountsTruncated=level_counts_truncated,
     )
+    if inventory is not None:
+        inventory[name] = (identity, profile)
+    return profile
 
 
 def _triage_columns(
@@ -495,11 +533,6 @@ def _collapse_ontology_aliases(
             note["levels"] = correspondence
         notes.append(note)
     return [name for name in columns if name not in dropped], aliases, notes
-
-
-def _bounded_context(study_context: str | None) -> str:
-    text = (study_context or "").strip()
-    return text if len(text) <= _CONTEXT_LIMIT else text[: _CONTEXT_LIMIT - 3] + "..."
 
 
 def _validate_directions(
@@ -1577,6 +1610,7 @@ def characterize_covariates(
     model: Any | None = None,
     directions: Mapping[str, Any] | None = None,
     groupingArtifacts: Mapping[str, ArtifactRef] | None = None,
+    inventory: dict[str, Any] | None = None,
 ) -> CovariateCharacterization:
     """Label cell covariates and record design-level confounding."""
     if (
@@ -1589,6 +1623,12 @@ def characterize_covariates(
         store,
         cellSelection,
         artifacts=grouping_artifacts,
+    )
+    if inventory is not None and inventory.get("cellSelection") != cellSelection:
+        inventory.clear()
+        inventory["cellSelection"] = cellSelection
+    column_inventory = (
+        inventory.setdefault("columns", {}) if inventory is not None else None
     )
     cell_key = "I"
     direction_map = dict(directions or {})
@@ -1621,6 +1661,7 @@ def characterize_covariates(
             name,
             cell_key=cell_key,
             kind=cast(ColumnKind, directed_kind) if directed_kind in _KINDS else None,
+            inventory=column_inventory,
         )
         profiles[name] = profile
         n_rows = profile.digest.nRows
@@ -1632,7 +1673,11 @@ def characterize_covariates(
     for name, reason in dropped:
         if reason == "dropAssayStat" and name not in profiles:
             profiles[name] = _profile_column(
-                bound_store, name, cell_key=cell_key, kind="continuous"
+                bound_store,
+                name,
+                cell_key=cell_key,
+                kind="continuous",
+                inventory=column_inventory,
             )
     candidates, aliases, alias_notes = _collapse_ontology_aliases(
         bound_store,
@@ -1645,7 +1690,7 @@ def characterize_covariates(
         store=bound_store,
         cell_key=cell_key,
         n_rows=n_rows,
-        context=_bounded_context(studyContext),
+        context=(studyContext or "").strip(),
         model=model,
         profiles=profiles,
     )

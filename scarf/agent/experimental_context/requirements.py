@@ -2,7 +2,7 @@
 
 import hashlib
 import re
-from typing import Any
+from typing import Any, Literal
 
 from ..record_io import canonical_json_bytes
 from .contracts import (
@@ -10,6 +10,56 @@ from .contracts import (
     DesignEvidenceRequirement,
     characterization_evidence,
 )
+
+
+def active_batch_safety(result: Any) -> list[Any]:
+    """Select the exact final assessed design without unioning alternatives."""
+    all_assessments = list(result.batchSafety)
+    columns = sorted(result.decision.batchCorrection.batchColumns)
+    if not columns:
+        tested = {tuple(sorted(item.batchColumns)) for item in all_assessments}
+        if len(tested) > 1:
+            raise ValueError(
+                "The final correction plan must identify one exact assessed batch set; "
+                "separate alternatives cannot be combined into an untested design"
+            )
+        columns = list(next(iter(tested), ()))
+    return [item for item in all_assessments if sorted(item.batchColumns) == columns]
+
+
+def requested_design_questions(
+    study_context: str, study_objective: str, columns: list[str]
+) -> list[tuple[str, list[str], bool]]:
+    """Keep explicit named joint/conditional requests visible before proposals."""
+    output: list[tuple[str, list[str], bool]] = []
+    for text in (study_context, study_objective):
+        for raw in re.split(r"[\n.!?]+", text):
+            quote = raw.strip()
+            joint = bool(
+                re.search(
+                    r"\b(joint|jointly|combined|combination|interaction)\b", quote, re.I
+                )
+            )
+            conditional = bool(
+                re.search(r"\b(within|conditioned|stratif\w*)\b", quote, re.I)
+            )
+            if not (joint or conditional) or re.search(
+                r"\b(?:do not|not requested|outside scope)\b", quote, re.I
+            ):
+                continue
+            named = sorted(
+                name
+                for name in columns
+                if re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", quote, re.I)
+            )
+            generic = re.search(r"\b(covariates|factors|columns)\b", quote, re.I)
+            if (len(named) >= 2 or not named and generic) and (
+                quote,
+                named,
+                conditional,
+            ) not in output:
+                output.append((quote, named, conditional))
+    return output
 
 
 def objective_evidence(
@@ -28,10 +78,11 @@ def objective_evidence(
         and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", study_objective, re.I)
     }
     conditions = sorted(set(decision.coefficientsOfInterest) | mentioned)
+    batch_safety = active_batch_safety(result)
     batch_columns = sorted(
         {
             *decision.batchCorrection.batchColumns,
-            *(name for item in result.batchSafety for name in item.batchColumns),
+            *(name for item in batch_safety for name in item.batchColumns),
         }
     )
     requirements = [
@@ -84,7 +135,7 @@ def objective_evidence(
         for name in conditions:
             matched = [
                 item
-                for item in result.batchSafety
+                for item in batch_safety
                 if item.coefficient == name
                 and sorted(item.batchColumns) == batch_columns
             ]
@@ -192,6 +243,55 @@ def objective_evidence(
                 status="computed" if computed else "unsupported",
                 evidenceIds=[comparison.evidenceId],
                 reasons=answer_reasons,
+            )
+        )
+    for quote, names, conditional in requested_design_questions(
+        study_context, study_objective, list(records)
+    ):
+        purpose: Literal["effectEstimation", "association", "designCoverage"] = (
+            "effectEstimation"
+            if re.search(r"\bestimat\w*.*\beffect", quote, re.I)
+            else "association"
+            if re.search(r"\bassociat\w*", quote, re.I)
+            else "designCoverage"
+        )
+        matches = [
+            item
+            for item in characterization.comparisons
+            if set(names).issubset(
+                {
+                    item.proposal.response,
+                    *item.proposal.explanatoryColumns,
+                    item.proposal.conditionedOn,
+                }
+            )
+            and (
+                item.proposal.conditionedOn is not None
+                if conditional
+                else len(item.proposal.explanatoryColumns) == 2
+            )
+            and item.proposal.purpose == purpose
+            and item.proposal.essential
+        ]
+        if matches:
+            continue
+        identifier = "requestedDesign:" + hashlib.sha256(quote.encode()).hexdigest()
+        requirements.append(
+            DesignEvidenceRequirement(
+                requirementId=identifier,
+                question=quote,
+                objectiveQuote=quote,
+                kind=purpose,
+                columns=names,
+            )
+        )
+        coverage.append(
+            DesignEvidenceCoverage(
+                requirementId=identifier,
+                status="unsupported",
+                reasons=[
+                    "The explicitly requested joint or conditional comparison has not been nominated and measured; marginal comparisons do not answer it."
+                ],
             )
         )
     if len(requirements) > 13:

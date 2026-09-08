@@ -7,7 +7,6 @@ from ...utils.logging import logger
 from .._deps import AGENT_INSTALL_HINT
 from ..tools import artifact_reference
 from ..types import AgentRunInfo, BatchSafetyEvidence
-from .characterization import characterize_covariates
 from .comparisons import canonical_design_choices
 from .contracts import (
     CellQcPlan,
@@ -19,11 +18,14 @@ from .contracts import (
     characterization_evidence,
 )
 from .qc_evidence import (
-    _hto_artifact_map,
     _offered_qc_profiles,
 )
-from .tools import contrast_plans_from_characterization
-from .requirements import objective_evidence, unmet_objective_requirements
+from .tools import characterize_context, contrast_plans_from_characterization
+from .requirements import (
+    active_batch_safety,
+    objective_evidence,
+    unmet_objective_requirements,
+)
 
 try:
     from pydantic import ValidationError
@@ -48,6 +50,14 @@ def _validate_batch_correction_plan(
         if isinstance(report.get("coefficient"), str)
     }
     plan = decision.batchCorrection
+    try:
+        active_batch_safety(
+            SimpleNamespace(
+                decision=decision, batchSafety=list(deps.batchSafety.values())
+            )
+        )
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
     directed_batch_columns = deps.directions.get("batchColumns")
     if directed_batch_columns is not None:
         if not isinstance(directed_batch_columns, list) or any(
@@ -247,6 +257,11 @@ def validate_experimental_context(
     deps: ExperimentalContextDependencies,
 ) -> ExperimentalContextDecision:
     """Recompute and validate every model-authored design choice."""
+    if decision.cellQc != CellQcPlan.get_blank():
+        raise ModelRetry(
+            "Experimental Context must leave cellQc blank; the audited filtering "
+            "checkpoint selects from qcProfiles"
+        )
     narrative_fields = {
         "rationale": decision.rationale,
         "batchCorrection.rationale": decision.batchCorrection.rationale,
@@ -274,6 +289,13 @@ def validate_experimental_context(
             "Narrative fields must contain plain prose without serialized sibling "
             f"fields: {invalid_narratives}"
         )
+    for required in ("inspect_cell_covariates", "analyze_experimental_design"):
+        if required not in deps.toolCalls:
+            raise ModelRetry(f"Call {required} before returning a decision")
+    try:
+        canonical_design_choices(deps, decision)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
     directions = dict(deps.directions)
     column_domains = dict(decision.columnDomains)
     column_domains.update(dict(directions.get("columnDomains") or {}))
@@ -293,14 +315,8 @@ def validate_experimental_context(
     units_of_inference.update(dict(directions.get("unitsOfInference") or {}))
     directions["unitsOfInference"] = units_of_inference
 
-    characterization = characterize_covariates(
-        deps.store,
-        cellSelection=deps.cellSelection,
-        studyContext=f"{deps.studyContext}\nStudy objective: {deps.studyObjective}",
-        model=None,
-        directions=directions,
-        groupingArtifacts=_hto_artifact_map(deps),
-    )
+    previous_inputs = deps.characterizationInputs
+    characterization = characterize_context(deps, directions)
     if characterization.status == "failed":
         raise ModelRetry("; ".join(characterization.notes))
     characterization.comparisons = list(deps.comparisons)
@@ -311,17 +327,7 @@ def validate_experimental_context(
     deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
     deps.evidenceIds.update(plan.evidenceId for plan in contrast_plans)
 
-    if "inspect_cell_covariates" not in deps.toolCalls:
-        raise ModelRetry("Call inspect_cell_covariates before returning a decision")
-    if "analyze_experimental_design" not in deps.toolCalls:
-        raise ModelRetry("Call analyze_experimental_design before returning a decision")
-
-    if decision.cellQc != CellQcPlan.get_blank():
-        raise ModelRetry(
-            "Experimental Context must leave cellQc blank; the audited filtering "
-            "checkpoint selects from qcProfiles"
-        )
-    if not deps.qcProfiles:
+    if not deps.qcProfiles or previous_inputs != deps.characterizationInputs:
         _offered_qc_profiles(deps, characterization)
     deps.evidenceIds.update(profile.evidenceId for profile in deps.qcProfiles.values())
     deps.evidenceIds.update(source.sourceId for source in deps.qcMetricSources)
@@ -472,7 +478,8 @@ def failed_experimental_context_result(
             f"Model failure: {model_detail}",
             *failure_notes,
         ],
-        runInfo=AgentRunInfo(
+        runInfo=getattr(error, "agent_run_info", None)
+        or AgentRunInfo(
             agentName="experimental_context_failed",
             modelName=model_name,
         ),

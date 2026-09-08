@@ -1413,8 +1413,12 @@ def select_final_parameter_graph(
                             }
                         ),
                     ),
-                    runInfo=AgentRunInfo(
-                        agentName="parameter_tuning_final_graph_needs_input"
+                    runInfo=getattr(
+                        exc,
+                        "agent_run_info",
+                        AgentRunInfo(
+                            agentName="parameter_tuning_final_graph_needs_input"
+                        ),
                     ),
                 ),
                 report,

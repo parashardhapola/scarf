@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..types import (
     AgentDataModel,
@@ -146,15 +147,15 @@ class BiologicalInterpretationReport(AgentDataModel):
     clusterInterpretations: list[ClusterInterpretation] = Field(default_factory=list)
     treatmentObservations: list[TreatmentObservation] = Field(default_factory=list)
     followUps: list[FollowUpRecommendation] = Field(default_factory=list)
-    clusterArtifact: ArtifactReferenceModel | None = None
-    markerArtifact: ArtifactReferenceModel | None = None
-    graphAssay: str | None = None
-    markerAssay: str | None = None
+    clusterArtifact: SkipJsonSchema[ArtifactReferenceModel | None] = None
+    markerArtifact: SkipJsonSchema[ArtifactReferenceModel | None] = None
+    graphAssay: SkipJsonSchema[str | None] = None
+    markerAssay: SkipJsonSchema[str | None] = None
     evidenceIds: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     stopReason: str = ""
     needsInput: BiologicalInterpretationNeedsInput | None = None
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
 
 class BiologicalInterpretationDependencies(AgentDataModel):

@@ -3,7 +3,7 @@ import json
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -36,6 +36,63 @@ _PCA_RANDOM_SEED = 4466
 _METRIC_CACHE: ContextVar[dict[tuple[Any, ...], Any] | None] = ContextVar(
     "scarf_candidate_metric_cache", default=None
 )
+_DIAGNOSTIC_WORK: ContextVar[dict[str, dict[str, int]] | None] = ContextVar(
+    "scarf_diagnostic_work", default=None
+)
+
+
+@contextmanager
+def diagnostic_work() -> Iterator[dict[str, dict[str, int]]]:
+    """Count agent operation calls, not internal core numerical rebuilds."""
+    counts: dict[str, dict[str, int]] = {}
+    token = _DIAGNOSTIC_WORK.set(counts)
+    try:
+        yield counts
+    finally:
+        _DIAGNOSTIC_WORK.reset(token)
+
+
+def _diagnostic_count(name: str, event: str, count: int = 1) -> None:
+    counts = _DIAGNOSTIC_WORK.get()
+    if counts is not None:
+        row = counts.setdefault(
+            name,
+            dict.fromkeys(
+                (
+                    "attempted",
+                    "completed",
+                    "failed",
+                    "cacheHits",
+                    "restored",
+                    "artifactReuses",
+                ),
+                0,
+            ),
+        )
+        row[event] += count
+
+
+def diagnostic_call[**P, T](
+    name: str, operation: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> T:
+    """Record an invoked operation while preserving its result and exception."""
+    _diagnostic_count(name, "attempted")
+    try:
+        result = operation(*args, **kwargs)
+    except BaseException:
+        _diagnostic_count(name, "failed")
+        raise
+    _diagnostic_count(name, "completed")
+    return result
+
+
+def diagnostic_reuse(
+    name: str,
+    kind: Literal["cacheHits", "restored", "artifactReuses"] = "cacheHits",
+    count: int = 1,
+) -> None:
+    """Record reuse only when the agent has directly established it."""
+    _diagnostic_count(name, kind, count)
 
 
 @contextmanager
@@ -49,11 +106,14 @@ def candidate_metric_cache() -> Iterator[None]:
 
 
 def _cached_candidate_metric[T](key: tuple[Any, ...], compute: Callable[[], T]) -> T:
+    name = f"metric.{key[1]}"
     cache = _METRIC_CACHE.get()
     if cache is None:
-        return compute()
+        return diagnostic_call(name, compute)
     if key not in cache:
-        cache[key] = compute()
+        cache[key] = diagnostic_call(name, compute)
+    else:
+        diagnostic_reuse(name)
     return cast(T, cache[key])
 
 
@@ -268,7 +328,9 @@ def run_candidate_reduction(
         identity_feature_limit=identity_feature_limit,
     )
     if candidate.reductionMethod == "pca":
-        ref = store.run_pca(
+        ref = diagnostic_call(
+            "core.pca",
+            store.run_pca,
             normalized,
             dims=candidate.dimensions,
             feat_scaling=True,
@@ -277,7 +339,9 @@ def run_candidate_reduction(
         )
         return ref, "pca", effective_dimensions
     if candidate.reductionMethod == "lsi":
-        ref = store.run_lsi(
+        ref = diagnostic_call(
+            "core.lsi",
+            store.run_lsi,
             normalized,
             dims=candidate.dimensions,
             skip_first=True,
@@ -286,7 +350,9 @@ def run_candidate_reduction(
         )
         return ref, "lsi", effective_dimensions
     loadings = np.eye(normalized_shape[1], dtype=np.float64)
-    ref = store.run_custom_reduction(
+    ref = diagnostic_call(
+        "core.customReduction",
+        store.run_custom_reduction,
         loadings,
         normalized,
         invalidate_cache=False,
@@ -348,7 +414,9 @@ def _collect_cluster_structure_metrics(
         return None
     membership_ref: ArtifactRef | None = None
     try:
-        membership_ref = calculate_membership(
+        membership_ref = diagnostic_call(
+            "core.membershipStrength",
+            calculate_membership,
             cluster_ref,
             graph_ref,
             invalidate_cache=False,
@@ -439,7 +507,9 @@ def _collect_parameter_candidate_metrics(
                 _RANDOM_SEED,
                 11,
             ),
-            lambda: store.metric_graph_silhouette(
+            lambda: diagnostic_call(
+                "core.graphSilhouette",
+                store.metric_graph_silhouette,
                 neighbors_ref,
                 cluster_ref,
                 random_seed=_RANDOM_SEED,
@@ -459,7 +529,9 @@ def _collect_parameter_candidate_metrics(
         try:
 
             def separability_values() -> dict[str, Any]:
-                separability = store.metric_cluster_separability(
+                separability = diagnostic_call(
+                    "core.clusterSeparability",
+                    store.metric_cluster_separability,
                     reduction_ref,
                     {cluster_column: cluster_ref},
                     random_seed=_RANDOM_SEED,
@@ -491,6 +563,41 @@ def _collect_parameter_candidate_metrics(
         except (KeyError, TypeError, ValueError) as exc:
             warnings.append(f"PCA cluster separability unavailable: {exc}")
 
+    _collect_covariate_metrics(
+        deps,
+        candidate=candidate,
+        candidate_id=candidate_id,
+        neighbors_ref=neighbors_ref,
+        graph_ref=graph_ref,
+        metrics=metrics,
+        evidence_ids=evidence_ids,
+        warnings=warnings,
+    )
+
+    eligibility_reasons: list[str] = []
+    if n_clusters < 2:
+        eligibility_reasons.append("fewer than two clusters")
+    if min_cluster_cells < deps.minClusterCells:
+        eligibility_reasons.append(
+            f"smallest cluster has {min_cluster_cells} cells; "
+            f"minimum is {deps.minClusterCells}"
+        )
+    return metrics, eligibility_reasons, membership_ref
+
+
+def _collect_covariate_metrics(
+    deps: ParameterTuningDependencies,
+    *,
+    candidate: ParameterCandidate,
+    candidate_id: str,
+    neighbors_ref: ArtifactRef,
+    graph_ref: ArtifactRef,
+    metrics: ParameterMetrics,
+    evidence_ids: list[str],
+    warnings: list[str],
+) -> None:
+    """Measure exact typed design effects on an existing graph and neighborhood."""
+    store = deps.store
     perplexity = max(1.0, float(candidate.neighborsK // 3))
     for column in deps.batchColumns:
         try:
@@ -504,7 +611,9 @@ def _collect_parameter_candidate_metrics(
                         _metric_metadata_key(store, column),
                         perplexity,
                     ),
-                    lambda: store.metric_proportional_batch_mixing(
+                    lambda: diagnostic_call(
+                        "core.batchMixing",
+                        store.metric_proportional_batch_mixing,
                         column,
                         neighbors_ref,
                         perplexity=perplexity,
@@ -537,7 +646,9 @@ def _collect_parameter_candidate_metrics(
                         None,
                         True,
                     ),
-                    lambda: store.metric_clisi(
+                    lambda: diagnostic_call(
+                        "core.clisi",
+                        store.metric_clisi,
                         column,
                         neighbors_ref,
                         perplexity=None,
@@ -560,7 +671,9 @@ def _collect_parameter_candidate_metrics(
                         column,
                         _metric_metadata_key(store, column),
                     ),
-                    lambda: store.metric_graph_connectivity(
+                    lambda: diagnostic_call(
+                        "core.graphConnectivity",
+                        store.metric_graph_connectivity,
                         column,
                         graph_ref,
                     ),
@@ -624,15 +737,41 @@ def _collect_parameter_candidate_metrics(
             metrics.biologicalPreservation[name] = scores
             evidence_ids.append(f"candidate:{candidate_id}:{name}")
 
-    eligibility_reasons: list[str] = []
-    if n_clusters < 2:
-        eligibility_reasons.append("fewer than two clusters")
-    if min_cluster_cells < deps.minClusterCells:
-        eligibility_reasons.append(
-            f"smallest cluster has {min_cluster_cells} cells; "
-            f"minimum is {deps.minClusterCells}"
-        )
-    return metrics, eligibility_reasons, membership_ref
+
+def refresh_candidate_design_evidence(
+    deps: ParameterTuningDependencies,
+    evaluation: ParameterCandidateEvaluation,
+) -> ParameterCandidateEvaluation:
+    """Reassess a revised design without repeating primary analysis or doublets."""
+    evaluation = evaluation.model_copy(deep=True)
+    evaluation.metrics.batchMixing = {}
+    evaluation.metrics.biologicalPreservation = {}
+    identifiers = (":batchMixing:", ":clisi:", ":graphConnectivity:", ":joint:")
+    evaluation.evidenceIds = [
+        item
+        for item in evaluation.evidenceIds
+        if not any(identifier in item for identifier in identifiers)
+    ]
+    prefixes = (
+        "Batch mixing for ",
+        "cLISI for ",
+        "Graph connectivity for ",
+        "Matched graph preservation for continuous column ",
+    )
+    evaluation.warnings = [
+        item for item in evaluation.warnings if not item.startswith(prefixes)
+    ]
+    _collect_covariate_metrics(
+        deps,
+        candidate=evaluation.parameters,
+        candidate_id=evaluation.candidateId,
+        neighbors_ref=core_artifact_reference(evaluation.artifacts["neighbors"]),
+        graph_ref=core_artifact_reference(evaluation.artifacts["connectivityMap"]),
+        metrics=evaluation.metrics,
+        evidence_ids=evaluation.evidenceIds,
+        warnings=evaluation.warnings,
+    )
+    return evaluation
 
 
 def execute_parameter_candidate(
@@ -643,6 +782,7 @@ def execute_parameter_candidate(
 
     with deps.executionLock:
         if candidate_id in deps.evaluations:
+            diagnostic_reuse("candidate.evaluation")
             logger.debug(
                 f"Parameter candidate {candidate_id!r} for assay "
                 f"{deps.fromAssay!r} reused its completed evaluation"
@@ -737,7 +877,9 @@ def execute_parameter_candidate(
 
             coordinates_ref = reduction_ref
             if candidate.useHarmony:
-                coordinates_ref = store.run_harmony(
+                coordinates_ref = diagnostic_call(
+                    "core.harmony",
+                    store.run_harmony,
                     reduction_ref,
                     list(deps.batchColumns),
                     invalidate_cache=False,
@@ -748,7 +890,9 @@ def execute_parameter_candidate(
                     f"using {len(deps.batchColumns)} batch column(s)"
                 )
 
-            ann_ref = store.build_ann_index(
+            ann_ref = diagnostic_call(
+                "core.ann",
+                store.build_ann_index,
                 coordinates_ref,
                 ann_metric="l2",
                 ann_parallel=False,
@@ -760,7 +904,9 @@ def execute_parameter_candidate(
                 f"Parameter candidate {candidate_id!r}: completed ANN indexing"
             )
 
-            neighbors_ref = store.query_neighbors(
+            neighbors_ref = diagnostic_call(
+                "core.neighbors",
+                store.query_neighbors,
                 ann_ref,
                 coordinates=coordinates_ref,
                 k=candidate.neighborsK,
@@ -771,7 +917,9 @@ def execute_parameter_candidate(
                 f"Parameter candidate {candidate_id!r}: completed neighbor query"
             )
 
-            graph_ref = store.build_connectivity_map(
+            graph_ref = diagnostic_call(
+                "core.graph",
+                store.build_connectivity_map,
                 neighbors_ref,
                 local_connectivity=1.0,
                 bandwidth=1.5,
@@ -782,7 +930,9 @@ def execute_parameter_candidate(
                 f"Parameter candidate {candidate_id!r}: completed connectivity map"
             )
 
-            cluster_ref = store.run_leiden_clustering(
+            cluster_ref = diagnostic_call(
+                "core.partition",
+                store.run_leiden_clustering,
                 graph_ref,
                 resolution=candidate.leidenResolution,
                 backend="igraph",

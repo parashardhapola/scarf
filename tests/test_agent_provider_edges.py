@@ -167,8 +167,8 @@ def test_biological_interpretation_cache_and_fallback_branches() -> None:
         error=provider_error,
         model_name="test-model",
     )
-    assert needs_markers.status == "needsInput"
-    assert needs_markers.needsInput is not None
+    assert needs_markers.status == "failed"
+    assert needs_markers.needsInput is None
     assert needs_markers.evidenceIds == ["composition:clusters"]
 
 

@@ -333,7 +333,11 @@ def test_interrupted_structured_retry_does_not_probe_images_on_resume(
     monkeypatch.setattr(rna_tuning, "run_agent_sync", interrupt)
     with pytest.raises(RuntimeError, match="Interrupted during structured"):
         run.review("full", 0, selected, {})
-    assert set(saved) == {"parameter_tuning/structured_evidence"}
+    assert set(saved) == {
+        "parameter_tuning/structured_evidence",
+        "parameter_tuning/full/review0/evidence/visual",
+        "parameter_tuning/full/review0/evidence/structured",
+    }
     resumed, selected = make_run(monkeypatch, object())
     monkeypatch.setattr(
         tuning,
@@ -365,7 +369,7 @@ def test_unrelated_model_failure_never_changes_evidence_mode(
     with pytest.raises(type(error)) as caught:
         run.review("full", 0, selected, {})
     assert caught.value is error
-    assert saved == {}
+    assert set(saved) == {"parameter_tuning/full/review0/evidence/visual"}
 
 
 def test_committed_visual_review_replays_without_images_or_neighbor_diagnostics(
@@ -747,7 +751,15 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
     assert resumed_report == first_report
     assert resumed_report.status == "needsInput"
     assert resumed_summary["budget"] == first_summary["budget"]
-    assert json.dumps(saved, sort_keys=True) == before
+    original = json.loads(before)
+    assert {key: saved[key] for key in original} == original
+    appended = {key: value for key, value in saved.items() if key not in original}
+    assert len(appended) == 2
+    assert all("/diagnostic_attempts/" in key for key in appended)
+    counts = resumed_summary["diagnosticOperations"]["operations"]
+    assert all(row["attempted"] == 0 for row in counts.values())
+    assert counts["diagnostic.primaryCandidateEvidence"]["restored"] == len(settings)
+    assert counts["diagnostic.reviewEvidence"]["restored"] == 1
 
 
 def test_model_failure_is_not_reported_as_a_scientific_question(

@@ -159,6 +159,7 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("Reported population support belongs to another candidate")
     return {
         "request": mapping(snapshot.get("request")),
+        "modelUsage": mapping(snapshot.get("modelUsage")),
         "finalAnalysis": final,
         "decisions": decisions,
         "assessments": assessments,

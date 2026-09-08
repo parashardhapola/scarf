@@ -711,6 +711,103 @@ def _analysis_visual_content(
     return content
 
 
+def _tuning_revision_provenances(
+    store: DataStore,
+    prefix: str,
+    workflow_run_id: str,
+    request: OrchestrationRequestRecord,
+    experimental_reference: StageEvidenceReference,
+    inputs: dict[str, Any],
+    previous_starts: Sequence[WorkflowStageAttempt],
+) -> list[dict[str, Any]]:
+    """Authorize changed interpretation only along committed context revisions."""
+    previous_inputs = [
+        {
+            key: value
+            for key, value in previous.inputs.items()
+            if key not in {"resumeAnswers", "answeredAttempt"}
+        }
+        for previous in previous_starts
+    ]
+    changed = [value for value in previous_inputs if value != inputs]
+    if not changed:
+        return []
+    contexts = journal._stage_outcomes(
+        store.zw, prefix, workflow_run_id, "experimental_context"
+    )
+    current = next(
+        (row for row in contexts if experimental_reference in row.reportReferences),
+        None,
+    )
+    if (
+        current is None
+        or current.status != "done"
+        or current.outputs.get("studyContract") != inputs["studyContract"]
+        or current.requestSha256 != request.requestSha256
+        or current.configSha256 != request.configSha256
+    ):
+        raise ValueError(
+            "Tuning inputs changed; changed evidence requires its exact completed context revision"
+        )
+    ancestors: list[dict[str, Any]] = []
+    visited: set[str] = set()
+    while current is not None and "reassessContextReport" in current.inputs:
+        if current.attemptId in visited:
+            raise ValueError("Context revision ancestry contains a cycle")
+        visited.add(current.attemptId)
+        previous_ref = current.inputs["reassessContextReport"]
+        current = next(
+            (
+                row
+                for row in contexts
+                if any(
+                    ref.model_dump(mode="json") == previous_ref
+                    for ref in row.reportReferences
+                )
+            ),
+            None,
+        )
+        if current is None or current.status != "done":
+            raise ValueError(
+                "Context revision is missing its committed previous evidence"
+            )
+        if (
+            current.requestSha256 != request.requestSha256
+            or current.configSha256 != request.configSha256
+        ):
+            raise ValueError(
+                "Context revision belongs to different request or configuration inputs"
+            )
+        ancestors.append(current.outputs["studyContract"])
+    authorized: list[dict[str, Any]] = []
+    for previous in changed:
+        if (
+            previous.get("studyContract") not in ancestors
+            or previous.get("preprocessedAssays") != inputs["preprocessedAssays"]
+            or previous.get("featureMetadataFingerprints")
+            != inputs["featureMetadataFingerprints"]
+            or any(
+                inputs["metadataFingerprints"].get(column) != fingerprint
+                for column, fingerprint in previous.get(
+                    "metadataFingerprints", {}
+                ).items()
+            )
+            or set(previous) != set(inputs)
+        ):
+            raise ValueError(
+                "Tuning inputs changed beyond an explicit context-evidence revision; "
+                "restore the original cohort, feature inputs and metadata or start a new workflow"
+            )
+        provenance = {
+            **previous,
+            "requestSha256": request.requestSha256,
+            "configSha256": request.configSha256,
+        }
+        if provenance not in authorized:
+            authorized.append(provenance)
+    return authorized
+
+
 class TuningStagesMixin(DecisionStagesMixin):
     """Run bounded experiments and return validated full-cohort artifacts."""
 
@@ -733,7 +830,7 @@ class TuningStagesMixin(DecisionStagesMixin):
     ) -> tuple[WorkflowStageAttempt, ParameterTuningReport]:
         from .rna_tuning import RnaTuningRun
 
-        del enrichment_reference, experimental_reference
+        del enrichment_reference
         if len(preprocessed) != 1 or study_contract is None:
             raise ValueError("RNA tuning requires one assay and a study contract")
         handoff = preprocessed[0]
@@ -765,19 +862,15 @@ class TuningStagesMixin(DecisionStagesMixin):
             "featureMetadataFingerprints": feature_fingerprints,
         }
         prefix = journal._ensure_orchestration_store(store)
-        for previous in journal._stage_starts(
-            store.zw, prefix, workflow.workflowRunId, stage_name
-        ):
-            scientific_inputs = {
-                key: value
-                for key, value in previous.inputs.items()
-                if key not in {"resumeAnswers", "answeredAttempt"}
-            }
-            if scientific_inputs != inputs:
-                raise ValueError(
-                    "Tuning inputs changed since saved evidence was computed; "
-                    "restore the original metadata or start a new workflow"
-                )
+        previous_provenances = _tuning_revision_provenances(
+            store,
+            prefix,
+            workflow.workflowRunId,
+            request_record,
+            experimental_reference,
+            inputs,
+            journal._stage_starts(store.zw, prefix, workflow.workflowRunId, stage_name),
+        )
         existing = journal._validated_done_outcome(
             store,
             prefix,
@@ -816,6 +909,7 @@ class TuningStagesMixin(DecisionStagesMixin):
                 "configSha256": request_record.configSha256,
             },
             design_comparisons=experimental.characterization.comparisons,
+            previous_provenances=previous_provenances,
         )
         try:
             with candidate_metric_cache():

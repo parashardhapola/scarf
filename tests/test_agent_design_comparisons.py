@@ -473,7 +473,12 @@ def test_design_tool_schema_and_retry_correct_proposals_before_computation(
     agent = Agent(
         FunctionModel(reply),
         deps_type=ExperimentalContextDependencies,
-        tools=[Tool(tools.analyze_experimental_design, max_retries=3)],
+        tools=[
+            Tool(
+                tools.model_evidence_tool(tools.analyze_experimental_design),
+                max_retries=3,
+            )
+        ],
     )
     result = agent.run_sync("Compare the observed study design.", deps=deps)
     assert result.output == "Comparison evidence computed."

@@ -368,8 +368,9 @@ def test_screening_that_uses_all_cells_is_not_labeled_as_a_sample() -> None:
 
 @pytest.mark.parametrize("mode", ["visual", "structured"])
 @pytest.mark.parametrize("damage", [None, "digest", "scope", "action", "genes", "mode"])
+@pytest.mark.parametrize("revised", [False, True])
 def test_review_view_requires_exact_checkpoint_bindings(
-    monkeypatch: pytest.MonkeyPatch, damage: str | None, mode: str
+    monkeypatch: pytest.MonkeyPatch, damage: str | None, mode: str, revised: bool
 ) -> None:
     import hashlib
 
@@ -419,7 +420,11 @@ def test_review_view_requires_exact_checkpoint_bindings(
     entry = {
         "scope": "full",
         "review": action,
-        "checkpointKey": "parameter_tuning/full/review0",
+        "checkpointKey": (
+            f"parameter_tuning/evidence_revisions/{'a' * 64}/full/review0"
+            if revised
+            else "parameter_tuning/full/review0"
+        ),
         "checkpointSha256": digest,
         "imageHashes": payload["inputs"]["imageHashes"],
         "evidenceMode": mode,

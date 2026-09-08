@@ -453,6 +453,23 @@ def render_analysis_document(payload: Mapping[str, Any]) -> str:
             )
         ],
     )
+    usage = mapping(payload.get("modelUsage"))
+    usage_note = ""
+    if usage.get("invocations"):
+        usage_note = (
+            f"<p>Recorded model work: {int(usage['invocations']):,} invocations, "
+            f"{int(usage.get('failedInvocations', 0)):,} failed; "
+            f"{int(usage.get('requests', 0)):,} completed responses and "
+            f"{int(usage.get('validationRetries', 0)):,} validation corrections. "
+            f"Reported tokens: {int(usage.get('inputTokens', 0)):,} input and "
+            f"{int(usage.get('outputTokens', 0)):,} output, including failed invocations.</p>"
+        )
+        if usage.get("availability") != "reported":
+            usage_note += (
+                "<p>Provider usage is incomplete or unavailable for some invocations. "
+                "Reported totals are known usage only; missing usage is not zero. "
+                "Failed requests without a response are not included in the response count.</p>"
+            )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scarf analysis summary</title><style>{_STYLES}</style></head><body><main>
@@ -461,7 +478,7 @@ def render_analysis_document(payload: Mapping[str, Any]) -> str:
 {'<aside class="notice"><h2>Limits of this analysis</h2>' + limitations + "</aside>" if limitations else ""}
 <section><h2>Populations and markers</h2><div{' class="population-overview"' if map_markup else ""}>{map_markup}<div>{_population_table(payload)}</div></div></section>
 {_qc_section(payload)}{_design_section(payload)}{_comparison_sections(payload)}
-<details><summary>Selected methods and evidence</summary>{methods}{mode_note}<p>Repeat and subsample agreement use adjusted Rand index. Marker coverage is the fraction of clusters with qualifying markers. These describe the selected analysis; they are not probabilities of biological correctness.</p></details>
+<details><summary>Selected methods and evidence</summary>{methods}{mode_note}{usage_note}<p>Repeat and subsample agreement use adjusted Rand index. Marker coverage is the fraction of clusters with qualifying markers. These describe the selected analysis; they are not probabilities of biological correctness.</p></details>
 {"<details><summary>Unavailable displays</summary>" + display_notes + "</details>" if display_notes else ""}
 <footer>Generated locally by <a href="https://scarf.readthedocs.io/">Scarf</a>. All numerical evidence is read from the saved analysis; report generation makes no analysis or model calls.</footer>
 </main></body></html>"""

@@ -1,13 +1,15 @@
 """Objective-led RNA experiments on frozen screening and full-cohort cells."""
 
 import hashlib
+import base64
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import numpy as np
 from pydantic import Field, create_model, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from ...metadata.rows import read_metadata_rows_chunkwise
 from ...storage.refs import ArtifactRef
@@ -18,6 +20,7 @@ from ...storage.selections import (
 from ...utils.logging import logger
 from .. import record_io
 from ..config.agent_exec import (
+    ImageEvidence,
     ImageInputUnsupportedError,
     build_visual_evidence_prompt,
     run_agent_sync,
@@ -38,7 +41,10 @@ from ..parameter_tuning.contracts import (
 from ..parameter_tuning.comparisons import (
     CombinedSettings,
     ComparisonConclusion,
+    ComparisonTradeoff,
     PopulationConcern,
+    bind_comparison_measurements,
+    comparison_advantages,
     setting_changes,
     partition_comparison_evidence,
     validate_comparison_review,
@@ -50,9 +56,15 @@ from ..parameter_tuning.diagnostics import (
     augment_cluster_evaluations,
     augment_pca_evaluations,
     population_support_evidence,
+    restore_advisory_doublets,
     score_advisory_doublets,
 )
-from ..parameter_tuning.execution import execute_parameter_candidate
+from ..parameter_tuning.execution import (
+    diagnostic_call,
+    diagnostic_reuse,
+    execute_parameter_candidate,
+    refresh_candidate_design_evidence,
+)
 from ..parameter_tuning.hvg import (
     HvgGroupVariability,
     aggregate_hvg_rankings,
@@ -90,6 +102,19 @@ def _configured_image_input(model: Any) -> bool | None:
         if isinstance(declared, bool):
             return declared
     return None
+
+
+def screening_sizes(n_cells: int, config: Any) -> tuple[int, ...]:
+    """Resolve the saved fixed policy or the bounded ten-percent default."""
+    if n_cells < 1:
+        raise ValueError("Screening requires a non-empty retained cohort")
+    if config.screeningCells is None:
+        maximum = min(n_cells, config.maxScreeningCells, 100_000)
+        initial = min(maximum, max(10_000, (n_cells + 9) // 10))
+    else:
+        initial = min(n_cells, config.screeningCells)
+        maximum = min(n_cells, config.maxScreeningCells)
+    return tuple(dict.fromkeys((initial, maximum)))
 
 
 class TuningAction(AgentDataModel):
@@ -170,6 +195,17 @@ def _assessment_output_type(
     """Constrain new model choices without changing the saved action contract."""
     if not candidate_ids:
         raise ValueError("RNA assessment requires observed candidates")
+    tradeoff_type = create_model(
+        "ObservedTradeoffInterpretation",
+        __base__=ComparisonTradeoff,
+        preferredValue=(Annotated[float | None, SkipJsonSchema()], None),
+        alternativeValue=(Annotated[float | None, SkipJsonSchema()], None),
+    )
+    conclusion_type = create_model(
+        "ObservedComparisonInterpretation",
+        __base__=ComparisonConclusion,
+        tradeoffs=(cast(Any, list)[tradeoff_type], Field(default_factory=list)),
+    )
     actions = tuple(
         action
         for action in ("accept", "combine", "experiment", "enlarge", "defer")
@@ -181,6 +217,7 @@ def _assessment_output_type(
     return create_model(
         "ObservedRnaAssessment",
         __base__=TuningAction,
+        comparisonConclusions=(cast(Any, list)[conclusion_type], ...),
         action=(
             Literal[actions],
             Field(description=TuningAction.model_fields["action"].description),
@@ -379,6 +416,7 @@ class RnaTuningRun:
         provenance: dict[str, Any],
         *,
         design_comparisons: Sequence[CovariateComparison] = (),
+        previous_provenances: Sequence[dict[str, Any]] = (),
     ) -> None:
         if (
             handoff.cellSelection is None
@@ -396,12 +434,23 @@ class RnaTuningRun:
             study,
         )
         self.answers, self.provenance = answers, provenance
+        self.previous_provenances = tuple(previous_provenances)
+        self.evidence_revision = (
+            hashlib.sha256(record_io.canonical_json_bytes(provenance)).hexdigest()
+            if previous_provenances
+            else None
+        )
         self.design_comparisons = tuple(design_comparisons)
         self.prefix = journal._ensure_orchestration_store(store)
         self.cells = artifact_model_to_ref(handoff.cellSelection)
         self.marker_features = artifact_model_to_ref(handoff.markerFeatures)
         self.budget = CandidateBudget(
-            store, self.prefix, workflow.workflowRunId, request.config, provenance
+            store,
+            self.prefix,
+            workflow.workflowRunId,
+            request.config,
+            provenance,
+            previous_provenances=self.previous_provenances,
         )
         self.settings: dict[str, RnaSetting] = {}
         self.history: list[dict[str, Any]] = []
@@ -411,16 +460,18 @@ class RnaTuningRun:
             "full": [],
         }
         self.last_action: TuningAction | None = None
-        self.full_repairs = 0
+        self.full_repairs = len(self.budget.repairs)
         self.answer_consumed = False
         self.scope_sizes: dict[str, int] = {}
         self.feature_evidence_cache: dict[str, dict[str, Any]] = {}
         self.neighbor_comparisons: dict[tuple[str, str], float] = {}
+        self.diagnostic_counts: dict[str, dict[str, int]] = {}
         self.comparison_rows: dict[str, list[dict[str, Any]]] = {}
         self.combined_candidates: dict[str, str] = {}
         self.resolution_candidates: dict[str, list[str]] = {}
         self.validation_sources: dict[str, dict[str, Any]] = {}
         self.discovery_scope: str | None = None
+        self.recovery_scope: str | None = None
         self.full_repair: dict[str, Any] | None = None
         self.batch_columns = list(study.technicalBatchColumns)
         self.coverage_columns = [
@@ -459,13 +510,29 @@ class RnaTuningRun:
             hvgCount=self.handoff.nFeatures,
         )
 
-    @staticmethod
-    def execution_inputs(cells: ArtifactRef, setting: RnaSetting) -> dict[str, Any]:
-        return {
+    def checkpoint_scope(self, scope: str) -> str:
+        """Separate revised interpretations while retaining numerical admissions."""
+        if self.evidence_revision is not None:
+            return (
+                f"parameter_tuning/evidence_revisions/{self.evidence_revision}/{scope}"
+            )
+        return f"parameter_tuning/{scope}"
+
+    def execution_inputs(
+        self, cells: ArtifactRef, setting: RnaSetting
+    ) -> dict[str, Any]:
+        inputs: dict[str, Any] = {
             "cells": cells.to_dict(),
             "features": setting.features.model_dump(mode="json"),
             "parameters": setting.parameters.model_dump(mode="json"),
         }
+        if setting.parameters.useHarmony and any(
+            previous.get("studyContract", {}).get("technicalBatchColumns")
+            != self.batch_columns
+            for previous in self.previous_provenances
+        ):
+            inputs["harmonyBatchColumns"] = self.batch_columns
+        return inputs
 
     def execute(
         self, scope: str, cells: ArtifactRef, setting: RnaSetting
@@ -500,10 +567,18 @@ class RnaTuningRun:
                     raise ValueError(
                         "Saved candidate evidence is unavailable or incomplete"
                     )
+            diagnostic_reuse("diagnostic.primaryCandidateEvidence", "restored")
+            evaluation = self._reassess_saved_evaluation(
+                scope, setting, admission, evaluation
+            )
         else:
             features = artifact_model_to_ref(setting.features)
-            normalized = self.store.run_normalization(
-                cells, features=features, invalidate_cache=False
+            normalized = diagnostic_call(
+                "core.primaryNormalization",
+                self.store.run_normalization,
+                cells,
+                features=features,
+                invalidate_cache=False,
             )
             deps, ids = prepare_parameter_tuning_dependencies(
                 self.store,
@@ -531,74 +606,7 @@ class RnaTuningRun:
                     "graphFeatures": ArtifactRecord.from_ref(features),
                 }
             )
-            if evaluation.status == "done":
-                evaluation = augment_pca_evaluations(
-                    self.store,
-                    [evaluation],
-                    feature_selection=features,
-                    nominated_families=SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
-                    protected_families=self.plan.assays[0].featureParameters.get(
-                        "protectFamilies", []
-                    ),
-                    technical_columns=self.batch_columns,
-                    batch_columns=self.batch_columns,
-                    protected_columns=self.study.protectedColumns,
-                    qc_columns=[
-                        *self.plan.cellQc.attributes,
-                        *(source.name for source in self.plan.cellQc.artifactMetrics),
-                    ],
-                    qc_artifacts={
-                        source.name: artifact_model_to_ref(source.artifact)
-                        for source in self.plan.cellQc.artifactMetrics
-                    },
-                    column_kinds={
-                        **self.study.columnKinds,
-                        **{
-                            source.name: "continuous"
-                            for source in self.plan.cellQc.artifactMetrics
-                        },
-                    },
-                )[0]
-                native = next(
-                    (
-                        item
-                        for item in self.evaluations[scope]
-                        if not item.parameters.useHarmony
-                        and self.settings[item.candidateId].features == setting.features
-                        and item.parameters.model_dump(
-                            exclude={"candidateId", "useHarmony"}
-                        )
-                        == parameters.model_dump(exclude={"candidateId", "useHarmony"})
-                    ),
-                    None,
-                )
-                doublets = score_advisory_doublets(
-                    self.store,
-                    native or evaluation,
-                    [
-                        item
-                        for item in [*self.evaluations[scope], evaluation]
-                        if item.artifacts.get("graphFeatures")
-                        == evaluation.artifacts["graphFeatures"]
-                        and item.cellSelection == evaluation.cellSelection
-                    ],
-                    assay=self.handoff.assay,
-                    feature_selection=features,
-                    capture_column=self.study.physicalCaptureColumn,
-                )
-                evaluation = augment_cluster_evaluations(
-                    self.store,
-                    [evaluation],
-                    marker_assay=self.handoff.assay,
-                    marker_features=self.marker_features,
-                    independent_unit_columns=self.study.independentUnitColumns,
-                    technical_columns=self.batch_columns,
-                    nominated_families=SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
-                    protected_families=self.plan.assays[0].featureParameters.get(
-                        "protectFamilies", []
-                    ),
-                    doublet_evidence=doublets,
-                )[0]
+            evaluation = self._augment_evaluation(scope, setting, evaluation)
             evaluation = ParameterCandidateEvaluation.model_validate_json(
                 record_io.canonical_json_bytes(evaluation.model_dump(mode="json"))
             )
@@ -609,6 +617,172 @@ class RnaTuningRun:
             item.candidateId for item in self.evaluations[scope]
         }:
             self.evaluations[scope].append(evaluation)
+        return evaluation
+
+    def _augment_evaluation(
+        self,
+        scope: str,
+        setting: RnaSetting,
+        evaluation: ParameterCandidateEvaluation,
+        *,
+        preserve_doublets: bool = False,
+    ) -> ParameterCandidateEvaluation:
+        """Attach required loading, population, stability and doublet evidence."""
+        features = artifact_model_to_ref(setting.features)
+        parameters = setting.parameters
+        evaluation = augment_pca_evaluations(
+            self.store,
+            [evaluation],
+            feature_selection=features,
+            nominated_families=SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
+            protected_families=self.plan.assays[0].featureParameters.get(
+                "protectFamilies", []
+            ),
+            technical_columns=self.batch_columns,
+            batch_columns=self.batch_columns,
+            protected_columns=self.study.protectedColumns,
+            qc_columns=[
+                *self.plan.cellQc.attributes,
+                *(source.name for source in self.plan.cellQc.artifactMetrics),
+            ],
+            qc_artifacts={
+                source.name: artifact_model_to_ref(source.artifact)
+                for source in self.plan.cellQc.artifactMetrics
+            },
+            column_kinds={
+                **self.study.columnKinds,
+                **{
+                    source.name: "continuous"
+                    for source in self.plan.cellQc.artifactMetrics
+                },
+            },
+        )[0]
+        native = next(
+            (
+                item
+                for item in self.evaluations[scope]
+                if not item.parameters.useHarmony
+                and self.settings[item.candidateId].features == setting.features
+                and item.parameters.model_dump(exclude={"candidateId", "useHarmony"})
+                == parameters.model_dump(exclude={"candidateId", "useHarmony"})
+            ),
+            None,
+        )
+        doublets = (
+            restore_advisory_doublets(
+                evaluation, capture_column=self.study.physicalCaptureColumn
+            )
+            if preserve_doublets and "doubletNativeGraph" in evaluation.artifacts
+            else score_advisory_doublets(
+                self.store,
+                native or evaluation,
+                [
+                    item
+                    for item in [*self.evaluations[scope], evaluation]
+                    if item.artifacts.get("graphFeatures")
+                    == evaluation.artifacts["graphFeatures"]
+                    and item.cellSelection == evaluation.cellSelection
+                ],
+                assay=self.handoff.assay,
+                feature_selection=features,
+                capture_column=self.study.physicalCaptureColumn,
+            )
+        )
+        evaluation = augment_cluster_evaluations(
+            self.store,
+            [evaluation],
+            marker_assay=self.handoff.assay,
+            marker_features=self.marker_features,
+            independent_unit_columns=self.study.independentUnitColumns,
+            technical_columns=self.batch_columns,
+            nominated_families=SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
+            protected_families=self.plan.assays[0].featureParameters.get(
+                "protectFamilies", []
+            ),
+            doublet_evidence=doublets,
+        )[0]
+        return evaluation
+
+    def _reassess_saved_evaluation(
+        self,
+        scope: str,
+        setting: RnaSetting,
+        admission: dict[str, Any],
+        evaluation: ParameterCandidateEvaluation,
+    ) -> ParameterCandidateEvaluation:
+        original = self.budget.admission_provenance(admission)
+        if original == self.provenance:
+            return evaluation
+        key = f"{self.checkpoint_scope(scope)}/evaluation{admission['slot']}/augmented"
+        inputs = {"admission": admission, "provenance": self.provenance}
+        saved = journal.load_checkpoint(
+            self.store, self.prefix, self.workflow.workflowRunId, key, inputs
+        )
+        if saved is not None:
+            restored = ParameterCandidateEvaluation.model_validate(saved["evaluation"])
+            for artifact in restored.artifacts.values():
+                status = self.store.inspect_artifact(artifact_model_to_ref(artifact))
+                if not status.exists or not status.complete:
+                    raise ValueError(
+                        "Revised candidate evidence is unavailable or incomplete"
+                    )
+            return restored
+        old = StudyContract.model_validate(original["studyContract"])
+        fields = (
+            "technicalBatchColumns",
+            "protectedColumns",
+            "protectedCombinations",
+            "columnKinds",
+        )
+        if any(getattr(old, field) != getattr(self.study, field) for field in fields):
+            normalized = artifact_model_to_ref(evaluation.artifacts["normalized"])
+            deps, _ = prepare_parameter_tuning_dependencies(
+                self.store,
+                normalized=normalized,
+                candidates=[evaluation.parameters],
+                batch_columns=self.batch_columns,
+                preservation_columns=self.study.protectedColumns,
+                pair_harmony_candidates=False,
+                max_candidates=1,
+                min_cluster_cells=1,
+            )
+            deps.protectedCombinations = tuple(
+                tuple(columns) for columns in self.study.protectedCombinations
+            )
+            deps.columnKinds = self.study.columnKinds
+            evaluation = refresh_candidate_design_evidence(deps, evaluation)
+        if any(
+            getattr(old, field) != getattr(self.study, field)
+            for field in (
+                "technicalBatchColumns",
+                "protectedColumns",
+                "columnKinds",
+                "independentUnitColumns",
+                "physicalCaptureColumn",
+            )
+        ):
+            evaluation = self._augment_evaluation(
+                scope,
+                setting,
+                evaluation,
+                preserve_doublets=old.physicalCaptureColumn
+                == self.study.physicalCaptureColumn,
+            )
+        evaluation = ParameterCandidateEvaluation.model_validate_json(
+            record_io.canonical_json_bytes(evaluation.model_dump(mode="json"))
+        )
+        journal.save_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow.workflowRunId,
+            key,
+            inputs,
+            {
+                "evaluation": evaluation.model_dump(mode="json"),
+                "primaryArtifactsReused": True,
+                "priorProvenance": original,
+            },
+        )
         return evaluation
 
     def execute_matched(
@@ -971,6 +1145,44 @@ class RnaTuningRun:
             }
         )
 
+    def _setting_checkpoint(
+        self,
+        scope: str,
+        key: str,
+        baseline: RnaSetting,
+        experiment: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
+        """Reuse exact feature work, with a new address for a revised intervention."""
+        inputs: dict[str, Any] = {
+            "baseline": baseline.model_dump(mode="json"),
+            "experiment": experiment,
+            "cells": self.cells.to_dict(),
+        }
+        checkpoint = f"parameter_tuning/{scope}/{key}/setting"
+        previous = journal.read_checkpoint(
+            self.store, self.prefix, self.workflow.workflowRunId, checkpoint
+        )
+        if self.evidence_revision is not None:
+            ranking_changed = experiment.get("parameter") == "hvgRanking" and any(
+                item["studyContract"]["technicalBatchColumns"] != self.batch_columns
+                for item in self.previous_provenances
+            )
+            if previous is None or previous["inputs"] != inputs or ranking_changed:
+                checkpoint = f"{self.checkpoint_scope(scope)}/{key}/setting"
+                if ranking_changed:
+                    inputs["rankingColumns"] = self.batch_columns
+        return (
+            checkpoint,
+            inputs,
+            journal.load_checkpoint(
+                self.store,
+                self.prefix,
+                self.workflow.workflowRunId,
+                checkpoint,
+                inputs,
+            ),
+        )
+
     def _prepared_setting(
         self,
         scope: str,
@@ -981,18 +1193,8 @@ class RnaTuningRun:
     ) -> RnaSetting:
         """Commit feature work separately so interrupted reviews do not repeat it."""
         baseline = self.settings[selected.candidateId]
-        inputs = {
-            "baseline": baseline.model_dump(mode="json"),
-            "experiment": experiment,
-            "cells": self.cells.to_dict(),
-        }
-        checkpoint = f"parameter_tuning/{scope}/{key}/setting"
-        saved = journal.load_checkpoint(
-            self.store,
-            self.prefix,
-            self.workflow.workflowRunId,
-            checkpoint,
-            inputs,
+        checkpoint, inputs, saved = self._setting_checkpoint(
+            scope, key, baseline, experiment
         )
         if saved is not None:
             return RnaSetting.model_validate(saved["setting"])
@@ -1194,16 +1396,8 @@ class RnaTuningRun:
                     experiment["parameter"]: experiment["value"],
                 }
             else:
-                prepared = journal.load_checkpoint(
-                    self.store,
-                    self.prefix,
-                    self.workflow.workflowRunId,
-                    f"parameter_tuning/{scope}/sensitivity/{identifier}/setting",
-                    {
-                        "baseline": setting.model_dump(mode="json"),
-                        "experiment": experiment,
-                        "cells": self.cells.to_dict(),
-                    },
+                _, _, prepared = self._setting_checkpoint(
+                    scope, f"sensitivity/{identifier}", setting, experiment
                 )
                 if prepared is not None:
                     known = RnaSetting.model_validate(prepared["setting"])
@@ -1333,7 +1527,9 @@ class RnaTuningRun:
         self.comparison_rows[scope] = rows
 
     def comparison_coverage(self, scope: str, cells: ArtifactRef) -> dict[str, Any]:
-        source = self.discovery_scope if scope == "full" else scope
+        source = (
+            (self.discovery_scope or self.recovery_scope) if scope == "full" else scope
+        )
         source = source or scope
         settings = {
             item.candidateId: {
@@ -1368,8 +1564,11 @@ class RnaTuningRun:
             for item in rows
         }
         rows = list(self.comparison_rows.get(source, []))
-        combined_id = self.combined_candidates.get(source)
-        resolution_ids = self.resolution_candidates.get(source, [])
+        panel_source = (
+            "full" if scope == "full" and "full" in self.combined_candidates else source
+        )
+        combined_id = self.combined_candidates.get(panel_source)
+        resolution_ids = self.resolution_candidates.get(panel_source, [])
         if combined_id is not None:
             rows.extend(
                 {
@@ -1385,7 +1584,8 @@ class RnaTuningRun:
             )
         return {
             "phase": "validation"
-            if scope == "full" and self.discovery_scope is not None
+            if scope == "full"
+            and (self.discovery_scope is not None or self.recovery_scope is not None)
             else "combined"
             if source in self.combined_candidates
             else "sensitivity",
@@ -1430,7 +1630,7 @@ class RnaTuningRun:
             },
             "cells": self.cells.to_dict(),
         }
-        key = f"parameter_tuning/{scope}/review{review_index}/combined_setting"
+        key = f"{self.checkpoint_scope(scope)}/review{review_index}/combined_setting"
         saved = journal.load_checkpoint(
             self.store, self.prefix, self.workflow.workflowRunId, key, inputs
         )
@@ -1515,8 +1715,17 @@ class RnaTuningRun:
         proposals = [self.execution_inputs(cells, item) for item in settings]
         if setting.parameters.useHarmony:
             proposals += [
-                {**row, "parameters": {**row["parameters"], "useHarmony": False}}
-                for row in proposals
+                self.execution_inputs(
+                    cells,
+                    item.model_copy(
+                        update={
+                            "parameters": item.parameters.model_copy(
+                                update={"useHarmony": False}
+                            )
+                        }
+                    ),
+                )
+                for item in settings
             ]
         self.budget.check_many(
             scope,
@@ -1526,6 +1735,35 @@ class RnaTuningRun:
                 if scope != "full" or self.budget.completed_source(row) is None
             ],
         )
+        if scope == "full" and self.recovery_scope is not None:
+            recovery_inputs = {
+                "sourceScope": self.recovery_scope,
+                "sourceReview": self.last_action.model_dump(mode="json")
+                if self.last_action is not None
+                else None,
+                "cells": cells.to_dict(),
+                "setting": setting.model_dump(mode="json"),
+            }
+            journal.save_checkpoint(
+                self.store,
+                self.prefix,
+                self.workflow.workflowRunId,
+                "parameter_tuning/full/targeted_recovery/"
+                + hashlib.sha256(
+                    record_io.canonical_json_bytes(recovery_inputs)
+                ).hexdigest(),
+                inputs=recovery_inputs,
+                outputs={
+                    "purpose": "Resolve the recorded screening concern using full-cohort population, marker, stability and preservation evidence for the proposed settings.",
+                    "screeningAccepted": False,
+                    "plannedEvaluations": proposals,
+                    "limits": self.budget.summary()["limits"],
+                },
+            )
+            self.budget.admit_many(
+                scope,
+                [row for row in proposals if self.budget.completed_source(row) is None],
+            )
         evaluations = [self.execute_matched(scope, cells, item) for item in settings]
         self.resolution_candidates[scope] = [item.candidateId for item in evaluations]
         return next(
@@ -1615,7 +1853,7 @@ class RnaTuningRun:
         from .tuning import _analysis_visual_content
 
         candidates = self.evaluations[scope]
-        key = f"parameter_tuning/{scope}/review{review_index}"
+        key = f"{self.checkpoint_scope(scope)}/review{review_index}"
         previous_review = journal.read_checkpoint(
             self.store,
             self.prefix,
@@ -1627,12 +1865,38 @@ class RnaTuningRun:
             item.candidateId: self.settings[item.candidateId].model_dump(mode="json")
             for item in candidates
         }
+        committed_review = previous_review
+        prepared_inputs = {
+            "candidatesSha256": hashlib.sha256(
+                record_io.canonical_json_bytes(candidate_evidence)
+            ).hexdigest(),
+            "settingsSha256": hashlib.sha256(
+                record_io.canonical_json_bytes(setting_evidence)
+            ).hexdigest(),
+            "coverage": coverage,
+            "provenance": self.provenance,
+        }
+        prepared = None
+        if previous_review is None:
+            for evidence_mode in ("structured", "visual"):
+                prepared = journal.load_checkpoint(
+                    self.store,
+                    self.prefix,
+                    self.workflow.workflowRunId,
+                    f"{key}/evidence/{evidence_mode}",
+                    inputs=prepared_inputs,
+                )
+                if prepared is not None:
+                    previous_review = {"inputs": prepared["evidence"]}
+                    break
         if previous_review is not None and (
             previous_review["inputs"].get("candidates") != candidate_evidence
             or previous_review["inputs"].get("settings") != setting_evidence
         ):
             raise ValueError(
-                "Saved review has different candidate evidence or settings"
+                "Saved review has different candidate evidence or settings. "
+                "If this review predates required Harmony comparisons for safe designs, "
+                "start a new workflow in a different destination; the saved history and artifacts remain intact."
             )
         if (
             previous_review is not None
@@ -1641,6 +1905,8 @@ class RnaTuningRun:
             raise ValueError(
                 "Saved analysis lacks mandatory sensitivity coverage; start a new workflow"
             )
+        if previous_review is not None:
+            diagnostic_reuse("diagnostic.reviewEvidence", "restored")
         experiments = (
             previous_review["inputs"]["experiments"]
             if previous_review is not None
@@ -1668,8 +1934,12 @@ class RnaTuningRun:
                     "currentCandidateId": selected.candidateId,
                     "alternativeCandidateId": candidate.candidateId,
                     "changedParameter": changes,
-                    "partitionEvidence": partition_comparison_evidence(
-                        self.store, selected, candidate
+                    "partitionEvidence": diagnostic_call(
+                        "diagnostic.partitionComparison",
+                        partition_comparison_evidence,
+                        self.store,
+                        selected,
+                        candidate,
                     )
                     if previous_review is None
                     else {},
@@ -1721,11 +1991,15 @@ class RnaTuningRun:
             )
             pair = (left_id, right_id)
             if pair not in self.neighbor_comparisons:
-                self.neighbor_comparisons[pair] = _neighbor_overlap(
+                self.neighbor_comparisons[pair] = diagnostic_call(
+                    "diagnostic.neighborOverlap",
+                    _neighbor_overlap,
                     self.store,
                     artifact_model_to_ref(selected_neighbors),
                     artifact_model_to_ref(other_neighbors),
                 )
+            else:
+                diagnostic_reuse("diagnostic.neighborOverlap", "cacheHits")
             comparisons.append(
                 {
                     "leftCandidateId": selected.candidateId,
@@ -1737,7 +2011,11 @@ class RnaTuningRun:
         declared_image_input = _configured_image_input(self.owner.model)
         capability_key = "parameter_tuning/structured_evidence"
         capability_inputs = {
-            **self.provenance,
+            **(
+                self.previous_provenances[0]
+                if self.previous_provenances
+                else self.provenance
+            ),
             "configuredImageInput": declared_image_input,
         }
         capability = journal.load_checkpoint(
@@ -1762,10 +2040,12 @@ class RnaTuningRun:
         if capability is not None and capability.get("evidenceMode") != "structured":
             raise ValueError("The recorded model capability is invalid")
         mode = (
-            previous_review["inputs"].get("evidenceMode")
-            if previous_review is not None
+            committed_review["inputs"].get("evidenceMode")
+            if committed_review is not None
             else "structured"
             if capability is not None
+            else previous_review["inputs"].get("evidenceMode")
+            if previous_review is not None
             else "visual"
         )
         if mode not in {"visual", "structured"}:
@@ -1774,8 +2054,27 @@ class RnaTuningRun:
             )
         visual_inspection = "available" if mode == "visual" else "unavailable"
         images = []
-        if previous_review is not None:
+        if (
+            previous_review is not None
+            and previous_review["inputs"].get("evidenceMode") == mode
+        ):
             image_hashes = previous_review["inputs"].get("imageHashes", {})
+            if prepared is not None:
+                images = [
+                    ImageEvidence(
+                        identifier=item["identifier"],
+                        data=base64.b64decode(item["dataBase64"], validate=True),
+                        media_type=item["mediaType"],
+                    )
+                    for item in prepared["images"]
+                ]
+                if {
+                    item.identifier: hashlib.sha256(item.data).hexdigest()
+                    for item in images
+                } != image_hashes:
+                    raise ValueError(
+                        "Saved review images do not match their exact evidence hashes"
+                    )
         elif mode == "visual":
             images = _analysis_visual_content(
                 self.store,
@@ -1798,7 +2097,12 @@ class RnaTuningRun:
         ):
             raise ValueError("Review images do not match its evidence mode")
         evidence_ids = (
-            previous_review["inputs"]["availableEvidenceIds"]
+            [
+                identifier
+                for identifier in previous_review["inputs"]["availableEvidenceIds"]
+                if identifier not in previous_review["inputs"].get("imageHashes", {})
+                or identifier in image_hashes
+            ]
             if previous_review is not None
             else list(
                 dict.fromkeys(
@@ -1835,9 +2139,9 @@ class RnaTuningRun:
             "currentCandidateId": selected.candidateId,
             "candidates": candidate_evidence,
             "settings": setting_evidence,
-            "featureEvidence": {
-                item.candidateId: self.feature_evidence(item) for item in candidates
-            },
+            "featureEvidence": previous_review["inputs"]["featureEvidence"]
+            if previous_review is not None
+            else {item.candidateId: self.feature_evidence(item) for item in candidates},
             "neighborComparisons": comparisons,
             "harmonyGates": {
                 item.candidateId: self.harmony_gate(scope, item)
@@ -1853,7 +2157,9 @@ class RnaTuningRun:
                 },
                 "limits": self.budget.summary()["limits"],
             },
-            "fullRepairsUsed": self.full_repairs,
+            "fullRepairsUsed": previous_review["inputs"]["fullRepairsUsed"]
+            if previous_review is not None
+            else self.full_repairs,
             "comparisonCoverage": self.comparison_coverage(
                 scope, artifact_model_to_ref(selected.cellSelection)
             )
@@ -1893,8 +2199,12 @@ class RnaTuningRun:
                     item.model_dump(mode="json") for item in self.design_comparisons
                 ],
                 "populationSupport": {
-                    item.candidateId: population_support_evidence(
-                        self.store, item, support_columns
+                    item.candidateId: diagnostic_call(
+                        "diagnostic.populationSupport",
+                        population_support_evidence,
+                        self.store,
+                        item,
+                        support_columns,
                     )
                     for item in candidates
                     if scope == "full" or item.candidateId == selected.candidateId
@@ -1922,8 +2232,22 @@ class RnaTuningRun:
             evidence["assessmentContext"] = previous_review["inputs"][
                 "assessmentContext"
             ]
+        if committed_review is None:
+            evidence["comparisonAdvantages"] = comparison_advantages(
+                evidence["comparisonCoverage"]
+            )
+        elif "comparisonAdvantages" in committed_review["inputs"]:
+            evidence["comparisonAdvantages"] = committed_review["inputs"][
+                "comparisonAdvantages"
+            ]
 
         def validate(action: TuningAction, *, replay: bool = False) -> TuningAction:
+            if not replay:
+                action = TuningAction.model_validate(
+                    bind_comparison_measurements(
+                        evidence["comparisonCoverage"], action.model_dump(mode="json")
+                    )
+                )
             by_id = {item.candidateId: item for item in candidates}
             if action.selectedCandidateId not in by_id:
                 raise ValueError("Choose an observed candidate from the current cells")
@@ -2051,14 +2375,13 @@ class RnaTuningRun:
                     raise ValueError(
                         "Native acceptance leaves required correction unresolved; provide more evidence or defer"
                     )
-                if self.study.correctionLicense == "safe" and action.correctionNeed in {
-                    "needed",
-                    "uncertain",
-                }:
+                if self.study.correctionLicense == "safe":
                     chosen_setting = self.settings[chosen.candidateId]
                     has_comparison = any(
                         item.parameters.useHarmony
                         and item.status == "done"
+                        and item.cellSelection == chosen.cellSelection
+                        and item.harmonyBatchColumns == self.batch_columns
                         and self.settings[item.candidateId].features
                         == chosen_setting.features
                         and item.parameters.model_dump(
@@ -2071,7 +2394,10 @@ class RnaTuningRun:
                     )
                     if not has_comparison:
                         raise ValueError(
-                            "Safe but uncertain/needed correction requires a matched Harmony experiment"
+                            "A safe correction design requires a completed, matched Harmony experiment "
+                            "before acceptance, including a notNeeded conclusion. "
+                            "Evaluate the offered useHarmony:true experiment or defer; "
+                            "the comparison must use the same cells, features, settings, and approved batch columns."
                         )
                 if self.study.correctionLicense == "indeterminate":
                     raise ValueError(
@@ -2121,6 +2447,24 @@ class RnaTuningRun:
             action = validate(TuningAction.model_validate(answer))
             self.answer_consumed = True
         else:
+            journal.save_checkpoint(
+                self.store,
+                self.prefix,
+                self.workflow.workflowRunId,
+                f"{key}/evidence/{mode}",
+                inputs=prepared_inputs,
+                outputs={
+                    "evidence": evidence,
+                    "images": [
+                        {
+                            "identifier": item.identifier,
+                            "mediaType": item.media_type,
+                            "dataBase64": base64.b64encode(item.data).decode("ascii"),
+                        }
+                        for item in images
+                    ],
+                },
+            )
             prompt = (
                 "Assess this RNA analysis as a computational biologist against the exact study objective. "
                 "Start from Scarf defaults; keep them when observed quantitative evidence and biological interpretation support them. "
@@ -2131,7 +2475,7 @@ class RnaTuningRun:
                 "In phase=sensitivity, use action=combine and choose each combinedSettings field from an observed candidate on that axis. A combination is a proposed hypothesis, not an observed result. "
                 "Scarf will execute it and compare four resolutions on its exact graph before acceptance. Do not request already covered settings as experiments. "
                 "comparisonConclusions must include quantitativeReason, biologicalReason and a short plainLanguageSummary for each axis. Explain how split or merged marker programs serve the stated objective, not just larger clusters or a single numerical maximum. "
-                "For each alternative with higher seedStability, subsampleStability, markerCoherence, markerSpecificityMedian or macroF1 than the stated preference, include a tradeoffs entry naming alternativeCandidateId, metric, exact preferredValue/alternativeValue and interpretation. These measurements require explanation, not automatic winner selection. "
+                "comparisonAdvantages enumerates the exact measured advantages for each possible preference on every axis. For each row belonging to your preference, include a tradeoffs entry naming alternativeCandidateId, metric and interpretation. Scarf attaches the exact saved values; do not transcribe numbers into tradeoff fields. Address every listed advantage, including small differences; these require explanation, not automatic winner selection. "
                 "For each selected cluster with empty topMarkerGenes, populationConcerns must name candidateId, clusterId, cited evidenceIds and explain whether it is a nonEssentialLimitation or unresolvedEssential. An unresolved essential population blocks acceptance; do not invent marker support. "
                 "The action plainLanguageSummary should state the selected settings, what evidence changed the choice, and any unresolved population interpretations without workflow jargon. "
                 "QC/capture retention, batch associations per PC and protected biological structure. "
@@ -2139,8 +2483,9 @@ class RnaTuningRun:
                 "If a specific concern warrants testing, choose exactly one offered experiment and state its expected improvement and "
                 "what objective-relevant biology must be preserved. Family policy remains revisable when later evidence warrants it. "
                 "PCA, HVG, k and resolution changes are separate comparisons. Do not equate a small sampled cluster with an artifact. "
-                "For a safe design license, needed or uncertain correction requires a matched Harmony experiment. "
-                "A notNeeded choice needs observed native batch/PC and biological evidence. Unsafe or unknown design is never authorization. "
+                "For a safe design license, a matched Harmony experiment is required before acceptance, even when correction initially appears unnecessary. "
+                "A notNeeded conclusion must follow the observed native/Harmony comparison, including batch/PC and biological evidence. "
+                "Keep the native representation when the comparison supports it; evaluating Harmony does not require selecting it. Unsafe or unknown design is never authorization. "
                 "Only accepting a Harmony representation requires a matched Harmony gate; a native representation does not require one. "
                 "When correctionLicense is unsafeConfounded, do not infer correction necessity from batch mixing or PCA association. "
                 "Use notApplicable for the prohibited correction, retain the confounding limitation, and assess whether native descriptive population discovery satisfies the objective. "
@@ -2185,6 +2530,13 @@ class RnaTuningRun:
                     config=self.request.config.agentRunConfig,
                     name=f"rna_{scope}_assessment",
                     output_validator=validate,
+                    on_attempt=journal.model_attempt_callback(
+                        self.store,
+                        self.prefix,
+                        self.workflow.workflowRunId,
+                        key,
+                        evidence,
+                    ),
                 )
             except ImageInputUnsupportedError:
                 if mode != "visual":
@@ -2249,12 +2601,41 @@ class RnaTuningRun:
     ) -> tuple[
         Literal["accept", "enlarge", "defer"], ParameterCandidateEvaluation | None
     ]:
-        coverage, insufficient = screening_coverage(
+        coverage_inputs = {
+            "parentCells": self.cells.to_dict(),
+            "cells": cells.to_dict(),
+            "columns": self.coverage_columns,
+            "protectedCombinations": self.study.protectedCombinations,
+            "columnKinds": self.study.columnKinds,
+            "provenance": self.provenance,
+        }
+        measured = journal.load_checkpoint(
             self.store,
-            self.cells,
-            cells,
-            self.coverage_columns,
-            self.study.protectedCombinations,
+            self.prefix,
+            self.workflow.workflowRunId,
+            f"{self.checkpoint_scope(scope)}/coverage",
+            inputs=coverage_inputs,
+        )
+        if measured is None:
+            coverage, insufficient = screening_coverage(
+                self.store,
+                self.cells,
+                cells,
+                self.coverage_columns,
+                self.study.protectedCombinations,
+            )
+            measured = journal.save_checkpoint(
+                self.store,
+                self.prefix,
+                self.workflow.workflowRunId,
+                f"{self.checkpoint_scope(scope)}/coverage",
+                inputs=coverage_inputs,
+                outputs={"coverage": coverage, "insufficient": insufficient},
+            )
+        coverage, insufficient = measured["coverage"], measured["insufficient"]
+        logger.info(
+            f"Analysis population: {coverage['screeningCells']:,} of {coverage.get('populationCells', self.handoff.nCells):,} retained cells; "
+            + ("all retained cells." if cells == self.cells else "screening subset.")
         )
         self.scope_sizes[scope] = coverage["screeningCells"]
         self.history.append(
@@ -2263,6 +2644,12 @@ class RnaTuningRun:
         if cells != self.cells and insufficient:
             return "enlarge", None
         if initial is None:
+            if scope == "full":
+                raise CandidateBudgetExceeded(
+                    "No supported screening proposal is available for targeted full-cohort recovery. "
+                    "The mandatory discovery comparisons cannot be replaced by a full-cohort baseline; "
+                    "saved results and unmet coverage requirements are preserved."
+                )
             baseline = self.baseline().model_copy(
                 update={
                     "parameters": self.baseline().parameters.model_copy(
@@ -2284,7 +2671,24 @@ class RnaTuningRun:
             self.resolution_candidates.pop(scope, None)
             self._sensitivity_panel(scope, cells, selected)
         else:
-            selected = self.execute_matched(scope, cells, initial)
+            requested = initial
+            if self.study.correctionLicense == "safe":
+                initial = initial.model_copy(
+                    update={
+                        "parameters": initial.parameters.model_copy(
+                            update={"useHarmony": True}
+                        )
+                    }
+                )
+            selected = (
+                self._resolution_panel(scope, cells, initial)
+                if scope == "full" and self.recovery_scope is not None
+                else self.execute_matched(scope, cells, initial)
+            )
+            if scope == "full" and self.recovery_scope is not None:
+                self.combined_candidates[scope] = selected.candidateId
+            if not requested.parameters.useHarmony and initial.parameters.useHarmony:
+                selected = self.execute(scope, cells, requested)
         limit = (
             self.request.config.maxFullPartitions
             if scope == "full"
@@ -2324,24 +2728,19 @@ class RnaTuningRun:
                 return action.action, selected
             if action.action == "combine":
                 setting = self._combined_setting(scope, review_index, action, cells)
-                selected = self.execute(scope, cells, setting)
-                selected = self._resolution_panel(
-                    scope, cells, self.settings[selected.candidateId]
-                )
-                self.combined_candidates[scope] = selected.candidateId
-                if self.study.correctionLicense == "safe" and action.correctionNeed in {
-                    "needed",
-                    "uncertain",
-                }:
-                    setting = self.settings[selected.candidateId].model_copy(
+                if self.study.correctionLicense == "safe":
+                    setting = setting.model_copy(
                         update={
-                            "parameters": selected.parameters.model_copy(
+                            "parameters": setting.parameters.model_copy(
                                 update={"useHarmony": True}
                             )
                         }
                     )
-                    selected = self._resolution_panel(scope, cells, setting)
-                    self.combined_candidates[scope] = selected.candidateId
+                else:
+                    selected = self.execute(scope, cells, setting)
+                    setting = self.settings[selected.candidateId]
+                selected = self._resolution_panel(scope, cells, setting)
+                self.combined_candidates[scope] = selected.candidateId
                 continue
             assert action.experimentId is not None
             experiment = self.experiments(selected)[action.experimentId]
@@ -2353,11 +2752,14 @@ class RnaTuningRun:
                 )
                 and experiment["parameter"] != "useHarmony"
             ):
-                if self.full_repairs >= self.request.config.maxFullRepairs:
-                    raise CandidateBudgetExceeded(
-                        "The allowed full-cohort repair has been used; scientific acceptance remains unresolved"
-                    )
-                self.full_repairs += 1
+                self.budget.admit_repair(
+                    ArtifactReferenceModel.from_artifact_ref(cells).model_dump(
+                        mode="json"
+                    ),
+                    self.settings[selected.candidateId].model_dump(mode="json"),
+                    experiment,
+                )
+                self.full_repairs = len(self.budget.repairs)
             if experiment["parameter"] in {
                 "hvgRanking",
                 "hvgCount",
@@ -2428,7 +2830,19 @@ class RnaTuningRun:
                         },
                     )
                     continue
-            selected = self.execute_matched(scope, cells, setting)
+            selected = (
+                self._resolution_panel(scope, cells, setting)
+                if scope == "full"
+                and self.recovery_scope is not None
+                and experiment["parameter"] != "leidenResolution"
+                else self.execute_matched(scope, cells, setting)
+            )
+            if (
+                scope == "full"
+                and self.recovery_scope is not None
+                and experiment["parameter"] != "leidenResolution"
+            ):
+                self.combined_candidates[scope] = selected.candidateId
             if pending_policy is not None and policy_experiment:
                 pending_policy.update(
                     status="completed",
@@ -2456,56 +2870,92 @@ class RnaTuningRun:
         return "defer", selected
 
     def run(self) -> tuple[ParameterTuningReport, dict[str, Any]]:
-        selected: ParameterCandidateEvaluation | None = None
-        final_status = "defer"
-        reason = "Required scientific evidence remains unresolved."
-        try:
-            initial: RnaSetting | None = None
-            previous_sample = None
-            for index, size in enumerate(
-                (
-                    self.request.config.screeningCells,
-                    self.request.config.maxScreeningCells,
-                )
-            ):
-                sample = uniform_screening_selection(
+        with journal.diagnostic_attempt(
+            self.store,
+            self.prefix,
+            self.workflow.workflowRunId,
+            {"provenance": self.provenance, "cells": self.cells.to_dict()},
+        ) as counts:
+            self.diagnostic_counts = counts
+            selected: ParameterCandidateEvaluation | None = None
+            final_status = "defer"
+            reason = "Required scientific evidence remains unresolved."
+            try:
+                initial: RnaSetting | None = None
+                recovery_candidate: ParameterCandidateEvaluation | None = None
+                previous_sample = None
+                sizes = screening_sizes(self.handoff.nCells, self.request.config)
+                journal.save_checkpoint(
                     self.store,
-                    self.cells,
-                    size=size,
-                    seed=self.request.config.randomSeed,
+                    self.prefix,
+                    self.workflow.workflowRunId,
+                    "parameter_tuning/sampling_policy",
+                    inputs={
+                        "cells": self.cells.to_dict(),
+                        "config": self.request.config.model_dump(mode="json"),
+                    },
+                    outputs={
+                        "policy": "fixed"
+                        if self.request.config.screeningCells is not None
+                        else "boundedTenPercent",
+                        "retainedCells": self.handoff.nCells,
+                        "populationSizes": list(sizes),
+                        "seed": self.request.config.randomSeed,
+                    },
                 )
-                if sample == previous_sample:
-                    break
-                previous_sample = sample
-                status, screened = self.assess_scope(f"sample{index}", sample, None)
-                if status == "accept" and screened is not None:
-                    initial = self.settings[screened.candidateId]
-                    self.discovery_scope = f"sample{index}"
-                    break
-                if status == "defer":
-                    return self.report(
-                        None,
-                        self.last_action.rationale
-                        if self.last_action is not None
-                        else reason,
-                    ), self.summary()
-                if sample == self.cells:
-                    return self.report(
-                        None,
-                        "All retained cells were assessed, but the required scientific evidence remains unresolved; another sample cannot resolve this concern.",
-                    ), self.summary()
-            if initial is None:
-                logger.info(
-                    "Both bounded discovery populations lack adequate support; assessing the bounded full baseline."
-                )
-            final_status, selected = self.assess_scope("full", self.cells, initial)
-            if final_status != "accept" and self.last_action is not None:
-                reason = self.last_action.rationale
-        except CandidateBudgetExceeded as exc:
-            reason = f"Required comparison coverage is incomplete within the configured work limits: {exc}"
-        if final_status != "accept":
-            selected = None
-        return self.report(selected, reason), self.summary()
+                for index, size in enumerate(sizes):
+                    sample = uniform_screening_selection(
+                        self.store,
+                        self.cells,
+                        size=size,
+                        seed=self.request.config.randomSeed,
+                    )
+                    if sample == previous_sample:
+                        break
+                    previous_sample = sample
+                    status, screened = self.assess_scope(f"sample{index}", sample, None)
+                    if (
+                        status == "enlarge"
+                        and screened is not None
+                        and f"sample{index}" in self.combined_candidates
+                    ):
+                        recovery_candidate = screened
+                        self.recovery_scope = f"sample{index}"
+                    if status == "accept" and screened is not None:
+                        initial = self.settings[screened.candidateId]
+                        self.discovery_scope = f"sample{index}"
+                        self.recovery_scope = None
+                        break
+                    if status == "defer":
+                        return self.report(
+                            None,
+                            self.last_action.rationale
+                            if self.last_action is not None
+                            else reason,
+                        ), self.summary()
+                    if sample == self.cells:
+                        return self.report(
+                            None,
+                            "All retained cells were assessed, but the required scientific evidence remains unresolved; another sample cannot resolve this concern.",
+                        ), self.summary()
+                if initial is None:
+                    if recovery_candidate is None:
+                        return self.report(
+                            None,
+                            "Screening coverage remains inadequate and no measured combined proposal is available for targeted recovery within the full-cohort allowance. Saved evidence is preserved; essential comparisons remain unresolved.",
+                        ), self.summary()
+                    initial = self.settings[recovery_candidate.candidateId]
+                    logger.info(
+                        "Screening evidence requires targeted full-cohort validation of the agent's proposed settings; previous comparisons remain available."
+                    )
+                final_status, selected = self.assess_scope("full", self.cells, initial)
+                if final_status != "accept" and self.last_action is not None:
+                    reason = self.last_action.rationale
+            except CandidateBudgetExceeded as exc:
+                reason = f"Required comparison coverage is incomplete within the configured work limits: {exc}"
+            if final_status != "accept":
+                selected = None
+            return self.report(selected, reason), self.summary()
 
     def summary(self) -> dict[str, Any]:
         budget = self.budget.summary()
@@ -2568,6 +3018,14 @@ class RnaTuningRun:
             f"{sum(subsample_evaluations.values())} subsample-stability evaluations. "
             "Saved evidence may be reused; these are not computation counts."
         )
+        for operation, counts in sorted(self.diagnostic_counts.items()):
+            logger.debug(
+                f"Diagnostic work this invocation, {operation}: "
+                f"{counts['completed']}/{counts['attempted']} calls completed/attempted, "
+                f"{counts['failed']} failed; {counts['cacheHits']} metric cache hits, "
+                f"{counts['restored']} saved evidence restores, "
+                f"{counts['artifactReuses']} confirmed artifact reuses."
+            )
         return {
             "history": self.history,
             "budget": budget,
@@ -2580,6 +3038,16 @@ class RnaTuningRun:
                 ),
             },
             "fullRepairs": self.full_repairs,
+            "diagnosticOperations": {
+                "scope": "thisInvocation",
+                "operations": self.diagnostic_counts,
+                "interpretation": (
+                    "Observed agent calls and explicit reuse events, not inferred core "
+                    "numerical rebuilds or simulated-doublet writes. Earlier invocations "
+                    "are recorded separately in the stage journal; absent historical "
+                    "operation records mean unknown counts."
+                ),
+            },
         }
 
     def report(

@@ -22,25 +22,6 @@ class DecisionValidationError(ValueError):
     """Raised when a model decision cites unknown or invalid evidence."""
 
 
-def _coerce_evidence_id(evidence_id: str, allowed: set[str]) -> str:
-    """Map a model-emitted id onto an allowed evidence id when unambiguous.
-
-    Live models often echo prompt scaffolding such as ``id=domain:biological``
-    instead of the bare id. Accept that when exactly one allowed id is embedded.
-    """
-    if evidence_id in allowed:
-        return evidence_id
-    stripped = evidence_id.strip()
-    if stripped.startswith("id="):
-        stripped = stripped[3:].strip()
-        if stripped in allowed:
-            return stripped
-    matches = [allowed_id for allowed_id in allowed if allowed_id in evidence_id]
-    if len(matches) == 1:
-        return matches[0]
-    return evidence_id
-
-
 def validate_decision(
     decision: Decision,
     evidence: Sequence[EvidenceItem],
@@ -48,19 +29,6 @@ def validate_decision(
     allowed = {item.id for item in evidence}
     if not allowed:
         raise DecisionValidationError("evidence must contain at least one item")
-    selected_id = _coerce_evidence_id(decision.selectedId, allowed)
-    evidence_ids = [
-        _coerce_evidence_id(evidence_id, allowed)
-        for evidence_id in decision.evidenceIds
-    ]
-    if selected_id not in evidence_ids and selected_id in allowed:
-        evidence_ids = [selected_id, *evidence_ids]
-    if selected_id != decision.selectedId or evidence_ids != list(decision.evidenceIds):
-        decision = Decision(
-            selectedId=selected_id,
-            rationale=decision.rationale,
-            evidenceIds=evidence_ids,
-        )
     if decision.selectedId not in allowed:
         raise DecisionValidationError(
             f"selectedId {decision.selectedId!r} is not in evidence ids {sorted(allowed)}"
@@ -130,11 +98,27 @@ def decide(
             f"evidence ids must be unique; duplicates: {sorted(duplicates)}"
         )
 
-    execution = run_agent_sync(
-        model=model,
-        output_type=Decision,
-        system_prompt=system_prompt,
-        user_prompt=_format_user_prompt(question, evidence),
-        name="decision",
-    )
+    from pydantic_ai import UnexpectedModelBehavior
+
+    try:
+        execution = run_agent_sync(
+            model=model,
+            output_type=Decision,
+            system_prompt=system_prompt,
+            user_prompt=_format_user_prompt(question, evidence),
+            name="decision",
+            output_validator=lambda value: validate_decision(value, evidence),
+        )
+    except UnexpectedModelBehavior as exc:
+        cause: BaseException | None = exc.__cause__
+        seen_causes: set[int] = set()
+        while cause is not None and id(cause) not in seen_causes:
+            seen_causes.add(id(cause))
+            if isinstance(cause, DecisionValidationError):
+                invalid = DecisionValidationError(str(cause))
+                if hasattr(exc, "agent_run_info"):
+                    setattr(invalid, "agent_run_info", exc.agent_run_info)
+                raise invalid from exc
+            cause = cause.__cause__
+        raise
     return validate_decision(execution.output, evidence)

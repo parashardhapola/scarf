@@ -168,6 +168,52 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
         return True
 
     @staticmethod
+    def _qc_decision_evidence(
+        profiles: Sequence[CellQcProfileEvidence],
+    ) -> dict[str, Any]:
+        """Keep exact QC measurements while sharing repeated source/design evidence."""
+        shared: dict[str, Any] = {}
+
+        def reference(value: Any) -> str:
+            digest = hashlib.sha256(record_io.canonical_json_bytes(value)).hexdigest()
+            shared[digest] = value
+            return digest
+
+        policies = []
+        for profile in profiles:
+            policy = profile.model_dump(mode="json")
+            for field in ("metricSources", "sourceConcordance"):
+                policy[field + "Ref"] = reference(policy.pop(field))
+            parameters = policy["parameters"]
+            if "captureComparisons" in parameters:
+                parameters["captureComparisonsRef"] = reference(
+                    parameters.pop("captureComparisons")
+                )
+            for duplicate, canonical in (
+                ("resolvedBounds", "resolvedBounds"),
+                ("captureSizes", "activeCellsByCapture"),
+            ):
+                if (
+                    duplicate in parameters
+                    and parameters[duplicate] == policy[canonical]
+                ):
+                    parameters.pop(duplicate)
+            for capture in policy["captureFailureEvidence"]:
+                capture["conditionAndUnitSafetyRef"] = reference(
+                    capture.pop("conditionAndUnitSafety")
+                )
+            policies.append(policy)
+        return {
+            "policies": policies,
+            "sharedMeasurements": shared,
+            "interpretation": (
+                "Each Ref identifies the exact record in sharedMeasurements. "
+                "Thresholds, distributions, flags and protected-group retention are "
+                "measured policy evidence; short evidence summaries do not replace them."
+            ),
+        }
+
+    @staticmethod
     def _profile_evidence(
         profile: CellQcProfileEvidence,
         retained_reference: CellQcProfileEvidence | None = None,
@@ -373,6 +419,7 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             bundle,
             answers,
             rule_selection=rule_selection,
+            qc_evidence=self._qc_decision_evidence(profiles),
         )
         if resolution.compiled is None:
             raise _DecisionNeedsInput(
@@ -447,6 +494,7 @@ class PreprocessingStagesMixin(DecisionStagesMixin):
             definition,
             bundle,
             answers,
+            qc_evidence=self._qc_decision_evidence(all_profiles),
         )
         if resolution.compiled is None:
             raise _DecisionNeedsInput(

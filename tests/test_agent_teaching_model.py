@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 
+from scarf.agent.experimental_context.contracts import ExperimentalContextDecision
 from scarf.agent.orchestrator.rna_tuning import _assessment_output_type
 from scarf.agent.parameter_tuning.comparisons import validate_comparison_review
 from tests.agent_comparison_examples import comparison_review
@@ -101,3 +102,27 @@ def test_teaching_provider_nominates_combines_and_assesses_actual_evidence() -> 
             assert "6 selected genes" in result.concern
     assert state["requests"] == 3
     assert len(state["assessments"][-1]["alternatives"]) == 4
+
+    async def inspect_cell_covariates() -> dict:
+        return {"characterization": {}, "qcProfiles": []}
+
+    async def analyze_experimental_design(
+        column_domains: dict,
+        coefficients_of_interest: list,
+        units_of_inference: dict,
+        batch_columns: list,
+    ) -> dict:
+        return {
+            "qcProfiles": [{"action": "skip", "evidenceId": "qc:retention"}],
+            "captureDesignSafety": {},
+            "requestedComparisons": [],
+        }
+
+    context_model, _ = namespace["_scripted_workflow_model"]()
+    context = Agent(
+        context_model,
+        output_type=ExperimentalContextDecision,
+        tools=[inspect_cell_covariates, analyze_experimental_design],
+    ).run_sync("Assess the available context")
+    assert context.output.batchCorrection.action == "skip"
+    assert context.output.evidenceIds == ["qc:retention"]

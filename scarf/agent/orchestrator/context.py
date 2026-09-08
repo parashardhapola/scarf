@@ -1,6 +1,7 @@
 """Ingest, RNA enrichment, quality metrics, and experimental-context stages."""
 
 from collections.abc import Mapping, Sequence
+import hashlib
 from typing import Any, cast
 
 from ...datastore.datastore import DataStore
@@ -20,9 +21,11 @@ from ..experimental_context.study import (
     build_study_contract,
     validate_objective_evidence,
 )
+from ..experimental_context.requirements import objective_evidence
 from ..ingest import IngestResult
 from ..ingest.manifest import DatasetManifest, is_author_label_column
 from ..types import AgentRunInfo, ArtifactReferenceModel
+from ..record_io import canonical_json_bytes
 from . import journal
 from .models import (
     WorkflowIdentity,
@@ -40,6 +43,23 @@ from .rna import (
     validate_rna_context,
     validate_rna_directions,
 )
+
+
+def _context_metadata_identity(
+    store: DataStore, request_record: OrchestrationRequestRecord
+) -> dict[str, str]:
+    """Bind added metadata without repeating the original resume fingerprint scan."""
+    from ..parameter_tuning.execution import _metadata_column_fingerprint
+
+    original = request_record.inputIdentity.get("data", {}).get("metadata", {})
+    # Public resume already validates every original column against this identity.
+    # Enrichment may add columns afterward; those also bind committed context work.
+    return {
+        column: original[column]
+        if column in original
+        else _metadata_column_fingerprint(store.cells, column)
+        for column in sorted(store.cells.columns)
+    }
 
 
 class ContextStagesMixin:
@@ -295,6 +315,20 @@ class ContextStagesMixin:
                     assays=selected_assays,
                     cache_dir=request_record.config.cacheDir,
                     allow_download=request_record.config.allowDownloads,
+                    on_attempt=journal.model_attempt_callback(
+                        store,
+                        prefix,
+                        workflow.workflowRunId,
+                        "data_enrichment",
+                        {
+                            "requestSha256": request_record.requestSha256,
+                            "configSha256": request_record.configSha256,
+                            "parents": [
+                                parent.model_dump(mode="json") for parent in parents
+                            ],
+                            "inputs": started.inputs,
+                        },
+                    ),
                 )
                 saved_report, reference = journal._save_stage_report(
                     store,
@@ -543,6 +577,8 @@ class ContextStagesMixin:
         *,
         resume_record: OrchestrationResumeRecord | None = None,
     ) -> tuple[WorkflowStageAttempt, ExperimentalContextResult]:
+        context_revision: dict[str, Any] = {}
+        prior_context: ExperimentalContextResult | None = None
         selected = selected_store_rna_assay(store, request_record.request)
         if hto_identity_artifacts:
             raise ValueError(
@@ -554,6 +590,7 @@ class ContextStagesMixin:
             quality_metric_artifacts,
             hto_identity_artifacts,
         )
+        metadata_identity = _context_metadata_identity(store, request_record)
         existing = journal._validated_done_outcome(
             store,
             prefix,
@@ -563,6 +600,27 @@ class ContextStagesMixin:
             parents,
         )
         if existing is not None:
+            saved_metadata = existing.inputs.get("metadataFingerprints")
+            if saved_metadata is not None and saved_metadata != metadata_identity:
+                raise ValueError(
+                    "Experimental Context metadata changed; start a new analysis"
+                )
+            if saved_metadata is None:
+                # Older compatible stages may already have committed downstream
+                # metadata identities. Verify them; do not rewrite the old report.
+                for tuning in journal._stage_starts(
+                    store.zw, prefix, workflow.workflowRunId, "parameter_tuning"
+                ):
+                    if any(
+                        metadata_identity.get(column) != digest
+                        for column, digest in tuning.inputs.get(
+                            "metadataFingerprints", {}
+                        ).items()
+                    ):
+                        raise ValueError(
+                            "Experimental Context metadata differs from saved tuning evidence; "
+                            "restore the original inputs or start a new analysis"
+                        )
             logger.debug(
                 f"Workflow {workflow.workflowRunId}: reusing Experimental Context "
                 "report"
@@ -572,10 +630,38 @@ class ContextStagesMixin:
             )
             resolved_report = cast(ExperimentalContextResult, report)
             validate_rna_context(resolved_report, selected)
-            validate_objective_evidence(
-                StudyContract.model_validate(existing.outputs.get("studyContract")),
-                resolved_report,
+            saved_contract = StudyContract.model_validate(
+                existing.outputs.get("studyContract")
             )
+            validate_objective_evidence(saved_contract)
+            current_requirements, current_coverage = objective_evidence(
+                study_context=request_record.request.studyContext,
+                study_objective=request_record.request.studyObjective,
+                experimental_result=resolved_report,
+            )
+            missing_questions = [
+                item.model_dump(mode="json")
+                for item in current_requirements
+                if item.requirementId.startswith("requestedDesign:")
+                and any(
+                    row.requirementId == item.requirementId
+                    and row.status == "unsupported"
+                    for row in current_coverage
+                )
+            ]
+            if missing_questions:
+                context_revision = {
+                    "reassessContextReport": existing.reportReferences[0].model_dump(
+                        mode="json"
+                    ),
+                    "requiredDesignQuestions": missing_questions,
+                }
+                prior_context = resolved_report
+                logger.info(
+                    "Experimental context: reassessing explicit study questions missing from prior evidence"
+                )
+            else:
+                validate_objective_evidence(saved_contract, resolved_report)
             if existing.artifacts != context_artifacts:
                 raise ValueError(
                     "Persisted Experimental Context stage artifacts are stale"
@@ -592,7 +678,8 @@ class ContextStagesMixin:
                 raise ValueError(
                     "Persisted Experimental Context HTO artifacts are stale"
                 )
-            return existing, resolved_report
+            if not context_revision:
+                return existing, resolved_report
         cell_selection_ref = artifact_model_to_ref(cell_selection)
         paused = journal._validated_done_outcome(
             store,
@@ -692,10 +779,12 @@ class ContextStagesMixin:
             parents,
             inputs={
                 **retry_inputs,
+                **context_revision,
                 "studyContext": request_record.request.studyContext,
                 "studyObjective": request_record.request.studyObjective,
                 "cellSelection": cell_selection.model_dump(mode="json"),
                 "directions": directions,
+                "metadataFingerprints": metadata_identity,
                 "qualityMetricArtifacts": [
                     source.model_dump(mode="json")
                     for source in quality_metric_artifacts
@@ -833,6 +922,43 @@ class ContextStagesMixin:
                         self.model,
                         config=request_record.config.agentRunConfig,
                     )
+                    evidence_inputs = {
+                        "request": request_record.model_dump(mode="json"),
+                        "parents": [
+                            parent.model_dump(mode="json") for parent in parents
+                        ],
+                        "context": {
+                            key: value
+                            for key, value in started.inputs.items()
+                            if key != "retryAfterFailedReport"
+                        },
+                    }
+                    evidence_key = (
+                        "experimental_context/evidence/"
+                        + hashlib.sha256(
+                            canonical_json_bytes(evidence_inputs)
+                        ).hexdigest()
+                    )
+
+                    def read_evidence(key: str) -> dict[str, Any] | None:
+                        return journal.load_checkpoint(
+                            store,
+                            prefix,
+                            workflow.workflowRunId,
+                            evidence_key + "/" + key,
+                            evidence_inputs,
+                        )
+
+                    def write_evidence(key: str, output: dict[str, Any]) -> None:
+                        journal.save_checkpoint(
+                            store,
+                            prefix,
+                            workflow.workflowRunId,
+                            evidence_key + "/" + key,
+                            evidence_inputs,
+                            output,
+                        )
+
                     report = agent.run(
                         store,
                         qc_assay=selected,
@@ -842,6 +968,16 @@ class ContextStagesMixin:
                         directions=directions,
                         quality_metric_artifacts=quality_metric_artifacts,
                         hto_identity_artifacts=hto_identity_artifacts,
+                        checkpoint_read=read_evidence,
+                        checkpoint_write=write_evidence,
+                        on_attempt=journal.model_attempt_callback(
+                            store,
+                            prefix,
+                            workflow.workflowRunId,
+                            evidence_key,
+                            evidence_inputs,
+                        ),
+                        previous_context=prior_context,
                     )
                 saved_report, reference = journal._save_stage_report(
                     store,

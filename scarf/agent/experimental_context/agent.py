@@ -33,6 +33,10 @@ from .tools import (
     analyze_experimental_design,
     contrast_plans_from_characterization,
     inspect_cell_covariates,
+    inspect_context_evidence,
+    compact_context_evidence,
+    model_evidence_tool,
+    restore_context_evidence,
     score_current_representation,
 )
 from .validation import (
@@ -47,8 +51,6 @@ try:
     from pydantic_ai import Tool, UnexpectedModelBehavior
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
-
-_CONTEXT_LIMIT = 1200
 
 
 class ExperimentalContextAgent:
@@ -73,7 +75,8 @@ class ExperimentalContextAgent:
             You are Scarf's Experimental Context Agent. Work only through the
             provided read-only tools and return the structured decision schema.
 
-            Call inspect_cell_covariates exactly once. Then call
+            Call inspect_cell_covariates exactly once unless its committed evidence
+            is already supplied on resume. Then call
             analyze_experimental_design with all explicit domains, all biological
             coefficients, every unit of inference, and the complete exact batch
             column set. Nominate up to eight comparisons that explain the study
@@ -125,11 +128,17 @@ class ExperimentalContextAgent:
             quote the study statement identifying it as a physical capture. An
             optional reference pool also needs an exact quote identifying the
             observed reference captures. Sample uniqueness is not capture proof.
-            Leave unresolved capture provenance explicit. Copy the supported
-            capture and protected combinations into the final decision.
+            Leave unresolved capture provenance explicit. Validated tools own
+            capture identities and protected combinations; do not copy them into
+            the final decision. Nominate any new combination through a design tool.
 
             The tools return bounded cell-QC profiles projected against the exact
-            shared cell selection. Do not choose a profile and leave cellQc blank.
+            shared cell selection. Do not choose a profile or return cellQc.
+            Summaries retain adverse findings, missingness, protected group loss,
+            replication and correction constraints. Use inspect_context_evidence
+            to inspect one exact saved policy/capture or design record when its
+            details are needed. Omitted donor examples and detailed thresholds
+            remain available; do not interpret their omission as passing evidence.
             A later audited checkpoint compares the Scarf default with eligible
             alternatives and selects one exact policy. Never author
             or alter numeric quality bounds. RNA is the preferred QC driver and
@@ -158,7 +167,8 @@ class ExperimentalContextAgent:
             Cite only evidenceIds returned by tools. Ask for input when study
             design cannot be resolved. The study objective is authoritative: use
             it to identify protected biological variables and the intended unit
-            of inference, but do not broaden it or claim to test a hypothesis.
+            of inference. Study-design explanations are in scope; biological
+            expression hypothesis testing, effect inference and causal claims are not.
             Never propose Python, shell commands,
             direct Zarr access, or any datastore mutation. Every rationale and
             question must be plain prose. Never place serialized JSON, schema
@@ -184,14 +194,14 @@ class ExperimentalContextAgent:
         quality_metric_artifacts: Sequence[NamedArtifactSource] = (),
         hto_identity_artifacts: Sequence[NamedArtifactSource] = (),
         qc_assay: str | None = None,
+        checkpoint_read: Any = None,
+        checkpoint_write: Any = None,
+        on_attempt: Any = None,
+        previous_context: ExperimentalContextResult | None = None,
     ) -> ExperimentalContextResult:
         """Inspect one datastore and return a validated experimental-context report."""
         study_context = (study_context or "").strip()
         study_objective = (study_objective or "").strip()
-        if len(study_context) > _CONTEXT_LIMIT:
-            study_context = study_context[: _CONTEXT_LIMIT - 3] + "..."
-        if len(study_objective) > _CONTEXT_LIMIT:
-            study_objective = study_objective[: _CONTEXT_LIMIT - 3] + "..."
         direction_map = dict(directions or {})
         if run is not None:
             if (
@@ -303,13 +313,63 @@ class ExperimentalContextAgent:
             directions=direction_map,
             qualityMetricArtifacts=quality_sources,
             htoIdentityArtifacts=hto_sources,
+            checkpointRead=checkpoint_read,
+            checkpointWrite=checkpoint_write,
         )
+        if checkpoint_read is not None:
+            saved_result = checkpoint_read("result")
+            if saved_result is not None:
+                report = ExperimentalContextResult.model_validate(
+                    saved_result["report"]
+                )
+                if report.cellSelection != artifact_reference(cell_selection):
+                    raise ValueError(
+                        "Committed context decision has a different cell selection"
+                    )
+                return report
+        restored = restore_context_evidence(deps)
+        if not restored and previous_context is not None:
+            # A completed older stage remains immutable. Its measurements seed
+            # an explicitly requested evidence revision under new stage inputs.
+            deps.characterization = previous_context.characterization
+            deps.comparisons = list(previous_context.characterization.comparisons)
+            deps.captureProposal = previous_context.characterization.captureProvenance
+            deps.protectedCombinations = list(
+                previous_context.decision.protectedCombinations
+            )
+            deps.qcProfiles = {
+                item.profileId: item for item in previous_context.qcProfiles
+            }
+            deps.qcMetricSources = list(previous_context.qcMetricSources)
+            deps.qcSourceConcordance = list(previous_context.qcSourceConcordance)
+            deps.batchSafety = {
+                item.evidenceId: item for item in previous_context.batchSafety
+            }
+            deps.contrastPlans = {
+                item.coefficient: item for item in previous_context.contrastPlans
+            }
+            deps.evidenceIds.update(previous_context.decision.evidenceIds)
+            deps.evidenceIds.update(
+                item.evidenceId for item in previous_context.batchSafety
+            )
+            deps.toolCalls = ["inspect_cell_covariates", "analyze_experimental_design"]
+            deps.designRounds = min(
+                2,
+                max(
+                    1,
+                    sum(
+                        item.toolName == "analyze_experimental_design"
+                        for item in previous_context.runInfo.toolCalls
+                    ),
+                ),
+            )
+            restored = True
         user_prompt = (
             dedent(
                 """
                 Characterize this experiment's metadata and decide whether Harmony
                 should be evaluated. Return cell-QC candidates as tool evidence;
-                leave cellQc blank for the later audited filtering checkpoint.
+                do not return cellQc; the later filtering checkpoint owns it.
 
                 Study context: {study_context}
                 Study objective: {study_objective}
@@ -335,6 +395,40 @@ class ExperimentalContextAgent:
                 directions=json.dumps(direction_map, sort_keys=True, default=str),
             )
         )
+        if restored:
+            from .contracts import CovariateEvidence
+            from .requirements import requested_design_questions
+
+            assert deps.characterization is not None
+
+            user_prompt += (
+                "\nCommitted evidence already measured; do not repeat completed tools:\n"
+                + json.dumps(
+                    compact_context_evidence(
+                        CovariateEvidence(
+                            characterization=deps.characterization,
+                            batchSafety=list(deps.batchSafety.values()),
+                            qcProfiles=list(deps.qcProfiles.values()),
+                            qcMetricSources=deps.qcMetricSources,
+                            qcSourceConcordance=deps.qcSourceConcordance,
+                            contrastPlans=list(deps.contrastPlans.values()),
+                            evidenceIds=sorted(deps.evidenceIds),
+                        )
+                    ),
+                    sort_keys=True,
+                )
+                + f"\nCompleted design rounds: {deps.designRounds} of 2."
+            )
+            user_prompt += (
+                "\nExplicit requested questions requiring matched evidence: "
+                + json.dumps(
+                    requested_design_questions(
+                        study_context,
+                        study_objective,
+                        [row["name"] for row in deps.characterization.columns],
+                    )
+                )
+            )
         try:
             execution = run_agent_sync(
                 model=self.model,
@@ -343,15 +437,20 @@ class ExperimentalContextAgent:
                 user_prompt=user_prompt,
                 tools=(
                     Tool(
-                        inspect_cell_covariates,
+                        model_evidence_tool(inspect_cell_covariates),
                         prepare=_prepare_experimental_context_tool,
                         sequential=self.config.sequentialTools,
                         timeout=self.config.timeoutSeconds,
                     ),
                     Tool(
-                        analyze_experimental_design,
+                        model_evidence_tool(analyze_experimental_design),
                         max_retries=3,
                         prepare=_prepare_experimental_context_tool,
+                        sequential=self.config.sequentialTools,
+                        timeout=self.config.timeoutSeconds,
+                    ),
+                    Tool(
+                        inspect_context_evidence,
                         sequential=self.config.sequentialTools,
                         timeout=self.config.timeoutSeconds,
                     ),
@@ -366,6 +465,7 @@ class ExperimentalContextAgent:
                 deps=deps,
                 config=self.config,
                 name="experimental_context",
+                on_attempt=on_attempt,
                 output_validator=lambda decision: validate_experimental_context(
                     decision,
                     deps,
@@ -406,7 +506,7 @@ class ExperimentalContextAgent:
         contrast_plans = list(deps.contrastPlans.values())
         if not contrast_plans:
             contrast_plans = contrast_plans_from_characterization(characterization)
-        return ExperimentalContextResult(
+        report = ExperimentalContextResult(
             status=status,
             decision=decision,
             characterization=characterization,
@@ -436,3 +536,6 @@ class ExperimentalContextAgent:
             ],
             runInfo=run_info,
         )
+        if checkpoint_write is not None:
+            checkpoint_write("result", {"report": report.model_dump(mode="json")})
+        return report

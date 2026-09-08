@@ -1137,4 +1137,4 @@ def test_failed_enrichment_retains_partial_evidence_without_inventing_policy() -
         assert failed.status == "failed"
         assert failed.policies == []
         assert failed.inspections == list(inspections.values())
-        assert "model failed" in failed.limitations
+        assert "RuntimeError: model failed" in failed.limitations

@@ -1,6 +1,6 @@
 """Data enrichment prompt and agent runner."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -9,6 +9,7 @@ from ...utils.logging import logger
 from .._deps import AGENT_INSTALL_HINT
 from ..config import AgentRunConfig
 from ..config.agent_exec import run_agent_sync
+from ..types import AgentRunInfo
 from .contracts import (
     DataEnrichmentContext,
     DataEnrichmentDependencies,
@@ -58,8 +59,8 @@ _SYSTEM_PROMPT = (
         Persisted assay types determine modality routes; never infer a route from
         an assay label. The validator fills assay type, modality eligibility, ADT
         controls, HTO tags, ATAC-coordinate status, inspections, tool calls, and
-        report-level evidence. Leave those derived fields at their defaults instead
-        of copying them into the output. Treat Ensembl release misses as unresolved,
+        report-level evidence. Do not return those derived fields.
+        Treat Ensembl release misses as unresolved,
         not artificial. Mitochondrial, ribosomal, and histone families may be
         sensitivity candidates. Sex-linked and cell-cycle families are protected
         by default. Marker testing retains conditional biological families.
@@ -69,9 +70,11 @@ _SYSTEM_PROMPT = (
         paraphrase, infer, or
         invent an organism, tissue, cell type, experiment, hypothesis, or analysis
         intent. Empty optional hint lists do not mean that the paragraph lacks
-        those references. When a category is explicitly present in the paragraph,
-        include its exact span in the corresponding summary list. The validator
-        binds the original paragraph and exact caller references. Return a bounded
+        those references. Select at most 12 objective-relevant spans per category,
+        each at most 240 characters. These lists are excerpts, not an exhaustive
+        replacement for the full context and objective that Scarf preserves and
+        passes downstream. The validator binds the original paragraph and exact
+        caller references. Return a bounded
         report with citations copied from tool or context evidence IDs.
         Do not write code, mutate the datastore, or request arbitrary Scarf calls.
         """
@@ -120,6 +123,7 @@ class DataEnrichmentAgent:
         assays: Sequence[str] | None = None,
         cache_dir: Path | str | None = None,
         allow_download: bool = False,
+        on_attempt: Callable[[AgentRunInfo], None] | None = None,
     ) -> DataEnrichmentReport:
         """Run the bounded tool loop without mutating the supplied datastore."""
         available_assays = [str(value) for value in store.assay_names]
@@ -193,11 +197,11 @@ class DataEnrichmentAgent:
                 Populate studyContextSummary only with exact verbatim spans from
                 the paragraph or caller references. Empty optional hint fields do
                 not erase references present in the paragraph. Before returning,
-                verify that every explicit organism, tissue, cell population,
-                experiment, hypothesis, and analysis intent has been placed in its
-                corresponding summary list. Leave inspections, modality-derived
-                fields, exact controls and tags, toolCalls, and report evidence at
-                their defaults because validation fills them from exact tool state.
+                select at most 12 verbatim references per category, each no more
+                than 240 characters, prioritizing the objective. These bounded
+                excerpts do not replace the preserved full context. Do not return
+                inspections, modality-derived fields, exact controls and tags,
+                toolCalls, runInfo, or report evidence; validation attaches them.
                 """
             )
             .strip()
@@ -240,6 +244,7 @@ class DataEnrichmentAgent:
                 deps=deps,
                 config=self.config,
                 name="data_enrichment",
+                on_attempt=on_attempt,
                 output_validator=lambda report: validate_data_enrichment_report(
                     deps,
                     report,

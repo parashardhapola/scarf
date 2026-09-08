@@ -164,6 +164,7 @@ class DecisionStagesMixin:
         rule_selection: DecisionSelection | None = None,
         agent_selection: DecisionSelection | None = None,
         agent_model_name: str | None = None,
+        qc_evidence: Mapping[str, Any] | None = None,
     ) -> DecisionResolution:
         evidence = (
             evidence if evidence.contentSha256 else evidence.with_content_sha256()
@@ -196,6 +197,8 @@ class DecisionStagesMixin:
             if agent_selection
             else None,
         }
+        if qc_evidence is not None:
+            identity["qcPolicyEvidence"] = dict(qc_evidence)
         digest = _sha256(identity)
         key = f"{stage}/decisions/{decision_id}/{digest}"
         prefix = journal._ensure_orchestration_store(store)
@@ -242,6 +245,8 @@ class DecisionStagesMixin:
                 "spec": definition.spec.model_dump(mode="json"),
                 "evidence": evidence.model_dump(mode="json"),
             }
+            if qc_evidence is not None:
+                payload["qcPolicyEvidence"] = dict(qc_evidence)
             prompt = json.dumps(payload, indent=2, sort_keys=True)
             prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
             execution = run_agent_sync(
@@ -261,6 +266,10 @@ class DecisionStagesMixin:
                     "group counts and absence of unsafe flags do not establish balanced retention, "
                     "cell validity, or preservation of marker programs. Compare retention fractions "
                     "and metric-specific flags where supplied; unmeasured effects remain unknown. "
+                    "Use qcPolicyEvidence for exact thresholds, distributions, retention "
+                    "and limitations. Its Ref fields point to sharedMeasurements in the "
+                    "same payload. Do not substitute the short evidence summaries for "
+                    "these measurements or dismiss an unsafe rejected policy as untested. "
                     "Within-capture QC does not require an independent biological unit or a healthy reference. "
                     "An override needs the independent evidence required by the supplied specification."
                 ),
@@ -269,6 +278,9 @@ class DecisionStagesMixin:
                 name=f"rna_{decision_id}_decision",
                 output_validator=lambda value: _validate_selection(
                     definition, evidence, value
+                ),
+                on_attempt=journal.model_attempt_callback(
+                    store, prefix, request_record.workflowRunId, key, payload
                 ),
             )
             selection = execution.output

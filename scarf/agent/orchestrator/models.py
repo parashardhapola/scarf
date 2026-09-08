@@ -289,7 +289,11 @@ class AutomatedWorkflowConfig(AgentDataModel):
         default="pause",
         exclude_if=lambda value: value == "pause",
     )
-    screeningCells: int = Field(default=50_000, ge=20)
+    screeningCells: int | None = Field(
+        default=None,
+        ge=20,
+        description="Fixed initial screening size; null uses 10% of retained cells bounded to 10,000–100,000.",
+    )
     maxScreeningCells: int = Field(default=100_000, ge=20)
     maxScreeningEvaluations: int = Field(default=24, ge=4)
     maxTotalScreeningEvaluations: int = Field(default=48, ge=4)
@@ -343,7 +347,10 @@ class AutomatedWorkflowConfig(AgentDataModel):
 
     @model_validator(mode="after")
     def validate_work_limits(self) -> "AutomatedWorkflowConfig":
-        if self.maxScreeningCells < self.screeningCells:
+        if (
+            self.screeningCells is not None
+            and self.maxScreeningCells < self.screeningCells
+        ):
             raise ValueError("maxScreeningCells must be at least screeningCells")
         if self.maxTotalScreeningEvaluations < self.maxScreeningEvaluations:
             raise ValueError(

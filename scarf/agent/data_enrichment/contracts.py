@@ -8,6 +8,7 @@ from ..types import AgentDataModel, AgentRunInfo, StageStatus
 
 try:
     from pydantic import ConfigDict, Field, model_validator
+    from pydantic.json_schema import SkipJsonSchema
 except ImportError as exc:
     raise ImportError(AGENT_INSTALL_HINT) from exc
 
@@ -30,15 +31,15 @@ class DataEnrichmentContext(AgentDataModel):
 class StudyContextSummary(AgentDataModel):
     """Verbatim, evidence-backed references extracted from the study context."""
 
-    studyContext: str = ""
-    studyObjective: str = ""
+    studyContext: SkipJsonSchema[str] = ""
+    studyObjective: SkipJsonSchema[str] = ""
     organismReferences: list[str] = Field(default_factory=list)
     tissueReferences: list[str] = Field(default_factory=list)
     cellTypeReferences: list[str] = Field(default_factory=list)
     experimentalReferences: list[str] = Field(default_factory=list)
     hypothesisReferences: list[str] = Field(default_factory=list)
     analysisIntentReferences: list[str] = Field(default_factory=list)
-    evidenceIds: list[str] = Field(default_factory=list)
+    evidenceIds: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     @classmethod
     def get_blank(cls) -> "StudyContextSummary":
@@ -272,7 +273,7 @@ class FeatureSelectionPolicy(AgentDataModel):
 
     assay: str
     species: str = "unknown"
-    organismName: str = "unknown"
+    organismName: SkipJsonSchema[str] = "unknown"
     speciesConfidence: Literal["high", "medium", "low", "unknown"] = "unknown"
     speciesRationale: str = ""
     excludeFamilies: list[str] = Field(default_factory=list)
@@ -280,19 +281,25 @@ class FeatureSelectionPolicy(AgentDataModel):
     excludeFeatures: list[str] = Field(default_factory=list)
     protectFeatures: list[str] = Field(default_factory=list)
     artificialFeatures: list[str] = Field(default_factory=list)
-    tissueReferences: list[str] = Field(default_factory=list)
-    cellTypeReferences: list[str] = Field(default_factory=list)
-    experimentalReferences: list[str] = Field(default_factory=list)
-    assayType: str = "Assay"
-    assayModality: Literal["RNA", "ATAC", "ADT", "HTO", "unsupported"] = "unsupported"
-    graphEligible: bool = False
-    markerEligible: bool = False
-    demultiplexEligible: bool = False
-    exactControlFeatures: list[FeatureReference] = Field(default_factory=list)
-    exactTagFeatures: list[FeatureReference] = Field(default_factory=list)
-    peakCoordinateStatus: Literal["notApplicable", "valid", "partial", "invalid"] = (
-        "notApplicable"
+    tissueReferences: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    cellTypeReferences: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    experimentalReferences: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    assayType: SkipJsonSchema[str] = "Assay"
+    assayModality: SkipJsonSchema[
+        Literal["RNA", "ATAC", "ADT", "HTO", "unsupported"]
+    ] = "unsupported"
+    graphEligible: SkipJsonSchema[bool] = False
+    markerEligible: SkipJsonSchema[bool] = False
+    demultiplexEligible: SkipJsonSchema[bool] = False
+    exactControlFeatures: SkipJsonSchema[list[FeatureReference]] = Field(
+        default_factory=list
     )
+    exactTagFeatures: SkipJsonSchema[list[FeatureReference]] = Field(
+        default_factory=list
+    )
+    peakCoordinateStatus: SkipJsonSchema[
+        Literal["notApplicable", "valid", "partial", "invalid"]
+    ] = "notApplicable"
     rationale: str = ""
     evidenceIds: list[str] = Field(default_factory=list)
 
@@ -334,15 +341,19 @@ class DataEnrichmentReport(AgentDataModel):
 
     status: StageStatus
     policies: list[FeatureSelectionPolicy] = Field(default_factory=list)
-    inspections: list[AssayFeatureInspection] = Field(default_factory=list)
+    inspections: SkipJsonSchema[list[AssayFeatureInspection]] = Field(
+        default_factory=list
+    )
     studyContextSummary: StudyContextSummary = Field(
         default_factory=StudyContextSummary.get_blank
     )
     unresolvedQuestions: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
-    evidenceIds: list[str] = Field(default_factory=list)
-    toolCalls: list[DataEnrichmentToolCall] = Field(default_factory=list)
-    runInfo: AgentRunInfo = Field(default_factory=AgentRunInfo)
+    evidenceIds: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    toolCalls: SkipJsonSchema[list[DataEnrichmentToolCall]] = Field(
+        default_factory=list
+    )
+    runInfo: SkipJsonSchema[AgentRunInfo] = Field(default_factory=AgentRunInfo)
 
     @model_validator(mode="after")
     def validate_status(self) -> "DataEnrichmentReport":
