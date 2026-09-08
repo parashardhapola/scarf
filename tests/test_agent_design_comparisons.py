@@ -426,7 +426,7 @@ def test_design_tool_schema_and_retry_correct_proposals_before_computation(
         proposal_schema = schema["$defs"]["CovariateProposal"]
         properties = proposal_schema["properties"]
         assert (
-            "joint comparison within strata is unsupported"
+            "Two explanatory columns plus conditioning are unsupported"
             in proposal_schema["description"]
         )
         assert (

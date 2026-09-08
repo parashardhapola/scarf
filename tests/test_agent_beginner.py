@@ -2,6 +2,7 @@
 
 from tests.agent_examples import example
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +13,7 @@ pytest.importorskip("pydantic_ai")
 
 from scarf.agent import AnalysisError, AutomatedWorkflowResult, analyze_rna
 from scarf.agent.orchestrator import api, journal
+from scarf.agent.orchestrator.main import AgentOrchestrator
 from scarf.agent.orchestrator.models import (
     AutomatedWorkflowConfig,
     AutomatedWorkflowRequest,
@@ -20,6 +22,7 @@ from scarf.agent.orchestrator.models import (
     artifact_model_to_ref,
 )
 from scarf.agent.types import ArtifactReferenceModel
+from scarf.agent.record_io import canonical_json_bytes
 
 
 def _completed_result(root: Path) -> AutomatedWorkflowResult:
@@ -71,6 +74,8 @@ def test_analyze_rna_passes_one_request_and_bounded_defaults(
     assert called["model"] is model
     config = called["config"]
     assert config.inputPolicy == "unattended"
+    assert config.scoreDoublets is True
+    assert "scoreDoublets" not in config.model_dump(mode="json")
     assert config.screeningCells is None
     assert config.maxScreeningCells == 100_000
     assert config.maxScreeningEvaluations == 24
@@ -84,6 +89,111 @@ def test_analyze_rna_passes_one_request_and_bounded_defaults(
     assert request.primaryAssay == request.markerAssay == "counts"
     assert request.analysisAssays == ["counts"]
     assert request.ingestDirections == {}
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_beginner_can_control_advisory_doublet_scoring(monkeypatch, enabled):
+    observed = []
+    outcome = _completed_result(Path("study.zarr"))
+
+    def orchestrator(model, *, config):
+        observed.append(config)
+        return SimpleNamespace(run=lambda request: outcome)
+
+    monkeypatch.setattr(api, "AgentOrchestrator", orchestrator)
+    assert (
+        analyze_rna(
+            "study.h5ad",
+            model=object(),
+            study_context="Human blood from independent physical captures.",
+            study_objective="Discover stable populations.",
+            score_doublets=enabled,
+        )
+        is outcome
+    )
+    assert observed[0].scoreDoublets is enabled
+    if not enabled:
+        assert observed[0].model_dump(mode="json")["scoreDoublets"] is False
+    assert "scoreDoublets" in observed[0].model_fields_set
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false", "true", [], {}])
+def test_doublet_scoring_flag_requires_a_boolean_before_pipeline_work(
+    monkeypatch, value
+):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid scoring policy must not start an orchestrator")
+
+    monkeypatch.setattr(api, "AgentOrchestrator", forbidden)
+    with pytest.raises(ValueError, match="scoreDoublets"):
+        analyze_rna(
+            "study.h5ad",
+            model=object(),
+            study_context="Human blood.",
+            study_objective="Discover stable populations.",
+            score_doublets=value,
+        )
+    with pytest.raises(ValueError, match="scoreDoublets"):
+        AutomatedWorkflowConfig(scoreDoublets=value)
+
+
+def test_legacy_doublet_policy_preserves_saved_request_bytes_and_checksums():
+    legacy_config = AutomatedWorkflowConfig(screeningCells=50_000).model_dump(
+        mode="json", exclude={"scoreDoublets"}
+    )
+    restored = AutomatedWorkflowConfig.model_validate(legacy_config)
+    assert restored.scoreDoublets is True
+    assert restored.model_dump(mode="json") == legacy_config
+    assert "scoreDoublets" not in AutomatedWorkflowConfig().model_dump(mode="json")
+    assert "scoreDoublets" not in AutomatedWorkflowConfig(
+        scoreDoublets=True
+    ).model_dump(mode="json")
+    request = example(AutomatedWorkflowRequest).model_dump(mode="json")
+    saved = {
+        "recordType": "automatedWorkflowRequest",
+        "inputIdentity": {"source": "study.h5ad"},
+        "modelIdentity": "test-model",
+        "workflowRunId": "legacy-workflow",
+        "createdAtNs": 1,
+        "request": request,
+        "config": legacy_config,
+        "requestSha256": hashlib.sha256(canonical_json_bytes(request)).hexdigest(),
+        "configSha256": hashlib.sha256(canonical_json_bytes(legacy_config)).hexdigest(),
+    }
+    saved["contentSha256"] = hashlib.sha256(canonical_json_bytes(saved)).hexdigest()
+    original = canonical_json_bytes(saved)
+    loaded = OrchestrationRequestRecord.model_validate_json(original)
+    assert loaded.config.scoreDoublets is True
+    assert canonical_json_bytes(loaded.model_dump(mode="json")) == original
+    assert journal._record_checksum(loaded) == saved["contentSha256"]
+    assert (
+        hashlib.sha256(
+            canonical_json_bytes(loaded.config.model_dump(mode="json"))
+        ).hexdigest()
+        == saved["configSha256"]
+    )
+
+
+def test_doublet_policy_cannot_be_changed_while_resuming_saved_work():
+    legacy = AutomatedWorkflowConfig.model_validate({"screeningCells": 50_000})
+    AgentOrchestrator(object())._validate_resume_config(legacy)
+    AgentOrchestrator(
+        object(), config=AutomatedWorkflowConfig(scoreDoublets=True)
+    )._validate_resume_config(legacy)
+    with pytest.raises(ValueError, match="execution settings differ"):
+        AgentOrchestrator(
+            object(), config=AutomatedWorkflowConfig(scoreDoublets=False)
+        )._validate_resume_config(legacy)
+
+    disabled = AutomatedWorkflowConfig(scoreDoublets=False)
+    AgentOrchestrator(object())._validate_resume_config(disabled)
+    AgentOrchestrator(
+        object(), config=AutomatedWorkflowConfig(scoreDoublets=False)
+    )._validate_resume_config(disabled)
+    with pytest.raises(ValueError, match="execution settings differ"):
+        AgentOrchestrator(
+            object(), config=AutomatedWorkflowConfig(scoreDoublets=True)
+        )._validate_resume_config(disabled)
 
 
 @pytest.mark.parametrize("status", ["failed", "abstained", "needsInput"])

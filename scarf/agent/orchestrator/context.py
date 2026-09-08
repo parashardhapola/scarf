@@ -762,13 +762,21 @@ class ContextStagesMixin:
             failed_report = journal.load_stage_report(
                 store, failed, ExperimentalContextResult
             )
-            if cast(ExperimentalContextResult, failed_report).status == "failed":
-                # A failed model report is evidence of an attempt, not a decision
-                # to replay. Keep it immutable and address the retry separately.
+            if cast(ExperimentalContextResult, failed_report).status in {
+                "failed",
+                "needsInput",
+            }:
+                # An unresolved unattended answer is also an unsuccessful attempt.
+                # Keep it immutable while reusing its measured design evidence.
                 # A committed successful retry still has a stable recovery key.
                 retry_inputs["retryAfterFailedReport"] = failed.reportReferences[
                     0
                 ].model_dump(mode="json")
+                if (
+                    cast(ExperimentalContextResult, failed_report).status
+                    == "needsInput"
+                ):
+                    prior_context = cast(ExperimentalContextResult, failed_report)
                 logger.info("Retrying experimental context after the previous failure")
         started = journal._start_attempt(
             store.zw,
@@ -939,13 +947,25 @@ class ContextStagesMixin:
                             canonical_json_bytes(evidence_inputs)
                         ).hexdigest()
                     )
+                    result_key = "result"
+                    if "retryAfterFailedReport" in retry_inputs:
+                        result_key += (
+                            "/"
+                            + hashlib.sha256(
+                                canonical_json_bytes(
+                                    retry_inputs["retryAfterFailedReport"]
+                                )
+                            ).hexdigest()
+                        )
 
                     def read_evidence(key: str) -> dict[str, Any] | None:
                         return journal.load_checkpoint(
                             store,
                             prefix,
                             workflow.workflowRunId,
-                            evidence_key + "/" + key,
+                            evidence_key
+                            + "/"
+                            + (result_key if key == "result" else key),
                             evidence_inputs,
                         )
 
@@ -954,7 +974,9 @@ class ContextStagesMixin:
                             store,
                             prefix,
                             workflow.workflowRunId,
-                            evidence_key + "/" + key,
+                            evidence_key
+                            + "/"
+                            + (result_key if key == "result" else key),
                             evidence_inputs,
                             output,
                         )
@@ -1014,7 +1036,8 @@ class ContextStagesMixin:
                         artifacts=context_artifacts,
                         error=(
                             "The unattended Experimental Context stage returned an "
-                            "unresolved decision"
+                            "unresolved decision: "
+                            + "; ".join(report.decision.needsInput or report.notes)
                         ),
                         notes=report.notes,
                     )

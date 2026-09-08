@@ -413,6 +413,26 @@ def validate_experimental_context(
         )
         unanswered = unmet_objective_requirements(requirements, coverage)
         if unanswered:
+            pending_comparisons = [
+                item.question
+                for item in requirements
+                if item.requirementId.startswith("requestedDesign:")
+                and any(
+                    row.requirementId == item.requirementId
+                    and row.status == "unsupported"
+                    for row in coverage
+                )
+            ]
+            if pending_comparisons and deps.designRounds < 2:
+                raise ModelRetry(
+                    "Explicit study comparisons have not been measured: "
+                    + "; ".join(pending_comparisons)
+                    + ". Use the remaining analyze_experimental_design round for "
+                    "these questions before finalizing. Match their requested purpose: "
+                    "descriptive crossing/replication is designCoverage, not an "
+                    "association or effect estimate. Preserve unsupported methods "
+                    "as limitations; do not substitute marginal comparisons."
+                )
             validated = validated.model_copy(
                 update={
                     "needsInput": list(

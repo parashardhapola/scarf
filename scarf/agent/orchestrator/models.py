@@ -289,6 +289,13 @@ class AutomatedWorkflowConfig(AgentDataModel):
         default="pause",
         exclude_if=lambda value: value == "pause",
     )
+    # Older requests always scored doublets. Keep their serialized defaults exact.
+    scoreDoublets: bool = Field(
+        default=False,
+        strict=True,
+        exclude_if=lambda value: value is True,
+        description="Score advisory doublets; this run is not eligible for label-based benchmark scoring.",
+    )
     screeningCells: int | None = Field(
         default=None,
         ge=20,

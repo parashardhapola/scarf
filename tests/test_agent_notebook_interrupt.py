@@ -94,7 +94,7 @@ def test_notebook_interrupt_cancels_pending_request_and_keeps_partial_usage(
     assert attempts[0].status == "failed"
     assert attempts[0].usage.availability == "partial"
     assert attempts[0].usage.inputTokens == 11
-    assert attempts[0].usage.requests == 1
+    assert attempts[0].usage.requests == 2
     assert attempts[0].errorType == "CancelledError"
     if callback_fails:
         assert "Saving cancellation evidence failed" in agent_exec.describe_agent_error(

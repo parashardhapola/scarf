@@ -62,6 +62,53 @@ def requested_design_questions(
     return output
 
 
+def _measured_joint_design(comparison: Any) -> bool:
+    """Recognize joint descriptive counts without claiming an association."""
+    proposal = comparison.proposal
+    columns = {
+        proposal.response,
+        *proposal.explanatoryColumns,
+        *([proposal.conditionedOn] if proposal.conditionedOn else []),
+    }
+    descriptive = comparison.evidence.get("descriptiveDesign", {})
+    rows = descriptive.get("jointGroupSupport", [])
+    if (
+        len(columns) != 3
+        or descriptive.get("status") != "computed"
+        or not isinstance(rows, list)
+        or not rows
+        or any(
+            comparison.evidence.get("columnKinds", {}).get(name) != "categorical"
+            for name in columns
+        )
+    ):
+        return False
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row.get("groups", {})) != columns
+            or type(row.get("observationUnits")) is not int
+            or type(row.get("independentUnits")) is not int
+            or not 0 < row["independentUnits"] <= row["observationUnits"]
+        ):
+            return False
+    return bool(
+        sum(row["observationUnits"] for row in rows)
+        == descriptive.get("observationUnits")
+    )
+
+
+def requested_design_purpose(
+    quote: str,
+) -> Literal["effectEstimation", "association", "designCoverage"]:
+    """Keep model guidance and validation on the same requested evidence kind."""
+    if re.search(r"\bestimat\w*.*\beffect", quote, re.I):
+        return "effectEstimation"
+    if re.search(r"\bassociat\w*", quote, re.I):
+        return "association"
+    return "designCoverage"
+
+
 def objective_evidence(
     *, study_context: str, study_objective: str, experimental_result: Any
 ) -> tuple[list[DesignEvidenceRequirement], list[DesignEvidenceCoverage]]:
@@ -248,16 +295,10 @@ def objective_evidence(
     for quote, names, conditional in requested_design_questions(
         study_context, study_objective, list(records)
     ):
-        purpose: Literal["effectEstimation", "association", "designCoverage"] = (
-            "effectEstimation"
-            if re.search(r"\bestimat\w*.*\beffect", quote, re.I)
-            else "association"
-            if re.search(r"\bassociat\w*", quote, re.I)
-            else "designCoverage"
-        )
+        purpose = requested_design_purpose(quote)
         matches = [
-            item
-            for item in characterization.comparisons
+            index
+            for index, item in enumerate(characterization.comparisons, start=1)
             if set(names).issubset(
                 {
                     item.proposal.response,
@@ -265,15 +306,28 @@ def objective_evidence(
                     item.proposal.conditionedOn,
                 }
             )
-            and (
-                item.proposal.conditionedOn is not None
-                if conditional
-                else len(item.proposal.explanatoryColumns) == 2
-            )
             and item.proposal.purpose == purpose
-            and item.proposal.essential
+            and (
+                (
+                    item.proposal.conditionedOn is not None
+                    if conditional
+                    else len(item.proposal.explanatoryColumns) == 2
+                )
+                and item.proposal.essential
+                or purpose == "designCoverage"
+                and coverage[index].status == "computed"
+                and _measured_joint_design(item)
+            )
         ]
         if matches:
+            for index in matches:
+                # A model's optional label cannot erase an explicit requirement.
+                # Reuse its measured question rather than adding a duplicate that
+                # would consume another slot in the bounded study contract.
+                if not requirements[index].essential:
+                    requirements[index] = requirements[index].model_copy(
+                        update={"essential": True}
+                    )
             continue
         identifier = "requestedDesign:" + hashlib.sha256(quote.encode()).hexdigest()
         requirements.append(

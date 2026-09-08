@@ -132,6 +132,15 @@ class AgentValidationRetry(AgentDataModel):
     response: dict[str, Any] | str | None = None
 
 
+class AgentProviderFailure(AgentDataModel):
+    """One failed model request, distinct from rejected scientific output."""
+
+    requestIndex: int
+    statusCode: int | None = None
+    error: str
+    retryDelaySeconds: float | None = None
+
+
 class AgentRunInfo(AgentDataModel):
     agentName: str = ""
     modelName: str = ""
@@ -143,6 +152,9 @@ class AgentRunInfo(AgentDataModel):
         default=None, exclude_if=lambda value: value is None
     )
     validationRetries: list[AgentValidationRetry] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
+    providerFailures: list[AgentProviderFailure] = Field(
         default_factory=list, exclude_if=lambda value: not value
     )
     errorType: str | None = Field(default=None, exclude_if=lambda value: value is None)

@@ -2,12 +2,13 @@
 
 import asyncio
 import json
+import math
 import sys
 import time
 import uuid
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import isawaitable, iscoroutinefunction
 from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Literal
@@ -16,6 +17,7 @@ from ...utils.logging import logger
 from .._deps import require_pydantic_ai
 from ..types import (
     AgentExecutionResult,
+    AgentProviderFailure,
     AgentRunInfo,
     AgentUsageInfo,
     AgentValidationRetry,
@@ -34,6 +36,8 @@ type ImageMediaType = Literal["image/png", "image/jpeg", "image/webp"]
 _MAX_VISUAL_EVIDENCE_ITEMS = 8
 _MAX_VISUAL_EVIDENCE_ITEM_BYTES = 4 * 1024 * 1024
 _MAX_VISUAL_EVIDENCE_TOTAL_BYTES = 16 * 1024 * 1024
+_RATE_LIMIT_DELAYS = (15.0, 30.0, 60.0)
+_RATE_LIMIT_WAIT_LIMIT = 120.0
 
 __all__ = [
     "AgentUserPrompt",
@@ -58,6 +62,115 @@ class ImageEvidence:
 
 class ImageInputUnsupportedError(RuntimeError):
     """The configured model or provider rejected image input."""
+
+
+@dataclass
+class _ProviderRequestAudit:
+    requests: int = 0
+    waited: float = 0.0
+    failures: list[AgentProviderFailure] = field(default_factory=list)
+    response_requests: list[int] = field(default_factory=list)
+
+
+def _rate_limit_delay(error: Exception, retry: int) -> float | None:
+    """Retry temporary throttling, preserving provider timing and hard quotas."""
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    if not isinstance(error, ModelHTTPError) or error.status_code != 429:
+        return None
+    detail = describe_agent_error(error).casefold()
+    if any(
+        marker in detail
+        for marker in (
+            "insufficient_quota",
+            "insufficient quota",
+            "exceeded your current quota",
+            "insufficient credit",
+            "insufficient balance",
+            "billing",
+            "payment required",
+            "spending limit",
+            "daily limit",
+            "monthly limit",
+        )
+    ):
+        return None
+    if retry >= len(_RATE_LIMIT_DELAYS):
+        return None
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(seen) < 8:
+        seen.add(id(current))
+        headers = getattr(current, "headers", None) or getattr(
+            getattr(current, "response", None), "headers", None
+        )
+        if headers:
+            parsed = ModelHTTPError(429, error.model_name, headers=headers).retry_after
+            if parsed is not None and math.isfinite(parsed):
+                return parsed
+        current = current.__cause__ or (
+            current.__context__ if not current.__suppress_context__ else None
+        )
+    return _RATE_LIMIT_DELAYS[retry]
+
+
+def _rate_limited_model(
+    model: Any,
+    *,
+    config: AgentRunConfig,
+    audit: _ProviderRequestAudit,
+    name: str | None,
+) -> Any:
+    """Retry only a failed request; completed agent tools are never replayed."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class RateLimitedModel(WrapperModel):
+        async def request(
+            self, messages: Any, model_settings: Any, model_request_parameters: Any
+        ) -> Any:
+            retry = 0
+            while True:
+                if audit.requests >= config.requestLimit:
+                    raise UsageLimitExceeded(
+                        "The model request limit includes failed provider requests; "
+                        f"all {config.requestLimit} available requests were used"
+                    )
+                audit.requests += 1
+                try:
+                    response = await self.wrapped.request(
+                        messages, model_settings, model_request_parameters
+                    )
+                    audit.response_requests.append(audit.requests)
+                    return response
+                except Exception as exc:
+                    delay = _rate_limit_delay(exc, retry)
+                    if delay is not None and (
+                        audit.requests >= config.requestLimit
+                        or audit.waited + delay > _RATE_LIMIT_WAIT_LIMIT
+                    ):
+                        delay = None
+                    audit.failures.append(
+                        AgentProviderFailure(
+                            requestIndex=audit.requests,
+                            statusCode=getattr(exc, "status_code", None),
+                            error=describe_agent_error(exc),
+                            retryDelaySeconds=delay,
+                        )
+                    )
+                    if delay is None:
+                        raise
+                    logger.warning(
+                        f"Agent {name or 'unnamed'}: provider rate limit; retrying "
+                        f"the same request in {delay:g}s "
+                        f"({retry + 1}/{len(_RATE_LIMIT_DELAYS)} retries). "
+                        "Completed tools and scientific evidence are preserved."
+                    )
+                    audit.waited += delay
+                    await asyncio.sleep(delay)
+                    retry += 1
+
+    return RateLimitedModel(model)
 
 
 def describe_agent_error(error: BaseException, *, limit: int = 8000) -> str:
@@ -294,12 +407,20 @@ def _build_agent(
     output_validator: Callable[[Any], Any] | None,
     normalize_sync_function_model: bool,
     validation_failures: list[AgentValidationRetry] | None = None,
+    provider_audit: _ProviderRequestAudit | None = None,
 ) -> Any:
     require_pydantic_ai()
     from pydantic_ai import Agent, RunContext
 
+    normalized_model = (
+        _normalize_model(model) if normalize_sync_function_model else model
+    )
+    if provider_audit is not None:
+        normalized_model = _rate_limited_model(
+            normalized_model, config=config, audit=provider_audit, name=name
+        )
     agent = Agent(
-        _normalize_model(model) if normalize_sync_function_model else model,
+        normalized_model,
         output_type=output_type,
         system_prompt=system_prompt,
         deps_type=deps_type or object,
@@ -330,7 +451,11 @@ def _build_agent(
                     validation_failures.append(
                         AgentValidationRetry(
                             source="output",
-                            requestIndex=context.usage.requests,
+                            requestIndex=(
+                                provider_audit.requests
+                                if provider_audit is not None
+                                else context.usage.requests
+                            ),
                             message=str(exc),
                             response=submitted,
                         )
@@ -345,7 +470,11 @@ def _build_agent(
                     validation_failures.append(
                         AgentValidationRetry(
                             source="output",
-                            requestIndex=context.usage.requests,
+                            requestIndex=(
+                                provider_audit.requests
+                                if provider_audit is not None
+                                else context.usage.requests
+                            ),
                             message=str(exc),
                             response=submitted,
                         )
@@ -369,17 +498,21 @@ def _run_info(
     tools: Sequence[Callable[..., Any] | Any],
     validation_failures: Sequence[AgentValidationRetry],
     error: BaseException | None = None,
+    provider_audit: _ProviderRequestAudit | None = None,
 ) -> AgentRunInfo:
     from pydantic import ValidationError
     from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart
 
     calls = _tool_calls(messages, allowed_names=_tool_names(tools))
     reported_usage = _usage_info(usage, tool_calls=len(calls))
+    if provider_audit is not None:
+        reported_usage.requests = provider_audit.requests
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     measured = [message for message in responses if message.usage.has_values()]
     reported_usage.availability = (
         "reported"
         if measured
+        and not (provider_audit is not None and provider_audit.failures)
         and len(measured) == len(responses) == reported_usage.requests
         and not (
             error is not None
@@ -398,9 +531,16 @@ def _run_info(
     pending: dict[str, Any] = {}
     tool_names = _tool_names(tools)
     request_index = 0
+    response_index = 0
     for message in messages:
         if isinstance(message, ModelResponse):
-            request_index += 1
+            request_index = (
+                provider_audit.response_requests[response_index]
+                if provider_audit is not None
+                and response_index < len(provider_audit.response_requests)
+                else request_index + 1
+            )
+            response_index += 1
         for part in getattr(message, "parts", ()):
             if isinstance(part, ToolCallPart):
                 pending[part.tool_call_id] = part.args
@@ -435,7 +575,7 @@ def _run_info(
             retries.append(
                 AgentValidationRetry(
                     source="tool" if rejected.tool_name in tool_names else "schema",
-                    requestIndex=len(responses),
+                    requestIndex=request_index,
                     message=str(error.__cause__),
                     response=rejected.args,
                 )
@@ -456,6 +596,7 @@ def _run_info(
         toolCalls=calls,
         status="failed" if error is not None else "done",
         validationRetries=sorted(retries, key=lambda retry: retry.requestIndex),
+        providerFailures=provider_audit.failures if provider_audit is not None else [],
         errorType=type(error).__name__ if error is not None else None,
         error=error_detail,
     )
@@ -486,6 +627,7 @@ async def _execute_agent(
     usage_limits = get_usage_limits(run_config)
     usage = RunUsage()
     failures: list[AgentValidationRetry] = []
+    provider_audit = _ProviderRequestAudit()
     started = time.monotonic()
     logger.debug(
         f"Starting agent {agent_name}: model={_model_name(model)}, "
@@ -511,6 +653,7 @@ async def _execute_agent(
                 output_validator=output_validator,
                 normalize_sync_function_model=normalize_sync_function_model,
                 validation_failures=failures,
+                provider_audit=provider_audit,
             )
             async with agent:
                 try:
@@ -539,6 +682,7 @@ async def _execute_agent(
                 tools=tools,
                 validation_failures=failures,
                 error=exc,
+                provider_audit=provider_audit,
             )
             setattr(exc, "agent_run_info", info)
             logger.error(
@@ -561,6 +705,7 @@ async def _execute_agent(
             started=started,
             tools=tools,
             validation_failures=failures,
+            provider_audit=provider_audit,
         )
         if on_attempt is not None:
             try:

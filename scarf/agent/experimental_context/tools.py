@@ -46,7 +46,11 @@ from .qc_evidence import (
     _hto_identity_columns,
     _offered_qc_profiles,
 )
-from .requirements import objective_evidence, requested_design_questions
+from .requirements import (
+    objective_evidence,
+    requested_design_purpose,
+    requested_design_questions,
+)
 
 try:
     from pydantic_ai import ModelRetry, RunContext
@@ -229,6 +233,32 @@ async def inspect_context_evidence(
     raise ModelRetry("Choose an exact record from the saved context summary")
 
 
+def capture_repair_inputs(
+    deps: ExperimentalContextDependencies,
+) -> dict[str, Any] | None:
+    """Offer the exact assessed design for one missing-provenance repair."""
+    saved_directions = deps.characterizationInputs.get("directions")
+    tested_batch_sets = {
+        tuple(sorted(item.batchColumns)) for item in deps.batchSafety.values()
+    }
+    if (
+        deps.designRounds < len(DESIGN_ROUND_LIMITS)
+        or deps.captureProposal is not None
+        or not isinstance(saved_directions, dict)
+        or len(tested_batch_sets) > 1
+    ):
+        return None
+    return {
+        "column_domains": deepcopy(saved_directions.get("columnDomains", {})),
+        "coefficients_of_interest": list(
+            saved_directions.get("coefficientsOfInterest", [])
+        ),
+        "units_of_inference": deepcopy(saved_directions.get("unitsOfInference", {})),
+        "batch_columns": list(next(iter(tested_batch_sets), ())),
+        "proposals": [],
+    }
+
+
 def model_evidence_tool(function: Any) -> Any:
     """Keep complete tool results in state and send a deduplicated model view."""
 
@@ -237,8 +267,26 @@ def model_evidence_tool(function: Any) -> Any:
         result = await function(*args, **kwargs)
         payload = compact_context_evidence(result)
         context = args[0] if args else kwargs["ctx"]
+        repair_inputs = capture_repair_inputs(context.deps)
+        payload["captureRepairAvailable"] = repair_inputs is not None
+        if payload["captureRepairAvailable"]:
+            payload["captureRepairInstructions"] = (
+                "analyze_experimental_design can validate capture_proposal using an "
+                "exact supplied study quote. Keep the assessed domains, coefficients, "
+                "units and batch columns unchanged and pass proposals=[]. This only "
+                "adds capture provenance and dependent QC evidence; it does not "
+                "authorize another covariate comparison round."
+            )
+            payload["captureRepairInputs"] = repair_inputs
         payload["requestedComparisons"] = [
-            {"question": quote, "columns": columns, "conditional": conditional}
+            {
+                "question": quote,
+                "columns": columns,
+                "conditional": conditional,
+                "purpose": requested_design_purpose(quote),
+                "essential": True,
+                "completionEvidence": "evidenceRequirements and evidenceCoverage",
+            }
             for quote, columns, conditional in requested_design_questions(
                 context.deps.studyContext,
                 context.deps.studyObjective,
@@ -267,7 +315,7 @@ def restore_context_evidence(deps: ExperimentalContextDependencies) -> bool:
     if deps.checkpointRead is None:
         return False
     restored = False
-    for key in ("inspection", "design1", "design2"):
+    for key in ("inspection", "design1", "design2", "capture"):
         saved = deps.checkpointRead(key)
         if saved is None:
             continue
@@ -332,6 +380,7 @@ def _prepare_experimental_context_tool(
         if (
             "inspect_cell_covariates" not in completed_calls
             or ctx.deps.designRounds >= len(DESIGN_ROUND_LIMITS)
+            and capture_repair_inputs(ctx.deps) is None
         ):
             return None
         return tool_definition
@@ -698,9 +747,15 @@ async def analyze_experimental_design(
             two explanatory columns without conditioning, or one explanatory
             column with one categorical conditioning column. Observation and
             independent units do not count toward the three-column limit.
-            Joint explanations within strata are unsupported. Do not discard a
-            scientific question or a unit identity just to fit this schema.
+            Two explanatory columns together with conditioning are unsupported.
+            One explanatory column within one categorical stratum is supported
+            subject to observed unit support; descriptive joint counts can remain
+            available when the association method is unsupported. Do not discard
+            a scientific question or a unit identity just to fit this schema.
         capture_proposal: Exact capture and baseline identities supported by study prose.
+            After two comparison rounds, only this provenance repair is permitted:
+            keep the assessed design unchanged and pass no proposals. The tool
+            validates the supplied quote and refreshes dependent QC evidence.
     """
     logger.info(
         "Experimental Context design analysis started: "
@@ -709,9 +764,17 @@ async def analyze_experimental_design(
         f"inferenceUnits={len(units_of_inference)}, "
         f"batchColumns={len(batch_columns)}"
     )
-    if ctx.deps.designRounds >= len(DESIGN_ROUND_LIMITS):
-        raise ModelRetry("Design comparison permits at most two evidence rounds")
-    if len(proposals or ()) > DESIGN_ROUND_LIMITS[ctx.deps.designRounds]:
+    capture_repair = ctx.deps.designRounds >= len(DESIGN_ROUND_LIMITS)
+    if capture_repair and (capture_proposal is None or proposals):
+        raise ModelRetry(
+            "Design comparison permits at most two evidence rounds. Only capture "
+            "provenance can now be repaired: supply capture_proposal, proposals=[], "
+            "and the exact unchanged assessed design."
+        )
+    if (
+        not capture_repair
+        and len(proposals or ()) > DESIGN_ROUND_LIMITS[ctx.deps.designRounds]
+    ):
         raise ModelRetry(
             "Design comparison permits eight initial and four follow-up proposals"
         )
@@ -801,7 +864,36 @@ async def analyze_experimental_design(
                     f"Batch column {batch_column!r} must be categorical for Harmony"
                 )
 
-    characterization = characterize_context(ctx.deps, directions)
+    if capture_repair:
+        characterization = ctx.deps.characterization
+        if (
+            characterization is None
+            or directions != ctx.deps.characterizationInputs.get("directions")
+        ):
+            raise ModelRetry(
+                "Capture provenance repair requires the exact saved domains, "
+                "coefficients and inference units; it cannot change the design."
+            )
+        tested_batch_sets = {
+            tuple(sorted(item.batchColumns)) for item in ctx.deps.batchSafety.values()
+        }
+        if tested_batch_sets != {tuple(canonical_batch_columns)} and (
+            tested_batch_sets or canonical_batch_columns
+        ):
+            raise ModelRetry(
+                "Capture provenance repair requires one unambiguous, unchanged "
+                "assessed batch-column set. Alternative designs cannot be combined."
+            )
+        if ctx.deps.captureProposal is not None:
+            raise ModelRetry(
+                "Capture provenance is already committed; reuse its saved evidence."
+            )
+        logger.info(
+            "Experimental Context capture provenance: validating the supplied study "
+            "statement and refreshing dependent QC; reusing measured study design"
+        )
+    else:
+        characterization = characterize_context(ctx.deps, directions)
     if characterization.status == "failed":
         rejection = "; ".join(characterization.notes).strip()
         logger.warning(
@@ -818,14 +910,21 @@ async def analyze_experimental_design(
     # the evidence without rescanning metadata or accepting an unsafe choice.
     ctx.deps.characterization = characterization
     try:
-        evaluate_proposals(ctx.deps, characterization, proposals or ())
+        if not capture_repair:
+            evaluate_proposals(ctx.deps, characterization, proposals or ())
         if capture_proposal is not None:
             accept_capture_proposal(ctx.deps, characterization, capture_proposal)
     except ValueError as exc:
         raise ModelRetry(str(exc)) from exc
     if not ctx.deps.htoIdentityColumns:
         ctx.deps.htoIdentityColumns = _hto_identity_columns(ctx.deps)
-    qc_profiles = _offered_qc_profiles(ctx.deps, characterization)
+    try:
+        qc_profiles = _offered_qc_profiles(ctx.deps, characterization)
+    except Exception:
+        if capture_repair:
+            ctx.deps.captureProposal = None
+            characterization.captureProvenance = None
+        raise
     contrast_plans = contrast_plans_from_characterization(characterization)
     ctx.deps.contrastPlans = {plan.coefficient: plan for plan in contrast_plans}
     evidence_ids = characterization_evidence(characterization)
@@ -878,17 +977,23 @@ async def analyze_experimental_design(
                 f"Batch column {batch_column!r} must be categorical for Harmony"
             )
 
-    batch_safety = _batch_safety_evidence(
-        ctx.deps,
-        characterization,
-        coefficients=directed_coefficients,
-        batch_columns=canonical_batch_columns,
+    batch_safety = (
+        list(ctx.deps.batchSafety.values())
+        if capture_repair
+        else _batch_safety_evidence(
+            ctx.deps,
+            characterization,
+            coefficients=directed_coefficients,
+            batch_columns=canonical_batch_columns,
+        )
     )
 
     evidence_ids.update(item.evidenceId for item in batch_safety)
     ctx.deps.evidenceIds.update(evidence_ids)
     ctx.deps.toolCalls.append("analyze_experimental_design")
-    persist_context_evidence(ctx.deps, f"design{ctx.deps.designRounds}")
+    persist_context_evidence(
+        ctx.deps, "capture" if capture_repair else f"design{ctx.deps.designRounds}"
+    )
     safety_counts = {
         status: sum(item.status == status for item in batch_safety)
         for status in ("safe", "unsafe", "notComputed")

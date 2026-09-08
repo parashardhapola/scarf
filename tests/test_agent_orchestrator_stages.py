@@ -26,8 +26,13 @@ from scarf.agent.data_enrichment import (
 from scarf.agent.experimental_context import (
     CellQcPlan,
     CellQcProfileEvidence,
+    ExperimentalContextDependencies,
     ExperimentalContextResult,
     NamedArtifactSource,
+)
+from scarf.agent.experimental_context.tools import (
+    persist_context_evidence,
+    restore_context_evidence,
 )
 from scarf.agent.orchestrator import (
     AgentOrchestrator,
@@ -417,10 +422,12 @@ def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
 
 
 @pytest.mark.parametrize("after_commit", ["none", "interrupt", "exception"])
+@pytest.mark.parametrize("report_status", ["failed", "needsInput"])
 def test_failed_context_retries_without_overwriting_or_replaying_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     after_commit: str,
+    report_status: str,
 ) -> None:
     path = create_store(tmp_path / "retry-context.zarr")
     store = DataStore(str(path), default_assay="RNA", min_features_per_cell=0)
@@ -455,10 +462,14 @@ def test_failed_context_retries_without_overwriting_or_replaying_failure(
         }
     )
     report.decision.batchCorrection.action = "unsafe"
+    unresolved_question = "Assess the joint tissue and treatment contrast by donor."
     failed_report = report.model_copy(
-        update={"status": "failed", "notes": ["Invalid design proposal"]}, deep=True
+        update={"status": report_status, "notes": ["Invalid design proposal"]},
+        deep=True,
     )
     failed_report.decision.batchCorrection.action = "needsInput"
+    failed_report.decision.needsInput = [unresolved_question]
+    evidence_readers = []
 
     class RecoveringAgent:
         calls = 0
@@ -466,9 +477,38 @@ def test_failed_context_retries_without_overwriting_or_replaying_failure(
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             pass
 
-        def run(self, *_args: Any, **_kwargs: Any) -> ExperimentalContextResult:
+        def run(self, *_args: Any, **kwargs: Any) -> ExperimentalContextResult:
             type(self).calls += 1
-            return failed_report if self.calls <= 2 else report
+            read = kwargs["checkpoint_read"]
+            evidence_readers.append(read)
+            # Every new interpretation has its own result, while the complete
+            # measured design and its consumed allowance remain shared.
+            assert read("result") is None
+            deps = ExperimentalContextDependencies(
+                checkpointRead=read,
+                checkpointWrite=kwargs["checkpoint_write"],
+            )
+            if self.calls == 1:
+                assert not restore_context_evidence(deps)
+                deps.characterization = report.characterization
+                deps.toolCalls = ["inspect_cell_covariates"]
+                persist_context_evidence(deps, "inspection")
+                deps.designRounds = 1
+                deps.toolCalls.append("analyze_experimental_design")
+                deps.evidenceIds.add("saved-design-evidence")
+                persist_context_evidence(deps, "design1")
+            else:
+                assert restore_context_evidence(deps)
+                assert deps.characterization == report.characterization
+                assert deps.designRounds == 1
+                assert deps.evidenceIds == {"saved-design-evidence"}
+                assert deps.toolCalls.count("analyze_experimental_design") == 1
+            current = failed_report if self.calls <= 2 else report
+            kwargs["checkpoint_write"](
+                "result", {"report": current.model_dump(mode="json")}
+            )
+            assert read("result")["report"]["status"] == current.status
+            return current
 
     monkeypatch.setattr(context_module, "ExperimentalContextAgent", RecoveringAgent)
     orchestrator = AgentOrchestrator(object())
@@ -481,6 +521,9 @@ def test_failed_context_retries_without_overwriting_or_replaying_failure(
     first, _ = execute()
     second, _ = execute()
     assert first.status == second.status == "failed"
+    if report_status == "needsInput":
+        assert unresolved_question in first.error
+        assert unresolved_question in second.error
     assert RecoveringAgent.calls == 2
     assert first.reportReferences != second.reportReferences
     assert second.inputs["retryAfterFailedReport"] == first.reportReferences[
@@ -520,6 +563,15 @@ def test_failed_context_retries_without_overwriting_or_replaying_failure(
     assert resumed_report.status == "done"
     assert resumed_report.decision.batchCorrection.action == "unsafe"
     assert RecoveringAgent.calls == 3
+    assert [read("result")["report"]["status"] for read in evidence_readers] == [
+        report_status,
+        report_status,
+        "done",
+    ]
+    for key in ("inspection", "design1"):
+        assert all(
+            read(key) == evidence_readers[0](key) for read in evidence_readers[1:]
+        )
     if after_commit != "none":
         assert "recover_persisted_experimental_context_report" in resumed.actions
     assert (
@@ -528,7 +580,7 @@ def test_failed_context_retries_without_overwriting_or_replaying_failure(
     )
     assert (
         journal_module.read_stage_evidence(store, second.reportReferences[0])["status"]
-        == "failed"
+        == report_status
     )
 
 

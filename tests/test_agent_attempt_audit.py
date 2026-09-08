@@ -201,9 +201,12 @@ def test_provider_outage_retains_partial_usage_and_completed_tool_evidence() -> 
     info = caught.value.agent_run_info
     assert operations == 1
     assert requests == 2
-    assert info.usage.requests == 1  # The SDK reported only the completed response.
+    assert info.usage.requests == 2  # Include the failed provider request.
     assert info.usage.inputTokens == 11
     assert info.usage.availability == "partial"
+    assert len(info.providerFailures) == 1
+    assert info.providerFailures[0].requestIndex == 2
+    assert info.providerFailures[0].retryDelaySeconds is None
     assert [call.toolName for call in info.toolCalls] == ["measure"]
 
 

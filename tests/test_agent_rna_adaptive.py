@@ -424,9 +424,22 @@ def test_required_comparisons_and_resume_reuse_augmented_evidence(
     assert len(model_calls) == expected_calls
 
 
+@pytest.mark.parametrize(
+    "enabled,license,batch_columns,expected_scores",
+    [
+        (True, "notApplicable", [], 1),
+        (False, "notApplicable", [], 0),
+        (False, "unsafeConfounded", ["batch"], 0),
+        (False, "safe", ["batch"], 1),
+    ],
+)
 def test_failed_execution_retries_and_doublets_bind_exact_feature_mask(
     checkpoints: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    license: str,
+    batch_columns: list[str],
+    expected_scores: int,
 ) -> None:
     handoff = example(PreprocessedAssayHandoff)
     handoff.graphFeatureCandidates = {"eligibleDefault": handoff.graphFeatures}
@@ -436,10 +449,15 @@ def test_failed_execution_retries_and_doublets_bind_exact_feature_mask(
         SimpleNamespace(model=object()),
         store,
         SimpleNamespace(workflowRunId="retry"),
-        SimpleNamespace(config=AutomatedWorkflowConfig()),
+        SimpleNamespace(config=AutomatedWorkflowConfig(scoreDoublets=enabled)),
         example(AutomatedPreprocessingPlan),
         handoff,
-        StudyContract.get_blank(),
+        StudyContract.get_blank().model_copy(
+            update={
+                "correctionLicense": license,
+                "technicalBatchColumns": batch_columns,
+            }
+        ),
         {},
         {},
     )
@@ -503,7 +521,16 @@ def test_failed_execution_retries_and_doublets_bind_exact_feature_mask(
     assert completed.status == "done"
     assert run.budget.summary()["scopes"]["full"]["reserved"]["partitions"] == 1
     assert run.budget.summary()["scopes"]["full"]["completed"]["partitions"] == 1
-    assert len(scored) == 1
+    assert len(scored) == expected_scores
+    assert any("score_doublets=False" in warning for warning in completed.warnings) == (
+        expected_scores == 0
+    )
+    if not expected_scores:
+        assert completed.metrics.doubletHighScoreConcentration is None
+        assert any(
+            "contamination was not assessed" in warning
+            for warning in completed.warnings
+        )
 
 
 @pytest.mark.parametrize(

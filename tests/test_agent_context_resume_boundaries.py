@@ -1,6 +1,7 @@
 """Committed context decisions and bounded details retain exact scientific inputs."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -61,12 +62,19 @@ def test_committed_context_result_replays_without_a_model_and_rejects_other_sele
 
 
 @pytest.mark.parametrize("rounds", [1, 2])
+@pytest.mark.parametrize("previous_status", ["done", "needsInput"])
+@pytest.mark.parametrize(
+    "objective",
+    ["", "Discover populations while preserving condition."],
+    ids=["without-objective", "with-objective"],
+)
 def test_explicit_context_revision_preserves_rounds_and_complete_study_text(
-    monkeypatch, rounds
+    monkeypatch, rounds, previous_status, objective
 ):
     store = _Store()
     previous = ExperimentalContextResult.get_blank().model_copy(
         update={
+            "status": previous_status,
             "cellSelection": ArtifactReferenceModel.from_artifact_ref(
                 store.cell_selection
             ),
@@ -83,9 +91,18 @@ def test_explicit_context_revision_preserves_rounds_and_complete_study_text(
             ),
         }
     )
+    blocker = "Confirm whether the supplied batch identifies physical capture."
+    if previous_status == "needsInput":
+        previous.decision.needsInput = [blocker]
+    saved_previous = previous.model_dump(mode="json")
     text = "Study provenance. " * 150 + "Assess condition and batch jointly."
     monkeypatch.setattr(
         context_agent, "_derive_missing_percentage_artifacts", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        context_agent,
+        "characterize_covariates",
+        lambda *a, **k: pytest.fail("A revision must reuse measured characterization"),
     )
     seen = []
 
@@ -96,6 +113,35 @@ def test_explicit_context_revision_preserves_rounds_and_complete_study_text(
         assert text in kwargs["user_prompt"]
         assert "Committed evidence already measured" in kwargs["user_prompt"]
         assert "Explicit requested questions" in kwargs["user_prompt"]
+        assert (
+            f"Study objective: {objective or 'not provided'}" in kwargs["user_prompt"]
+        )
+        if previous_status == "needsInput":
+            prompt = kwargs["user_prompt"]
+            assert blocker in prompt
+            assert "Keep genuinely essential unresolved questions" in prompt
+            evidence_json = prompt.split(
+                "Current objective requirements and their measured support: ", 1
+            )[1].split("\nThe previous interpretation stopped", 1)[0]
+            evidence = json.loads(evidence_json)
+            if objective:
+                joint = next(
+                    item
+                    for item in evidence["evidenceRequirements"]
+                    if item["question"] == "Assess condition and batch jointly"
+                )
+                assert joint["columns"] == ["batch", "condition"]
+                assert joint["essential"] is True
+                measured = {
+                    item["requirementId"]: item for item in evidence["evidenceCoverage"]
+                }
+                assert measured[joint["requirementId"]]["status"] == "unsupported"
+                assert "marginal comparisons do not answer" in " ".join(
+                    measured[joint["requirementId"]]["reasons"]
+                )
+                assert measured["studyDesign"]["status"] == "computed"
+            else:
+                assert evidence == {"evidenceRequirements": [], "evidenceCoverage": []}
         raise UnexpectedModelBehavior("No additional provider attempt is available")
 
     monkeypatch.setattr(context_agent, "run_agent_sync", inspect)
@@ -103,11 +149,12 @@ def test_explicit_context_revision_preserves_rounds_and_complete_study_text(
         store,
         cell_selection=store.cell_selection,
         study_context=text,
+        study_objective=objective,
         previous_context=previous,
     )
     assert result.status == "failed"
     assert seen == [rounds]
-    assert previous.runInfo.toolCalls[0].toolName == "analyze_experimental_design"
+    assert previous.model_dump(mode="json") == saved_previous
 
 
 def test_saved_details_return_complete_inventory_and_policy_without_computation():

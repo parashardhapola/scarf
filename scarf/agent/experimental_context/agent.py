@@ -31,6 +31,7 @@ from .qc_evidence import (
 from .tools import (
     _prepare_experimental_context_tool,
     analyze_experimental_design,
+    capture_repair_inputs,
     contrast_plans_from_characterization,
     inspect_cell_covariates,
     inspect_context_evidence,
@@ -88,9 +89,12 @@ class ExperimentalContextAgent:
             observationUnit and independentUnit are separate unit fields and do
             not count toward that limit. Never repeat response among explanatory
             or conditioning columns. Never append unit identifiers to explanatory
-            columns just to identify replication. A joint explanation within
-            strata is unsupported; separate simpler comparisons do not establish
-            that joint conditional finding. If a tool rejects a proposal, correct
+            columns just to identify replication. Two explanatory columns plus a
+            conditioning column are unsupported. One response, one explanatory
+            column and one conditioning column are supported for descriptive
+            design coverage; association support depends on the measured units.
+            Separate simpler comparisons do not establish an unsupported joint
+            conditional finding. If a tool rejects a proposal, correct
             the named fields while preserving its scientific question or record
             the unsupported requirement explicitly. You may make one
             follow-up call with at most four new or revised comparisons after
@@ -114,7 +118,11 @@ class ExperimentalContextAgent:
             evidenceRequirements and evidenceCoverage enforce this distinction.
             For repeated donors and incomplete pairing, inspect descriptiveDesign:
             it retains observation counts, distinct donors, group support and paired
-            coverage without collapsing a donor to its first condition. Unsupported
+            coverage without collapsing a donor to its first condition. A computed
+            descriptiveDesign answers a designCoverage question even if the separate
+            association method is unsupported. Preserve that association limitation
+            in the rationale; do not ask the user to resolve an optional association
+            before continuing descriptive population discovery. Unsupported
             association methods do not establish non-identifiability. Only measured
             rank and estimability for the exact tested design support that claim.
             Use the single follow-up round to resolve missing design evidence.
@@ -124,13 +132,21 @@ class ExperimentalContextAgent:
             testing are unsupported. You may call
             score_current_representation at most once when an exact supplied graph
             can add evidence. Pass batch_columns as a JSON array, including a
-            singleton. Capture proposals must name an exact observed column and
-            quote the study statement identifying it as a physical capture. An
-            optional reference pool also needs an exact quote identifying the
+            singleton. When the study explicitly identifies physical capture, pass
+            capture_proposal in analyze_experimental_design, preferably in its first
+            call. This existing tool validates capture provenance; no separate
+            capture tool or additional user confirmation is required for an explicit
+            supported study statement. Capture proposals must name an exact observed
+            column and quote the study statement identifying it as a physical capture.
+            An optional reference pool also needs an exact quote identifying the
             observed reference captures. Sample uniqueness is not capture proof.
             Leave unresolved capture provenance explicit. Validated tools own
             capture identities and protected combinations; do not copy them into
             the final decision. Nominate any new combination through a design tool.
+            If capture was omitted from two completed design rounds, the same tool
+            permits only a capture provenance repair with identical domains,
+            coefficients, units and batch columns, and no proposals. This does not
+            authorize another design comparison round.
 
             The tools return bounded cell-QC profiles projected against the exact
             shared cell selection. Do not choose a profile or return cellQc.
@@ -428,6 +444,51 @@ class ExperimentalContextAgent:
                         [row["name"] for row in deps.characterization.columns],
                     )
                 )
+            )
+            repair_inputs = capture_repair_inputs(deps)
+            if repair_inputs is not None:
+                user_prompt += (
+                    "\nCapture provenance can be repaired with these exact saved "
+                    "analyze_experimental_design inputs. Add only capture_proposal "
+                    "with an exact supporting study quote: "
+                    + json.dumps(repair_inputs, sort_keys=True)
+                )
+        if previous_context is not None and previous_context.status == "needsInput":
+            from .requirements import objective_evidence
+
+            requirements, coverage = (
+                objective_evidence(
+                    study_context=study_context,
+                    study_objective=study_objective,
+                    experimental_result=previous_context.model_copy(
+                        update={
+                            "characterization": deps.characterization,
+                            "batchSafety": list(deps.batchSafety.values()),
+                        }
+                    ),
+                )
+                if study_objective
+                else ([], [])
+            )
+            user_prompt += (
+                "\nCurrent objective requirements and their measured support: "
+                + json.dumps(
+                    {
+                        "evidenceRequirements": [
+                            item.model_dump(mode="json") for item in requirements
+                        ],
+                        "evidenceCoverage": [
+                            item.model_dump(mode="json") for item in coverage
+                        ],
+                    }
+                )
+                + "\nThe previous interpretation stopped with these unresolved questions: "
+                + json.dumps(previous_context.decision.needsInput)
+                + "\nReassess each against the original study text and committed evidence. "
+                "Use the existing design tool for an omitted capture proposal. "
+                "Distinguish computed descriptive support from unavailable association "
+                "methods. Keep genuinely essential unresolved questions; do not copy "
+                "a previous blocker when supplied provenance or measured evidence answers it."
             )
         try:
             execution = run_agent_sync(

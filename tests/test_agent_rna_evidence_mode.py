@@ -319,8 +319,18 @@ def test_explicit_image_rejection_is_saved_before_retry_and_reused(
     assert all(row["evidenceMode"] == "structured" for row in run.history)
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("Interrupted during structured assessment"),
+        ModelHTTPError(429, "test-model", "Too Many Requests"),
+    ],
+    ids=["interrupted", "rate-limited"],
+)
 def test_interrupted_structured_retry_does_not_probe_images_on_resume(
-    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    failure: Exception,
 ) -> None:
     saved = request.getfixturevalue("memory_checkpoints")
     run, selected = make_run(monkeypatch, object())
@@ -328,25 +338,56 @@ def test_interrupted_structured_retry_does_not_probe_images_on_resume(
     def interrupt(**kwargs: Any) -> Any:
         if not isinstance(kwargs["user_prompt"], str):
             raise ImageInputUnsupportedError("Image input is not supported")
-        raise RuntimeError("Interrupted during structured assessment")
+        raise failure
 
     monkeypatch.setattr(rna_tuning, "run_agent_sync", interrupt)
-    with pytest.raises(RuntimeError, match="Interrupted during structured"):
+    with pytest.raises(type(failure)) as caught:
         run.review("full", 0, selected, {})
+    assert caught.value is failure
     assert set(saved) == {
         "parameter_tuning/structured_evidence",
         "parameter_tuning/full/review0/evidence/visual",
         "parameter_tuning/full/review0/evidence/structured",
     }
+    original = deepcopy(saved)
     resumed, selected = make_run(monkeypatch, object())
     monkeypatch.setattr(
         tuning,
         "_analysis_visual_content",
         lambda *a, **kw: pytest.fail("Resume must preserve the rejected capability"),
     )
-    monkeypatch.setattr(rna_tuning, "run_agent_sync", assess)
+    for name in (
+        "partition_comparison_evidence",
+        "population_support_evidence",
+        "_neighbor_overlap",
+    ):
+        monkeypatch.setattr(
+            rna_tuning,
+            name,
+            lambda *a, **kw: pytest.fail(
+                "Output recovery must reuse saved diagnostics"
+            ),
+        )
+    monkeypatch.setattr(
+        resumed,
+        "feature_evidence",
+        lambda *a, **kw: pytest.fail("Output recovery must reuse saved gene evidence"),
+    )
+
+    def recover(**kwargs):
+        evidence = original["parameter_tuning/full/review0/evidence/structured"][
+            "outputs"
+        ]["evidence"]
+        assert json.loads(kwargs["user_prompt"]) == evidence
+        assert kwargs["user_prompt"] == json.dumps(
+            evidence, sort_keys=True, separators=(",", ":")
+        )
+        return assess(**kwargs)
+
+    monkeypatch.setattr(rna_tuning, "run_agent_sync", recover)
     assert resumed.review("full", 0, selected, {}).action == "accept"
     assert resumed.history[-1]["evidenceMode"] == "structured"
+    assert {key: saved[key] for key in original} == original
 
 
 @pytest.mark.parametrize(
@@ -639,8 +680,13 @@ def test_real_agent_retry_repairs_a_citation_from_actionable_feedback(
     assert requests == 2
 
 
+@pytest.mark.parametrize(
+    "provider_failure", [False, True], ids=["deferred", "rate-limited"]
+)
 def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
-    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    provider_failure: bool,
 ) -> None:
     saved = request.getfixturevalue("memory_checkpoints")
     run, prototype = make_run(monkeypatch, object())
@@ -730,9 +776,19 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
         )
         return SimpleNamespace(output=kwargs["output_validator"](action))
 
-    monkeypatch.setattr(rna_tuning, "run_agent_sync", defer)
-    first_report, first_summary = run.run()
-    assert first_report.status == "needsInput"
+    def unavailable(**kwargs):
+        raise ModelHTTPError(429, "test-model", "Too Many Requests")
+
+    monkeypatch.setattr(
+        rna_tuning, "run_agent_sync", unavailable if provider_failure else defer
+    )
+    if provider_failure:
+        with pytest.raises(ModelHTTPError, match="429"):
+            run.run()
+    else:
+        first_report, _ = run.run()
+        assert first_report.status == "needsInput"
+    first_budget = run.budget.summary()
     before = json.dumps(saved, sort_keys=True)
 
     resumed, _ = make_run(monkeypatch, object())
@@ -745,17 +801,25 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
         "comparison_coverage",
         rna_tuning.RnaTuningRun.comparison_coverage.__get__(resumed),
     )
-    monkeypatch.setattr(rna_tuning, "run_agent_sync", unexpected)
+    monkeypatch.setattr(
+        rna_tuning, "run_agent_sync", defer if provider_failure else unexpected
+    )
     monkeypatch.setattr(tuning, "_analysis_visual_content", unexpected)
     resumed_report, resumed_summary = resumed.run()
-    assert resumed_report == first_report
+    if not provider_failure:
+        assert resumed_report == first_report
     assert resumed_report.status == "needsInput"
-    assert resumed_summary["budget"] == first_summary["budget"]
+    assert resumed_summary["budget"] == first_budget
     original = json.loads(before)
     assert {key: saved[key] for key in original} == original
     appended = {key: value for key, value in saved.items() if key not in original}
-    assert len(appended) == 2
-    assert all("/diagnostic_attempts/" in key for key in appended)
+    assert len(appended) == (3 if provider_failure else 2)
+    assert sum("/diagnostic_attempts/" in key for key in appended) == 2
+    if provider_failure:
+        assert (
+            saved["parameter_tuning/sample0/review0"]["outputs"]["action"]["action"]
+            == "defer"
+        )
     counts = resumed_summary["diagnosticOperations"]["operations"]
     assert all(row["attempted"] == 0 for row in counts.values())
     assert counts["diagnostic.primaryCandidateEvidence"]["restored"] == len(settings)

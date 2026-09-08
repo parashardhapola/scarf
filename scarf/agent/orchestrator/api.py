@@ -20,6 +20,7 @@ def analyze_rna(
     study_objective: str,
     assay: str | None = None,
     zarr_path: str | Path | None = None,
+    score_doublets: bool = False,
 ) -> AutomatedWorkflowResult:
     """Choose and explain settings for one RNA assay, then execute them.
 
@@ -32,6 +33,13 @@ def analyze_rna(
     Work is bounded by the advanced orchestrator's screening and full-cohort
     limits. Use that interface for explicit workspaces, execution limits, and
     resumable pauses. An identical repeated call reuses or resumes exact work.
+
+    ``score_doublets=False`` skips advisory doublet scoring when Harmony is
+    unavailable or prohibited. Harmony-eligible runs retain the matched doublet
+    diagnostics required by the correction acceptance gate. Scoring does not
+    remove cells. Changing this option requires a new workflow destination.
+    If `score_doublets=True`, the workflow will score doublets and save the scores
+    to the Zarr store. This may consume a lot of additional time.
     """
     if model is None or isinstance(model, str) and not model.strip():
         raise ValueError(
@@ -48,6 +56,7 @@ def analyze_rna(
     )
     config = AutomatedWorkflowConfig(
         inputPolicy="unattended",
+        scoreDoublets=score_doublets,
     )
     result = AgentOrchestrator(model, config=config).run(request)
     if result.status != "completed":

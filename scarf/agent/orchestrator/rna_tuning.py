@@ -668,26 +668,41 @@ class RnaTuningRun:
             ),
             None,
         )
-        doublets = (
-            restore_advisory_doublets(
-                evaluation, capture_column=self.study.physicalCaptureColumn
+        doublets = None
+        if self.request.config.scoreDoublets or (
+            self.study.correctionLicense == "safe" and self.batch_columns
+        ):
+            doublets = (
+                restore_advisory_doublets(
+                    evaluation, capture_column=self.study.physicalCaptureColumn
+                )
+                if preserve_doublets and "doubletNativeGraph" in evaluation.artifacts
+                else score_advisory_doublets(
+                    self.store,
+                    native or evaluation,
+                    [
+                        item
+                        for item in [*self.evaluations[scope], evaluation]
+                        if item.artifacts.get("graphFeatures")
+                        == evaluation.artifacts["graphFeatures"]
+                        and item.cellSelection == evaluation.cellSelection
+                    ],
+                    assay=self.handoff.assay,
+                    feature_selection=features,
+                    capture_column=self.study.physicalCaptureColumn,
+                )
             )
-            if preserve_doublets and "doubletNativeGraph" in evaluation.artifacts
-            else score_advisory_doublets(
-                self.store,
-                native or evaluation,
-                [
-                    item
-                    for item in [*self.evaluations[scope], evaluation]
-                    if item.artifacts.get("graphFeatures")
-                    == evaluation.artifacts["graphFeatures"]
-                    and item.cellSelection == evaluation.cellSelection
-                ],
-                assay=self.handoff.assay,
-                feature_selection=features,
-                capture_column=self.study.physicalCaptureColumn,
+        else:
+            limitation = (
+                f"Advisory doublet scoring was not run for assay {self.handoff.assay!r} "
+                "because score_doublets=False. Doublet contamination was not assessed."
             )
-        )
+            evaluation = evaluation.model_copy(
+                update={
+                    "warnings": list(dict.fromkeys([*evaluation.warnings, limitation]))
+                }
+            )
+            logger.info(limitation)
         evaluation = augment_cluster_evaluations(
             self.store,
             [evaluation],
@@ -2512,6 +2527,14 @@ class RnaTuningRun:
                 if mode == "visual"
                 else "Visual inspection is unavailable: no images were supplied. Do not claim to have seen, inspected or compared plots or images, and do not cite image IDs. Use qualitativeFindings to interpret the reported marker identities, PCA loading genes, feature families and structured diagnostic tables. State limitations and defer if the supplied evidence cannot resolve an essential question."
             )
+            serialized_evidence = json.dumps(
+                evidence, sort_keys=True, separators=(",", ":")
+            )
+            logger.debug(
+                f"Analysis assessment payload: {len(serialized_evidence.encode('utf-8')):,} "
+                f"text bytes, {len(candidates)} candidates, {len(images)} images; "
+                "all saved scientific evidence retained"
+            )
             try:
                 result = run_agent_sync(
                     model=self.owner.model,
@@ -2523,10 +2546,10 @@ class RnaTuningRun:
                     ),
                     system_prompt=prompt,
                     user_prompt=build_visual_evidence_prompt(
-                        json.dumps(evidence, sort_keys=True), images
+                        serialized_evidence, images
                     )
                     if mode == "visual"
-                    else json.dumps(evidence, sort_keys=True),
+                    else serialized_evidence,
                     config=self.request.config.agentRunConfig,
                     name=f"rna_{scope}_assessment",
                     output_validator=validate,

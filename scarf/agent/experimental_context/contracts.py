@@ -50,7 +50,8 @@ class CovariateProposal(AgentDataModel):
     Use one response with either one or two explanatory columns and no conditioning,
     or one response with one explanatory column and one categorical conditioning
     column. Observation and independent units are separate and do not count toward
-    this limit. A joint comparison within strata is unsupported.
+    this limit. Two explanatory columns plus conditioning are unsupported; one
+    explanatory column within a categorical stratum is an offered comparison.
     """
 
     response: str = Field(
