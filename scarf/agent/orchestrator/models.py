@@ -291,10 +291,10 @@ class AutomatedWorkflowConfig(AgentDataModel):
     )
     # Older requests always scored doublets. Keep their serialized defaults exact.
     scoreDoublets: bool = Field(
-        default=False,
+        default=True,
         strict=True,
         exclude_if=lambda value: value is True,
-        description="Score advisory doublets; this run is not eligible for label-based benchmark scoring.",
+        description="Score advisory doublets; Harmony-eligible runs always retain required doublet diagnostics. The beginner API defaults to false; absent saved fields retain enabled scoring.",
     )
     screeningCells: int | None = Field(
         default=None,

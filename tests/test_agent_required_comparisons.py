@@ -90,7 +90,7 @@ def test_better_alternative_requires_exact_observed_tradeoff() -> None:
     review = comparison_review()
     coverage = review["comparisonCoverage"]
     coverage["candidateSettings"]["genes-two"]["metrics"]["seedStability"] = 0.99
-    with pytest.raises(ValueError, match="better stability"):
+    with pytest.raises(ValueError, match="tradeoffs.*seedStability"):
         validate_comparison_review(coverage, review)
     conclusion = next(
         row for row in review["comparisonConclusions"] if row["axis"] == "hvgCount"

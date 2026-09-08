@@ -204,7 +204,19 @@ def _assessment_output_type(
     conclusion_type = create_model(
         "ObservedComparisonInterpretation",
         __base__=ComparisonConclusion,
-        tradeoffs=(cast(Any, list)[tradeoff_type], Field(default_factory=list)),
+        tradeoffs=(
+            cast(Any, list)[tradeoff_type],
+            Field(
+                description=(
+                    "Required array: for each comparisonAdvantages row matching this "
+                    "axis and preferredCandidateId, supply alternativeCandidateId, "
+                    "metric and your interpretation. Explanations in quantitativeReason "
+                    "or biologicalReason do not replace these entries. For combine or "
+                    "accept, use [] only when this preference has no measured "
+                    "alternative advantages. Scarf attaches the measured values."
+                )
+            ),
+        ),
     )
     actions = tuple(
         action

@@ -74,8 +74,8 @@ def test_analyze_rna_passes_one_request_and_bounded_defaults(
     assert called["model"] is model
     config = called["config"]
     assert config.inputPolicy == "unattended"
-    assert config.scoreDoublets is True
-    assert "scoreDoublets" not in config.model_dump(mode="json")
+    assert config.scoreDoublets is False
+    assert config.model_dump(mode="json")["scoreDoublets"] is False
     assert config.screeningCells is None
     assert config.maxScreeningCells == 100_000
     assert config.maxScreeningEvaluations == 24

@@ -93,6 +93,8 @@ def test_model_repairs_multiple_missing_tradeoffs_without_transcribing_values() 
         for key, value in review.items()
         if key in rna_tuning.TuningAction.model_fields
     }
+    for conclusion in action["comparisonConclusions"]:
+        conclusion.setdefault("tradeoffs", [])
     output_type = rna_tuning._assessment_output_type(
         list(coverage["candidateSettings"]), [], scope="full"
     )

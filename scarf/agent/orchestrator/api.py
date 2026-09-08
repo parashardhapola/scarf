@@ -38,8 +38,8 @@ def analyze_rna(
     unavailable or prohibited. Harmony-eligible runs retain the matched doublet
     diagnostics required by the correction acceptance gate. Scoring does not
     remove cells. Changing this option requires a new workflow destination.
-    If `score_doublets=True`, the workflow will score doublets and save the scores
-    to the Zarr store. This may consume a lot of additional time.
+    Advisory scoring defaults to disabled for new beginner calls. Pass
+    ``score_doublets=True`` explicitly to resume a run that enabled scoring.
     """
     if model is None or isinstance(model, str) and not model.strip():
         raise ValueError(

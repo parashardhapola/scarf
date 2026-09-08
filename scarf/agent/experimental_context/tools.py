@@ -1,6 +1,7 @@
 """Read-only Pydantic AI tools for experimental context."""
 
 import hashlib
+import json
 import math
 from copy import deepcopy
 from functools import wraps
@@ -72,7 +73,7 @@ def compact_context_evidence(evidence: CovariateEvidence) -> dict[str, Any]:
             if name in source and report[name] == source[name]:
                 report.pop(name)
         report["coefficientDetails"] = f"coefficient:{report.get('coefficient')}"
-        report["details"] = f"confounding:{index}"
+        report["details"] = {"section": "confounding", "record_id": str(index)}
     for plan in payload["contrastPlans"]:
         source = coefficients.get(plan["coefficient"], {})
         for name in ("replication", "estimability", "pairedCoverage"):
@@ -221,6 +222,13 @@ async def inspect_context_evidence(
     elif section == "confounding":
         if record_id.isdecimal() and int(record_id) < len(characterization.confounding):
             return deepcopy(characterization.confounding[int(record_id)])
+        raise ModelRetry(
+            "For section='confounding', record_id must be a zero-based index "
+            "string, not an evidence ID. Available record_id values: "
+            + json.dumps(
+                [str(index) for index in range(len(characterization.confounding))]
+            )
+        )
     else:
         records = (
             characterization.columns

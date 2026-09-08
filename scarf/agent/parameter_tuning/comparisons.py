@@ -461,13 +461,17 @@ def validate_comparison_review(
                 (row.alternativeCandidateId, row.metric): row
                 for row in conclusion.tradeoffs
             }
-            prefix = f"{axis}, preferred {conclusion.preferredCandidateId}"
+            prefix = (
+                f"comparisonConclusions[axis={axis!r}, "
+                f"preferredCandidateId={conclusion.preferredCandidateId!r}].tradeoffs"
+            )
             if len(supplied) != len(conclusion.tradeoffs):
                 tradeoff_errors.append(f"{prefix}: duplicate tradeoff entries")
             for key in sorted(required_tradeoffs.keys() - supplied.keys()):
                 left, right = required_tradeoffs[key]
                 tradeoff_errors.append(
-                    f"{prefix}: explain alternative {key[0]} on {key[1]} "
+                    f"{prefix}: add alternativeCandidateId={key[0]!r}, metric={key[1]!r}, "
+                    "and an interpretation "
                     f"(preferred={left!r}, alternative={right!r})"
                 )
             for key, row in supplied.items():
@@ -482,8 +486,16 @@ def validate_comparison_review(
                     )
         if tradeoff_errors:
             raise ValueError(
-                "Explain each observed alternative's better stability, marker or "
-                "separability measurement: " + "; ".join(tradeoff_errors)
+                "Repair the comparisonConclusions entries' tradeoffs arrays. Each "
+                "missing entry must contain alternativeCandidateId, metric and "
+                "interpretation explaining the measured alternative advantage and "
+                "its tradeoff with the objective. Expanding quantitativeReason, "
+                "biologicalReason or the overall rationale does not fill these arrays. "
+                "Do not leave them empty when advantages are listed. Scarf supplies "
+                "preferredValue and alternativeValue; do not transcribe them. "
+                "A larger listed value is an advantage on that metric, even if "
+                "you prefer another candidate for other reasons. Required repairs: "
+                + "; ".join(tradeoff_errors)
             )
     if action["action"] == "combine":
         if coverage["phase"] != "sensitivity":

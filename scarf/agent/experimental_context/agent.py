@@ -65,8 +65,8 @@ class ExperimentalContextAgent:
     ) -> None:
         self.model = model
         self.config = (config or AgentRunConfig()).with_limits(
-            request_limit=9,
-            tool_call_limit=6,
+            request_limit=10,
+            tool_call_limit=10,
             output_token_limit=32768,
             timeout_seconds=600.0,
         )
@@ -153,7 +153,10 @@ class ExperimentalContextAgent:
             Summaries retain adverse findings, missingness, protected group loss,
             replication and correction constraints. Use inspect_context_evidence
             to inspect one exact saved policy/capture or design record when its
-            details are needed. Omitted donor examples and detailed thresholds
+            details are needed. Copy the supplied section and record_id from
+            confounding details; do not construct an evidence ID for this lookup.
+            Reuse returned details instead of requesting the same record again.
+            Omitted donor examples and detailed thresholds
             remain available; do not interpret their omission as passing evidence.
             A later audited checkpoint compares the Scarf default with eligible
             alternatives and selects one exact policy. Never author
