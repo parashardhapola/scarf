@@ -26,6 +26,21 @@ def texts(value: Any) -> list[str]:
 
 
 def label(value: str) -> str:
+    names = {
+        "donor_id": "Donor",
+        "sample_id": "Sample",
+        "library_id": "Capture",
+        "T2D": "T2D status",
+        "hvgCount": "Number of variable genes",
+        "hvgRanking": "Variable-gene ranking",
+        "observationAndIndependentUnitsMustBeDesignOrTechnical": "The saved analysis did not support the declared study-unit roles",
+        "withinIndependentUnitComparisonsAreUnsupported": "Association testing for repeated observations from one study unit is unavailable",
+        "continuousConditioningIsUnsupported": "Conditioning on a continuous variable is unavailable",
+        "fewerThanFourIndependentUnits": "Fewer than four independent study units",
+        "unsupportedConditioningStrata": "Some conditioned groups do not support the requested comparison",
+    }
+    if value in names:
+        return names[value]
     return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value.replace("_", " ")).capitalize()
 
 

@@ -71,6 +71,41 @@ def _save_input_evidence(store, workflow, request, enrichment):
     )[1]
 
 
+def _measured_context_characterization(store, cell_selection):
+    from scarf.agent.experimental_context.characterization import (
+        characterize_covariates,
+    )
+    from scarf.agent.orchestrator.models import artifact_model_to_ref
+
+    for name, values in {
+        "sample": ["s1", "s1", "s2", "s2"],
+        "donor": ["d1", "d1", "d2", "d2"],
+        "treatment": ["control", "control", "treated", "treated"],
+        "batch": ["b1", "b1", "b2", "b2"],
+    }.items():
+        store.cells.insert(name, np.asarray(values))
+    return characterize_covariates(
+        store,
+        cellSelection=artifact_model_to_ref(cell_selection),
+        model=None,
+        directions={
+            "columnDomains": {
+                "sample": "design",
+                "donor": "design",
+                "treatment": "biological",
+                "batch": "technical",
+            },
+            "coefficientsOfInterest": ["treatment"],
+            "unitsOfInference": {
+                "treatment": {
+                    "observationUnit": "sample",
+                    "independentUnit": "donor",
+                }
+            },
+        },
+    )
+
+
 def _cell_selection_model() -> ArtifactReferenceModel:
     return ArtifactReferenceModel(
         scope="datastore",
@@ -227,9 +262,11 @@ def _build_plan(
     return AgentOrchestrator(object()).build_preprocessing_plan(*inputs)
 
 
+@pytest.mark.parametrize("missing_replication", [False, True])
 def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    missing_replication: bool,
 ) -> None:
     path = create_store(tmp_path / "unsafe-context.zarr")
     store = DataStore(str(path), default_assay="RNA", min_features_per_cell=0)
@@ -269,6 +306,9 @@ def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
     )
     unsafe_report = sample_context.model_copy(
         update={
+            "characterization": _measured_context_characterization(
+                store, cell_selection
+            ),
             "cellSelection": cell_selection,
             "qualityMetricArtifacts": [],
             "htoIdentityArtifacts": [],
@@ -293,6 +333,8 @@ def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
             ),
         }
     )
+    if missing_replication:
+        unsafe_report.characterization.coefficients[0]["replication"] = {}
 
     class UnsafeAgent:
         calls = 0
@@ -356,7 +398,15 @@ def test_unsafe_experimental_context_pauses_and_explicit_skip_reuses_evidence(
         {"experimentalDirections": "skipHarmony"},
     )
 
-    assert done_outcome.status == "done"
+    if missing_replication:
+        assert done_outcome.status == "needsInput"
+        assert done_outcome.needsInput is not None
+        assert (
+            "replication evidence is unavailable"
+            in done_outcome.needsInput.questions[0].question
+        )
+    else:
+        assert done_outcome.status == "done"
     assert done_outcome.actions == ["resolve_unsafe_batch_correction:skip"]
     assert resolved_report.decision.batchCorrection.action == "skip"
     assert resolved_report.decision.batchCorrection.batchColumns == []
@@ -409,6 +459,9 @@ def test_explicit_no_inference_skip_resolves_context_without_provider_rerun(
     )
     needs_input_report = sample_context.model_copy(
         update={
+            "characterization": _measured_context_characterization(
+                store, cell_selection
+            ),
             "status": "needsInput",
             "cellSelection": cell_selection,
             "cellQc": CellQcPlan(),
@@ -599,7 +652,7 @@ def test_converted_input_preserves_exact_selection_and_typed_qc() -> None:
     assert isinstance(plan.cellQc, CellQcPlan)
 
 
-def test_percent_features_follow_deterministic_inspection_not_policy_lists(
+def test_percent_features_use_exact_symbols_even_when_enrichment_omits_a_family(
     tmp_path: Path,
 ) -> None:
     path = create_store(tmp_path / "inspected-families.zarr")
@@ -668,11 +721,24 @@ def test_percent_features_follow_deterministic_inspection_not_policy_lists(
     assert metric_source.name == "RNA_percentMito"
     assert metric_source.artifact.kind == "quality_metric"
     assert outcome.artifacts[metric_source.name] == metric_source.artifact
-    assert orchestrator._named_stage_artifacts(
+    metric_sources = orchestrator._named_stage_artifacts(
         outcome,
         "qualityMetricArtifacts",
         "quality_metric",
-    ) == [metric_source]
+    )
+    assert metric_sources[0] == metric_source
+    assert [item.name for item in metric_sources] == [
+        "RNA_percentMito",
+        "RNA_percentRibo",
+    ]
+    assert outcome.outputs["percentageDefinitions"] == [
+        {"family": "mitochondrial", "pattern": r"(?i)^MT-", "matchedGenes": 1},
+        {
+            "family": "ribosomal",
+            "pattern": r"(?i)^(RPS|RPL|MRPS|MRPL)",
+            "matchedGenes": 1,
+        },
+    ]
     operation = outcome.outputs["operations"][0]
     assert operation["operation"] == "run_feature_percentage"
     assert operation["cellSelection"] == cell_selection.model_dump(mode="json")

@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
 from ...metadata.queries import reduce_observation_units
@@ -26,6 +27,8 @@ from .contracts import (
     CovariateCharacterization,
     CovariateEvidence,
     CovariateProposal,
+    BatchCorrectionPlan,
+    ExperimentalContextDecision,
     ExperimentalContextDependencies,
     InferenceUnit,
     RepresentationEvaluation,
@@ -37,6 +40,7 @@ from .qc_evidence import (
     _hto_identity_columns,
     _offered_qc_profiles,
 )
+from .requirements import objective_evidence
 
 try:
     from pydantic_ai import ModelRetry, RunContext
@@ -636,9 +640,30 @@ async def analyze_experimental_design(
         f"batchSafetyNotComputed={safety_counts['notComputed']}, "
         f"qcProfiles={len(qc_profiles)}, evidence={len(evidence_ids)}"
     )
+    requirements, coverage = (
+        objective_evidence(
+            study_context=ctx.deps.studyContext,
+            study_objective=ctx.deps.studyObjective,
+            experimental_result=SimpleNamespace(
+                characterization=characterization,
+                decision=ExperimentalContextDecision(
+                    coefficientsOfInterest=directed_coefficients,
+                    batchCorrection=BatchCorrectionPlan(
+                        action="needsInput",
+                        batchColumns=canonical_batch_columns,
+                    ),
+                ),
+                batchSafety=batch_safety,
+            ),
+        )
+        if ctx.deps.studyObjective
+        else ([], [])
+    )
     return CovariateEvidence(
         characterization=characterization,
         batchSafety=batch_safety,
+        evidenceRequirements=requirements,
+        evidenceCoverage=coverage,
         qcProfiles=qc_profiles,
         qcMetricSources=ctx.deps.qcMetricSources,
         qcSourceConcordance=ctx.deps.qcSourceConcordance,

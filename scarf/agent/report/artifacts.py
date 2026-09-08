@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from ...storage.refs import ArtifactRef
 from ...storage.stores import zarr_root_path
 from ..types import ArtifactReferenceModel
-from .contracts import mapping, mappings, texts
+from .contracts import label, mapping, mappings, texts
 
 if TYPE_CHECKING:
     from ...datastore.datastore import DataStore
@@ -58,6 +58,9 @@ def artifact_ref(value: Any) -> ArtifactRef:
 
 def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Select recorded scientific values without inferring decision rationales."""
+    from ..orchestrator.rna import validate_analysis_evidence
+
+    validate_analysis_evidence(snapshot)
     final = mapping(snapshot.get("finalAnalysis"))
     stages = mappings(snapshot.get("stages"))
     decisions = [
@@ -65,21 +68,22 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     ]
     limitations = texts(final.get("limitations")) + texts(snapshot.get("limitations"))
     assessments = mappings(snapshot.get("analysisReviews"))
-    full_assessments = [item for item in assessments if item["scope"] == "full"]
+    full_assessments = [
+        item
+        for item in assessments
+        if item["scope"] == "full" and item.get("action") == "accept"
+    ]
     accepted = full_assessments[-1] if full_assessments else {}
-    findings = texts(accepted.get("quantitativeFindings")) + texts(
-        accepted.get("qualitativeFindings")
-    )
     selected: dict[str, Any] = {}
-    alternatives: list[dict[str, Any]] = []
     qc_profiles: list[dict[str, Any]] = []
     qc_profile_id: Any = None
+    context: dict[str, Any] = {}
+    study: dict[str, Any] = {}
     for stage in stages:
         report = mapping(stage.get("report"))
         stage_name = str(stage.get("stage", ""))
         if stage_name.startswith("parameter_tuning"):
             evaluations = mappings(report.get("evaluations"))
-            alternatives = evaluations
             recommended = report.get("recommendedCandidateId")
             selected = next(
                 (
@@ -90,6 +94,8 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                 selected,
             )
         if stage_name == "experimental_context":
+            context = report
+            study = mapping(mapping(stage.get("outputs")).get("studyContract"))
             qc_profile_id = mapping(report.get("cellQc")).get("profileId")
             qc_profiles = mappings(report.get("qcProfiles"))
         outputs = mapping(stage.get("outputs"))
@@ -100,14 +106,67 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     qc = next(
         (item for item in qc_profiles if item.get("profileId") == qc_profile_id), {}
     )
+    limitations.extend(texts(study.get("limitations")))
+    limitations.extend(
+        str(item["explanation"])
+        for item in mappings(accepted.get("populationConcerns"))
+        if item.get("explanation")
+    )
+    comparison_limits = {}
+    for comparison in mappings(
+        mapping(context.get("characterization")).get("comparisons")
+    ):
+        if comparison.get("status") != "unsupported":
+            continue
+        proposal = mapping(comparison.get("proposal"))
+        question = (
+            f"{label(str(proposal.get('response', 'Study factor')))} against "
+            + ", ".join(
+                label(name) for name in texts(proposal.get("explanatoryColumns"))
+            )
+        )
+        if proposal.get("conditionedOn"):
+            question += f" within {label(str(proposal['conditionedOn']))} groups"
+        reasons = "; ".join(
+            label(reason) for reason in texts(comparison.get("reasons"))
+        )
+        comparison_limits[str(comparison.get("evidenceId"))] = (
+            f"{question}: the requested association was not computed. {reasons}."
+        )
+    displayed_limits = []
+    for limitation in limitations:
+        match = next(
+            (
+                text
+                for identity, text in comparison_limits.items()
+                if identity and identity in limitation
+            ),
+            None,
+        )
+        displayed_limits.append(match or limitation)
+    population = mapping(
+        mapping(accepted.get("populationSupport")).get(
+            str(accepted.get("selectedCandidateId"))
+        )
+    )
+    if population:
+        for key in ("cellSelection", "clusters"):
+            if artifact_ref(population.get(key)) != artifact_ref(final.get(key)):
+                raise ValueError(
+                    "Reported population support differs from the final analysis"
+                )
+        if population.get("candidateId") != accepted.get("selectedCandidateId"):
+            raise ValueError("Reported population support belongs to another candidate")
     return {
         "request": mapping(snapshot.get("request")),
         "finalAnalysis": final,
         "decisions": decisions,
         "assessments": assessments,
-        "alternatives": alternatives,
-        "findings": list(dict.fromkeys(findings)),
-        "limitations": list(dict.fromkeys(limitations)),
+        "accepted": accepted,
+        "context": context,
+        "study": study,
+        "populationSupport": population,
+        "limitations": list(dict.fromkeys(displayed_limits)),
         "selectedParameters": mapping(selected.get("parameters")),
         "selectedMetrics": mapping(selected.get("metrics")),
         "selectedSetting": mapping(
@@ -121,4 +180,5 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             )
         ),
         "qc": qc,
+        "qcProfiles": qc_profiles,
     }

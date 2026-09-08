@@ -1,5 +1,6 @@
 """Experimental-context canonicalization and explicit model failures."""
 
+from types import SimpleNamespace
 from typing import Any
 
 from ...utils.logging import logger
@@ -22,6 +23,7 @@ from .qc_evidence import (
     _offered_qc_profiles,
 )
 from .tools import contrast_plans_from_characterization
+from .requirements import objective_evidence, unmet_objective_requirements
 
 try:
     from pydantic_ai import ModelRetry
@@ -392,6 +394,25 @@ def validate_experimental_context(
             **design_choices,
         }
     )
+    if deps.studyObjective:
+        requirements, coverage = objective_evidence(
+            study_context=deps.studyContext,
+            study_objective=deps.studyObjective,
+            experimental_result=SimpleNamespace(
+                decision=validated,
+                characterization=characterization,
+                batchSafety=list(deps.batchSafety.values()),
+            ),
+        )
+        unanswered = unmet_objective_requirements(requirements, coverage)
+        if unanswered:
+            validated = validated.model_copy(
+                update={
+                    "needsInput": list(
+                        dict.fromkeys([*validated.needsInput, *unanswered])
+                    ),
+                }
+            )
     logger.debug(
         "Experimental Context decision validated: "
         f"domains={len(validated.columnDomains)}, "

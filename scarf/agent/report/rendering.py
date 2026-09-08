@@ -1,6 +1,7 @@
 """A single readable analysis page, using only recorded scientific evidence."""
 
 import html
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -13,6 +14,8 @@ _STYLES = """
 header{border-bottom:2px solid #237e6a;padding-bottom:22px}h1,h2,h3{line-height:1.25;color:#164c40}
 h1{font-size:2.2rem;margin:8px 0}h2{font-size:1.4rem;margin-top:36px}h3{font-size:1.05rem}
 p{max-width:90ch}a{color:#17644f}small,.muted{color:#586763}.numbers{font-size:1.25rem;font-weight:600}
+.fraction{white-space:nowrap}progress{width:86px;height:12px;accent-color:#237e6a}.notice{background:#fff6df;border-left:4px solid #bd8b22;padding:12px 18px;margin:20px 0}.notice h2{margin-top:0}
+.population-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:20px;align-items:start}.population-overview figure{position:sticky;top:20px}.population-overview>div{min-width:0}
 figure{margin:24px 0;background:white;padding:12px;border-radius:8px}figure img{width:100%;height:auto}
 figcaption{font-size:.9rem;text-align:center}.decision{border-top:1px solid #ccd7d1;padding:14px 0}
 .decision h3{margin:0}.decision p{margin:8px 0}details{margin:12px 0}summary{cursor:pointer;color:#17644f}
@@ -20,6 +23,7 @@ figcaption{font-size:.9rem;text-align:center}.decision{border-top:1px solid #ccd
 th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid #d9e0dc}
 th{background:#e9efeb}td p{margin:0}li{margin:6px 0}
 footer{margin-top:36px;border-top:1px solid #ccd7d1;padding-top:18px;font-size:.85rem}
+@media(max-width:800px){.population-overview{display:block}.population-overview figure{position:static}}
 @media(max-width:600px){main{padding:20px 14px}h1{font-size:1.7rem}th,td{padding:7px}}
 @media print{body{background:white}main{padding:0}details{break-inside:avoid}}
 """
@@ -48,60 +52,361 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
     return f'<div class="table-wrap"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
-def _decision(decision: Mapping[str, Any]) -> str:
-    spec, record = mapping(decision.get("spec")), mapping(decision.get("record"))
-    options = mappings(spec.get("options"))
-    selected = next(
-        (
-            option
-            for option in options
-            if option.get("optionId") == record.get("selectedOptionId")
-        ),
-        {},
+def _fraction_bar(value: Any) -> str:
+    if (
+        not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        return "Unavailable"
+    return f'<span class="fraction"><progress value="{value:.6f}" max="1"></progress> {value:.1%}</span>'
+
+
+def _percentage(value: Any) -> str:
+    return (
+        f"{value:.1%}"
+        if isinstance(value, int | float) and math.isfinite(value) and 0 <= value <= 1
+        else "Unavailable"
     )
-    question = str(
-        spec.get("question") or label(str(record.get("decisionId", "Analysis setting")))
+
+
+def _scope(assessment: Mapping[str, Any]) -> str:
+    coverage = mapping(assessment.get("coverage"))
+    all_cells = (
+        assessment.get("scope") == "full"
+        or mapping(assessment.get("comparisonCoverage")).get("population") == "allCells"
     )
-    chosen = str(selected.get("label") or "Selection unavailable")
-    rationale = str(record.get("rationale") or "No rationale was recorded.")
-    source = {
-        "agent": "Agent choice",
-        "rule": "Scarf rule",
-        "human": "User choice",
-    }.get(str(record.get("source", "")), "")
-    alternatives = _table(
-        ("Option", "Action", "Description"),
-        [
+    name = "Full cohort" if all_cells else "Screening sample"
+    size = coverage.get("screeningCells")
+    return f"{name} ({size:,} cells)" if isinstance(size, int) else name
+
+
+def _population_table(payload: Mapping[str, Any]) -> str:
+    counts = mapping(payload.get("clusterCounts"))
+    total = sum(counts.values())
+    markers = mappings(payload.get("markers"))
+    support = mapping(payload.get("populationSupport"))
+    units = texts(mapping(payload.get("study")).get("independentUnitColumns"))
+    columns = mapping(support.get("columns"))
+    unit = next((name for name in units if name in columns), None)
+    evidence = mapping(columns.get(unit)) if unit is not None else {}
+    populations = {
+        str(row["cluster"]): row for row in mappings(evidence.get("populations"))
+    }
+    rows = []
+    for cluster, count in counts.items():
+        row = populations.get(str(cluster), {})
+        genes = ", ".join(
+            str(item["feature"])
+            for item in markers
+            if str(item.get("cluster")) == str(cluster)
+        )
+        observed = row.get("groupsWithAtLeast5Cells")
+        unit_count = str(observed) if isinstance(observed, int) else "Unavailable"
+        rows.append(
+            f"<tr><td>{_escape(cluster)}</td><td>{count:,}<br>{_fraction_bar(count / total if total else None)}</td>"
+            f"<td>{_escape(genes or 'No marker preview available')}</td>"
+            f"<td>{unit_count}</td><td>{_fraction_bar(row.get('largestGroupFraction'))}</td></tr>"
+        )
+    unit_label = label(unit) if unit else "Study unit"
+    omitted = evidence.get("omittedPopulations", 0)
+    notes = []
+    if omitted:
+        notes.append(
+            f"Support details were not saved for {omitted} populations; their support is unavailable here."
+        )
+    if evidence.get("missingCells"):
+        notes.append(
+            f"{evidence['missingCells']:,} cells lack the recorded study-unit metadata."
+        )
+    if not evidence:
+        notes.append("No per-population study-unit evidence was saved.")
+    return (
+        '<div class="table-wrap"><table><thead><tr><th>Population</th><th>Cells</th><th>Top marker genes</th>'
+        f"<th>{_escape(unit_label)} groups with ≥5 cells</th><th>Largest group contribution</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+        + '<p class="muted">Markers describe gene programs, not validated cell identities. Study-unit counts and concentration describe observed support; five cells is not a replication threshold.</p>'
+        + _list(notes)
+    )
+
+
+def _qc_section(payload: Mapping[str, Any]) -> str:
+    qc = mapping(payload.get("qc"))
+    profiles = mappings(payload.get("qcProfiles"))
+    names = {
+        "coreGlobalGaussian": "Scarf default global filter",
+        "globalGaussian": "Scarf default global filter",
+        "coreSampleMad3": "Scarf filter within samples",
+        "sampleMad": "Scarf filter within samples",
+        "retainWithFlags": "Retain cells with quality flags",
+        "skip": "Retain cells without filtering",
+        "globalMad5": "Lenient global filter",
+        "captureMad5": "Lenient filter within captures",
+        "captureMad3Sensitivity": "Stricter filter within captures",
+        "pooledReferenceMad5": "Filter using reference captures",
+    }
+    rows = []
+    for profile in profiles:
+        name = names.get(
+            str(profile.get("registeredProfile") or profile.get("action")),
+            "Recorded quality filter",
+        )
+        if profile.get("sampleColumn"):
+            name += f" ({label(str(profile['sampleColumn']))})"
+        chosen = profile.get("profileId") == qc.get("profileId")
+        rows.append(
+            f"<tr><td>{_escape(name)}{' <strong>(selected)</strong>' if chosen else ''}</td>"
+            f"<td>{_escape(profile.get('retainedCells'))}</td>"
+            f"<td>{_fraction_bar(profile.get('retainedFraction'))}</td></tr>"
+        )
+    table = (
+        '<div class="table-wrap"><table><thead><tr><th>Compared policy</th><th>Projected cells retained</th><th>Retention</th></tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table></div>"
+        if rows
+        else "<p>Quality-policy comparisons are unavailable.</p>"
+    )
+    grouped = []
+    for column, groups in mapping(qc.get("retainedCellsByColumn")).items():
+        values = list(mapping(groups).values())
+        if not values:
+            continue
+        description = (
+            "; ".join(f"{name}: {count:,}" for name, count in groups.items())
+            if len(values) <= 8
+            else f"{len(values)} groups; smallest {min(values):,}, largest {max(values):,} cells"
+        )
+        grouped.append([label(column), description])
+    decisions = [
+        mapping(item.get("record"))
+        for item in mappings(payload.get("decisions"))
+        if mapping(item.get("record")).get("decisionId")
+        in {"cellQuality", "qcGrouping"}
+    ]
+    quality = [item for item in decisions if item.get("decisionId") == "cellQuality"]
+    chosen_reason = f"<p>{_escape(quality[-1].get('rationale'))}</p>" if quality else ""
+    explanations = "".join(
+        f"<p>{_escape(item.get('rationale'))}</p>"
+        for item in decisions
+        if item.get("decisionId") == "qcGrouping"
+    )
+    if explanations:
+        explanations = f"<details><summary>Study grouping for quality filtering</summary>{explanations}</details>"
+    return f'<section id="quality"><h2>Cell quality</h2>{chosen_reason}{table}{_table(("Retained study groups", "Cells"), grouped)}{explanations}</section>'
+
+
+def _design_section(payload: Mapping[str, Any]) -> str:
+    study = mapping(payload.get("study"))
+    context = mapping(payload.get("context"))
+    characterization = mapping(context.get("characterization"))
+    correction = mapping(payload.get("selectedParameters")).get("useHarmony")
+    license = study.get("correctionLicense")
+    if correction is True:
+        correction_text = "Batch correction was applied to the selected representation."
+    elif license == "unsafeConfounded":
+        correction_text = "Batch correction was not applied: the recorded design cannot separate the proposed batch effects from protected biology."
+    elif correction is False:
+        correction_text = "The selected representation uses no batch correction."
+    else:
+        correction_text = "The correction decision is unavailable."
+    rows = []
+    for coefficient in mappings(characterization.get("coefficients")):
+        replication = mapping(coefficient.get("replication"))
+        groups = mappings(replication.get("independentUnitsByGroup"))
+        counts = "; ".join(
+            f"{item.get('group')}: {item.get('count')}" for item in groups
+        )
+        paired = mapping(coefficient.get("pairedCoverage"))
+        pairing = (
+            f"{paired['completePairs']} of {paired.get('pairs', 'unavailable')} complete pairs"
+            if paired.get("design") == "mixedOrIncomplete"
+            else "Between study units"
+            if paired.get("betweenIndependentUnits")
+            else ""
+        )
+        rows.append([label(str(coefficient.get("name", ""))), counts, pairing])
+    requirements = {
+        item["requirementId"]: item
+        for item in mappings(study.get("evidenceRequirements"))
+    }
+    questions = []
+    for item in mappings(study.get("evidenceCoverage")):
+        requirement = requirements.get(item.get("requirementId"), {})
+        status = {
+            "computed": "Assessed",
+            "nonIdentifiable": "Not identifiable",
+            "unsupported": "Not assessed",
+            "failed": "Failed",
+        }.get(str(item.get("status")), "Unavailable")
+        questions.append(
             [
-                option.get("label"),
-                "Selected" if option is selected else "Not selected",
-                option.get("description"),
+                requirement.get("question"),
+                status,
+                "; ".join(label(reason) for reason in texts(item.get("reasons"))),
             ]
-            for option in options
-        ],
-    )
-    evidence = mappings(mapping(decision.get("evidence")).get("evidence"))
-    evidence_markup = _list(
-        [str(item["summary"]) for item in evidence if item.get("summary")]
-    )
-    checks = mappings(decision.get("checks"))
-    check_markup = _table(
-        ("Check", "Outcome", "Finding"),
-        [
-            [
-                item.get("label", item.get("name")),
-                item.get("status"),
-                item.get("reason", item.get("summary")),
-            ]
-            for item in checks
-        ],
-    )
-    return f"""<article class="decision">
-<h3>{html.escape(question)}</h3>
-<p><strong>{html.escape(chosen)}.</strong> {html.escape(rationale)}</p>
-{"<small>" + source + "</small>" if source else ""}
-<details><summary>Alternatives and supporting evidence</summary>{alternatives}{evidence_markup}{check_markup}</details>
-</article>"""
+        )
+    claims = texts(study.get("unsupportedClaims"))
+    return f'<section id="design"><h2>Study design and correction</h2><p>{_escape(correction_text)}</p>{_table(("Study factor", "Independent units per group", "Design"), rows)}{_table(("Objective question", "Evidence", "Limit"), questions)}{_list(claims)}</section>'
+
+
+_AXIS_LABELS = {
+    "hvgCount": "Number of variable genes",
+    "hvgRanking": "Variable-gene ranking",
+    "featurePolicy": "Gene families",
+    "pca": "PCA dimensions",
+    "dimensions": "PCA dimensions",
+    "neighbors": "Neighbors",
+    "resolution": "Clustering resolution",
+    "partition": "Clustering resolution",
+    "batchCorrection": "Batch correction",
+    "harmony": "Batch correction",
+}
+
+
+def _comparison_sections(payload: Mapping[str, Any]) -> str:
+    assessments = mappings(payload.get("assessments"))
+    scope_evidence = {str(item["scope"]): item for item in assessments}
+    sections = []
+    for title, partition in (("Genes and representation", False), ("Clustering", True)):
+        scopes: dict[str, dict[str, Any]] = {}
+        for assessment in assessments:
+            coverage = mapping(assessment.get("comparisonCoverage"))
+            settings = mapping(coverage.get("candidateSettings"))
+            for conclusion in mappings(assessment.get("comparisonConclusions")):
+                if (conclusion.get("axis") == "partition") != partition:
+                    continue
+                identities = texts(conclusion.get("candidateIds"))
+                for identity in identities:
+                    candidate = mapping(settings.get(identity))
+                    scope = str(candidate.get("scope", ""))
+                    if not candidate or scope not in {"sample0", "sample1", "full"}:
+                        raise ValueError(
+                            "Reported comparison lacks exact candidate scope and settings"
+                        )
+                    group = scopes.setdefault(
+                        scope,
+                        {
+                            "assessment": scope_evidence.get(scope, {"scope": scope}),
+                            "conclusions": {},
+                            "candidates": {},
+                            "unavailable": {},
+                        },
+                    )
+                    key = (conclusion["axis"], tuple(sorted(identities)))
+                    group["conclusions"][key] = conclusion
+                    group["candidates"][identity] = candidate
+            for item in mappings(coverage.get("comparisons")):
+                if (
+                    item.get("status") != "notApplicable"
+                    or (item.get("axis") == "partition") != partition
+                ):
+                    continue
+                candidate = mapping(settings.get(str(item.get("baselineCandidateId"))))
+                scope = str(candidate.get("scope", ""))
+                if scope in scopes:
+                    scopes[scope]["unavailable"][
+                        (item.get("axis"), item.get("reason"))
+                    ] = item
+        content = []
+        for group in scopes.values():
+            content.append(f"<h3>{_escape(_scope(group['assessment']))}</h3>")
+            for conclusion in group["conclusions"].values():
+                axis = str(conclusion["axis"])
+                content.append(
+                    f"<p><strong>{_escape(_AXIS_LABELS.get(axis, label(axis)))}.</strong> {_escape(conclusion.get('plainLanguageSummary'))}</p>"
+                )
+                content.append(
+                    f"<details><summary>Evidence behind this choice</summary><p>{_escape(conclusion.get('quantitativeReason'))}</p><p>{_escape(conclusion.get('biologicalReason'))}</p></details>"
+                )
+                content.append(
+                    _list(
+                        texts(
+                            [
+                                item.get("interpretation")
+                                for item in mappings(conclusion.get("tradeoffs"))
+                            ]
+                        )
+                    )
+                )
+            rows = []
+            for identity, candidate in group["candidates"].items():
+                setting = candidate
+                parameters = mapping(candidate.get("parameters"))
+                metrics = mapping(candidate.get("metrics"))
+                preferred = [
+                    _AXIS_LABELS.get(item["axis"], label(item["axis"]))
+                    for item in group["conclusions"].values()
+                    if item.get("preferredCandidateId") == identity
+                ]
+                choice = (
+                    "Preferred: " + ", ".join(dict.fromkeys(preferred))
+                    if preferred
+                    else "Compared"
+                )
+                if identity == mapping(payload.get("accepted")).get(
+                    "selectedCandidateId"
+                ):
+                    choice = "Selected final settings"
+                if partition:
+                    rows.append(
+                        [
+                            parameters.get("leidenResolution"),
+                            metrics.get("nClusters"),
+                            metrics.get("minClusterCells"),
+                            metrics.get("seedStability"),
+                            metrics.get("subsampleStability"),
+                            _percentage(metrics.get("markerCoherence")),
+                            choice,
+                        ]
+                    )
+                else:
+                    ranking = {"batchAware": "Within batches", "global": "Global"}.get(
+                        str(setting.get("ranking")), "Unavailable"
+                    )
+                    rows.append(
+                        [
+                            setting.get("hvgCount"),
+                            ranking,
+                            parameters.get("dimensions"),
+                            parameters.get("neighborsK"),
+                            metrics.get("nClusters"),
+                            metrics.get("seedStability"),
+                            _percentage(metrics.get("markerCoherence")),
+                            choice,
+                        ]
+                    )
+            headers = (
+                (
+                    "Resolution",
+                    "Populations",
+                    "Smallest population",
+                    "Repeat agreement",
+                    "Subsample agreement",
+                    "Clusters with qualifying markers",
+                    "Choice",
+                )
+                if partition
+                else (
+                    "Variable genes",
+                    "Ranking",
+                    "PCA dimensions",
+                    "Neighbors",
+                    "Populations",
+                    "Repeat agreement",
+                    "Clusters with qualifying markers",
+                    "Choice",
+                )
+            )
+            content.append(_table(headers, rows))
+            for item in group["unavailable"].values():
+                axis = str(item["axis"])
+                content.append(
+                    f"<p>{_escape(_AXIS_LABELS.get(axis, label(axis)))}: not compared. {_escape(item.get('reason'))}</p>"
+                )
+        if content:
+            sections.append(f"<section><h2>{title}</h2>{''.join(content)}</section>")
+    return "".join(sections)
 
 
 def render_analysis_document(payload: Mapping[str, Any]) -> str:
@@ -109,7 +414,7 @@ def render_analysis_document(payload: Mapping[str, Any]) -> str:
     request = mapping(payload.get("request"))
     counts = mapping(payload.get("clusterCounts"))
     total = sum(int(value) for value in counts.values())
-    context = request.get("studyObjective") or request.get("studyContext") or ""
+    objective = request.get("studyObjective") or request.get("studyContext") or ""
     assay = final.get("primaryAssay") or request.get("primaryAssay") or "RNA"
     qc = mapping(payload.get("qc"))
     qc_text = ""
@@ -117,164 +422,46 @@ def render_analysis_document(payload: Mapping[str, Any]) -> str:
         qc.get("retainedFraction"), int | float
     ):
         qc_text = f"<p>QC retained {_escape(qc['retainedCells'])} cells ({float(qc['retainedFraction']):.1%}).</p>"
+    accepted = mapping(payload.get("accepted"))
+    outcome = str(
+        accepted.get("plainLanguageSummary")
+        or "The selected populations and their marker programs are recorded below."
+    )
     map_markup = ""
     if payload.get("umap"):
         display = int(payload.get("displayedCells") or total)
-        map_markup = f'<figure><img src="{html.escape(str(payload["umap"]), quote=True)}" alt="Final UMAP colored by saved cluster labels"><figcaption>{display:,} of {total:,} cells shown. Counts and marker statistics use the complete selection.</figcaption></figure>'
-    decisions = "".join(_decision(item) for item in mappings(payload.get("decisions")))
-    assessments = mappings(payload.get("assessments"))
-    for assessment in assessments:
-        scope = (
-            "Full cohort" if assessment.get("scope") == "full" else "Screening sample"
-        )
-        alternatives = mappings(assessment.get("candidates"))
-        settings = mapping(assessment.get("settings"))
-        comparison = _table(
-            (
-                "Resolution",
-                "PCA dimensions",
-                "Neighbors",
-                "HVGs",
-                "HVG ranking",
-                "Harmony",
-                "Clusters",
-                "Seed stability",
-                "Marker coherence",
-                "Selected",
-            ),
-            [
-                [
-                    mapping(item.get("parameters")).get("leidenResolution"),
-                    mapping(item.get("parameters")).get("dimensions"),
-                    mapping(item.get("parameters")).get("neighborsK"),
-                    mapping(settings.get(str(item.get("candidateId")))).get("hvgCount"),
-                    mapping(settings.get(str(item.get("candidateId")))).get("ranking"),
-                    mapping(item.get("parameters")).get("useHarmony"),
-                    mapping(item.get("metrics")).get("nClusters"),
-                    mapping(item.get("metrics")).get("seedStability"),
-                    mapping(item.get("metrics")).get("markerCoherence"),
-                    item.get("candidateId") == assessment.get("selectedCandidateId"),
-                ]
-                for item in alternatives
-            ],
-        )
-        assessment_findings = texts(assessment.get("quantitativeFindings")) + texts(
-            assessment.get("qualitativeFindings")
-        )
-        details = _list(assessment_findings)
-        if assessment.get("evidenceMode") == "structured":
-            details = (
-                "<p>The model assessed structured loading, marker and diagnostic evidence. "
-                "No plots were supplied for visual inspection.</p>" + details
-            )
-        rationale = html.escape(str(assessment.get("rationale", "")))
-        action = {
-            "accept": "Accepted settings",
-            "experiment": "Selected a targeted experiment",
-            "enlarge": "Requested more cells",
-            "defer": "Required more evidence",
-        }.get(str(assessment.get("action", "")), "Analysis assessment")
-        protection = html.escape(str(assessment.get("objectivePreservation", "")))
-        experiment = ""
-        if assessment.get("experimentId"):
-            experiment = (
-                f"<p><strong>Experiment: {_escape(assessment['experimentId'])}</strong></p>"
-                f"<p>Observed concern: {_escape(assessment.get('concern'))}</p>"
-                f"<p>Expected improvement: {_escape(assessment.get('expectedImprovement'))}</p>"
-            )
-        correction = assessment.get("correctionNeed")
-        correction_text = (
-            f"<p>Correction necessity: {_escape(label(str(correction)))}.</p>"
-            if correction
-            else ""
-        )
-        decisions += f'<article class="decision"><h3>{scope}: {action}</h3><p>{rationale}</p>{experiment}<details><summary>Compared settings and evidence</summary>{comparison}{details}{correction_text}<p>{protection}</p></details></article>'
-    if not decisions:
-        decisions = "<p>No consequential decisions were recorded.</p>"
-    findings = _list(texts(payload.get("findings")))
-    marker_rows = mappings(payload.get("markers"))
-    cluster_table = _table(
-        ("Cluster", "Cells", "Top marker genes"),
-        [
-            [
-                cluster,
-                count,
-                ", ".join(
-                    str(row["feature"])
-                    for row in marker_rows
-                    if row.get("cluster") == cluster
-                )
-                or "No markers passed the saved-table filters",
-            ]
-            for cluster, count in counts.items()
-        ],
-    )
-    parameters = mapping(payload.get("selectedParameters"))
-    metrics = mapping(payload.get("selectedMetrics"))
-    selected_setting = mapping(payload.get("selectedSetting"))
-    selected_features = mapping(payload.get("selectedFeatures"))
-    methods = _table(
-        ("Setting", "Selected value"),
-        [
-            [name, parameters[key]]
-            for key, name in (
-                ("dimensions", "PCA dimensions"),
-                ("neighborsK", "Neighbors"),
-                ("leidenResolution", "Clustering resolution"),
-                ("useHarmony", "Harmony correction"),
-            )
-            if key in parameters
-        ],
-    )
-    methods += _table(
-        ("Gene selection", "Selected value"),
-        [
-            [name, selected_setting[key]]
-            for key, name in (
-                ("hvgCount", "HVG count"),
-                ("ranking", "HVG ranking"),
-                ("rankingColumn", "Ranking technical column"),
-            )
-            if selected_setting.get(key) is not None
-        ],
-    )
-    methods += _table(
-        ("Feature family", "Eligible genes", "Selected HVGs"),
-        [
-            [
-                label(name),
-                mapping(values).get("eligibleGenes"),
-                mapping(values).get("selectedGenes"),
-            ]
-            for name, values in mapping(selected_features.get("families")).items()
-        ],
-    )
-    measurements = _table(
-        ("Measure", "Recorded value"),
-        [
-            [name, metrics[key]]
-            for key, name in (
-                ("seedStability", "Clustering stability across seeds"),
-                ("subsampleStability", "Clustering stability across subsamples"),
-                ("markerCoherence", "Marker coherence"),
-                ("crossUnitSupport", "Support across study units"),
-                ("minClusterCells", "Smallest cluster"),
-            )
-            if key in metrics and metrics[key] is not None
-        ],
-    )
+        map_markup = f'<figure><img src="{html.escape(str(payload["umap"]), quote=True)}" alt="Final UMAP colored by saved population labels"><figcaption>{display:,} of {total:,} cells shown. Counts and markers use the complete selection.</figcaption></figure>'
     limitations = _list(texts(payload.get("limitations")))
     display_notes = _list(texts(payload.get("displayNotes")))
+    mode_note = (
+        "<p>The model assessed structured evidence. No plots were supplied for visual inspection.</p>"
+        if accepted.get("evidenceMode") == "structured"
+        else ""
+    )
+    parameters = mapping(payload.get("selectedParameters"))
+    setting = mapping(payload.get("selectedSetting"))
+    methods = _table(
+        ("Selected setting", "Value"),
+        [
+            [name, value]
+            for name, value in (
+                ("Variable genes", setting.get("hvgCount")),
+                ("PCA dimensions", parameters.get("dimensions")),
+                ("Neighbors", parameters.get("neighborsK")),
+                ("Clustering resolution", parameters.get("leidenResolution")),
+                ("Batch correction", parameters.get("useHarmony")),
+            )
+        ],
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scarf analysis summary</title><style>{_STYLES}</style></head><body><main>
-<header><small>Scarf analysis</small><h1>Analysis summary</h1><p>{_escape(context)}</p>
-<p class="numbers">{total:,} cells · {len(counts):,} clusters · {_escape(assay)}</p>{qc_text}</header>
-{map_markup}<section><h2>Analysis decisions</h2>{decisions}</section>
-{"<section><h2>What the evidence shows</h2>" + findings + "</section>" if findings else ""}
-<section><h2>Clusters and markers</h2>{cluster_table}<p class="muted">Marker genes describe the saved clusters; they do not establish cell identities.</p></section>
-{"<section><h2>Limitations</h2>" + limitations + "</section>" if limitations else ""}
-<details><summary>Selected methods and measurements</summary>{methods}{measurements}<p>All measurements and explanations are read from the completed analysis. The map uses saved coordinates and a bounded display sample. No analysis or model calls run when this report is generated.</p></details>
+<header><small>Scarf analysis</small><h1>Analysis summary</h1><p>{_escape(objective)}</p>
+<p class="numbers">{total:,} cells · {len(counts):,} clusters · {_escape(assay)}</p>{qc_text}<p>{_escape(outcome)}</p></header>
+{'<aside class="notice"><h2>Limits of this analysis</h2>' + limitations + "</aside>" if limitations else ""}
+<section><h2>Populations and markers</h2><div{' class="population-overview"' if map_markup else ""}>{map_markup}<div>{_population_table(payload)}</div></div></section>
+{_qc_section(payload)}{_design_section(payload)}{_comparison_sections(payload)}
+<details><summary>Selected methods and evidence</summary>{methods}{mode_note}<p>Repeat and subsample agreement use adjusted Rand index. Marker coverage is the fraction of clusters with qualifying markers. These describe the selected analysis; they are not probabilities of biological correctness.</p></details>
 {"<details><summary>Unavailable displays</summary>" + display_notes + "</details>" if display_notes else ""}
-<footer>Generated locally by <a href="https://scarf.readthedocs.io/">Scarf</a>.</footer>
+<footer>Generated locally by <a href="https://scarf.readthedocs.io/">Scarf</a>. All numerical evidence is read from the saved analysis; report generation makes no analysis or model calls.</footer>
 </main></body></html>"""

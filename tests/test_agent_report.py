@@ -22,39 +22,50 @@ from tests.test_agent_analysis_plots import display_store
 
 
 def snapshot() -> dict[str, Any]:
-    state = {
+    from scarf.agent.experimental_context import ExperimentalContextResult
+    from scarf.agent.experimental_context.study import build_study_contract
+    from tests.agent_comparison_examples import comparison_review
+
+    request = {
+        "studyContext": "Human RNA cells",
+        "studyObjective": "Find stable populations <without> batch artifacts.",
+    }
+    context = ExperimentalContextResult.get_blank().model_dump(mode="json")
+    context["status"] = "done"
+    context["characterization"].update(
+        status="done",
+        columns=[{"name": "sample", "kind": "categorical", "domain": "design"}],
+    )
+    context["cellQc"]["profileId"] = "selected"
+    context["qcProfiles"] = [
+        {
+            "profileId": "selected",
+            "action": "globalGaussian",
+            "driverAssay": "RNA2",
+            "driverAssayType": "RNA",
+            "attributes": ["RNA2_nCounts", "RNA2_nFeatures", "RNA2_percentMito"],
+            "activeCells": 675218,
+            "retainedCells": 621200,
+            "retainedFraction": 621200 / 675218,
+            "retainedCellsByColumn": {
+                "condition": {"control": 320000, "treated": 301200}
+            },
+        }
+    ]
+    context = ExperimentalContextResult.model_validate(context)
+    study = build_study_contract(
+        study_context=request["studyContext"],
+        study_objective=request["studyObjective"],
+        experimental_result=context,
+    )
+    review = comparison_review()
+    return {
         "runId": "exact-analysis",
         "status": "completed",
-        "request": {
-            "studyContext": "Human RNA cells",
-            "studyObjective": "Find stable populations <without> batch artifacts.",
-        },
+        "request": request,
         "finalAnalysis": {
             "primaryAssay": "RNA2",
             "limitations": ["Condition and batch are confounded."],
-            "analysisEvidence": {
-                "analysisReview": {
-                    "tuningEvidence": {
-                        "history": [
-                            {
-                                "scope": "full",
-                                "review": {
-                                    "action": "accept",
-                                    "selectedCandidateId": "candidate-two",
-                                    "quantitativeFindings": [
-                                        "The chosen partition has seed stability 0.92."
-                                    ],
-                                    "qualitativeFindings": [
-                                        "MS4A1 and CD79A support the same partition."
-                                    ],
-                                    "rationale": "The selected partition preserves a small marker-supported population.",
-                                    "objectivePreservation": "Retain the rare marker program.",
-                                },
-                            }
-                        ]
-                    }
-                }
-            },
         },
         "stages": [
             {
@@ -62,96 +73,27 @@ def snapshot() -> dict[str, Any]:
                 "status": "done",
                 "report": {
                     "recommendedCandidateId": "candidate-two",
-                    "evaluations": [
-                        {
-                            "candidateId": "candidate-two",
-                            "parameters": {
-                                "dimensions": 20,
-                                "neighborsK": 15,
-                                "leidenResolution": 0.75,
-                                "useHarmony": False,
-                            },
-                            "metrics": {"seedStability": 0.92, "markerCoherence": 0.84},
-                        }
-                    ],
+                    "evaluations": review["candidates"],
                 },
-                "decisions": [
-                    {
-                        "spec": {
-                            "question": "Which clustering resolution preserves supported populations?",
-                            "options": [
-                                {
-                                    "optionId": "low",
-                                    "label": "Resolution 0.5",
-                                    "description": "Compare the coarser partition.",
-                                },
-                                {
-                                    "optionId": "chosen",
-                                    "label": "Resolution 0.75",
-                                    "description": "Compare the marker-supported partition.",
-                                },
-                            ],
-                        },
-                        "record": {
-                            "selectedOptionId": "chosen",
-                            "decisionId": "clustering",
-                            "rationale": "Selected 0.75 because seed stability was 0.92 and B-cell markers remained coherent.",
-                            "modelName": "not-in-report",
-                            "recordId": "hidden-record-id",
-                        },
-                        "evidence": {
-                            "evidence": [
-                                {
-                                    "summary": "Resolution 0.5: stability 0.96; marker coherence 0.67."
-                                },
-                                {
-                                    "summary": "Resolution 0.75: stability 0.92; marker coherence 0.84."
-                                },
-                            ]
-                        },
-                        "checks": [
-                            {
-                                "name": "Protected condition",
-                                "status": "passed",
-                                "reason": "Condition representation was retained.",
-                            }
-                        ],
-                    }
-                ],
+                "decisions": [],
             },
             {
                 "stage": "experimental_context",
-                "report": {
-                    "cellQc": {"profileId": "selected"},
-                    "qcProfiles": [
-                        {
-                            "profileId": "selected",
-                            "retainedCells": 920,
-                            "retainedFraction": 0.92,
-                        }
-                    ],
-                },
+                "status": "done",
+                "report": context.model_dump(mode="json"),
+                "outputs": {"studyContract": study.model_dump(mode="json")},
+                "decisions": [
+                    {
+                        "record": {
+                            "decisionId": "cellQuality",
+                            "rationale": "The selected quality policy retains supported study groups.",
+                        },
+                    }
+                ],
             },
         ],
+        "analysisReviews": [review],
     }
-
-    review = state["finalAnalysis"]["analysisEvidence"]["analysisReview"][
-        "tuningEvidence"
-    ]["history"][0]["review"]
-    state["analysisReviews"] = [
-        {
-            "scope": "full",
-            **review,
-            "candidates": state["stages"][0]["report"]["evaluations"],
-            "settings": {"candidate-two": {"hvgCount": 2000, "ranking": "global"}},
-            "featureEvidence": {
-                "candidate-two": {
-                    "families": {"hla": {"eligibleGenes": 12, "selectedGenes": 6}}
-                }
-            },
-        }
-    ]
-    return state
 
 
 def display_payload() -> dict[str, Any]:
@@ -176,13 +118,19 @@ def test_one_page_shows_recorded_choices_evidence_and_qualitative_findings(
     assert state == original
     assert "621,200 cells" in document and "2 clusters" in document
     assert "50,000 of 621,200" in document
-    assert "QC retained 920 cells (92.0%)" in document
-    assert "Selected 0.75 because seed stability was 0.92" in document
-    assert "Resolution 0.5: stability 0.96; marker coherence 0.67." in document
-    assert "MS4A1 and CD79A support the same partition." in document
-    assert "small marker-supported population" in document
+    assert "QC retained 621,200 cells (92.0%)" in document
+    assert "Resolution 0.75 retains a small population with clear markers." in document
+    assert (
+        "Repeat agreement was 0.92 and 84% of clusters had qualifying markers."
+        in document
+    )
+    assert "Original detailed model reasoning retained in the journal." not in document
+    assert "small population with clear markers" in document
     assert "Condition and batch are confounded." in document
-    assert "Condition representation was retained." in document
+    assert "The selected quality policy retains supported study groups." in document
+    assert document.index(
+        "The selected quality policy retains supported study groups."
+    ) < document.index("Compared policy")
     assert "&lt;without&gt;" in document and "<without>" not in document
     assert "hidden-record-id" not in document and "not-in-report" not in document
     assert "technical.html" not in document and "decision-tree" not in document
@@ -190,13 +138,17 @@ def test_one_page_shows_recorded_choices_evidence_and_qualitative_findings(
     assert ("No plots were supplied for visual inspection" in document) == (
         mode == "structured"
     )
-    assert document.index("final_umap.png") < document.index("Analysis decisions")
+    assert (
+        document.index("Limits of this analysis")
+        < document.index("final_umap.png")
+        < document.index("Cell quality")
+    )
 
 
 def test_all_untrusted_scientific_text_is_escaped() -> None:
     state = snapshot()
     injection = '<img src=x onerror="alert(1)">'
-    state["stages"][0]["decisions"][0]["record"]["rationale"] = injection
+    state["stages"][1]["decisions"][0]["record"]["rationale"] = injection
     state["finalAnalysis"]["limitations"] = [injection]
     payload = scientific_summary(state) | display_payload()
     payload["markers"][0]["feature"] = injection
@@ -205,41 +157,213 @@ def test_all_untrusted_scientific_text_is_escaped() -> None:
     assert document.count("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;") == 3
 
 
-def test_missing_evidence_is_reported_without_inventing_selection_reasons() -> None:
+def test_missing_evidence_rejects_regeneration_without_inventing_reasons() -> None:
     state = snapshot()
-    state["stages"] = []
-    state["finalAnalysis"]["analysisEvidence"] = {}
     state["analysisReviews"] = []
-    document = render_analysis_document(scientific_summary(state) | display_payload())
-    assert "No consequential decisions were recorded" in document
-    assert "What the evidence shows" not in document
-    assert "seed stability was 0.92" not in document
+    with pytest.raises(ValueError, match="mandatory objective and comparison evidence"):
+        scientific_summary(state)
 
 
-def test_report_distinguishes_gene_correction_and_experiment_evidence() -> None:
+def test_report_distinguishes_actual_comparisons_and_unavailable_choices() -> None:
     state = snapshot()
-    accepted = state["analysisReviews"][0]
-    accepted["correctionNeed"] = "needed"
-    accepted["candidates"][0]["parameters"]["useHarmony"] = True
-    accepted["settings"]["candidate-two"].update(
-        ranking="batchAware", rankingColumn="library"
-    )
-    experiment = copy.deepcopy(accepted)
-    experiment.update(
-        action="experiment",
-        experimentId="includeFamily:hla",
-        concern="HLA markers distinguish the objective-relevant activation state.",
-        expectedImprovement="Restoring HLA genes may retain that state.",
-    )
-    state["analysisReviews"].insert(0, experiment)
     document = render_analysis_document(scientific_summary(state) | display_payload())
-    assert "includeFamily:hla" in document
-    assert experiment["concern"] in document
-    assert experiment["expectedImprovement"] in document
-    assert "HVG count" in document and "2,000" in document
-    assert "batchAware" in document and "library" in document
-    assert "Feature family" in document and "Selected HVGs" in document
-    assert "Correction necessity: Needed" in document
+    assert "Number of variable genes" in document and "4,000" in document
+    assert "No technical grouping supports a batch-specific ranking." in document
+    assert "Variable-gene ranking: not compared" in document
+    assert "Genes and representation" in document and "Clustering" in document
+    assert "Clusters with qualifying markers" in document and "84.0%" in document
+    assert "candidate-two" not in document and "hvgCount:4000" not in document
+    assert "Full cohort (621,200 cells)" in document
+
+
+def test_repeated_reviews_do_not_repeat_candidate_inventory_or_raw_history() -> None:
+    state = snapshot()
+    earlier = copy.deepcopy(state["analysisReviews"][0])
+    earlier.update(
+        action="combine",
+        rationale="Historical model claim about an unexecuted correction.",
+    )
+    state["analysisReviews"].insert(0, earlier)
+    document = render_analysis_document(scientific_summary(state) | display_payload())
+    assert document.count("<td>41</td>") == 1
+    assert document.count("<td>1.25</td>") == 1
+    assert "Historical model claim" not in document
+    assert "Complete recorded reasoning" not in document
+    assert document.index("Populations and markers") < document.index(
+        "Genes and representation"
+    )
+
+
+def population_snapshot() -> dict[str, Any]:
+    state = snapshot()
+    review = state["analysisReviews"][0]
+    cells = review["candidates"][0]["cellSelection"]
+    clusters = {
+        "scope": "assay",
+        "assay": "RNA2",
+        "kind": "cluster_labels",
+        "artifactId": "3" * 64,
+    }
+    state["finalAnalysis"].update(cellSelection=cells, clusters=clusters)
+    state["stages"][1]["outputs"]["studyContract"]["independentUnitColumns"] = ["donor"]
+    review["populationSupport"] = {
+        "candidate-two": {
+            "candidateId": "candidate-two",
+            "cellSelection": cells,
+            "clusters": clusters,
+            "columns": {
+                "donor": {
+                    "status": "computed",
+                    "observedGroups": 19,
+                    "missingCells": 200,
+                    "omittedPopulations": 1,
+                    "populations": [
+                        {
+                            "cluster": "1",
+                            "cells": 1200,
+                            "groupsWithAtLeast5Cells": 4,
+                            "largestGroupFraction": 0.938,
+                        }
+                    ],
+                }
+            },
+        }
+    }
+    return state
+
+
+def test_population_support_is_descriptive_and_missing_rows_are_unavailable() -> None:
+    document = render_analysis_document(
+        scientific_summary(population_snapshot()) | display_payload()
+    )
+    assert "93.8%" in document and "<td>4</td>" in document
+    assert "five cells is not a replication threshold" in document
+    assert "200 cells lack" in document
+    assert "not saved for 1 populations" in document
+    assert "Unavailable" in document
+    assert "not validated cell identities" in document
+    assert '<progress value="0.938000"' in document
+    assert '<progress value="0.001932"' in document
+    assert '<div class="population-overview">' in document
+    assert "@media(max-width:800px)" in document
+
+
+def test_selected_population_concerns_and_study_limits_remain_prominent() -> None:
+    state = snapshot()
+    explanation = "Population 1 lacks qualifying markers and remains unclassified."
+    state["analysisReviews"][0]["populationConcerns"] = [
+        {
+            "candidateId": "candidate-two",
+            "clusterId": "1",
+            "status": "nonEssentialLimitation",
+            "evidenceIds": ["candidate:candidate-two:clusters"],
+            "explanation": explanation,
+        }
+    ]
+    study_limit = "The study contains only one independent donor."
+    state["stages"][1]["outputs"]["studyContract"]["limitations"].append(study_limit)
+    state["finalAnalysis"]["limitations"].append(explanation)
+    document = render_analysis_document(scientific_summary(state) | display_payload())
+    assert document.count(explanation) == 1
+    assert document.index(explanation) < document.index("final_umap.png")
+    assert document.index(study_limit) < document.index("final_umap.png")
+
+
+def test_report_keeps_the_recorded_tradeoff_beside_its_comparison() -> None:
+    payload = scientific_summary(snapshot()) | display_payload()
+    payload["assessments"][0]["comparisonConclusions"][0]["tradeoffs"] = [
+        {"interpretation": "The preferred setting loses some repeat agreement."}
+    ]
+    document = render_analysis_document(payload)
+    assert "The preferred setting loses some repeat agreement." in document
+    assert document.index("Genes and representation") < document.index(
+        "The preferred setting loses some repeat agreement."
+    )
+
+
+@pytest.mark.parametrize("field", ["clusters", "cellSelection", "candidateId"])
+def test_population_support_must_match_the_final_candidate_and_artifacts(field) -> None:
+    state = population_snapshot()
+    population = state["analysisReviews"][0]["populationSupport"]["candidate-two"]
+    population[field] = (
+        "different-candidate"
+        if field == "candidateId"
+        else {**population[field], "artifactId": "f" * 64}
+    )
+    with pytest.raises(ValueError, match="Reported population support"):
+        scientific_summary(state)
+
+
+@pytest.mark.parametrize(
+    "missing", ["evidenceRequirements", "comparisonCoverage", "comparisonConclusions"]
+)
+def test_incompatible_report_evidence_fails_before_rendering_or_replacing_files(
+    monkeypatch, tmp_path, missing
+) -> None:
+    state = snapshot()
+    if missing == "evidenceRequirements":
+        state["stages"][1]["outputs"]["studyContract"].pop(missing)
+    else:
+        state["analysisReviews"][0].pop(missing)
+    old_page = tmp_path / "index.html"
+    old_page.write_text("Existing historical report")
+    numerical = tmp_path / "saved-artifact"
+    numerical.write_bytes(b"original numerical values")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("An incompatible report must fail before artifact display reads")
+
+    monkeypatch.setattr(generator, "collect_analysis_artifacts", unexpected)
+    with pytest.raises(ValueError, match="start a new workflow"):
+        generator.render_analysis_report(SimpleNamespace(), state, tmp_path)
+    assert old_page.read_text() == "Existing historical report"
+    assert numerical.read_bytes() == b"original numerical values"
+
+
+def test_invalid_or_missing_fractions_never_render_as_zero() -> None:
+    state = population_snapshot()
+    population = state["analysisReviews"][0]["populationSupport"]["candidate-two"][
+        "columns"
+    ]["donor"]["populations"][0]
+    population["largestGroupFraction"] = float("nan")
+    payload = scientific_summary(state) | display_payload()
+    payload["qcProfiles"][0]["retainedFraction"] = None
+    document = render_analysis_document(payload)
+    assert "0.0%" not in document
+    assert '<progress value="nan"' not in document
+
+
+def test_comparison_scopes_use_candidate_evidence_not_the_latest_review_scope() -> None:
+    from tests.agent_comparison_examples import comparison_review
+
+    state = snapshot()
+    subset = comparison_review("sample0")
+    payload = scientific_summary(state) | display_payload()
+    payload["assessments"].insert(0, subset)
+    # A later full review can also cite earlier screening comparisons.
+    for setting in subset["comparisonCoverage"]["candidateSettings"].values():
+        assert setting["scope"] == "sample0"
+    subset["scope"] = "full"
+    payload["assessments"].insert(
+        0, {"scope": "sample0", "coverage": {"screeningCells": 50000}}
+    )
+    document = render_analysis_document(payload)
+    assert "Screening sample (50,000 cells)" in document
+    assert "Full cohort (621,200 cells)" in document
+    assert "Screening sample (621,200 cells)" not in document
+
+
+def test_screening_that_uses_all_cells_is_not_labeled_as_a_sample() -> None:
+    from tests.agent_comparison_examples import comparison_review
+
+    payload = scientific_summary(snapshot()) | display_payload()
+    all_cells = comparison_review("sample0")
+    all_cells["coverage"]["screeningCells"] = 621200
+    all_cells["comparisonCoverage"]["population"] = "allCells"
+    payload["assessments"] = [all_cells]
+    document = render_analysis_document(payload)
+    assert "Full cohort (621,200 cells)" in document
+    assert "Screening sample" not in document
 
 
 @pytest.mark.parametrize("mode", ["visual", "structured"])
@@ -251,18 +375,23 @@ def test_review_view_requires_exact_checkpoint_bindings(
 
     from scarf.agent import record_io
     from scarf.agent.orchestrator.models import AutomatedWorkflowConfig
+    from scarf.agent.orchestrator.rna_tuning import TuningAction
 
     state = snapshot()
     view = state["analysisReviews"][0]
-    candidate = copy.deepcopy(view["candidates"][0])
+    candidate = copy.deepcopy(
+        next(
+            item
+            for item in view["candidates"]
+            if item["candidateId"] == "candidate-two"
+        )
+    )
     features = ArtifactReferenceModel(
         assay="RNA2", kind="feature_selection", artifactId="4" * 64
     ).model_dump(mode="json")
     candidate["artifacts"] = {"graphFeatures": features}
     action = {
-        key: value
-        for key, value in view.items()
-        if key not in {"scope", "candidates", "settings", "featureEvidence"}
+        key: value for key, value in view.items() if key in TuningAction.model_fields
     }
     payload = {
         "inputs": {
@@ -278,7 +407,11 @@ def test_review_view_requires_exact_checkpoint_bindings(
                     "features": features,
                 }
             },
-            "featureEvidence": view["featureEvidence"],
+            "featureEvidence": {
+                "candidate-two": view["featureEvidence"]["candidate-two"]
+            },
+            "comparisonCoverage": view["comparisonCoverage"],
+            "coverage": view["coverage"],
         },
         "outputs": {"action": action},
     }
@@ -334,8 +467,10 @@ def test_review_view_requires_exact_checkpoint_bindings(
         )
         assert result[0]["rationale"] == action["rationale"]
         assert result[0]["evidenceMode"] == mode
-        assert result[0]["settings"]["candidate-two"]["hvgCount"] == 2000
-        assert "artifacts" not in result[0]["candidates"][0]
+        assert result[0]["settings"]["candidate-two"]["hvgCount"] == 1000
+        assert result[0]["candidates"][0]["artifacts"] == candidate["artifacts"]
+        assert result[0]["comparisonCoverage"] == view["comparisonCoverage"]
+        assert result[0]["coverage"] == view["coverage"]
 
 
 def test_report_regeneration_only_replaces_derived_files(
@@ -509,7 +644,7 @@ def test_optional_map_failure_preserves_counts_and_report(
     document = path.read_text()
     assert "12 cells" in document
     assert "matplotlib unavailable" in document
-    assert "Selected 0.75 because seed stability was 0.92" in document
+    assert "Resolution 0.75 retains a small population with clear markers." in document
     assert 'src="plots/final_umap.png"' not in document
 
 

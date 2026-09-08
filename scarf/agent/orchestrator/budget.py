@@ -157,6 +157,19 @@ class CandidateBudget:
             inputs=admission,
         )
 
+    def completed_source(
+        self, inputs: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Find exact completed evidence before charging additional validation work."""
+        identity = candidate_identity(inputs)
+        for rows in self.admissions.values():
+            for admission in rows:
+                if admission["identity"] == identity:
+                    completed = self.completed(admission)
+                    if completed is not None:
+                        return admission, completed
+        return None
+
     def complete(self, admission: dict[str, Any], output: dict[str, Any]) -> None:
         journal.save_checkpoint(
             self.store,

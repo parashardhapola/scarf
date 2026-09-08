@@ -1,10 +1,7 @@
 """Ingest, RNA enrichment, quality metrics, and experimental-context stages."""
 
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
-
-import numpy as np
 
 from ...datastore.datastore import DataStore
 from ...utils.logging import logger
@@ -18,7 +15,11 @@ from ..experimental_context.contracts import (
     ExperimentalContextResult,
     NamedArtifactSource,
 )
-from ..experimental_context.study import build_study_contract
+from ..experimental_context.study import (
+    StudyContract,
+    build_study_contract,
+    validate_objective_evidence,
+)
 from ..ingest import IngestResult
 from ..ingest.manifest import DatasetManifest, is_author_label_column
 from ..types import AgentRunInfo, ArtifactReferenceModel
@@ -414,6 +415,11 @@ class ContextStagesMixin:
             parents,
         )
         if existing is not None:
+            if "percentageDefinitions" not in existing.outputs:
+                raise ValueError(
+                    "Saved RNA quality metrics lack exact percentage definitions; "
+                    "start a new workflow. Existing analysis artifacts remain accessible."
+                )
             self._named_stage_artifacts(
                 existing,
                 "qualityMetricArtifacts",
@@ -455,105 +461,52 @@ class ContextStagesMixin:
         }
         artifacts: dict[str, ArtifactReferenceModel] = {"cellSelection": cell_selection}
         try:
-            inspections = {value.assay: value for value in enrichment.inspections}
-            for policy in enrichment.policies:
-                if policy.assayModality == "RNA":
-                    inspection = inspections.get(policy.assay)
-                    observed_families = (
-                        {
-                            value.family
-                            for value in inspection.families
-                            if value.count > 0
-                        }
-                        if inspection is not None
-                        else set()
+            from ..experimental_context.qc_evidence import _rna_percentage_feature_masks
+
+            definitions = []
+            for family, suffix, pattern, mask in _rna_percentage_feature_masks(
+                store, selected
+            ):
+                definition = {
+                    "family": family,
+                    "pattern": pattern,
+                    "matchedGenes": int(mask.sum()),
+                }
+                definitions.append(definition)
+                if not mask.any():
+                    definition["limitation"] = (
+                        "No genes match this symbol-based percentage definition"
                     )
-                    assay = store.get_assay(policy.assay)
-                    feature_ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
-                    feature_names = np.asarray(assay.feats.fetch_all("names")).astype(
-                        str
-                    )
-                    family_patterns = (
-                        (
-                            "mitochondrial",
-                            r"^(MT-|mt-)",
-                            "percentMito",
-                            "percent_mito",
-                        ),
-                        (
-                            "ribosomal",
-                            r"^(RPS|RPL|MRPS|MRPL|Rps|Rpl|Mrps|Mrpl)",
-                            "percentRibo",
-                            "percent_ribo",
-                        ),
-                    )
-                    for (
-                        family,
-                        pattern,
-                        artifact_suffix,
-                        action_suffix,
-                    ) in family_patterns:
-                        if family not in observed_families:
-                            continue
-                        compiled = re.compile(pattern)
-                        mask = np.fromiter(
-                            (
-                                compiled.search(feature_id) is not None
-                                or compiled.search(feature_name) is not None
-                                for feature_id, feature_name in zip(
-                                    feature_ids,
-                                    feature_names,
-                                    strict=True,
-                                )
-                            ),
-                            dtype=bool,
-                            count=assay.feats.N,
-                        )
-                        if not mask.any():
-                            continue
-                        features_ref = store.set_feature_selection(
-                            from_assay=policy.assay,
-                            mask=mask,
-                            invalidate_cache=False,
-                        )
-                        metric_ref = store.run_feature_percentage(
-                            cell_selection_ref,
-                            features_ref,
-                            invalidate_cache=False,
-                        )
-                        features_model = ArtifactReferenceModel.from_artifact_ref(
-                            features_ref
-                        )
-                        metric_model = ArtifactReferenceModel.from_artifact_ref(
-                            metric_ref
-                        )
-                        artifact_name = f"{policy.assay}_{artifact_suffix}"
-                        if artifact_name in artifacts:
-                            raise ValueError(
-                                f"Duplicate generated artifact name {artifact_name!r}"
-                            )
-                        source = NamedArtifactSource(
-                            name=artifact_name,
-                            artifact=metric_model,
-                        )
-                        artifacts[f"{artifact_name}_features"] = features_model
-                        artifacts[artifact_name] = metric_model
-                        cast(
-                            list[dict[str, Any]],
-                            outputs["qualityMetricArtifacts"],
-                        ).append(source.model_dump(mode="json"))
-                        cast(list[dict[str, Any]], outputs["operations"]).append(
-                            {
-                                "operation": "run_feature_percentage",
-                                "assay": policy.assay,
-                                "family": family,
-                                "pattern": pattern,
-                                "cellSelection": cell_selection.model_dump(mode="json"),
-                                "features": features_model.model_dump(mode="json"),
-                                "artifact": metric_model.model_dump(mode="json"),
-                            }
-                        )
-                        actions.append(f"compute_{action_suffix}:{policy.assay}")
+                    continue
+                features_ref = store.set_feature_selection(
+                    from_assay=selected, mask=mask, invalidate_cache=False
+                )
+                metric_ref = store.run_feature_percentage(
+                    cell_selection_ref, features_ref, invalidate_cache=False
+                )
+                features_model = ArtifactReferenceModel.from_artifact_ref(features_ref)
+                metric_model = ArtifactReferenceModel.from_artifact_ref(metric_ref)
+                artifact_name = f"{selected}_{suffix}"
+                source = NamedArtifactSource(name=artifact_name, artifact=metric_model)
+                artifacts[f"{artifact_name}_features"] = features_model
+                artifacts[artifact_name] = metric_model
+                cast(list[dict[str, Any]], outputs["qualityMetricArtifacts"]).append(
+                    source.model_dump(mode="json")
+                )
+                cast(list[dict[str, Any]], outputs["operations"]).append(
+                    {
+                        "operation": "run_feature_percentage",
+                        "assay": selected,
+                        **definition,
+                        "cellSelection": cell_selection.model_dump(mode="json"),
+                        "features": features_model.model_dump(mode="json"),
+                        "artifact": metric_model.model_dump(mode="json"),
+                    }
+                )
+                actions.append(
+                    f"compute_{'percent_mito' if family == 'mitochondrial' else 'percent_ribo'}:{selected}"
+                )
+            outputs["percentageDefinitions"] = definitions
             outcome = journal._complete_attempt(
                 started,
                 status="done",
@@ -619,6 +572,10 @@ class ContextStagesMixin:
             )
             resolved_report = cast(ExperimentalContextResult, report)
             validate_rna_context(resolved_report, selected)
+            validate_objective_evidence(
+                StudyContract.model_validate(existing.outputs.get("studyContract")),
+                resolved_report,
+            )
             if existing.artifacts != context_artifacts:
                 raise ValueError(
                     "Persisted Experimental Context stage artifacts are stale"
@@ -976,6 +933,35 @@ class ContextStagesMixin:
                     physical_capture_column=report.decision.physicalCaptureColumn
                     or physical_capture,
                 )
+                try:
+                    validate_objective_evidence(study_contract, report)
+                except ValueError as exc:
+                    unattended = request_record.config.inputPolicy == "unattended"
+                    outcome = journal._complete_attempt(
+                        started,
+                        status="failed" if unattended else "needsInput",
+                        report_references=[reference],
+                        artifacts=context_artifacts,
+                        outputs={
+                            "studyContract": study_contract.model_dump(mode="json")
+                        },
+                        actions=actions,
+                        error=str(exc) if unattended else None,
+                        needs_input=None
+                        if unattended
+                        else WorkflowNeedsInput(
+                            questions=[
+                                WorkflowQuestion(
+                                    questionId="experimentalDirections",
+                                    question=str(exc),
+                                    evidenceIds=list(study_contract.evidenceIds),
+                                )
+                            ]
+                        ),
+                        notes=[*report.notes, str(exc)],
+                    )
+                    journal._save_outcome(store.zw, prefix, outcome)
+                    return outcome, report
                 outcome = journal._complete_attempt(
                     started,
                     status="done",

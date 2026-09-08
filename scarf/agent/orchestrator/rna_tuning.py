@@ -35,6 +35,14 @@ from ..parameter_tuning.contracts import (
     ParameterTuningNeedsInput,
     ParameterTuningReport,
 )
+from ..parameter_tuning.comparisons import (
+    CombinedSettings,
+    ComparisonConclusion,
+    PopulationConcern,
+    setting_changes,
+    partition_comparison_evidence,
+    validate_comparison_review,
+)
 from ..parameter_tuning.diagnostics import (
     SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
     _family_mask,
@@ -65,17 +73,6 @@ from .models import (
 )
 
 
-_DOMAINS = {
-    "qualityControl",
-    "featurePolicy",
-    "hvgRankingAndCount",
-    "pca",
-    "batchCorrection",
-    "neighbors",
-    "partition",
-    "rarePopulations",
-}
-
 _STRUCTURED_VISUAL_LIMITATION = (
     "The model assessed structured marker, PCA loading and diagnostic evidence; "
     "visual inspection was unavailable because the configured model does not accept images."
@@ -98,7 +95,7 @@ def _configured_image_input(model: Any) -> bool | None:
 class TuningAction(AgentDataModel):
     """An assessment of observed evidence and at most one registered experiment."""
 
-    action: Literal["accept", "experiment", "enlarge", "defer"] = Field(
+    action: Literal["accept", "combine", "experiment", "enlarge", "defer"] = Field(
         description=(
             "Accept supported observed evidence, request one next experiment, "
             "enlarge a screening sample, or defer an unresolved essential question."
@@ -118,7 +115,6 @@ class TuningAction(AgentDataModel):
         ),
     )
     correctionNeed: Literal["needed", "notNeeded", "uncertain", "notApplicable"]
-    assessedDomains: list[str]
     evidenceIds: list[str] = Field(
         min_length=1,
         description=(
@@ -131,6 +127,10 @@ class TuningAction(AgentDataModel):
         description="Describe supplied observed measurements, not predicted results.",
     )
     qualitativeFindings: list[str] = Field(min_length=1)
+    comparisonConclusions: list[ComparisonConclusion]
+    populationConcerns: list[PopulationConcern] = Field(default_factory=list)
+    plainLanguageSummary: str = Field(min_length=1)
+    combinedSettings: CombinedSettings | None = None
     concern: str = ""
     expectedImprovement: str = Field(
         default="",
@@ -147,6 +147,8 @@ class TuningAction(AgentDataModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> "TuningAction":
+        if (self.action == "combine") != (self.combinedSettings is not None):
+            raise ValueError("Only a combine action proposes combined settings")
         if (self.action == "experiment") != (self.experimentId is not None):
             raise ValueError("Only an experiment action names an experiment")
         if self.action == "experiment" and (
@@ -155,24 +157,26 @@ class TuningAction(AgentDataModel):
             raise ValueError(
                 "An experiment needs an observed concern and expected improvement"
             )
-        if self.action == "accept" and set(self.assessedDomains) != _DOMAINS:
-            raise ValueError(
-                "Acceptance requires assessment of every scientific domain"
-            )
         return self
 
 
 def _assessment_output_type(
-    candidate_ids: Sequence[str], experiment_ids: Sequence[str], *, scope: str
+    candidate_ids: Sequence[str],
+    experiment_ids: Sequence[str],
+    *,
+    scope: str,
+    phase: str = "combined",
 ) -> type[TuningAction]:
     """Constrain new model choices without changing the saved action contract."""
     if not candidate_ids:
         raise ValueError("RNA assessment requires observed candidates")
     actions = tuple(
         action
-        for action in ("accept", "experiment", "enlarge", "defer")
+        for action in ("accept", "combine", "experiment", "enlarge", "defer")
         if (action != "enlarge" or scope != "full")
         and (action != "experiment" or experiment_ids)
+        and (action != "combine" or phase == "sensitivity")
+        and (action != "accept" or phase != "sensitivity")
     )
     return create_model(
         "ObservedRnaAssessment",
@@ -206,6 +210,52 @@ class RnaSetting(AgentDataModel):
     hvgCount: int = 1000
     ranking: Literal["global", "batchAware"] = "global"
     rankingColumn: str | None = None
+
+
+def validate_completed_comparison_evidence(review: Mapping[str, Any]) -> None:
+    """Check exact completed review coverage before finalization or report reuse."""
+    if not {
+        "comparisonCoverage",
+        "comparisonConclusions",
+        "plainLanguageSummary",
+    }.issubset(review):
+        raise ValueError(
+            "Saved analysis lacks mandatory comparison evidence; start a new workflow"
+        )
+    action = TuningAction.model_validate(
+        {
+            key: value
+            for key, value in review.items()
+            if key in TuningAction.model_fields
+        }
+    )
+    coverage = review.get("comparisonCoverage")
+    if not isinstance(coverage, Mapping):
+        raise ValueError(
+            "Saved analysis lacks mandatory comparison evidence; start a new workflow"
+        )
+    validate_comparison_review(coverage, action.model_dump(mode="json"))
+    for candidate in review.get("candidates", []):
+        setting = coverage["candidateSettings"].get(candidate["candidateId"])
+        if (
+            setting is None
+            or any(
+                setting[key] != candidate[key]
+                for key in ("parameters", "cellSelection")
+            )
+            or setting["features"]
+            != candidate.get("artifacts", {}).get("graphFeatures")
+        ):
+            raise ValueError(
+                "Comparison evidence differs from the exact reviewed candidate"
+            )
+        if any(
+            candidate["metrics"].get(key) != value
+            for key, value in setting.get("metrics", {}).items()
+        ):
+            raise ValueError(
+                "Comparison measurements differ from the reviewed candidate"
+            )
 
 
 def uniform_screening_selection(
@@ -366,6 +416,12 @@ class RnaTuningRun:
         self.scope_sizes: dict[str, int] = {}
         self.feature_evidence_cache: dict[str, dict[str, Any]] = {}
         self.neighbor_comparisons: dict[tuple[str, str], float] = {}
+        self.comparison_rows: dict[str, list[dict[str, Any]]] = {}
+        self.combined_candidates: dict[str, str] = {}
+        self.resolution_candidates: dict[str, list[str]] = {}
+        self.validation_sources: dict[str, dict[str, Any]] = {}
+        self.discovery_scope: str | None = None
+        self.full_repair: dict[str, Any] | None = None
         self.batch_columns = list(study.technicalBatchColumns)
         self.coverage_columns = [
             value
@@ -421,8 +477,19 @@ class RnaTuningRun:
         )
         setting = setting.model_copy(update={"parameters": parameters})
         self.settings[parameters.candidateId] = setting
-        admission = self.budget.admit(scope, inputs)
-        saved = self.budget.completed(admission)
+        saved: dict[str, Any] | None
+        source = self.budget.completed_source(inputs) if scope == "full" else None
+        if source is not None:
+            admission, saved = source
+            if admission["scope"] != "full":
+                self.validation_sources[parameters.candidateId] = {
+                    "scope": admission["scope"],
+                    "slot": admission["slot"],
+                    "identity": admission["identity"],
+                }
+        else:
+            admission = self.budget.admit(scope, inputs)
+            saved = self.budget.completed(admission)
         if saved is not None:
             evaluation = ParameterCandidateEvaluation.model_validate(
                 saved["evaluation"]
@@ -476,8 +543,21 @@ class RnaTuningRun:
                     technical_columns=self.batch_columns,
                     batch_columns=self.batch_columns,
                     protected_columns=self.study.protectedColumns,
-                    qc_columns=self.plan.cellQc.attributes,
-                    column_kinds=self.study.columnKinds,
+                    qc_columns=[
+                        *self.plan.cellQc.attributes,
+                        *(source.name for source in self.plan.cellQc.artifactMetrics),
+                    ],
+                    qc_artifacts={
+                        source.name: artifact_model_to_ref(source.artifact)
+                        for source in self.plan.cellQc.artifactMetrics
+                    },
+                    column_kinds={
+                        **self.study.columnKinds,
+                        **{
+                            source.name: "continuous"
+                            for source in self.plan.cellQc.artifactMetrics
+                        },
+                    },
                 )[0]
                 native = next(
                     (
@@ -549,8 +629,12 @@ class RnaTuningRun:
             self.budget.admit_many(
                 scope,
                 [
-                    self.execution_inputs(cells, native),
-                    self.execution_inputs(cells, setting),
+                    value
+                    for value in (
+                        self.execution_inputs(cells, native),
+                        self.execution_inputs(cells, setting),
+                    )
+                    if scope != "full" or self.budget.completed_source(value) is None
                 ],
             )
             self.execute(scope, cells, native)
@@ -633,32 +717,77 @@ class RnaTuningRun:
                 "parameter": "hvgRanking",
                 "value": "global",
             }
-        for family in self.family_patterns:
-            for operation in ("includeFamily", "excludeFamily"):
-                options[f"{operation}:{family}"] = {
-                    "parameter": operation,
-                    "value": family,
-                }
-        feature_policy = self.plan.assays[0].featureParameters
-        for feature in dict.fromkeys(
-            [
-                *feature_policy.get("proposedExcludeFeatures", []),
-                *feature_policy.get("protectFeatures", []),
-            ]
-        ):
-            for operation in ("includeFeature", "excludeFeature"):
-                if operation == "excludeFeature" and feature in feature_policy.get(
-                    "protectFeatures", []
-                ):
-                    continue
-                options[f"{operation}:{feature}"] = {
-                    "parameter": operation,
-                    "value": feature,
-                }
+        options.update(self._feature_experiments(setting))
         if self.study.correctionLicense == "safe" and self.batch_columns:
             options["useHarmony:true"] = {"parameter": "useHarmony", "value": True}
         if setting.parameters.useHarmony:
             options["useHarmony:false"] = {"parameter": "useHarmony", "value": False}
+        return options
+
+    def _feature_experiments(self, setting: RnaSetting) -> dict[str, dict[str, Any]]:
+        """Offer policy changes only when exact eligible genes can change safely."""
+        policy = self.plan.assays[0].featureParameters
+        assay = self.store.get_assay(self.handoff.assay)
+        names = np.asarray(assay.feats.fetch_all("names")).astype(str)
+        ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
+        eligible = np.asarray(
+            self.store.load_artifact(artifact_model_to_ref(setting.eligibleFeatures))[
+                "values"
+            ][:],
+            dtype=bool,
+        )
+        allowed = np.asarray(
+            self.store.load_artifact(
+                artifact_model_to_ref(
+                    self.handoff.graphFeatureCandidates["eligibleAll"]
+                )
+            )["values"][:],
+            dtype=bool,
+        )
+        protected = np.isin(names, policy.get("protectFeatures", [])) | np.isin(
+            ids, policy.get("protectFeatures", [])
+        )
+        for family in policy.get("protectFamilies", []):
+            mask = _family_mask(names, family)
+            if mask is not None:
+                protected |= mask
+        masks = {
+            ("Family", family): np.asarray(
+                [
+                    re.search(pattern, name, flags=re.IGNORECASE) is not None
+                    for name in names
+                ]
+            )
+            for family, pattern in self.family_patterns.items()
+        }
+        masks.update(
+            {
+                ("Feature", feature): (names == feature) | (ids == feature)
+                for feature in dict.fromkeys(
+                    [
+                        *policy.get("proposedExcludeFeatures", []),
+                        *policy.get("protectFeatures", []),
+                    ]
+                )
+            }
+        )
+        options = {}
+        for (kind, value), mask in masks.items():
+            for operation in ("include", "exclude"):
+                if operation == "exclude" and (mask & protected).any():
+                    continue
+                changed = (
+                    mask & allowed & ~eligible
+                    if operation == "include"
+                    else mask & eligible
+                )
+                if changed.any():
+                    field = operation + kind
+                    options[f"{field}:{value}"] = {
+                        "parameter": field,
+                        "value": value,
+                        "affectedEligibleGenes": int(changed.sum()),
+                    }
         return options
 
     def batch_ranking(
@@ -842,6 +971,567 @@ class RnaTuningRun:
             }
         )
 
+    def _prepared_setting(
+        self,
+        scope: str,
+        key: str,
+        selected: ParameterCandidateEvaluation,
+        experiment: dict[str, Any],
+        cells: ArtifactRef,
+    ) -> RnaSetting:
+        """Commit feature work separately so interrupted reviews do not repeat it."""
+        baseline = self.settings[selected.candidateId]
+        inputs = {
+            "baseline": baseline.model_dump(mode="json"),
+            "experiment": experiment,
+            "cells": self.cells.to_dict(),
+        }
+        checkpoint = f"parameter_tuning/{scope}/{key}/setting"
+        saved = journal.load_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow.workflowRunId,
+            checkpoint,
+            inputs,
+        )
+        if saved is not None:
+            return RnaSetting.model_validate(saved["setting"])
+        proposed = self.execution_inputs(cells, baseline)
+        proposed["features"] = {"requestedExperiment": inputs}
+        self.budget.check_many(scope, [proposed])
+        setting = self.apply_experiment(selected, experiment)
+        journal.save_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow.workflowRunId,
+            checkpoint,
+            inputs,
+            {"setting": setting.model_dump(mode="json")},
+        )
+        return setting
+
+    def _feature_nomination(self, baseline: RnaSetting) -> dict[str, Any] | None:
+        """Find one meaningful, previously justified policy intervention."""
+        policy = self.plan.assays[0].featureParameters
+        eligible = np.asarray(
+            self.store.load_artifact(artifact_model_to_ref(baseline.eligibleFeatures))[
+                "values"
+            ][:],
+            dtype=bool,
+        )
+        all_eligible = np.asarray(
+            self.store.load_artifact(
+                artifact_model_to_ref(
+                    self.handoff.graphFeatureCandidates["eligibleAll"]
+                )
+            )["values"][:],
+            dtype=bool,
+        )
+        names = np.asarray(
+            self.store.get_assay(self.handoff.assay).feats.fetch_all("names")
+        ).astype(str)
+        ids = np.asarray(
+            self.store.get_assay(self.handoff.assay).feats.fetch_all("ids")
+        ).astype(str)
+        nominations = [
+            *(("includeFeature", value) for value in policy.get("protectFeatures", [])),
+            *(("includeFamily", value) for value in policy.get("protectFamilies", [])),
+            *(
+                ("excludeFeature", value)
+                for value in policy.get("proposedExcludeFeatures", [])
+            ),
+            *(
+                ("excludeFamily", value)
+                for value in policy.get("proposedExcludeFamilies", [])
+            ),
+        ]
+        protected = np.isin(names, policy.get("protectFeatures", [])) | np.isin(
+            ids, policy.get("protectFeatures", [])
+        )
+        for family in policy.get("protectFamilies", []):
+            mask = _family_mask(names, family)
+            if mask is not None:
+                protected |= mask
+        for operation, value in nominations:
+            if operation.endswith("Family"):
+                mask = _family_mask(names, value)
+                if mask is None:
+                    continue
+                if value not in self.family_patterns:
+                    value = next(
+                        (
+                            family
+                            for family, pattern in self.family_patterns.items()
+                            if np.array_equal(
+                                mask,
+                                np.asarray(
+                                    [
+                                        re.search(pattern, name, flags=re.IGNORECASE)
+                                        is not None
+                                        for name in names
+                                    ]
+                                ),
+                            )
+                        ),
+                        None,
+                    )
+                    if value is None:
+                        continue
+            else:
+                mask = (names == value) | (ids == value)
+            if operation.startswith("include"):
+                changed = mask & all_eligible & ~eligible
+            else:
+                if (mask & protected).any():
+                    continue
+                changed = mask & eligible
+            if changed.any():
+                return {"parameter": operation, "value": value}
+        return None
+
+    def _sensitivity_panel(
+        self,
+        scope: str,
+        cells: ArtifactRef,
+        baseline: ParameterCandidateEvaluation,
+    ) -> None:
+        """Execute a small single-axis floor, never a Cartesian product."""
+        setting = self.settings[baseline.candidateId]
+        n_cells = self.scope_sizes[scope]
+        plans: list[tuple[str, str, dict[str, Any] | None, str]] = []
+        for field, axis, values in (
+            ("hvgCount", "hvgCount", (2000, 4000)),
+            ("dimensions", "pca", (10, 30)),
+            ("neighborsK", "neighbors", (21, 41)),
+        ):
+            for value in values:
+                reason = ""
+                if field == "dimensions" and value >= min(setting.hvgCount, n_cells):
+                    reason = "The requested PCA dimension exceeds the observed cell or selected-feature rank."
+                if field == "neighborsK" and value >= n_cells:
+                    reason = (
+                        "The requested neighbor count exceeds the observed cell count."
+                    )
+                plans.append(
+                    (
+                        f"{field}:{value}",
+                        axis,
+                        None if reason else {"parameter": field, "value": value},
+                        reason,
+                    )
+                )
+        columns = list(
+            dict.fromkeys(
+                [
+                    *(
+                        [self.study.physicalCaptureColumn]
+                        if self.study.physicalCaptureColumn in self.batch_columns
+                        else []
+                    ),
+                    *self.batch_columns,
+                ]
+            )
+        )
+        ranking = None
+        ranking_groups = {}
+        for column in columns:
+            if self.study.columnKinds.get(column) == "continuous":
+                continue
+            indices = read_stored_selection_indices(
+                self.store.zw,
+                self.cells,
+                kind="cell_selection",
+                scope="datastore",
+                assay=None,
+                table_path="cellData",
+            )
+            group_values = read_metadata_rows_chunkwise(
+                self.store.cells, column, indices
+            )
+            _, counts = np.unique(group_values, return_counts=True)
+            ranking_groups[column] = int((counts >= 20).sum())
+            if int((counts >= 20).sum()) >= 2:
+                ranking = {
+                    "parameter": "hvgRanking",
+                    "value": "batchAware",
+                    "column": column,
+                }
+                break
+        plans.append(
+            (
+                "hvgRanking",
+                "hvgRanking",
+                ranking,
+                "No approved categorical technical grouping has two groups with at least 20 cells."
+                if ranking is None
+                else "",
+            )
+        )
+        nomination = self._feature_nomination(setting)
+        pending_feature = nomination is None and bool(
+            self._feature_experiments(setting)
+        )
+        plans.append(
+            (
+                "featurePolicy",
+                "featurePolicy",
+                nomination,
+                "Baseline loading, marker and objective evidence must nominate one of the offered policy interventions before combining."
+                if pending_feature
+                else "Every registered inclusion/exclusion is a no-op on the exact eligible genes or would remove objective-protected genes."
+                if nomination is None
+                else "",
+            )
+        )
+        proposed: list[dict[str, Any]] = []
+        for identifier, _, experiment, _ in plans:
+            if experiment is None:
+                continue
+            proposal = self.execution_inputs(cells, setting)
+            if experiment["parameter"] in {"dimensions", "neighborsK"}:
+                proposal["parameters"] = {
+                    **proposal["parameters"],
+                    experiment["parameter"]: experiment["value"],
+                }
+            else:
+                prepared = journal.load_checkpoint(
+                    self.store,
+                    self.prefix,
+                    self.workflow.workflowRunId,
+                    f"parameter_tuning/{scope}/sensitivity/{identifier}/setting",
+                    {
+                        "baseline": setting.model_dump(mode="json"),
+                        "experiment": experiment,
+                        "cells": self.cells.to_dict(),
+                    },
+                )
+                if prepared is not None:
+                    known = RnaSetting.model_validate(prepared["setting"])
+                    if (
+                        known.features == setting.features
+                        or np.array_equal(
+                            self.store.load_artifact(
+                                artifact_model_to_ref(known.features)
+                            )["values"][:],
+                            self.store.load_artifact(
+                                artifact_model_to_ref(setting.features)
+                            )["values"][:],
+                        )
+                        or (
+                            identifier == "featurePolicy"
+                            and known.hvgCount != setting.hvgCount
+                        )
+                    ):
+                        continue
+                    proposal = self.execution_inputs(cells, known)
+                else:
+                    proposal["features"] = {"requiredSensitivity": identifier}
+            proposed.append(proposal)
+        self.budget.check_many(scope, proposed)
+        rows: list[dict[str, Any]] = [
+            {
+                "comparisonId": f"defaultResolution:{item.parameters.leidenResolution}",
+                "axis": "partition",
+                "status": "completed",
+                "baselineCandidateId": baseline.candidateId,
+                "alternativeCandidateId": item.candidateId,
+                "reason": "",
+            }
+            for item in self.evaluations[scope]
+            if item.candidateId != baseline.candidateId
+            and item.parameters.leidenResolution in {0.5, 0.75, 1.25}
+        ]
+        for identifier, axis, experiment, reason in plans:
+            alternative = None
+            proof: dict[str, Any] = {
+                "baselineFeatures": setting.features.model_dump(mode="json")
+            }
+            if axis in {"pca", "neighbors"}:
+                proof["kind"] = "numericalBound"
+            elif axis == "hvgRanking":
+                proof.update(
+                    kind="insufficientTechnicalGroups",
+                    eligibleGroupsByColumn=ranking_groups,
+                )
+            elif axis == "featurePolicy":
+                proof.update(
+                    kind="noPermittedPolicy",
+                    meaningfulPermittedInterventions=0,
+                    registeredFamilies=list(self.family_patterns),
+                )
+            if experiment is not None:
+                if experiment["parameter"] in {"dimensions", "neighborsK"}:
+                    alternative_setting = self.apply_experiment(baseline, experiment)
+                else:
+                    alternative_setting = self._prepared_setting(
+                        scope,
+                        f"sensitivity/{identifier}",
+                        baseline,
+                        experiment,
+                        cells,
+                    )
+                same_genes = alternative_setting.features == setting.features
+                if not same_genes and axis in {
+                    "hvgCount",
+                    "hvgRanking",
+                    "featurePolicy",
+                }:
+                    same_genes = np.array_equal(
+                        self.store.load_artifact(
+                            artifact_model_to_ref(alternative_setting.features)
+                        )["values"][:],
+                        self.store.load_artifact(
+                            artifact_model_to_ref(setting.features)
+                        )["values"][:],
+                    )
+                if (
+                    axis == "featurePolicy"
+                    and alternative_setting.hvgCount != setting.hvgCount
+                ):
+                    reason = "The nominated policy leaves too few eligible genes to hold the baseline HVG count fixed."
+                    proof.update(
+                        kind="insufficientEligibleGenes",
+                        eligibleFeatureCount=alternative_setting.hvgCount,
+                    )
+                elif same_genes and axis in {"hvgCount", "hvgRanking", "featurePolicy"}:
+                    reason = "The requested intervention produces exactly the same selected genes as the baseline; its numerical representation is already evaluated."
+                    proof.update(
+                        kind="identicalSelectedGenes",
+                        verifiedEqualMasks=True,
+                        alternativeSetting=alternative_setting.model_dump(mode="json"),
+                    )
+                elif (
+                    axis in {"pca", "neighbors"}
+                    and setting_changes(
+                        setting.model_dump(mode="json"),
+                        alternative_setting.model_dump(mode="json"),
+                    )
+                    == {}
+                ):
+                    reason = (
+                        "The requested value is already the exact baseline setting."
+                    )
+                else:
+                    alternative = self.execute(scope, cells, alternative_setting)
+            rows.append(
+                {
+                    "comparisonId": identifier,
+                    "axis": axis,
+                    "status": "completed"
+                    if alternative is not None
+                    else "pending"
+                    if identifier == "featurePolicy" and pending_feature
+                    else "notApplicable",
+                    "baselineCandidateId": baseline.candidateId,
+                    "alternativeCandidateId": alternative.candidateId
+                    if alternative is not None
+                    else None,
+                    "reason": reason,
+                    "observedProof": proof if alternative is None else None,
+                }
+            )
+        self.comparison_rows[scope] = rows
+
+    def comparison_coverage(self, scope: str, cells: ArtifactRef) -> dict[str, Any]:
+        source = self.discovery_scope if scope == "full" else scope
+        source = source or scope
+        settings = {
+            item.candidateId: {
+                **self.settings[item.candidateId].model_dump(mode="json"),
+                "scope": name,
+                "status": item.status,
+                "nCells": self.scope_sizes.get(name, self.handoff.nCells),
+                "cellSelection": item.cellSelection.model_dump(mode="json")
+                if item.cellSelection is not None
+                else None,
+                "metrics": item.metrics.model_dump(
+                    mode="json",
+                    include={
+                        "nClusters",
+                        "minClusterCells",
+                        "seedStability",
+                        "subsampleStability",
+                        "markerCoherence",
+                        "markerSpecificityMedian",
+                        "macroF1",
+                        "weightedF1",
+                        "graphSilhouetteMedian",
+                        "clusterConnectivity",
+                        "crossUnitSupport",
+                        "batchMixing",
+                        "biologicalPreservation",
+                        "topMarkerGenes",
+                    },
+                ),
+            }
+            for name, rows in self.evaluations.items()
+            for item in rows
+        }
+        rows = list(self.comparison_rows.get(source, []))
+        combined_id = self.combined_candidates.get(source)
+        resolution_ids = self.resolution_candidates.get(source, [])
+        if combined_id is not None:
+            rows.extend(
+                {
+                    "comparisonId": f"combinedResolution:{settings[identifier]['parameters']['leidenResolution']}",
+                    "axis": "partition",
+                    "status": "completed",
+                    "baselineCandidateId": combined_id,
+                    "alternativeCandidateId": identifier,
+                    "reason": "",
+                }
+                for identifier in resolution_ids
+                if identifier != combined_id
+            )
+        return {
+            "phase": "validation"
+            if scope == "full" and self.discovery_scope is not None
+            else "combined"
+            if source in self.combined_candidates
+            else "sensitivity",
+            "population": "allCells" if cells == self.cells else "subset",
+            "comparisons": rows,
+            "candidateSettings": settings,
+            "combinedCandidateId": combined_id,
+            "resolutionCandidateIds": resolution_ids,
+            "validationSources": dict(self.validation_sources),
+            "fullRepair": self.full_repair,
+        }
+
+    def _combined_setting(
+        self,
+        scope: str,
+        review_index: int,
+        action: TuningAction,
+        cells: ArtifactRef,
+    ) -> RnaSetting:
+        assert action.combinedSettings is not None
+        choices = action.combinedSettings
+        policy = self.settings[choices.featurePolicyCandidateId]
+        count = self.settings[choices.hvgCountCandidateId].hvgCount
+        ranking = self.settings[choices.hvgRankingCandidateId]
+        parameters = policy.parameters.model_copy(
+            update={
+                "dimensions": self.settings[
+                    choices.pcaCandidateId
+                ].parameters.dimensions,
+                "neighborsK": self.settings[
+                    choices.neighborsCandidateId
+                ].parameters.neighborsK,
+                "leidenResolution": 1.0,
+                "useHarmony": False,
+            }
+        )
+        inputs = {
+            "choices": choices.model_dump(mode="json"),
+            "settings": {
+                identifier: self.settings[identifier].model_dump(mode="json")
+                for identifier in choices.model_dump().values()
+            },
+            "cells": self.cells.to_dict(),
+        }
+        key = f"parameter_tuning/{scope}/review{review_index}/combined_setting"
+        saved = journal.load_checkpoint(
+            self.store, self.prefix, self.workflow.workflowRunId, key, inputs
+        )
+        if saved is not None:
+            return RnaSetting.model_validate(saved["setting"])
+        eligible = artifact_model_to_ref(policy.eligibleFeatures)
+        if (
+            count == policy.hvgCount
+            and ranking.ranking == policy.ranking
+            and ranking.rankingColumn == policy.rankingColumn
+        ):
+            features = policy.features
+        else:
+            proposed = self.execution_inputs(cells, policy)
+            proposed["features"] = {"combinedSettings": inputs}
+            proposed["parameters"] = parameters.model_dump(mode="json")
+            self.budget.check_many(scope, [proposed])
+            order = (
+                self.batch_ranking(eligible, count, ranking.rankingColumn)
+                if ranking.ranking == "batchAware" and ranking.rankingColumn is not None
+                else None
+            )
+            features = ArtifactReferenceModel.from_artifact_ref(
+                rank_core_hvgs(
+                    self.store,
+                    eligible=eligible,
+                    statistics=artifact_model_to_ref(
+                        self.handoff.graphFeatureCandidates["eligibleAll"]
+                    ),
+                    top_n=count,
+                    ranking=order,
+                )
+            )
+        actual_count = int(
+            np.asarray(
+                self.store.load_artifact(artifact_model_to_ref(features))["values"][:],
+                dtype=bool,
+            ).sum()
+        )
+        if parameters.dimensions >= min(actual_count, self.scope_sizes[scope]):
+            raise ValueError(
+                "Combined settings cannot support the selected PCA dimension"
+            )
+        if actual_count != count:
+            raise ValueError(
+                "The proposed combined HVG count was not retained by the selected feature policy"
+            )
+        setting = RnaSetting(
+            parameters=parameters,
+            features=features,
+            eligibleFeatures=policy.eligibleFeatures,
+            hvgCount=actual_count,
+            ranking=ranking.ranking,
+            rankingColumn=ranking.rankingColumn,
+        )
+        journal.save_checkpoint(
+            self.store,
+            self.prefix,
+            self.workflow.workflowRunId,
+            key,
+            inputs,
+            {"setting": setting.model_dump(mode="json")},
+        )
+        return setting
+
+    def _resolution_panel(
+        self,
+        scope: str,
+        cells: ArtifactRef,
+        setting: RnaSetting,
+    ) -> ParameterCandidateEvaluation:
+        settings = [
+            setting.model_copy(
+                update={
+                    "parameters": setting.parameters.model_copy(
+                        update={"leidenResolution": resolution}
+                    )
+                }
+            )
+            for resolution in (0.5, 0.75, 1.0, 1.25)
+        ]
+        proposals = [self.execution_inputs(cells, item) for item in settings]
+        if setting.parameters.useHarmony:
+            proposals += [
+                {**row, "parameters": {**row["parameters"], "useHarmony": False}}
+                for row in proposals
+            ]
+        self.budget.check_many(
+            scope,
+            [
+                row
+                for row in proposals
+                if scope != "full" or self.budget.completed_source(row) is None
+            ],
+        )
+        evaluations = [self.execute_matched(scope, cells, item) for item in settings]
+        self.resolution_candidates[scope] = [item.candidateId for item in evaluations]
+        return next(
+            item for item in evaluations if item.parameters.leidenResolution == 1.0
+        )
+
     def feature_evidence(
         self, selected: ParameterCandidateEvaluation
     ) -> dict[str, Any]:
@@ -890,7 +1580,7 @@ class RnaTuningRun:
                     np.flatnonzero(~eligible & membership)[:8]
                 ].tolist(),
             }
-        evidence = {
+        evidence: dict[str, Any] = {
             "statistics": reference.to_dict(),
             "statisticsCells": self.cells.to_dict(),
             "basis": "Core Scarf corrected variance on the full QC-retained cells; feature-axis summaries are descriptive, not a substitute for downstream comparisons.",
@@ -944,6 +1634,13 @@ class RnaTuningRun:
             raise ValueError(
                 "Saved review has different candidate evidence or settings"
             )
+        if (
+            previous_review is not None
+            and "comparisonCoverage" not in previous_review["inputs"]
+        ):
+            raise ValueError(
+                "Saved analysis lacks mandatory sensitivity coverage; start a new workflow"
+            )
         experiments = (
             previous_review["inputs"]["experiments"]
             if previous_review is not None
@@ -957,25 +1654,13 @@ class RnaTuningRun:
             if (
                 candidate.candidateId == selected.candidateId
                 or candidate.cellSelection != selected.cellSelection
-                or other.features != current_setting.features
                 or other.parameters.reductionMethod
                 != current_setting.parameters.reductionMethod
             ):
                 continue
-            changes = {
-                field: {
-                    "current": getattr(current_setting.parameters, field),
-                    "alternative": getattr(other.parameters, field),
-                }
-                for field in (
-                    "dimensions",
-                    "neighborsK",
-                    "leidenResolution",
-                    "useHarmony",
-                )
-                if getattr(current_setting.parameters, field)
-                != getattr(other.parameters, field)
-            }
+            changes = setting_changes(
+                current_setting.model_dump(mode="json"), other.model_dump(mode="json")
+            )
             if len(changes) != 1:
                 continue
             matched_comparisons.append(
@@ -983,15 +1668,31 @@ class RnaTuningRun:
                     "currentCandidateId": selected.candidateId,
                     "alternativeCandidateId": candidate.candidateId,
                     "changedParameter": changes,
-                    "basis": "Same frozen cells and graph features; all other analysis parameters match. Compare these exact candidates rather than mixing dimensions and resolution effects.",
+                    "partitionEvidence": partition_comparison_evidence(
+                        self.store, selected, candidate
+                    )
+                    if previous_review is None
+                    else {},
+                    "basis": "Same frozen cells and every unaffected logical setting; the named intervention alone changes. Feature comparisons hold ranking/count/eligible genes fixed except for their declared axis.",
                 }
             )
             if previous_review is None and candidate.status == "done":
                 field, values = next(iter(changes.items()))
+                field = {
+                    "pca": "dimensions",
+                    "neighbors": "neighborsK",
+                    "partition": "leidenResolution",
+                    "correction": "useHarmony",
+                }.get(field, field)
                 for experiment_id, experiment in experiments.items():
+                    requested_value = (
+                        [experiment["value"], experiment.get("column")]
+                        if field == "hvgRanking"
+                        else experiment["value"]
+                    )
                     if (
                         experiment["parameter"] == field
-                        and experiment["value"] == values["alternative"]
+                        and requested_value == values["alternative"]
                     ):
                         completed_experiments[experiment_id] = candidate.candidateId
         if previous_review is None:
@@ -1114,6 +1815,7 @@ class RnaTuningRun:
                         "featureEvidence",
                         "neighborComparisons",
                         "assessmentContext",
+                        "comparisonCoverage",
                     ]
                 )
             )
@@ -1122,7 +1824,7 @@ class RnaTuningRun:
             not isinstance(value, str) for value in evidence_ids
         ):
             raise ValueError("Review evidence IDs must be a list of strings")
-        evidence = {
+        evidence: dict[str, Any] = {
             "studyContract": self.study.model_dump(mode="json"),
             "qcPolicy": self.plan.cellQc.model_dump(mode="json"),
             "scope": scope,
@@ -1145,7 +1847,6 @@ class RnaTuningRun:
             "experiments": experiments,
             "availableEvidenceIds": evidence_ids,
             "imageHashes": image_hashes,
-            "assessedDomains": sorted(_DOMAINS),
             "budget": {
                 "visibleEvaluations": {
                     name: len(rows) for name, rows in self.evaluations.items()
@@ -1153,10 +1854,16 @@ class RnaTuningRun:
                 "limits": self.budget.summary()["limits"],
             },
             "fullRepairsUsed": self.full_repairs,
+            "comparisonCoverage": self.comparison_coverage(
+                scope, artifact_model_to_ref(selected.cellSelection)
+            )
+            if selected.cellSelection is not None
+            else {},
             "pilotPopulationWarnings": {
                 item.candidateId: "This sampled partition includes fewer than 20 cells in a population. Assess its relevance and support; it is not evidence of an invalid biological group. Accepting this partition requires a larger sample or full-cohort assessment."
                 for item in candidates
                 if scope != "full"
+                and selected.cellSelection != self.handoff.cellSelection
                 and item.metrics.minClusterCells is not None
                 and item.metrics.minClusterCells < 20
             },
@@ -1186,9 +1893,11 @@ class RnaTuningRun:
                     item.model_dump(mode="json") for item in self.design_comparisons
                 ],
                 "populationSupport": {
-                    selected.candidateId: population_support_evidence(
-                        self.store, selected, support_columns
+                    item.candidateId: population_support_evidence(
+                        self.store, item, support_columns
                     )
+                    for item in candidates
+                    if scope == "full" or item.candidateId == selected.candidateId
                 }
                 if support_columns
                 else {},
@@ -1256,6 +1965,19 @@ class RnaTuningRun:
                 raise ValueError(
                     "An offered experiment must use the current candidate as its fixed baseline"
                 )
+            validate_comparison_review(
+                evidence["comparisonCoverage"], action.model_dump(mode="json")
+            )
+            if action.combinedSettings is not None:
+                choices = action.combinedSettings
+                count = self.settings[choices.hvgCountCandidateId].hvgCount
+                available = evidence["featureEvidence"][
+                    choices.featurePolicyCandidateId
+                ]["eligibleGenes"]
+                if count > available:
+                    raise ValueError(
+                        "The combined feature policy cannot supply the requested HVG count; choose a compatible observed count or policy"
+                    )
             if (
                 self.study.correctionLicense == "unsafeConfounded"
                 and action.correctionNeed in {"needed", "notNeeded"}
@@ -1403,7 +2125,15 @@ class RnaTuningRun:
                 "Assess this RNA analysis as a computational biologist against the exact study objective. "
                 "Start from Scarf defaults; keep them when observed quantitative evidence and biological interpretation support them. "
                 "Do not execute a search grid or favor a default solely because it is a default. "
-                "Assess every named scientific domain before acceptance. Explain observed marker programs and relevant PCA loading genes, "
+                "Explain observed marker programs and relevant PCA loading genes, "
+                "The supplied comparisonCoverage records which sensitivity comparisons actually ran. If featurePolicy is pending, nominate an offered family/feature experiment from observed baseline loading, marker and objective evidence before combining; missing nomination is not evidence of inapplicability. "
+                "Conclude every comparisonCoverage axis using its exact completed baseline and alternatives, including candidates with better stability or marker coverage than your preference. "
+                "In phase=sensitivity, use action=combine and choose each combinedSettings field from an observed candidate on that axis. A combination is a proposed hypothesis, not an observed result. "
+                "Scarf will execute it and compare four resolutions on its exact graph before acceptance. Do not request already covered settings as experiments. "
+                "comparisonConclusions must include quantitativeReason, biologicalReason and a short plainLanguageSummary for each axis. Explain how split or merged marker programs serve the stated objective, not just larger clusters or a single numerical maximum. "
+                "For each alternative with higher seedStability, subsampleStability, markerCoherence, markerSpecificityMedian or macroF1 than the stated preference, include a tradeoffs entry naming alternativeCandidateId, metric, exact preferredValue/alternativeValue and interpretation. These measurements require explanation, not automatic winner selection. "
+                "For each selected cluster with empty topMarkerGenes, populationConcerns must name candidateId, clusterId, cited evidenceIds and explain whether it is a nonEssentialLimitation or unresolvedEssential. An unresolved essential population blocks acceptance; do not invent marker support. "
+                "The action plainLanguageSummary should state the selected settings, what evidence changed the choice, and any unresolved population interpretations without workflow jargon. "
                 "QC/capture retention, batch associations per PC and protected biological structure. "
                 "Family dominance alone never proves nuisance; inclusion, exclusion and HVG bans need evidence and objective justification. "
                 "If a specific concern warrants testing, choose exactly one offered experiment and state its expected improvement and "
@@ -1424,7 +2154,7 @@ class RnaTuningRun:
                 "A QC association is correlation. Check featureEvidence for actual selected genes: marker-family enrichment cannot show that an excluded family drives PCA. "
                 "More retained cells, balanced group counts, or cross-unit support alone do not prove healthy cells or biological preservation. "
                 "Check proposed cell identities against the tissue context. Unexpected marker programs require capture/donor and provenance investigation; do not declare them ordinary tissue populations or assert contamination without evidence. "
-                "Detailed populationSupport is supplied for currentCandidateId only; do not claim to have compared unprovided distributions for alternatives. Inspect its capture/donor distribution and missing metadata. Broad support does not prove a biological identity; concentration alone does not prove contamination. "
+                "Detailed populationSupport is supplied for currentCandidateId during screening and every final validation candidate; do not claim to have compared unprovided distributions for alternatives. Inspect its capture/donor distribution and missing metadata. Broad support does not prove a biological identity; concentration alone does not prove contamination. "
                 "Unsupported design comparisons establish neither association nor absence; keep their unresolved requirements visible. "
                 "Previous actions are history, not scientific authority. Reassess their claims against the exact current evidence. "
                 "Request enlarge when sample evidence is insufficient; on full cells there is one targeted repair, then defer. "
@@ -1444,6 +2174,7 @@ class RnaTuningRun:
                         [item.candidateId for item in candidates],
                         list(experiments),
                         scope=scope,
+                        phase=evidence["comparisonCoverage"]["phase"],
                     ),
                     system_prompt=prompt,
                     user_prompt=build_visual_evidence_prompt(
@@ -1506,7 +2237,8 @@ class RnaTuningRun:
             if action.action == "experiment"
             else f"{action.action} {action.selectedCandidateId}"
         )
-        logger.info(f"Analysis assessment ({operation}): {action.rationale}")
+        logger.info(f"Analysis assessment: {action.plainLanguageSummary}")
+        logger.debug(f"Analysis assessment ({operation}): {action.rationale}")
         return action
 
     def assess_scope(
@@ -1528,39 +2260,29 @@ class RnaTuningRun:
         self.history.append(
             {"scope": scope, "coverage": coverage, "coverageConcerns": insufficient}
         )
-        if scope != "full" and insufficient:
+        if cells != self.cells and insufficient:
             return "enlarge", None
         if initial is None:
-            settings = [
-                self.baseline(resolution) for resolution in (0.5, 0.75, 1.0, 1.25)
-            ]
-            settings = [
-                value.model_copy(
-                    update={
-                        "parameters": value.parameters.model_copy(
-                            update={
-                                "dimensions": min(
-                                    value.parameters.dimensions,
-                                    coverage["screeningCells"] - 1,
-                                ),
-                                "neighborsK": min(
-                                    value.parameters.neighborsK,
-                                    coverage["screeningCells"] - 1,
-                                ),
-                            }
-                        )
-                    }
-                )
-                for value in settings
-            ]
-            self.budget.admit_many(
-                scope, [self.execution_inputs(cells, value) for value in settings]
+            baseline = self.baseline().model_copy(
+                update={
+                    "parameters": self.baseline().parameters.model_copy(
+                        update={
+                            "dimensions": min(
+                                self.baseline().parameters.dimensions,
+                                coverage["screeningCells"] - 1,
+                            ),
+                            "neighborsK": min(
+                                self.baseline().parameters.neighborsK,
+                                coverage["screeningCells"] - 1,
+                            ),
+                        }
+                    )
+                }
             )
-            baseline = [self.execute(scope, cells, value) for value in settings]
-            selected = next(
-                (item for item in baseline if item.parameters.leidenResolution == 1.0),
-                baseline[0],
-            )
+            selected = self._resolution_panel(scope, cells, baseline)
+            # The first panel describes defaults, not an accepted combined recipe.
+            self.resolution_candidates.pop(scope, None)
+            self._sensitivity_panel(scope, cells, selected)
         else:
             selected = self.execute_matched(scope, cells, initial)
         limit = (
@@ -1576,9 +2298,17 @@ class RnaTuningRun:
                 if item.candidateId == action.selectedCandidateId
             )
             if action.action in {"accept", "enlarge", "defer"}:
+                if action.action == "enlarge" and cells == self.cells:
+                    self.history.append(
+                        {
+                            "scope": scope,
+                            "reason": "All retained cells were already assessed; more sampling cannot supply the unresolved evidence.",
+                        }
+                    )
+                    return "defer", selected
                 if (
                     action.action == "accept"
-                    and scope != "full"
+                    and cells != self.cells
                     and selected.metrics.minClusterCells is not None
                     and selected.metrics.minClusterCells < 20
                 ):
@@ -1589,10 +2319,40 @@ class RnaTuningRun:
                         }
                     )
                     return "enlarge", selected
+                if action.action == "accept" and scope != "full":
+                    self.discovery_scope = scope
                 return action.action, selected
+            if action.action == "combine":
+                setting = self._combined_setting(scope, review_index, action, cells)
+                selected = self.execute(scope, cells, setting)
+                selected = self._resolution_panel(
+                    scope, cells, self.settings[selected.candidateId]
+                )
+                self.combined_candidates[scope] = selected.candidateId
+                if self.study.correctionLicense == "safe" and action.correctionNeed in {
+                    "needed",
+                    "uncertain",
+                }:
+                    setting = self.settings[selected.candidateId].model_copy(
+                        update={
+                            "parameters": selected.parameters.model_copy(
+                                update={"useHarmony": True}
+                            )
+                        }
+                    )
+                    selected = self._resolution_panel(scope, cells, setting)
+                    self.combined_candidates[scope] = selected.candidateId
+                continue
             assert action.experimentId is not None
             experiment = self.experiments(selected)[action.experimentId]
-            if scope == "full" and experiment["parameter"] != "useHarmony":
+            if (
+                scope == "full"
+                and (
+                    self.discovery_scope is not None
+                    or scope in self.combined_candidates
+                )
+                and experiment["parameter"] != "useHarmony"
+            ):
                 if self.full_repairs >= self.request.config.maxFullRepairs:
                     raise CandidateBudgetExceeded(
                         "The allowed full-cohort repair has been used; scientific acceptance remains unresolved"
@@ -1606,65 +2366,93 @@ class RnaTuningRun:
                 "includeFeature",
                 "excludeFeature",
             }:
-                feature_key = (
-                    f"parameter_tuning/{scope}/review{review_index}/feature_experiment"
+                setting = self._prepared_setting(
+                    scope,
+                    f"review{review_index}/feature_experiment",
+                    selected,
+                    experiment,
+                    cells,
                 )
-                feature_inputs = {
-                    "baseline": self.settings[selected.candidateId].model_dump(
-                        mode="json"
-                    ),
-                    "experiment": experiment,
-                    "cells": self.cells.to_dict(),
-                }
-                saved_feature = journal.load_checkpoint(
-                    self.store,
-                    self.prefix,
-                    self.workflow.workflowRunId,
-                    feature_key,
-                    inputs=feature_inputs,
-                )
-                if saved_feature is None:
-                    proposed = self.execution_inputs(
-                        cells, self.settings[selected.candidateId]
-                    )
-                    proposed["features"] = {
-                        "requestedFeatureExperiment": feature_inputs
-                    }
-                    proposals = [proposed]
-                    if selected.parameters.useHarmony:
-                        proposals.append(
-                            {
-                                **proposed,
-                                "parameters": {
-                                    **proposed["parameters"],
-                                    "useHarmony": False,
-                                },
-                            }
-                        )
-                    self.budget.check_many(scope, proposals)
-                    setting = self.apply_experiment(selected, experiment)
-                    journal.save_checkpoint(
-                        self.store,
-                        self.prefix,
-                        self.workflow.workflowRunId,
-                        feature_key,
-                        inputs=feature_inputs,
-                        outputs={"setting": setting.model_dump(mode="json")},
-                    )
-                else:
-                    setting = RnaSetting.model_validate(saved_feature["setting"])
             else:
                 setting = self.apply_experiment(selected, experiment)
-            next_selected = self.execute_matched(scope, cells, setting)
-            if next_selected.candidateId == selected.candidateId:
-                self.history.append(
-                    {
-                        "scope": scope,
-                        "experiment": action.experimentId,
-                        "result": "The intervention did not change the selected genes or numerical representation; exact artifacts were reused.",
-                    }
+            prior = selected
+            pending_policy = next(
+                (
+                    row
+                    for row in self.comparison_rows.get(scope, [])
+                    if row["axis"] == "featurePolicy" and row["status"] == "pending"
+                ),
+                None,
+            )
+            policy_experiment = experiment["parameter"] in {
+                "includeFamily",
+                "excludeFamily",
+                "includeFeature",
+                "excludeFeature",
+            }
+            if pending_policy is not None and policy_experiment:
+                if prior.candidateId != pending_policy["baselineCandidateId"]:
+                    raise ValueError(
+                        "The required policy comparison must retain the exact default baseline"
+                    )
+                prior_setting = self.settings[prior.candidateId]
+                if setting.hvgCount != prior_setting.hvgCount or np.array_equal(
+                    self.store.load_artifact(artifact_model_to_ref(setting.features))[
+                        "values"
+                    ][:],
+                    self.store.load_artifact(
+                        artifact_model_to_ref(prior_setting.features)
+                    )["values"][:],
+                ):
+                    pending_policy.update(
+                        status="notApplicable",
+                        reason="The nominated policy cannot change selected genes while retaining the fixed baseline HVG count.",
+                        observedProof={
+                            "baselineFeatures": prior_setting.features.model_dump(
+                                mode="json"
+                            ),
+                            **(
+                                {
+                                    "kind": "insufficientEligibleGenes",
+                                    "eligibleFeatureCount": setting.hvgCount,
+                                }
+                                if setting.hvgCount != prior_setting.hvgCount
+                                else {
+                                    "kind": "identicalSelectedGenes",
+                                    "verifiedEqualMasks": True,
+                                    "alternativeSetting": setting.model_dump(
+                                        mode="json"
+                                    ),
+                                }
+                            ),
+                        },
+                    )
+                    continue
+            selected = self.execute_matched(scope, cells, setting)
+            if pending_policy is not None and policy_experiment:
+                pending_policy.update(
+                    status="completed",
+                    alternativeCandidateId=selected.candidateId,
+                    reason="Baseline loading, marker and objective evidence nominated this exact policy comparison.",
                 )
-            selected = next_selected
+            if (
+                scope == "full"
+                and (
+                    self.discovery_scope is not None
+                    or scope in self.combined_candidates
+                )
+                and experiment["parameter"] != "useHarmony"
+            ):
+                self.full_repair = {
+                    "baselineCandidateId": prior.candidateId,
+                    "selectedCandidateId": selected.candidateId,
+                    "experimentId": action.experimentId,
+                }
+            if scope != "full" and scope in self.combined_candidates:
+                selected = self._resolution_panel(
+                    scope, cells, self.settings[selected.candidateId]
+                )
+                self.combined_candidates[scope] = selected.candidateId
         return "defer", selected
 
     def run(self) -> tuple[ParameterTuningReport, dict[str, Any]]:
@@ -1673,41 +2461,48 @@ class RnaTuningRun:
         reason = "Required scientific evidence remains unresolved."
         try:
             initial: RnaSetting | None = None
-            if self.handoff.nCells > self.request.config.screeningCells:
-                for index, size in enumerate(
-                    (
-                        self.request.config.screeningCells,
-                        self.request.config.maxScreeningCells,
-                    )
-                ):
-                    sample = uniform_screening_selection(
-                        self.store,
-                        self.cells,
-                        size=size,
-                        seed=self.request.config.randomSeed,
-                    )
-                    if sample == self.cells:
-                        break
-                    status, screened = self.assess_scope(f"sample{index}", sample, None)
-                    if status == "accept" and screened is not None:
-                        initial = self.settings[screened.candidateId]
-                        break
-                    if status == "defer":
-                        return self.report(
-                            None,
-                            self.last_action.rationale
-                            if self.last_action is not None
-                            else reason,
-                        ), self.summary()
-                else:
-                    logger.info(
-                        "Screening evidence remains insufficient; assessing the bounded full Scarf baseline."
-                    )
+            previous_sample = None
+            for index, size in enumerate(
+                (
+                    self.request.config.screeningCells,
+                    self.request.config.maxScreeningCells,
+                )
+            ):
+                sample = uniform_screening_selection(
+                    self.store,
+                    self.cells,
+                    size=size,
+                    seed=self.request.config.randomSeed,
+                )
+                if sample == previous_sample:
+                    break
+                previous_sample = sample
+                status, screened = self.assess_scope(f"sample{index}", sample, None)
+                if status == "accept" and screened is not None:
+                    initial = self.settings[screened.candidateId]
+                    self.discovery_scope = f"sample{index}"
+                    break
+                if status == "defer":
+                    return self.report(
+                        None,
+                        self.last_action.rationale
+                        if self.last_action is not None
+                        else reason,
+                    ), self.summary()
+                if sample == self.cells:
+                    return self.report(
+                        None,
+                        "All retained cells were assessed, but the required scientific evidence remains unresolved; another sample cannot resolve this concern.",
+                    ), self.summary()
+            if initial is None:
+                logger.info(
+                    "Both bounded discovery populations lack adequate support; assessing the bounded full baseline."
+                )
             final_status, selected = self.assess_scope("full", self.cells, initial)
             if final_status != "accept" and self.last_action is not None:
                 reason = self.last_action.rationale
         except CandidateBudgetExceeded as exc:
-            reason = f"Scientific assessment paused: {exc}"
+            reason = f"Required comparison coverage is incomplete within the configured work limits: {exc}"
         if final_status != "accept":
             selected = None
         return self.report(selected, reason), self.summary()
@@ -1830,6 +2625,11 @@ class RnaTuningRun:
                 needsInput=ParameterTuningNeedsInput(question=reason),
             )
         assert self.last_action is not None
+        common["limitations"].extend(
+            f"Population {row.clusterId}: {row.explanation}"
+            for row in self.last_action.populationConcerns
+            if row.candidateId == selected.candidateId
+        )
         report = ParameterTuningReport(
             **common,
             status="done",

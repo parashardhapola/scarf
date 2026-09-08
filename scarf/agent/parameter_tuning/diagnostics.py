@@ -15,6 +15,7 @@ from ...metadata.rows import (
     read_metadata_missing_rows_chunkwise,
     read_metadata_rows_chunkwise,
 )
+from ...metadata.selection import resolve_cell_aligned_artifact
 from ...quality_control.cell_cycle_genes import (
     g2m_phase_genes,
     g2m_phase_genes_mouse,
@@ -512,6 +513,7 @@ def _covariate_associations(
     roles: Sequence[str],
     column_kinds: Mapping[str, str] | None = None,
     support: dict[str, Any] | None = None,
+    column_artifacts: Mapping[str, ArtifactRef] | None = None,
 ) -> np.ndarray:
     if len(columns) != len(roles):
         raise ValueError("PCA covariate columns and roles must align")
@@ -519,8 +521,28 @@ def _covariate_associations(
     from ..experimental_context.characterization import _infer_kind
 
     for index, column in enumerate(columns):
-        values = _aligned_metadata_values(store, cell_selection, column)
-        kind = (column_kinds or {}).get(column) or _infer_kind(values)
+        artifact = (column_artifacts or {}).get(column)
+        values = (
+            _aligned_metadata_values(store, cell_selection, column)
+            if artifact is None
+            else np.asarray(
+                resolve_cell_aligned_artifact(
+                    store.zw,
+                    artifact,
+                    cell_selection=cell_selection,
+                    expected_kind="quality_metric",
+                ).values
+            )
+        )
+        if values.shape != (coordinates.shape[0],):
+            raise ValueError(f"Covariate {column!r} does not align with PCA rows")
+        kind = (column_kinds or {}).get(column) or (
+            "continuous" if artifact is not None else _infer_kind(values)
+        )
+        if artifact is not None and kind != "continuous":
+            raise ValueError(
+                "QC percentage artifacts require continuous covariate evidence"
+            )
         if kind not in {"continuous", "categorical"}:
             raise ValueError(f"Unknown covariate kind for {column!r}: {kind!r}")
         valid = np.asarray(~pd.isna(values), dtype=bool)
@@ -581,6 +603,7 @@ def _write_pca_diagnostic(
     covariate_roles: Sequence[str],
     adjacent_overlap: float | None,
     column_kinds: Mapping[str, str] | None = None,
+    column_artifacts: Mapping[str, ArtifactRef] | None = None,
 ) -> tuple[
     ArtifactRef,
     np.ndarray,
@@ -590,6 +613,17 @@ def _write_pca_diagnostic(
     np.ndarray,
     np.ndarray,
 ]:
+    if column_artifacts:
+        column_kinds = dict(column_kinds or {})
+        for column, artifact in column_artifacts.items():
+            if (
+                artifact.kind != "quality_metric"
+                or column_kinds.get(column, "continuous") != "continuous"
+            ):
+                raise ValueError(
+                    "QC percentage artifacts require continuous covariate evidence"
+                )
+            column_kinds[column] = "continuous"
     reduction = _artifact_ref(evaluation, "pca")
     neighbors = _artifact_ref(evaluation, "neighbors")
     reduction_status = store.inspect_artifact(reduction)
@@ -628,7 +662,11 @@ def _write_pca_diagnostic(
                 for family, mask in family_masks.items()
             },
             "covariate_fingerprints": {
-                column: _metadata_column_fingerprint(store.cells, column)
+                column: (
+                    column_artifacts[column].to_dict()
+                    if column_artifacts and column in column_artifacts
+                    else _metadata_column_fingerprint(store.cells, column)
+                )
                 for column in covariate_columns
             },
             "adjacent_neighbor_overlap": adjacent_overlap,
@@ -638,6 +676,7 @@ def _write_pca_diagnostic(
             "reduction": reduction,
             "neighbors": neighbors,
             "feature_selection": feature_selection,
+            "covariate_artifacts": dict(column_artifacts or {}),
         },
         execution_options={},
         invalidate_cache=False,
@@ -742,6 +781,7 @@ def _write_pca_diagnostic(
             covariate_roles,
             column_kinds,
             covariate_support,
+            column_artifacts,
         )
         if evaluation.cellSelection is not None
         else np.zeros((len(covariate_columns), coordinates.shape[1]), dtype=np.float64)
@@ -803,6 +843,7 @@ def augment_pca_evaluations(
     qc_columns: Sequence[str],
     batch_columns: Sequence[str] = (),
     column_kinds: Mapping[str, str] | None = None,
+    qc_artifacts: Mapping[str, ArtifactRef] | None = None,
 ) -> tuple[ParameterCandidateEvaluation, ...]:
     """Attach persisted PCA loading, variance, topology, and covariate evidence."""
     selected_indices, selected_names = _selected_feature_names(
@@ -830,7 +871,9 @@ def augment_pca_evaluations(
         ("qc", qc_columns),
     ):
         for column in values:
-            if column in store.cells.columns and column not in columns:
+            if (
+                column in store.cells.columns or column in (qc_artifacts or {})
+            ) and column not in columns:
                 columns.append(column)
                 roles.append(role)
     completed = [
@@ -883,6 +926,7 @@ def augment_pca_evaluations(
             covariate_roles=roles,
             adjacent_overlap=previous_by_id[evaluation.candidateId],
             column_kinds=column_kinds,
+            column_artifacts=qc_artifacts,
         )
         family_maxima = {
             family: float(family_enrichment[index].max(initial=0.0))

@@ -147,10 +147,32 @@ biology, including supported joint groups. Unsafe or unknown designs cannot lice
 Large inputs use an immutable uniform screening cohort of 50,000 cells, with one possible
 enlargement to 100,000. Coverage and rare-population concerns can require a full-cohort baseline.
 Screening selects settings; it does not replace the final QC-retained cohort. Selected settings
-are executed and assessed on the full cohort. The default numerical limits admit at most 12
-screening evaluations per sample and 24 in total, four full-cohort graphs, eight full-cohort
-partitions, and one targeted full-cohort repair. Reused exact work is not charged again. Limits
-bound numerical work rather than promise elapsed time or provider cost.
+are executed and assessed on the full cohort. Each screening population must compare the
+baseline against 2,000 and 4,000 variable genes, 10 and 30 PCA dimensions, and 21 and 41
+neighbors, changing one setting at a time. The four baseline resolutions share one graph.
+Supported batch-aware ranking and an evidence-nominated feature policy provide additional
+comparisons. The agent interprets these results, proposes combined settings, and assesses their
+actual execution and resolution alternatives before accepting them. A list of reviewed domains
+or a general preference for defaults does not establish sufficient evidence.
+
+The default limits allow 24 screening evaluations per population and 48 overall, with four
+additional final-validation graphs, eight additional partitions, and one targeted repair.
+For small cohorts, discovery uses every retained cell; these are full-sized comparisons counted
+in the screening allowance. Exact completed artifacts are reused for final validation without
+another admission. Report the analyzed population and diagnostic operations separately; the
+candidate allowance does not bound doublet calculations, elapsed time, or provider cost.
+
+Experimental Context records objective evidence requirements before tuning. Repeated donors and
+incomplete pairing receive descriptive counts and support summaries without treating cells or
+repeated samples as independent replicates. A method that cannot compute an association does
+not establish that an effect is absent or unidentifiable. Essential unresolved evidence blocks
+a consequential decision; measured confounding may prohibit correction while descriptive
+population discovery remains possible.
+
+RNA percentages use explicit gene-selection artifacts. Imported percentage columns remain
+available for comparison but do not override a validated definition. In particular, a
+mitochondrial symbol definition matches `MT-` rather than every gene beginning with `MT`.
+Changing the metric definition requires new QC thresholds and dependent evidence.
 
 All saved execution and decisions belong to the orchestration stage history. Identical calls
 reuse completed work or resume matching interrupted work; changed inputs and identity checks

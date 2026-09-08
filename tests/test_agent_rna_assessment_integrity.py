@@ -181,14 +181,22 @@ def test_matched_comparisons_require_one_change_on_the_exact_representation(
                 "currentCandidateId": selected.candidateId,
                 "alternativeCandidateId": alternative.candidateId,
                 "changedParameter": {
-                    "dimensions": {
+                    "pca": {
                         "current": selected.parameters.dimensions,
                         "alternative": alternative.parameters.dimensions,
                     }
                 },
+                "partitionEvidence": context["matchedComparisons"][0][
+                    "partitionEvidence"
+                ],
                 "basis": context["matchedComparisons"][0]["basis"],
             }
         ]
+        partition = context["matchedComparisons"][0]["partitionEvidence"]
+        assert partition["matchedCells"] == 100
+        assert all(
+            row["fractionOutsideLargestMatch"] == 0.0 for row in partition["splits"]
+        )
         assert experiment_id not in observed["experiments"]
     else:
         assert not context["matchedComparisons"]
@@ -242,9 +250,9 @@ def test_committed_catalogue_replays_without_new_filtering_or_population_work(
     expected = run.review("full", 0, selected, {})
     key = "parameter_tuning/full/review0"
     assert len(run.evaluations["full"]) == 2
-    assert support_calls == [selected.candidateId]
+    assert support_calls == [item.candidateId for item in run.evaluations["full"]]
     assert set(saved[key]["inputs"]["assessmentContext"]["populationSupport"]) == {
-        selected.candidateId
+        item.candidateId for item in run.evaluations["full"]
     }
     # Prior reviews could offer an already-completed comparison and lacked this context.
     saved[key]["inputs"]["experiments"][experiment_id] = old_experiment

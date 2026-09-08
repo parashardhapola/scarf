@@ -693,6 +693,26 @@ def _example_45_StudyContract(cls):
             "This workflow does not test differential-expression hypotheses."
         ],
         evidenceIds=["column:batch", "column:donor", "column:treatment"],
+        evidenceRequirements=[
+            {
+                "requirementId": "studyDesign",
+                "question": "Which independent units and design constraints support population discovery?",
+                "objectiveQuote": "Discover stable populations while preserving treatment-associated structure.",
+                "kind": "studyDesign",
+                "columns": ["batch", "donor", "treatment"],
+                "observationUnit": "sample",
+                "independentUnit": "donor",
+                "essential": True,
+            }
+        ],
+        evidenceCoverage=[
+            {
+                "requirementId": "studyDesign",
+                "status": "computed",
+                "evidenceIds": ["column:batch", "column:donor", "column:treatment"],
+                "reasons": [],
+            }
+        ],
     )
 
 

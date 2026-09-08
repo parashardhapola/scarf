@@ -250,7 +250,11 @@ class DecisionStagesMixin:
                 system_prompt=(
                     "Assess the offered settings against the study objective using the observed quantitative and qualitative evidence. "
                     "The objective identifies questions and biology to protect; it does not predetermine the answer. "
-                    "Select only an offered option and cite its required evidence. Explain the scientific consequence. "
+                    "Select only an offered option and cite its required evidence. "
+                    "Write the rationale as two or three plain-language sentences for the analysis report: "
+                    "state the chosen outcome, the relevant measured comparison, and its scientific tradeoff or limitation. "
+                    "Use readable study and measurement names. Keep option identifiers, artifact identifiers and "
+                    "internal field names out of the rationale; cite identifiers in evidenceIds instead. "
                     "Do not infer nuisance from gene-family names alone. Retain defaults only when evidence supports them. "
                     "Defer essential unresolved questions. Model failure or a work limit never justifies an unsupported choice. "
                     "For QC, distinguish retained group coverage from preserved biological structure: "

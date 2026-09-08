@@ -76,13 +76,16 @@ result = runner.run(AutomatedWorkflowRequest(
 
 The advanced interface exposes numerical limits, provider limits, existing-store workspaces, and
 explicit pauses. Inspect its returned status and questions before continuing. Defaults allow
-50,000 screening cells, one enlargement to 100,000, 12 evaluations per screen and 24 across
-screens, four full-cohort graphs, eight full-cohort partitions, and one targeted full-cohort
-repair. These counts bound distinct admitted work, including failed attempts; exact reuse does
+50,000 screening cells, one enlargement to 100,000, 24 evaluations per screen and 48 across
+screens, four additional final-validation graphs, eight additional partitions, and one targeted
+full-cohort repair. Screening includes every retained cell in small datasets; those comparisons
+are counted in the screening allowance, and exact artifacts are reused for final validation. These counts bound distinct admitted work, including failed attempts; exact reuse does
 not spend another slot. They do not bound every QC, marker, I/O, or provider cost.
 
 The previous agent workflow records, result fields, candidate-budget aliases, and root imports
-are unsupported. Old agent runs must be restarted. Numerical artifacts remain accessible through
+are unsupported. Histories without mandatory objective requirements and completed comparison
+coverage cannot be resumed or used to regenerate reports under this contract. Start a new
+workflow; existing historical HTML remains readable. Numerical artifacts remain accessible through
 the ordinary Scarf artifact APIs; no saved records are silently migrated.
 
 For a complete executable example, see {doc}`../../tutorials/agent_workflow`.

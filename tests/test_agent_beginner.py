@@ -73,8 +73,8 @@ def test_analyze_rna_passes_one_request_and_bounded_defaults(
     assert config.inputPolicy == "unattended"
     assert config.screeningCells == 50_000
     assert config.maxScreeningCells == 100_000
-    assert config.maxScreeningEvaluations == 12
-    assert config.maxTotalScreeningEvaluations == 24
+    assert config.maxScreeningEvaluations == 24
+    assert config.maxTotalScreeningEvaluations == 48
     assert config.maxFullGraphs == 4
     assert config.maxFullPartitions == 8
     assert config.maxFullRepairs == 1

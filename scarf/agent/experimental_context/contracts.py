@@ -53,6 +53,11 @@ class CovariateProposal(AgentDataModel):
     independentUnit: str | None = None
     rationale: str = Field(min_length=1)
     protectCombination: bool = False
+    purpose: Literal["designCoverage", "association", "effectEstimation"] = (
+        "designCoverage"
+    )
+    essential: bool = True
+    objectiveQuote: str = ""
 
     @model_validator(mode="after")
     def validate_columns(self) -> "CovariateProposal":
@@ -76,6 +81,28 @@ class CovariateComparison(AgentDataModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
     evidenceId: str
+
+
+class DesignEvidenceRequirement(AgentDataModel):
+    """One objective question whose completion is checked against measured evidence."""
+
+    requirementId: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+    objectiveQuote: str = Field(min_length=1)
+    kind: Literal["studyDesign", "designCoverage", "association", "effectEstimation"]
+    columns: list[str] = Field(default_factory=list)
+    observationUnit: str | None = None
+    independentUnit: str | None = None
+    essential: bool = True
+
+
+class DesignEvidenceCoverage(AgentDataModel):
+    """Measured answer to a requirement, without assigning a second workflow status."""
+
+    requirementId: str
+    status: Literal["computed", "nonIdentifiable", "unsupported", "failed"]
+    evidenceIds: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
 
 
 class CaptureProposal(AgentDataModel):
@@ -607,6 +634,8 @@ class CovariateEvidence(AgentDataModel):
     htoIdentityColumns: list[str] = Field(default_factory=list)
     htoIdentityArtifacts: list[NamedArtifactSource] = Field(default_factory=list)
     evidenceIds: list[str] = Field(default_factory=list)
+    evidenceRequirements: list[DesignEvidenceRequirement] = Field(default_factory=list)
+    evidenceCoverage: list[DesignEvidenceCoverage] = Field(default_factory=list)
 
 
 class ExperimentalContextResult(AgentDataModel):

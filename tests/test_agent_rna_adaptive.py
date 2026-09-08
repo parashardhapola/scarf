@@ -1,6 +1,7 @@
 """Bounded RNA admission, uniform sampling and evidence-driven acceptance."""
 
 from tests.agent_examples import example
+from tests.agent_comparison_examples import observed_action
 
 import copy
 import hashlib
@@ -10,7 +11,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from scarf.agent.orchestrator import journal, rna_tuning, tuning
+from scarf.agent.orchestrator import journal, rna_tuning
 from scarf.agent import record_io
 from scarf.agent.orchestrator.budget import CandidateBudget, CandidateBudgetExceeded
 from scarf.agent.orchestrator.models import (
@@ -18,7 +19,6 @@ from scarf.agent.orchestrator.models import (
     AutomatedWorkflowConfig,
     PreprocessedAssayHandoff,
 )
-from scarf.agent.config.agent_exec import ImageEvidence
 from scarf.agent.experimental_context.study import StudyContract
 from scarf.agent.parameter_tuning.contracts import ParameterCandidateEvaluation
 from scarf.agent.parameter_tuning.hvg import core_hvg_evidence, rank_core_hvgs
@@ -289,62 +289,26 @@ def test_native_acceptance_requires_resolved_supported_correction_need(
     monkeypatch: pytest.MonkeyPatch,
     unsupported: bool,
 ) -> None:
-    handoff = example(PreprocessedAssayHandoff)
-    handoff.graphFeatureCandidates = {"eligibleDefault": handoff.graphFeatures}
-    study = StudyContract.get_blank().model_copy(
+    from tests.test_agent_rna_evidence_mode import assess, make_run
+
+    run, evaluation = make_run(monkeypatch, object())
+    run.study = run.study.model_copy(
         update={
             "correctionLicense": "safe",
             "technicalBatchColumns": ["batch"],
             "unsupportedProtection": ["age"] if unsupported else [],
         }
     )
-    run = rna_tuning.RnaTuningRun(
-        SimpleNamespace(model=object()),
-        SimpleNamespace(),
-        SimpleNamespace(workflowRunId="workflow"),
-        SimpleNamespace(config=AutomatedWorkflowConfig()),
-        example(AutomatedPreprocessingPlan),
-        handoff,
-        study,
-        {},
-        {},
-    )
-    evaluation = example(ParameterCandidateEvaluation)
-    evaluation.parameters.useHarmony = False
-    for field in (
-        "seedStability",
-        "subsampleStability",
-        "markerCoherence",
-        "membershipStrengthMean",
-        "clusterConnectivity",
-    ):
-        setattr(evaluation.metrics, field, 0.9)
-    monkeypatch.setattr(run, "feature_evidence", lambda selected: {})
+    run.batch_columns = ["batch"]
     run.evaluations["sample0"] = [evaluation]
-    run.settings[evaluation.candidateId] = run.baseline()
-    monkeypatch.setattr(
-        tuning,
-        "_analysis_visual_content",
-        lambda *a, **kw: [
-            ImageEvidence(
-                identifier="observed-plot", data=b"image", media_type="image/png"
-            )
-        ],
-    )
-    action = rna_tuning.TuningAction(
-        action="accept",
-        selectedCandidateId=evaluation.candidateId,
-        correctionNeed="needed",
-        assessedDomains=sorted(rna_tuning._DOMAINS),
-        evidenceIds=[f"candidate:{evaluation.candidateId}", "observed-plot"],
-        quantitativeFindings=["Observed separation requires a matched comparison."],
-        qualitativeFindings=["Batch colors separate within a comparable population."],
-        objectivePreservation="Preserve condition-associated populations.",
-        rationale="Inspect correction.",
-    )
-    monkeypatch.setattr(
-        rna_tuning, "run_agent_sync", lambda **kwargs: SimpleNamespace(output=action)
-    )
+
+    def propose_native(**kwargs: Any) -> Any:
+        action = assess(**{**kwargs, "output_validator": lambda value: value}).output
+        return SimpleNamespace(
+            output=action.model_copy(update={"correctionNeed": "needed"})
+        )
+
+    monkeypatch.setattr(rna_tuning, "run_agent_sync", propose_native)
     with pytest.raises(
         ValueError,
         match="biological protection is unsupported"
@@ -356,7 +320,7 @@ def test_native_acceptance_requires_resolved_supported_correction_need(
 
 
 @pytest.mark.slow
-def test_full_execution_repair_and_resume_reuse_augmented_evidence(
+def test_required_comparisons_and_resume_reuse_augmented_evidence(
     datastore_ephemeral: Any,
     checkpoints: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -404,32 +368,8 @@ def test_full_execution_repair_and_resume_reuse_augmented_evidence(
     def assess(**kwargs: Any) -> Any:
         evidence = json.loads(kwargs["user_prompt"][0])
         selected = evidence["currentCandidateId"]
-        repair = not model_calls
         model_calls.append(selected)
-        action = rna_tuning.TuningAction(
-            action="experiment" if repair else "accept",
-            selectedCandidateId=selected,
-            experimentId="leidenResolution:1.5" if repair else None,
-            correctionNeed="notApplicable",
-            assessedDomains=sorted(rna_tuning._DOMAINS),
-            evidenceIds=[f"candidate:{selected}", *evidence["imageHashes"]],
-            quantitativeFindings=[
-                "Compare the registered finer partition against measured stability and markers."
-            ],
-            qualitativeFindings=[
-                "Inspect the observed PCA and marker diagnostic panels."
-            ],
-            concern="Test whether the current partition merges marker-supported groups."
-            if repair
-            else "",
-            expectedImprovement="A finer partition may preserve distinct marker programs."
-            if repair
-            else "",
-            objectivePreservation="Retain coherent populations and all selected cells.",
-            rationale="Run one targeted partition comparison."
-            if repair
-            else "The full-cohort diagnostics support this partition.",
-        )
+        action = rna_tuning.TuningAction.model_validate(observed_action(evidence))
         return SimpleNamespace(output=kwargs["output_validator"](action))
 
     monkeypatch.setattr(rna_tuning, "run_agent_sync", assess)
@@ -451,20 +391,26 @@ def test_full_execution_repair_and_resume_reuse_augmented_evidence(
     assert first.status == "done"
     assert first.cellSelection == handoff.cellSelection
     assert first.selectedArtifacts["normalized"]
-    assert len(model_calls) == 2
-    assert history["budget"]["scopes"]["full"]["reserved"]["graphs"] == 1
-    assert history["budget"]["scopes"]["full"]["reserved"]["partitions"] == 5
-    assert history["fullRepairs"] == 1
+    assert len(model_calls) >= 3
+    expected_calls = len(model_calls)
+    assert history["budget"]["scopes"]["sample0"]["reserved"]["partitions"] >= 8
+    assert history["budget"]["scopes"]["full"]["reserved"] == {
+        "graphs": 0,
+        "partitions": 0,
+    }
+    assert history["fullRepairs"] == 0
 
     def no_recomputation(*args: Any, **kwargs: Any) -> Any:
         pytest.fail("A fully augmented candidate must not be recomputed on resume")
 
     monkeypatch.setattr(rna_tuning, "augment_pca_evaluations", no_recomputation)
     monkeypatch.setattr(rna_tuning, "augment_cluster_evaluations", no_recomputation)
+    monkeypatch.setattr(rna_tuning, "execute_parameter_candidate", no_recomputation)
+    monkeypatch.setattr(rna_tuning, "partition_comparison_evidence", no_recomputation)
     resumed, resumed_history = runner().run()
     assert resumed == first
     assert resumed_history == history
-    assert len(model_calls) == 2
+    assert len(model_calls) == expected_calls
 
 
 def test_failed_execution_retries_and_doublets_bind_exact_feature_mask(

@@ -91,6 +91,22 @@ class ExperimentalContextAgent:
             missingness, replication, and sparse strata; do not turn these into
             negative findings. Explain unsupported requested comparisons in the
             final rationale; a proposed comparison is not a completed analysis.
+            Set each proposal's purpose to designCoverage for measured counts,
+            crossing, replication, or pairing; association when an association
+            coefficient is essential; effectEstimation for an explicitly requested
+            biological effect, which this workflow cannot deliver. Copy an exact
+            objectiveQuote from the supplied study text and mark explicit objective
+            questions essential. Do not downgrade an essential association or effect
+            question to descriptive coverage to obtain completion. The returned
+            evidenceRequirements and evidenceCoverage enforce this distinction.
+            For repeated donors and incomplete pairing, inspect descriptiveDesign:
+            it retains observation counts, distinct donors, group support and paired
+            coverage without collapsing a donor to its first condition. Unsupported
+            association methods do not establish non-identifiability. Only measured
+            rank and estimability for the exact tested design support that claim.
+            Use the single follow-up round to resolve missing design evidence.
+            If essential evidence remains unsupported, ask for clarification or
+            abstain. Optional questions must remain explicit limitations.
             Continuous conditioning and expression hypothesis
             testing are unsupported. You may call
             score_current_representation at most once when an exact supplied graph

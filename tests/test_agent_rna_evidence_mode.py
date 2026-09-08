@@ -1,9 +1,12 @@
 """RNA assessments preserve scientific checks for visual and text-only models."""
 
 import json
+import hashlib
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -26,10 +29,86 @@ from scarf.agent.orchestrator.models import (
 )
 from scarf.agent.parameter_tuning.contracts import ParameterCandidateEvaluation
 from tests.agent_examples import example
+from tests.agent_comparison_examples import comparison_review
 from tests.test_agent_rna_adaptive import checkpoints as memory_checkpoints  # noqa: F401
 
 
 pytestmark = pytest.mark.usefixtures("memory_checkpoints")
+
+
+def comparison_coverage(run: rna_tuning.RnaTuningRun, scope: str) -> dict[str, Any]:
+    """A completed sensitivity fixture with the exact candidate under assessment."""
+    panel = comparison_review(scope)
+    coverage = panel["comparisonCoverage"]
+    selected = run.evaluations[scope][0]
+    selected_id = selected.candidateId
+    setting = run.settings[selected_id].model_dump(mode="json")
+    baseline = {
+        **setting,
+        "scope": scope,
+        "status": selected.status,
+        "cellSelection": selected.cellSelection.model_dump(mode="json"),
+        "metrics": selected.metrics.model_dump(mode="json"),
+    }
+    template_baseline = coverage["candidateSettings"]["baseline"]
+    settings = {}
+    for identifier, template in coverage["candidateSettings"].items():
+        row = deepcopy(baseline)
+        for field in ("hvgCount", "ranking", "rankingColumn", "eligibleFeatures"):
+            if template[field] != template_baseline[field]:
+                row[field] = deepcopy(template[field])
+        if row["hvgCount"] != baseline["hvgCount"]:
+            row["features"]["artifactId"] = hashlib.sha256(
+                identifier.encode()
+            ).hexdigest()
+        for field, value in template["parameters"].items():
+            if value != template_baseline["parameters"][field]:
+                row["parameters"][field] = value
+        settings[selected_id if identifier == "baseline" else identifier] = row
+    coverage["candidateSettings"] = settings
+    coverage["combinedCandidateId"] = selected_id
+    coverage["resolutionCandidateIds"] = [
+        selected_id if identifier == "baseline" else identifier
+        for identifier in coverage["resolutionCandidateIds"]
+    ]
+    for row in coverage["comparisons"]:
+        row["baselineCandidateId"] = selected_id
+        if "observedProof" in row:
+            row["observedProof"]["baselineFeatures"] = deepcopy(baseline["features"])
+    for candidate in run.evaluations[scope][1:]:
+        settings[candidate.candidateId] = {
+            **run.settings[candidate.candidateId].model_dump(mode="json"),
+            "scope": scope,
+            "status": candidate.status,
+            "cellSelection": candidate.cellSelection.model_dump(mode="json"),
+            "metrics": candidate.metrics.model_dump(mode="json"),
+        }
+        coverage["fullRepair"] = {
+            "baselineCandidateId": selected_id,
+            "selectedCandidateId": candidate.candidateId,
+        }
+    return coverage
+
+
+def comparison_conclusions(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    coverage = evidence["comparisonCoverage"]
+    by_axis: dict[str, set[str]] = {}
+    for row in coverage["comparisons"]:
+        ids = by_axis.setdefault(row["axis"], set())
+        ids.add(row["baselineCandidateId"])
+        if row["alternativeCandidateId"] is not None:
+            ids.add(row["alternativeCandidateId"])
+    return [
+        {
+            "axis": axis,
+            "candidateIds": sorted(ids),
+            "preferredCandidateId": evidence["currentCandidateId"],
+            "quantitativeReason": "The supplied fixture metrics support retaining the observed baseline.",
+            "biologicalReason": "The supplied marker program remains represented.",
+            "plainLanguageSummary": "The observed alternatives do not justify changing this setting.",
+        }
+        for axis, ids in by_axis.items()
+    ]
 
 
 def make_run(
@@ -50,6 +129,14 @@ def make_run(
     )
     selected = example(ParameterCandidateEvaluation)
     selected.parameters.useHarmony = False
+    selected.parameters.dimensions = 20
+    selected.parameters.neighborsK = 11
+    selected.parameters.leidenResolution = 1.0
+    selected.metrics.nClusters = 2
+    selected.metrics.topMarkerGenes = {
+        "0": ["NKG7", "GNLY"],
+        "1": ["MS4A1", "CD79A"],
+    }
     for field in (
         "seedStability",
         "subsampleStability",
@@ -62,6 +149,25 @@ def make_run(
     run.settings[selected.candidateId] = run.baseline().model_copy(
         update={"parameters": selected.parameters}
     )
+    run.store = SimpleNamespace(
+        inspect_artifact=lambda _ref: SimpleNamespace(
+            exists=True,
+            complete=True,
+            inputs={"cell_selection": run.cells.to_dict()},
+        ),
+        load_artifact=lambda _ref: {"values": np.repeat([0, 1], 50)},
+    )
+    monkeypatch.setattr(
+        rna_tuning,
+        "uniform_screening_selection",
+        lambda _store, cells, **_kwargs: cells,
+    )
+    monkeypatch.setattr(
+        run,
+        "comparison_coverage",
+        lambda scope, _cells: comparison_coverage(run, scope),
+    )
+    monkeypatch.setattr(run, "_feature_experiments", lambda _setting: {})
     monkeypatch.setattr(
         run,
         "feature_evidence",
@@ -93,7 +199,8 @@ def assess(**kwargs: Any) -> Any:
         action="accept",
         selectedCandidateId=selected,
         correctionNeed="notApplicable",
-        assessedDomains=sorted(rna_tuning._DOMAINS),
+        comparisonConclusions=comparison_conclusions(evidence),
+        plainLanguageSummary="The observed settings preserve the reported cytotoxic program.",
         evidenceIds=[
             f"candidate:{selected}",
             "featureEvidence",
@@ -504,7 +611,8 @@ def test_real_agent_retry_repairs_a_citation_from_actionable_feedback(
             action="accept",
             selectedCandidateId=selected_id,
             correctionNeed="notApplicable",
-            assessedDomains=sorted(rna_tuning._DOMAINS),
+            comparisonConclusions=comparison_conclusions(evidence),
+            plainLanguageSummary="The observed settings preserve the reported cytotoxic program.",
             evidenceIds=[invalid_id if requests == 1 else metric],
             quantitativeFindings=["The supplied seed stability is 0.9."],
             qualitativeFindings=["NKG7 and GNLY support a cytotoxic program."],
@@ -535,12 +643,32 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
     run.handoff.nCells = 100
     run.evaluations["full"] = []
     run.settings = {}
+    monkeypatch.setattr(
+        run,
+        "comparison_coverage",
+        rna_tuning.RnaTuningRun.comparison_coverage.__get__(run),
+    )
+    run.handoff.graphFeatureCandidates["eligibleAll"] = (
+        run.handoff.graphFeatureCandidates["eligibleDefault"]
+    )
 
     def unexpected(*args: Any, **kwargs: Any) -> Any:
         pytest.fail("A committed defer cannot trigger new model or scientific work")
 
     run.store = SimpleNamespace(
-        inspect_artifact=lambda _: SimpleNamespace(exists=True, complete=True),
+        inspect_artifact=lambda _: SimpleNamespace(
+            exists=True, complete=True, inputs={"cell_selection": run.cells.to_dict()}
+        ),
+        load_artifact=lambda ref: {
+            "values": np.ones(1000, dtype=bool)
+            if ref.kind == "feature_selection"
+            else np.repeat([0, 1], 50)
+        },
+        get_assay=lambda _: SimpleNamespace(
+            feats=SimpleNamespace(
+                fetch_all=lambda _: np.asarray([f"G{i}" for i in range(1000)])
+            )
+        ),
         run_normalization=unexpected,
     )
     monkeypatch.setattr(
@@ -548,8 +676,35 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
         "screening_coverage",
         lambda *args, **kwargs: ({"screeningCells": 100}, []),
     )
-    for resolution in (0.5, 0.75, 1.0, 1.25):
-        setting = run.baseline(resolution)
+    baseline = run.baseline()
+    baseline_identity = rna_tuning.candidate_identity(
+        run.execution_inputs(run.cells, baseline)
+    )
+    prepared_baseline = baseline.model_copy(
+        update={
+            "parameters": baseline.parameters.model_copy(
+                update={"candidateId": f"rna_{baseline_identity[:24]}"}
+            )
+        }
+    )
+    for count in (2000, 4000):
+        saved[f"parameter_tuning/sample0/sensitivity/hvgCount:{count}/setting"] = {
+            "inputs": {
+                "baseline": prepared_baseline.model_dump(mode="json"),
+                "experiment": {"parameter": "hvgCount", "value": count},
+                "cells": run.cells.to_dict(),
+            },
+            "outputs": {"setting": prepared_baseline.model_dump(mode="json")},
+        }
+    settings = [run.baseline(resolution) for resolution in (0.5, 0.75, 1.0, 1.25)]
+    settings += [
+        baseline.model_copy(
+            update={"parameters": baseline.parameters.model_copy(update={field: value})}
+        )
+        for field, values in (("dimensions", (10, 30)), ("neighborsK", (21, 41)))
+        for value in values
+    ]
+    for setting in settings:
         inputs = run.execution_inputs(run.cells, setting)
         candidate_id = f"rna_{rna_tuning.candidate_identity(inputs)[:24]}"
         candidate = prototype.model_copy(deep=True)
@@ -558,7 +713,7 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
             update={"candidateId": candidate_id}
         )
         candidate.evidenceIds = [f"candidate:{candidate_id}:seedStability"]
-        admission = run.budget.admit("full", inputs)
+        admission = run.budget.admit("sample0", inputs)
         run.budget.complete(
             admission, {"evaluation": candidate.model_dump(mode="json")}
         )
@@ -581,6 +736,11 @@ def test_saved_scientific_defer_replays_completed_candidates_without_new_work(
     resumed.store = run.store
     resumed.evaluations["full"] = []
     resumed.settings = {}
+    monkeypatch.setattr(
+        resumed,
+        "comparison_coverage",
+        rna_tuning.RnaTuningRun.comparison_coverage.__get__(resumed),
+    )
     monkeypatch.setattr(rna_tuning, "run_agent_sync", unexpected)
     monkeypatch.setattr(tuning, "_analysis_visual_content", unexpected)
     resumed_report, resumed_summary = resumed.run()
@@ -643,7 +803,8 @@ def test_assessment_schema_limits_choices_without_changing_saved_fields(
         action="defer",
         selectedCandidateId="observed_a",
         correctionNeed="notApplicable",
-        assessedDomains=[],
+        comparisonConclusions=[],
+        plainLanguageSummary="Independent evidence is still needed.",
         evidenceIds=["candidate:observed_a"],
         quantitativeFindings=["Observed stability needs further assessment."],
         qualitativeFindings=["Marker support remains unresolved."],
@@ -695,7 +856,8 @@ def test_real_agent_retries_choices_against_the_current_output_schema(
             selectedCandidateId=selected_id,
             experimentId=chosen_experiment,
             correctionNeed="notApplicable",
-            assessedDomains=[],
+            comparisonConclusions=[],
+            plainLanguageSummary="Request one observed-evidence-driven comparison.",
             evidenceIds=[f"candidate:{selected_id}"],
             quantitativeFindings=["The supplied stability metric is 0.9."],
             qualitativeFindings=["Reported markers support a cytotoxic program."],

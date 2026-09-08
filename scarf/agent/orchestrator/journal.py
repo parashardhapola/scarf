@@ -994,10 +994,22 @@ def _analysis_review_views(
                     "evidenceMode": mode,
                     "visualInspection": inspection,
                     **entry["review"],
+                    "coverage": inputs.get("coverage", {}),
+                    "comparisonCoverage": inputs.get("comparisonCoverage"),
+                    "populationSupport": inputs.get("assessmentContext", {}).get(
+                        "populationSupport", {}
+                    ),
+                    "harmonyGates": inputs.get("harmonyGates", {}),
                     "candidates": [
                         {
                             name: item[name]
-                            for name in ("candidateId", "parameters", "metrics")
+                            for name in (
+                                "candidateId",
+                                "parameters",
+                                "metrics",
+                                "cellSelection",
+                                "artifacts",
+                            )
                         }
                         for item in candidates
                     ],

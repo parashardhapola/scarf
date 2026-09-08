@@ -11,6 +11,7 @@ import pandas as pd
 
 from ...metrics.association import association_pair, coefficient_estimability
 from .. import record_io
+from .characterization import _json_scalar, _paired_coverage
 from .contracts import (
     CaptureProposal,
     CovariateCharacterization,
@@ -22,6 +23,7 @@ from .contracts import (
 DESIGN_ROUND_LIMITS = (8, 4)
 MAX_COMBINATIONS = 32
 MAX_STRATA = 16
+MAX_DESCRIPTIVE_ROWS = 128
 
 
 def combination_labels(cells: Any, columns: Sequence[str]) -> np.ndarray:
@@ -74,6 +76,97 @@ def _association(
         leftKind=kinds[response],
         rightKind=kinds[explanatory],
     )
+
+
+def _descriptive_design(
+    design: pd.DataFrame,
+    *,
+    columns: Sequence[str],
+    independent: str,
+    kinds: dict[str, Any],
+) -> dict[str, Any]:
+    """Count observations and distinct units without treating repeats as replicates."""
+    categorical = list(
+        dict.fromkeys(name for name in columns if kinds[name] == "categorical")
+    )
+    output: dict[str, Any] = {
+        "status": "computed",
+        "observationUnits": len(design),
+        "independentUnits": int(design[independent].nunique()),
+        "independentUnit": independent,
+        "interpretation": (
+            "Descriptive counts only. A unit can occur in multiple groups; group "
+            "memberships are not disjoint independent replicates or effect estimates."
+        ),
+        "groupSupport": {},
+        "pairedCoverage": {},
+        "sharedIndependentUnits": {},
+    }
+    if any(design[name].nunique() > MAX_COMBINATIONS for name in categorical):
+        output.update(status="unsupported", reason="moreThanThirtyTwoCategoricalLevels")
+        return output
+    for name in categorical:
+        rows: list[dict[str, Any]] = []
+        memberships: list[tuple[Any, set[Any]]] = []
+        for label, subset in design.groupby(name, sort=False, observed=True):
+            memberships.append((_json_scalar(label), set(subset[independent])))
+            rows.append(
+                {
+                    "group": _json_scalar(label),
+                    "observationUnits": len(subset),
+                    "independentUnits": int(subset[independent].nunique()),
+                }
+            )
+        output["groupSupport"][name] = rows
+        overlap = [
+            {
+                "groups": [left, right],
+                "independentUnits": len(left_units & right_units),
+            }
+            for index, (left, left_units) in enumerate(memberships)
+            for right, right_units in memberships[index + 1 :]
+        ]
+        output["sharedIndependentUnits"][name] = {
+            "pairs": overlap[:MAX_DESCRIPTIVE_ROWS],
+            "truncated": len(overlap) > MAX_DESCRIPTIVE_ROWS,
+        }
+        if name != independent and len(rows) >= 2:
+            output["pairedCoverage"][name] = _paired_coverage(
+                design,
+                coefficient=name,
+                pair_by=independent,
+                group_order=list(design[name].unique()),
+            )
+    if categorical:
+        groups = design.groupby(categorical, sort=False, observed=True)
+        if groups.ngroups > MAX_DESCRIPTIVE_ROWS:
+            output.update(status="unsupported", reason="moreThan128DescriptiveGroups")
+        else:
+            rows = []
+            for labels, subset in groups:
+                if not isinstance(labels, tuple):
+                    labels = (labels,)
+                rows.append(
+                    {
+                        "groups": dict(
+                            zip(categorical, map(_json_scalar, labels), strict=True)
+                        ),
+                        "observationUnits": len(subset),
+                        "independentUnits": int(subset[independent].nunique()),
+                    }
+                )
+            output["jointGroupSupport"] = rows
+    output["continuousSummaries"] = {
+        name: {
+            "minimum": float(design[name].min()),
+            "median": float(design[name].median()),
+            "maximum": float(design[name].max()),
+            "unit": "observationUnit",
+        }
+        for name in columns
+        if kinds[name] == "continuous"
+    }
+    return output
 
 
 def compare_covariates(
@@ -161,6 +254,10 @@ def compare_covariates(
                 )
                 evidence["responseAggregation"] = "medianPerObservationUnit"
             evidence["observationUnits"] = len(design)
+            if not reasons:
+                evidence["descriptiveDesign"] = _descriptive_design(
+                    design, columns=columns, independent=independent, kinds=kinds
+                )
             if independent != unit:
                 grouped_independent = design.groupby(
                     independent, sort=False, observed=True
@@ -327,6 +424,25 @@ def evaluate_proposals(
         raise ValueError(
             "Design comparison permits eight initial and four follow-up proposals"
         )
+    for proposal in proposals:
+        if deps.studyObjective and (
+            not proposal.objectiveQuote or "purpose" not in proposal.model_fields_set
+        ):
+            raise ValueError(
+                "Objective comparisons require an exact objectiveQuote and explicit purpose"
+            )
+        if proposal.objectiveQuote and proposal.objectiveQuote not in (
+            f"{deps.studyContext}\n{deps.studyObjective}"
+        ):
+            raise ValueError("Comparison objectiveQuote must copy exact study text")
+        if (
+            proposal.objectiveQuote
+            and proposal.objectiveQuote in deps.studyObjective
+            and not proposal.essential
+        ):
+            raise ValueError(
+                "A question quoting the explicit study objective must remain essential"
+            )
     deps.designRounds += 1
     previous = {_proposal_key(item.proposal): item for item in deps.comparisons}
     records = {record["name"]: record for record in characterization.columns}
@@ -342,7 +458,26 @@ def evaluate_proposals(
             for column, value in prior.evidence.get(recorded, {}).items()
         ):
             del previous[key]
+        if prior is not None and key in previous:
+            declared_pairs = {
+                (
+                    record.get("observationUnit"),
+                    record.get("independentUnit") or record.get("observationUnit"),
+                )
+                for record in characterization.coefficients
+            }
+            declared = (
+                proposal.observationUnit,
+                proposal.independentUnit or proposal.observationUnit,
+            ) in declared_pairs
+            if (
+                prior.evidence.get("unitRoles", {}).get("declaredInCharacterization")
+                != declared
+            ):
+                del previous[key]
         if key not in previous:
+            if prior is not None:
+                deps.comparisons.remove(prior)
             comparison = compare_covariates(
                 deps.cells,
                 characterization,

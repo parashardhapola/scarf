@@ -1,6 +1,7 @@
 """Public facade, model, and end-to-end orchestrator contracts."""
 
 from tests.agent_examples import example
+from tests.agent_comparison_examples import observed_action
 
 import json
 from pathlib import Path
@@ -37,7 +38,7 @@ from scarf.agent.orchestrator.journal import (
     load_checkpoint,
     _ensure_orchestration_store,
 )
-from scarf.agent.orchestrator.rna_tuning import TuningAction, _DOMAINS
+from scarf.agent.orchestrator.rna_tuning import TuningAction
 from scarf.agent.orchestrator import (
     AgentOrchestrator,
     AutomatedWorkflowConfig,
@@ -212,7 +213,7 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
         prompt = prompt_text(messages)
         payload, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
         if any(
-            {"selectedCandidateId", "correctionNeed", "assessedDomains"}.issubset(
+            {"selectedCandidateId", "correctionNeed", "comparisonConclusions"}.issubset(
                 tool.parameters_json_schema.get("properties", {})
             )
             for tool in info.output_tools
@@ -226,30 +227,20 @@ def _rna_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
                 ),
                 payload["currentCandidateId"],
             )
-            action = TuningAction(
-                action="defer" if state["pca_pauses"] == 0 else "accept",
-                selectedCandidateId=selected,
-                correctionNeed="notApplicable",
-                assessedDomains=sorted(_DOMAINS),
-                evidenceIds=[f"candidate:{selected}", *payload["imageHashes"]],
-                quantitativeFindings=[
-                    "The measured stability and marker evidence supports the observed population partition."
-                ],
-                qualitativeFindings=[
-                    "The diagnostic board shows the distinct CD3D and MS4A1 marker programs."
-                ],
-                objectivePreservation="Retain marker-supported populations and every QC-retained cell.",
-                rationale="Review the supplied evidence before continuing."
-                if state["pca_pauses"] == 0
-                else "Full-cell quantitative and visual evidence supports the selected partition.",
+            if payload["comparisonCoverage"]["phase"] == "sensitivity":
+                selected = payload["currentCandidateId"]
+            action = TuningAction.model_validate(
+                observed_action(payload, selected=selected)
             )
-            state["pca_pauses"] += 1
-            state["answer"] = action.model_copy(
-                update={
-                    "action": "accept",
-                    "rationale": "Accept the observed screening evidence and validate these settings on the full cohort.",
-                }
-            ).model_dump(mode="json")
+            if action.action == "accept" and state["pca_pauses"] == 0:
+                state["answer"] = action.model_dump(mode="json")
+                action = action.model_copy(
+                    update={
+                        "action": "defer",
+                        "rationale": "Review the completed comparisons before validating the selected combination on all retained cells.",
+                    }
+                )
+                state["pca_pauses"] += 1
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -482,7 +473,7 @@ def test_rna_h5ad_completes_public_automated_workflow(
 
     assert result.status == "completed", result.notes
     assert len(pca_diagnostic_calls) == len(pca_diagnostics_before_resume) + 1
-    assert state["pca_prompts"] == 2
+    assert state["pca_prompts"] >= 3
     assert result.currentStage == "analysis_finalization"
     assert result.workflowRunId is not None
     report_path = result.report()
@@ -570,7 +561,22 @@ def test_rna_h5ad_completes_public_automated_workflow(
     evidence = next(
         stage for stage in snapshot["stages"] if stage["stage"] == "parameter_tuning"
     )["outputs"]["tuningEvidence"]
-    assert evidence["budget"]["scopes"]["sample0"]["reserved"]["partitions"] == 4
+    assert 4 < evidence["budget"]["scopes"]["sample0"]["reserved"]["partitions"] <= 24
+    compared = {
+        row["comparisonId"]
+        for review in snapshot["analysisReviews"]
+        for row in review["comparisonCoverage"]["comparisons"]
+    }
+    assert {
+        "hvgCount:2000",
+        "hvgCount:4000",
+        "dimensions:10",
+        "dimensions:30",
+        "neighborsK:21",
+        "neighborsK:41",
+        "hvgRanking",
+        "featurePolicy",
+    } <= compared
     assert evidence["budget"]["scopes"]["full"]["reserved"]["graphs"] == 1
     assert evidence["budget"]["scopes"]["full"]["reserved"]["partitions"] == 1
     sample_record = load_checkpoint(

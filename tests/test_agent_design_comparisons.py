@@ -267,6 +267,44 @@ def test_two_round_limit_counts_retries_and_reuses_identical_proposals() -> None
         evaluate_proposals(deps, characterization, [])
 
 
+def test_objective_questions_require_explicit_grounded_purpose_before_a_round() -> None:
+    cells, characterization = _design()
+    deps = _deps(cells)
+    deps.studyObjective = "Explain treatment and time design coverage"
+    with pytest.raises(ValueError, match="explicit purpose"):
+        evaluate_proposals(deps, characterization, [_proposal()])
+    assert deps.designRounds == 0
+    proposal = _proposal(purpose="designCoverage", objectiveQuote=deps.studyObjective)
+    with pytest.raises(ValueError, match="must remain essential"):
+        evaluate_proposals(
+            deps, characterization, [proposal.model_copy(update={"essential": False})]
+        )
+    assert deps.designRounds == 0
+    evaluate_proposals(deps, characterization, [proposal])
+    assert deps.designRounds == 1
+
+
+def test_changed_declared_unit_pair_recomputes_one_current_comparison() -> None:
+    cells, characterization = _design()
+    cells.frame["donor"] = cells.frame["sample"]
+    cells.columns.append("donor")
+    characterization.columns.append(
+        {"name": "donor", "domain": "biological", "kind": "categorical"}
+    )
+    deps = _deps(cells)
+    proposal = _proposal(independentUnit="donor")
+    evaluate_proposals(deps, characterization, [proposal])
+    assert deps.comparisons[0].status == "unsupported"
+    prior_id = deps.comparisons[0].evidenceId
+    characterization.coefficients = [
+        {"name": "response", "observationUnit": "sample", "independentUnit": "donor"}
+    ]
+    evaluate_proposals(deps, characterization, [proposal])
+    assert len(deps.comparisons) == 1
+    assert deps.comparisons[0].status == "computed"
+    assert deps.comparisons[0].evidenceId != prior_id
+
+
 def test_unsupported_explanation_does_not_discard_protected_biology() -> None:
     cells, characterization = _design()
     cells.frame.loc[:2, "response"] = None

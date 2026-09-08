@@ -382,6 +382,77 @@ def _qc_metric_sources(
         source for source in sources if source.sourceType == "metadataColumn"
     ]
     artifact_sources = [source for source in sources if source.sourceType == "artifact"]
+    # An imported percentage has no frozen gene definition. Keep it visible for
+    # comparison, but let an exactly defined derived metric own filtering.
+    canonical_roles: set[QcMetricRole] = set()
+    if (
+        driver[1] == "RNA"
+        and callable(getattr(deps.store, "get_assay", None))
+        and callable(getattr(deps.store, "load_artifact", None))
+    ):
+        expected_masks = {
+            role: mask
+            for role, _, _, mask in _rna_percentage_feature_masks(
+                deps.store, assay_name
+            )
+        }
+        for metric_source in artifact_sources:
+            if metric_source.provenanceOperation != "run_feature_percentage":
+                continue
+            for reference in metric_source.inputArtifacts:
+                if (
+                    reference.kind != "feature_selection"
+                    or reference.assay != assay_name
+                ):
+                    continue
+                expected = expected_masks.get(metric_source.metricRole)
+                actual = np.asarray(
+                    deps.store.load_artifact(core_artifact_reference(reference))[
+                        "values"
+                    ][:],
+                    dtype=bool,
+                )
+                if expected is not None and np.array_equal(expected, actual):
+                    canonical_roles.add(metric_source.metricRole)
+        for metric_source in metadata_sources:
+            if metric_source.metricRole not in {"mitochondrial", "ribosomal"}:
+                continue
+            metric_source.usableForFiltering = False
+            note = (
+                f"Imported {metric_source.metricName} is retained for comparison; filtering "
+                "uses the derived percentage with an exact gene selection."
+                if metric_source.metricRole in canonical_roles
+                else f"Imported {metric_source.metricName} has no validated gene definition "
+                "and cannot drive filtering. This percentage QC axis remains unavailable."
+            )
+            metric_source.notes.append(note)
+            notes.append(note)
+            values_by_execution_name.pop(metric_source.executionName, None)
+            if metric_source.metadataColumn in valid_metadata:
+                valid_metadata.remove(metric_source.metadataColumn)
+        for metric_source in artifact_sources:
+            if metric_source.artifact is None:
+                continue
+            execution_name = qc_metric_execution_name(
+                metric_source.metricName,
+                artifact_id=metric_source.artifact.artifactId,
+                collides_with_metadata=metric_source.metricName in valid_metadata,
+            )
+            if execution_name != metric_source.executionName:
+                if metric_source.executionName in values_by_execution_name:
+                    values_by_execution_name[execution_name] = (
+                        values_by_execution_name.pop(metric_source.executionName)
+                    )
+                metric_source.executionName = execution_name
+        for role in expected_masks:
+            if not any(
+                metric_source.metricRole == role and metric_source.usableForFiltering
+                for metric_source in artifact_sources
+            ):
+                notes.append(
+                    f"The {role} percentage has no exact usable artifact; "
+                    "QC conclusions cannot claim that this axis was evaluated."
+                )
     for left in metadata_sources:
         for right in artifact_sources:
             if left.metricRole != right.metricRole or left.metricRole == "diagnostic":
@@ -466,6 +537,35 @@ def _qc_attributes(store: Any, assay_name: str, assay_type: str) -> list[str]:
     ]
 
 
+def _rna_percentage_feature_masks(
+    store: Any, assay_name: str
+) -> list[tuple[QcMetricRole, str, str, np.ndarray]]:
+    """Resolve symbol-defined RNA percentages without the ambiguous MT prefix."""
+    assay = store.get_assay(assay_name)
+    feature_ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
+    feature_names = np.asarray(assay.feats.fetch_all("names")).astype(str)
+    specifications: tuple[tuple[QcMetricRole, str, str], ...] = (
+        ("mitochondrial", "percentMito", r"(?i)^MT-"),
+        ("ribosomal", "percentRibo", r"(?i)^(RPS|RPL|MRPS|MRPL)"),
+    )
+    resolved = []
+    for role, suffix, pattern in specifications:
+        compiled = re.compile(pattern)
+        mask = np.fromiter(
+            (
+                compiled.search(feature_id) is not None
+                or compiled.search(feature_name) is not None
+                for feature_id, feature_name in zip(
+                    feature_ids, feature_names, strict=True
+                )
+            ),
+            dtype=bool,
+            count=assay.feats.N,
+        )
+        resolved.append((role, suffix, pattern, mask))
+    return resolved
+
+
 def _derive_missing_percentage_artifacts(
     store: Any,
     *,
@@ -473,7 +573,7 @@ def _derive_missing_percentage_artifacts(
     driver: tuple[str, CellQcDriverType] | None,
     quality_sources: Sequence[NamedArtifactSource],
 ) -> list[NamedArtifactSource]:
-    """Derive missing RNA percentage metrics through public immutable APIs."""
+    """Derive RNA percentage artifacts even when unbound metadata is present."""
     sources = list(quality_sources)
     if driver is None or driver[1] != "RNA":
         return sources
@@ -482,44 +582,16 @@ def _derive_missing_percentage_artifacts(
     ):
         return sources
     assay_name = driver[0]
-    available_metadata = set(store.cells.columns)
     supplied_roles = {
         registered_qc_metric_role(source.name)
         for source in sources
         if source.artifact.assay == assay_name
     }
-    assay = store.get_assay(assay_name)
-    feature_ids = np.asarray(assay.feats.fetch_all("ids")).astype(str)
-    feature_names = np.asarray(assay.feats.fetch_all("names")).astype(str)
-    specifications: tuple[
-        tuple[QcMetricRole, str, re.Pattern[str]],
-        ...,
-    ] = (
-        ("mitochondrial", "percentMito", re.compile(r"^(MT-|mt-)")),
-        (
-            "ribosomal",
-            "percentRibo",
-            re.compile(r"^(RPS|RPL|MRPS|MRPL|Rps|Rpl|Mrps|Mrpl)"),
-        ),
-    )
     existing_names = {source.name for source in sources}
-    for role, suffix, pattern in specifications:
+    for role, suffix, _, mask in _rna_percentage_feature_masks(store, assay_name):
         metric_name = f"{assay_name}_{suffix}"
-        if metric_name in available_metadata or role in supplied_roles:
+        if role in supplied_roles:
             continue
-        mask = np.fromiter(
-            (
-                pattern.search(feature_id) is not None
-                or pattern.search(feature_name) is not None
-                for feature_id, feature_name in zip(
-                    feature_ids,
-                    feature_names,
-                    strict=True,
-                )
-            ),
-            dtype=bool,
-            count=assay.feats.N,
-        )
         if not mask.any():
             continue
         if metric_name in existing_names:

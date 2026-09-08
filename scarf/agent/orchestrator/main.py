@@ -13,7 +13,7 @@ from ...datastore.datastore import DataStore
 from ...datastore.summary import summarize_zarr_readonly
 from ...utils.logging import logger
 from .. import record_io
-from ..experimental_context.study import StudyContract
+from ..experimental_context.study import StudyContract, validate_objective_evidence
 from ..ingest import IngestResult, detect_format, ingest
 from ..ingest.manifest import DatasetManifest, inspect_h5ad_manifest
 from . import journal
@@ -799,6 +799,7 @@ class AgentOrchestrator(
         study_contract = StudyContract.model_validate(
             context_outcome.outputs["studyContract"]
         )
+        validate_objective_evidence(study_contract, experimental)
         parents = [journal._parent_link(context_outcome)]
 
         plan_outcome, preprocessing_plan = self.preprocessing_plan_stage(
@@ -870,6 +871,7 @@ class AgentOrchestrator(
                 tuning_outcome,
                 study_contract=study_contract,
             )
+        validate_objective_evidence(study_contract, experimental)
         parents = [journal._parent_link(tuning_outcome)]
         tuning_reference = tuning_outcome.reportReferences[0]
         selected = next(

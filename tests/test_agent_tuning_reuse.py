@@ -83,11 +83,15 @@ def test_stage_metric_reuse_tracks_artifacts_and_live_metadata(
     assert counts()["metric_proportional_batch_mixing"] == 4
 
 
-@pytest.mark.parametrize("kind", ["categorical", "continuous"])
+@pytest.mark.parametrize(
+    ("kind", "artifact_covariate"),
+    [("categorical", False), ("continuous", False), ("continuous", True)],
+)
 def test_pca_diagnostic_reuse_precedes_numerical_work(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
+    artifact_covariate: bool,
 ) -> None:
     root = zarr.open_group(str(tmp_path / "diagnostic.zarr"), mode="w")
     reduction = root.create_group("reduction")
@@ -136,6 +140,9 @@ def test_pca_diagnostic_reuse_precedes_numerical_work(
         "_covariate_associations",
     ):
         monkeypatch.setattr(diagnostics, name, unexpected)
+    covariate_artifacts = (
+        {"batch": _artifact("quality_metric", 6)} if artifact_covariate else {}
+    )
     result = diagnostics._write_pca_diagnostic(
         store,
         ParameterCandidateEvaluation(
@@ -151,10 +158,16 @@ def test_pca_diagnostic_reuse_precedes_numerical_work(
         covariate_roles=("technical",),
         adjacent_overlap=0.8,
         column_kinds={"batch": kind},
+        column_artifacts=covariate_artifacts,
     )
     assert result[0] == diagnostic_ref
     np.testing.assert_array_equal(result[1], payload["component_variance"])
-    assert planned[0]["parameters"]["covariate_fingerprints"] == {"batch": "current"}
+    assert planned[0]["parameters"]["covariate_fingerprints"] == {
+        "batch": covariate_artifacts["batch"].to_dict()
+        if artifact_covariate
+        else "current"
+    }
+    assert planned[0]["inputs"]["covariate_artifacts"] == covariate_artifacts
     assert planned[0]["parameters"]["covariate_kinds"] == {"batch": kind}
     assert (
         planned[0]["parameters"]["covariate_method"] == "typedCompleteCaseAssociation"

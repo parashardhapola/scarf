@@ -117,6 +117,7 @@ def validate_saved_rna_history(
     """Validate single-RNA ownership before opening resumed work for writes."""
     from ..data_enrichment.contracts import DataEnrichmentReport
     from ..experimental_context.contracts import ExperimentalContextResult
+    from ..experimental_context.study import StudyContract, validate_objective_evidence
     from ..parameter_tuning.contracts import ParameterTuningReport
     from . import journal
     from .models import (
@@ -133,6 +134,12 @@ def validate_saved_rna_history(
                 raise ValueError(
                     "Saved automatic HTO processing is unsupported; start a new RNA workflow"
                 )
+            if stage == "rna_quality_metrics" and outcome.status == "done":
+                if "percentageDefinitions" not in outcome.outputs:
+                    raise ValueError(
+                        "Saved RNA quality metrics lack exact percentage definitions; "
+                        "start a new workflow. Existing analysis artifacts remain accessible."
+                    )
             for name in ("preprocessingPlan", "resolvedPreprocessingPlan"):
                 if outcome.outputs.get(name):
                     validate_rna_plan(
@@ -167,6 +174,12 @@ def validate_saved_rna_history(
                 )
                 if context.status == "done":
                     validate_rna_context(context, selected)
+                if outcome.status == "done":
+                    raw_contract = outcome.outputs.get("studyContract", {})
+                    _require_objective_contract(raw_contract)
+                    validate_objective_evidence(
+                        StudyContract.model_validate(raw_contract), context
+                    )
             elif stage == "parameter_tuning":
                 tuning = ParameterTuningReport.model_validate(
                     journal.read_stage_evidence(store, outcome.reportReferences[0])
@@ -179,3 +192,54 @@ def validate_saved_rna_history(
                     raise ValueError(
                         "Saved tuning includes unsupported assays or integration"
                     )
+    validate_analysis_evidence(journal.analysis_snapshot(store, workflow_run_id))
+
+
+def _require_objective_contract(value: Any) -> None:
+    """Reject historical conclusions without rewriting their evidence."""
+    if not isinstance(value, Mapping) or not {
+        "evidenceRequirements",
+        "evidenceCoverage",
+    }.issubset(value):
+        raise ValueError(
+            "Saved analysis lacks mandatory objective evidence requirements; "
+            "start a new workflow to resume or regenerate its report. "
+            "Existing analysis artifacts and historical HTML remain accessible."
+        )
+
+
+def validate_analysis_evidence(snapshot: Mapping[str, Any]) -> None:
+    """Check scientific completion from the authenticated journal view."""
+    from ..experimental_context.contracts import ExperimentalContextResult
+    from ..experimental_context.study import StudyContract, validate_objective_evidence
+    from .rna_tuning import validate_completed_comparison_evidence
+
+    context_validated = False
+    for stage in snapshot.get("stages", []):
+        if (
+            stage.get("stage") != "experimental_context"
+            or stage.get("status") != "done"
+        ):
+            continue
+        raw_contract = stage.get("outputs", {}).get("studyContract", {})
+        _require_objective_contract(raw_contract)
+        validate_objective_evidence(
+            StudyContract.model_validate(raw_contract),
+            ExperimentalContextResult.model_validate(stage["report"]),
+        )
+        context_validated = True
+    accepted = [
+        review
+        for review in snapshot.get("analysisReviews", [])
+        if review.get("action") == "accept"
+    ]
+    for review in accepted:
+        validate_completed_comparison_evidence(review)
+    if snapshot.get("status") == "completed":
+        if not context_validated or not any(
+            item.get("scope") == "full" for item in accepted
+        ):
+            raise ValueError(
+                "Completed analysis lacks its mandatory objective and comparison evidence; "
+                "start a new workflow. Existing analysis artifacts remain accessible."
+            )

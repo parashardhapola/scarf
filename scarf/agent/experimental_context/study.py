@@ -6,7 +6,12 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from ..types import AgentDataModel
-from .contracts import CovariateComparison
+from .contracts import (
+    CovariateComparison,
+    DesignEvidenceCoverage,
+    DesignEvidenceRequirement,
+)
+from .requirements import objective_evidence, unmet_objective_requirements
 
 type AuthorLabelPolicy = Literal["holdout", "preservation"]
 type ProcessingGoal = Literal[
@@ -45,6 +50,10 @@ class StudyContract(AgentDataModel):
     unsupportedClaims: list[str] = Field(default_factory=list)
     evidenceIds: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    evidenceRequirements: list[DesignEvidenceRequirement] = Field(
+        min_length=1, max_length=13
+    )
+    evidenceCoverage: list[DesignEvidenceCoverage] = Field(min_length=1, max_length=13)
 
     @model_validator(mode="after")
     def validate_contract(self) -> "StudyContract":
@@ -77,11 +86,65 @@ class StudyContract(AgentDataModel):
             raise ValueError(
                 "Protected combinations require two distinct protected columns"
             )
+        requirements = {item.requirementId: item for item in self.evidenceRequirements}
+        coverage = {item.requirementId: item for item in self.evidenceCoverage}
+        if (
+            len(requirements) != len(self.evidenceRequirements)
+            or len(coverage) != len(self.evidenceCoverage)
+            or requirements.keys() != coverage.keys()
+        ):
+            raise ValueError(
+                "Objective requirements and measured coverage must match uniquely"
+            )
+        mandatory = requirements.get("studyDesign")
+        if (
+            mandatory is None
+            or mandatory.kind != "studyDesign"
+            or not mandatory.essential
+        ):
+            raise ValueError(
+                "The essential measured studyDesign requirement cannot be omitted"
+            )
+        for item in self.evidenceRequirements:
+            if item.objectiveQuote not in f"{self.studyContext}\n{self.studyObjective}":
+                raise ValueError("Objective requirements must quote exact study text")
+        if any(
+            set(item.evidenceIds) - set(self.evidenceIds)
+            for item in self.evidenceCoverage
+        ):
+            raise ValueError(
+                "Objective coverage cites evidence outside the study contract"
+            )
+        if any(
+            item.status in {"computed", "nonIdentifiable"} and not item.evidenceIds
+            for item in self.evidenceCoverage
+        ):
+            raise ValueError(
+                "Computed objective coverage requires measured evidence IDs"
+            )
         return self
 
     @classmethod
     def get_blank(cls) -> "StudyContract":
-        return cls(studyContext="Study context", studyObjective="Study objective")
+        return cls(
+            studyContext="Study context",
+            studyObjective="Study objective",
+            evidenceRequirements=[
+                DesignEvidenceRequirement(
+                    requirementId="studyDesign",
+                    question="Resolve study design",
+                    objectiveQuote="Study objective",
+                    kind="studyDesign",
+                )
+            ],
+            evidenceCoverage=[
+                DesignEvidenceCoverage(
+                    requirementId="studyDesign",
+                    status="unsupported",
+                    reasons=["Study evidence is unavailable"],
+                )
+            ],
+        )
 
 
 def _unique(values: Iterable[str | None]) -> list[str]:
@@ -106,6 +169,34 @@ def unsupported_comparison_limitations(
                 "This comparison provides no supported association or absence finding."
             )
     return limitations
+
+
+def validate_objective_evidence(
+    contract: StudyContract, experimental_result: Any | None = None
+) -> None:
+    """Reject unresolved essential questions and mismatched saved measured coverage."""
+    # model_copy can bypass Pydantic validators; authority checks cannot.
+    StudyContract.model_validate(contract.model_dump(mode="json"))
+    if experimental_result is not None:
+        requirements, coverage = objective_evidence(
+            study_context=contract.studyContext,
+            study_objective=contract.studyObjective,
+            experimental_result=experimental_result,
+        )
+        if (
+            requirements != contract.evidenceRequirements
+            or coverage != contract.evidenceCoverage
+        ):
+            raise ValueError(
+                "Study objective evidence differs from its measured context report"
+            )
+    unmet = unmet_objective_requirements(
+        contract.evidenceRequirements, contract.evidenceCoverage
+    )
+    if unmet:
+        raise ValueError(
+            "Essential objective evidence is unresolved: " + " | ".join(unmet)
+        )
 
 
 def build_study_contract(
@@ -174,8 +265,20 @@ def build_study_contract(
             *(item.evidenceId for item in experimental_result.batchSafety),
         ]
     )
+    requirements, coverage = objective_evidence(
+        study_context=study_context,
+        study_objective=study_objective,
+        experimental_result=experimental_result,
+    )
+    evidence_ids = _unique(
+        [
+            *evidence_ids,
+            *(evidence_id for item in coverage for evidence_id in item.evidenceIds),
+        ]
+    )
     limitations = [
         *experimental_result.notes,
+        *(reason for item in coverage for reason in item.reasons),
         *unsupported_comparison_limitations(
             experimental_result.characterization.comparisons
         ),
@@ -221,6 +324,8 @@ def build_study_contract(
         ],
         evidenceIds=evidence_ids,
         limitations=limitations,
+        evidenceRequirements=requirements,
+        evidenceCoverage=coverage,
     )
 
 
@@ -229,4 +334,5 @@ __all__ = [
     "ProcessingGoal",
     "StudyContract",
     "build_study_contract",
+    "validate_objective_evidence",
 ]
