@@ -15,43 +15,143 @@ kernelspec:
 
 (agent_workflow)=
 
-# Choose and explain RNA analysis settings
+# Automate an RNA analysis
 
-Give Scarf a dataset, a configured Pydantic AI model, a study-context paragraph, and an objective.
-Scarf computes the evidence, the agent evaluates a few consequential choices, and Scarf executes
-the selected analysis.
+Give Scarf your data, study context, objective, and a language model. Scarf measures the evidence,
+the agent compares analysis settings, and Scarf runs the selected analysis. You receive a cluster
+map, descriptive markers, and a report explaining the choices and limitations.
+
+## Before you start
+
+Install the optional agent package in the Python environment used by your script or notebook:
+
+```bash
+uv pip install "scarf[agent]"
+```
+
+You need an RNA count file, such as H5AD, or an existing Scarf Zarr store. Keep the study metadata
+with the cells. The workflow selects one RNA assay; if your store has several, pass
+`assay="RNA2"` with its actual name. Other modalities receive no automated processing.
+
+Scarf uses a model you configure through
+[Pydantic AI's provider setup](https://pydantic.dev/docs/ai/models/overview/).
+The agent extra includes OpenAI-compatible provider support; other providers may require the
+optional dependencies described in their setup instructions.
+Configure your provider credentials, then set `SCARF_AGENT_MODEL` in your environment to its
+supported `provider:model-name` identifier. This variable is just a convenient way for the example
+below to read your choice. If you already have a configured Pydantic AI model object in your
+notebook, use that object as `model` instead. Keep credentials out of study descriptions and
+shared notebooks.
+
+Image support is optional. Models without it receive numerical, marker, and loading-gene evidence
+instead. Provider calls can incur charges; Scarf's analysis limits do not set a provider spending cap.
+
+## Run your data
+
+Replace the paths and study description with your own. Choose a destination you can keep: it
+stores the completed work and lets you resume an interrupted run.
 
 ```python
+import os
+
 from scarf.agent import analyze_rna
 
+model = os.environ["SCARF_AGENT_MODEL"]
 result = analyze_rna(
     "study.h5ad",
     model=model,
     study_context="Human blood from one healthy donor; no treatment comparison.",
     study_objective="Identify stable major immune-cell populations.",
     zarr_path="study.zarr",
+    score_doublets=False,
 )
 result.plot_embedding()
 markers = result.get_markers()
 report_path = result.report()
+print(report_path)
 ```
 
-`analyze_rna` returns a completed result or raises `AnalysisError`. You do not need to inspect a
-status field to catch an unsuccessful beginner run. Install the optional dependency with
-`uv pip install "scarf[agent]"`.
+The call runs unattended. It returns a completed result or raises `AnalysisError` with the failing
+stage and available resume address. It does not return silently after an unsuccessful analysis.
 
-This release analyzes one RNA assay. Other modalities can remain in the store; they do not enter
-this workflow. Pass `assay="RNA2"` when several RNA assays exist. Automated integration, HTO
-assignment, and biological significance or differential-expression hypothesis execution are
-outside this workflow. Experimental Context still explores covariate patterns and possible
-explanations of the study design.
+Describe the experiment rather than the settings you expect the agent to choose:
 
-The result opens its exact saved workspace and artifacts read-only. Its cluster-map helper shows
-at most 50,000 cells with full population counts. Marker statistics use the complete selected
-cohort. `report()` returns a local HTML path without opening a browser or rerunning an analysis.
-The {doc}`../reference/api/agent` page describes the small public interface and advanced controls.
+| Input | What to include |
+|---|---|
+| Study context | Species, tissue, assay, and the actual metadata columns for donors, samples, captures, conditions, and batches. State repeated donors, pairing, and known limitations. |
+| Study objective | Which populations or structure you want to investigate, and which biological differences must remain interpretable. |
 
-## A reproducible teaching analysis
+A donor, a sample, and a physical capture can be different units. Name their columns explicitly
+when you know them. Missing replication or confounded groups cannot be repaired by a language model.
+
+## Read the result
+
+- `plot_embedding()` displays the final UMAP colored by cluster.
+- `get_markers()` returns a DataFrame of saved descriptive markers. For one cluster, use
+  `result.get_markers(group_id="0")` with its actual label.
+- `report()` returns the local `index.html` path. Open that file in your browser to inspect
+  the cohort, populations, decisions, and limitations. Regenerating it uses saved evidence.
+
+Review the explanations alongside the executed settings and measurements. Completion does not
+validate every biological interpretation or establish a cell identity. Differential-expression
+testing, causal claims, automated multimodal integration, and HTO assignment are outside this workflow.
+
+## What runs automatically?
+
+```{mermaid}
+flowchart TD
+    A[Import RNA and inspect study metadata] --> B[Assess cell QC and retain a cohort]
+    B --> C[Compare genes, PCs, neighbors and clustering settings]
+    C --> D[Agent weighs evidence and proposes settings]
+    D --> E[Execute and validate on all retained cells]
+    E --> F[Final UMAP, markers and report]
+```
+
+Scarf checks defaults and supported alternatives, including variable-gene counts of 1,000, 2,000,
+and 4,000, PCA dimensions of 10, 21, and 30, and neighbor counts of 11, 21, and 41. Infeasible
+values and identical gene selections are recorded. Batch-aware ranking and gene-family changes
+depend on the available evidence. Several clustering resolutions can share one graph.
+
+When the assessed design permits correction, the workflow evaluates native and Harmony-corrected
+representations before deciding whether to retain correction. Confounding between batch and
+protected biology can prohibit correction. Better mixing alone does not establish a better analysis.
+
+`score_doublets=False` is the beginner default. It disables optional advisory doublet scoring
+when Harmony is unavailable or prohibited. **Harmony-eligible runs still perform the doublet
+diagnostics required for their correction checks.** Set `score_doublets=True` to request advisory
+scoring as well. Scoring does not remove cells; doublet removal remains a separate analysis decision.
+
+## Which cells are analyzed and displayed?
+
+| Step | Cells used |
+|---|---|
+| QC | The input cohort, producing the retained cohort. |
+| Screening settings | A deterministic 10% sample of retained cells, rounded up, with a minimum of 10,000 and maximum of 100,000; never more than the retained cohort. |
+| Final execution and validation | All retained cells. Exact results can be reused when screening already included all of them. |
+| UMAP display | At most 50,000 cells, sampled proportionally by cluster with every cluster represented. |
+
+For 62,721 retained cells, initial screening uses 10,000. The final analysis and UMAP use all
+62,721, while the plot heading says **50,000 of 62,721** because it displays fewer points.
+Cluster counts and marker statistics still describe the full retained cohort. Display sampling
+does not change the analysis. Insufficient screening support can trigger a larger sample or a
+bounded additional comparison; it must not be interpreted as evidence that a small population is absent.
+
+## Continue after an interruption
+
+Keep the Zarr store and rerun the **same call**, including the same source, model configuration,
+study text, destination, and `score_doublets` value. Matching completed stages and evidence are
+reused. After upgrading Scarf in a notebook, restart the kernel first so it imports the updated code.
+If only report generation failed, the completed analysis can be reused to generate the report.
+
+An error describing unresolved evidence needs investigation; repeating the same call does not
+guarantee that the model can resolve it. Read the reported stage, reason, and resume address.
+For a deliberately different analysis, choose another destination rather than deleting your work.
+An older run that enabled advisory scoring needs `score_doublets=True` when resumed.
+
+Work limits, explicit resume, workspaces, and saved-history compatibility are documented in
+{doc}`../reference/api/agent`. You do not need those interfaces for the basic call above.
+
+## Worked example without an API key
 
 The executable example uses a deterministic 1,000-cell teaching cohort drawn without replacement
 from the public 10x Genomics 5K PBMC dataset (random seed 42). Preparation imports the public
@@ -63,9 +163,8 @@ of all cells in the public dataset.
 The example uses the real analysis operations and a local scripted `FunctionModel`.
 The script chooses among observed partitions by agreement across clustering runs, then the
 fraction of clusters with qualifying markers. Marker coverage alone does not establish biological
-coherence. This makes
-the example reproducible without an API key. It is a teaching policy, not a substitute for a model
-that interprets the supplied diagnostic images and study-specific biology.
+coherence. This makes the example reproducible without an API key. The scripted model below is
+only for this demonstration; use your configured model for your own analysis as shown above.
 
 ```{code-cell} ipython3
 from pathlib import Path
@@ -573,53 +672,49 @@ def _scripted_workflow_model() -> tuple[FunctionModel, dict[str, Any]]:
 
     return FunctionModel(reply), state
 
+model, model_state = _scripted_workflow_model()
+
 ```
 
 ```{code-cell} ipython3
-model, model_state = _scripted_workflow_model()
 result = analyze_rna(
     source_path,
     model=model,
     study_context=study_context,
     study_objective="Discover stable major immune-cell populations.",
+    score_doublets=False,
 )
 {"status": result.status}
 ```
 
-## See what was chosen and why
+### What did the teaching policy choose?
 
 The starting graph is compared at four clustering resolutions: 0.5, 0.75, 1.0, and 1.25.
 These partitions share the same cells, features, and graph. The table below contains the exact
 observations offered to the scripted provider, followed by its recorded explanation.
 
 ```{code-cell} ipython3
+:tags: [remove-input]
+
 assessment = model_state["assessments"][-1]
 pd.DataFrame(assessment["alternatives"])
 ```
 
 ```{code-cell} ipython3
+:tags: [remove-input]
+
 selection = assessment["selection"]
 {
-    "why": selection["rationale"],
-    "marker_evidence": selection["qualitativeFindings"],
-    "biology_to_preserve": selection["objectivePreservation"],
+    "Why this setting": selection["rationale"],
+    "Marker evidence": selection["qualitativeFindings"],
+    "Biology to preserve": selection["objectivePreservation"],
 }
 ```
 
-A live model receives required comparisons of variable-gene counts (1,000, 2,000, and 4,000),
-PCA dimensions (10, 21, and 30), and neighbors (11, 21, and 41) against a shared baseline.
-Supported batch-aware gene ranking and evidence-nominated gene eligibility changes also receive
-matched comparisons. Infeasible values and identical gene selections are recorded explicitly.
-The model must explain the observed tradeoffs and which biology should be preserved. The selected
-combination is then executed and assessed at all four clustering resolutions before acceptance.
-Further unresolved concerns require a targeted comparison or an incomplete outcome.
-A metric rank alone does not authorize correction or deletion of a biological program. When the
-design permits correction, a matched native/Harmony comparison is required even when correction
-initially appears unnecessary. Accepting correction requires measured improvement,
-preservation of protected biology, and the existing doublet checks. Confounded technical and
-biological variables cannot license correction.
+The table shows measured comparisons, not independently validated cell identities. A live model
+must weigh marker programs, study design, and protected biology alongside these metrics.
 
-## Inspect the analysis
+### Inspect the example's map, markers and report
 
 The result fixes the saved layout and cluster labels. Display options include `figsize`, `show`,
 `seed`, and a lower `max_points` display cap; they change only the picture.
@@ -645,88 +740,7 @@ report_path = result.report()
 {"report": report_path.name, "exists": report_path.is_file()}
 ```
 
-The single report page opens on the final map, population counts, and decisions. Alternatives and
-recorded measurements sit beside each choice; marker findings and material limitations remain
-visible. There is no separate technical-report application.
-
-## Large datasets and saved work
-
-New workflows screen settings on an immutable uniform sample of 10% of retained cells,
-rounded up and bounded to 10,000–100,000 cells. The sample never exceeds the retained cohort.
-For example, 62,721 retained cells use 10,000 initially; one million use 100,000.
-Insufficient representation can trigger one enlargement up to 100,000 cells when the initial
-population is smaller. An explicitly saved integer screening size is preserved on resume:
-a compatible interrupted run configured for 50,000 cells keeps that setting and any matching
-admitted work. The sample is a tuning cohort, not a new final cohort: the selected settings are
-executed and assessed on all QC-retained
-cells before finalization. Sample measurements do not prove that rare populations or batch
-correction will transfer. When a measured combined recipe needs more population support, a targeted full-cohort
-recovery panel can address that concern. Its comparisons and matched controls must fit the
-remaining allowance before execution. If no supported recipe exists or admission fails, the
-workflow remains incomplete; it does not delete poorly represented groups or restart a broad
-full-cohort grid.
-
-The default advanced limits permit 24 candidate evaluations per screening population and 48
-across screening populations. Additional final validation permits four full-cohort graphs,
-eight partitions, and one targeted repair. When screening includes every retained cell, these
-are all-cell comparisons; their exact artifacts can be reused for final validation. The
-additional-validation allowance is not a cap on all graphs built during all-cell comparisons.
-They count distinct admitted work, including failed attempts. Reuse of a complete exact artifact
-does not spend another slot. These limits do not promise an elapsed time: ingest, QC, diagnostics,
-markers, and one final UMAP also have costs. One repair is a maximum, not an extra reserved
-partition: four corrected resolutions plus four matched native controls use the entire
-eight-partition additional allowance.
-
-Advanced history separates attempted, completed and failed operation calls from metric cache
-hits, restored evidence and confirmed artifact reuse for each invocation. Unique saved artifacts
-are reported separately and do not establish how much computation ran. A called core operation
-may itself reuse work; older histories without operation records have unknown counts, not zero.
-
-One orchestration history owns the request, evidence, decisions, and final artifact references.
-An identical call reuses a completed result or resumes matching interrupted work. Changed data,
-metadata roles, model identity, or configuration cannot silently reinterpret that history. Older
-agent runs without the mandatory study and comparison evidence must be restarted; they cannot
-resume or regenerate a report under this contract. Their historical HTML remains available, and
-their numerical artifacts remain readable through the ordinary Scarf APIs. Compatible histories
-can append an explicit context-evidence revision when a requested joint/conditional question
-was left unanswered; previous records remain immutable and changed scientific evidence must
-be reassessed.
-
-## Failure handling and advanced control
-
-Use the exception's result address when an unattended analysis needs investigation:
-
-```python
-from scarf.agent import AnalysisError, analyze_rna
-
-try:
-    result = analyze_rna(
-        "study.zarr", model=model,
-        study_context="The observed study design and metadata roles.",
-        study_objective="The biological structure that should be retained.",
-    )
-except AnalysisError as error:
-    print(error)
-    print(error.result.notes)
-    raise
-```
-
-Advanced callers can import `AgentOrchestrator` and its request/configuration models from
-`scarf.agent.orchestrator`, set an existing-store workspace, and use `inputPolicy="pause"` for
-explicit questions. The advanced result still carries status and resume information. Supply only
-grounded answers to the saved questions. A work limit pauses or fails the analysis; it does not
-turn an unsupported candidate into an accepted result.
-
-Experimental Context preserves the complete study text and saves completed inspection and
-design evidence before the next model request. Compact model-facing views remove repeated
-source and capture-design tables; the saved evidence remains complete. A final model response
-does not select QC or copy already validated capture/protection identities. Failed model
-attempts retain available usage and validation feedback in advanced history; unavailable
-provider usage is not reported as measured zero. These records do not impose a whole-workflow
-provider-spend limit.
-
-For live analysis, replace the `FunctionModel` with your configured Pydantic AI model and use the
-same `analyze_rna` call. Scarf sends diagnostic images when the model supports them. Other models
-assess the structured marker, loading-gene, and numerical evidence, with that limitation recorded
-in the report. Credentials belong in the provider configuration, not in a study paragraph or
-saved analysis record.
+Open the returned HTML file to see the map, population counts, recorded comparisons, and
+limitations together. For your own data, return to the model setup and `analyze_rna` call at the
+top of this page. See {doc}`../reference/api/agent` for configuration and saved-history details,
+or {doc}`../analysis_with_agents` for scientific reasoning guidance.

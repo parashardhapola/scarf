@@ -14,6 +14,8 @@ RNA analysis settings. The root `scarf.agent` facade exports three objects:
 
 ## Start an analysis
 
+For model setup and a beginner walkthrough, see {doc}`../../tutorials/agent_workflow`.
+
 ```python
 from scarf.agent import analyze_rna
 
@@ -22,6 +24,7 @@ result = analyze_rna(
     model=model,
     study_context="Human blood from one healthy donor, with no treatment comparison.",
     study_objective="Identify stable major immune-cell populations.",
+    score_doublets=False,
 )
 result.plot_embedding()
 markers = result.get_markers()
@@ -39,6 +42,19 @@ The beginner call returns only after completion. If it cannot complete, it raise
 whose `result` provides the status, notes, and exact saved address for investigation or advanced
 resume. An identical repeated call reuses a completed analysis or resumes matching interrupted
 work. Input and model identity checks prevent attaching changed analysis intent to saved work.
+
+## Doublet scoring and correction
+
+`analyze_rna` defaults to `score_doublets=False`. This disables optional advisory doublet
+scoring when Harmony is unavailable or prohibited. When the assessed design permits Harmony,
+the workflow still computes the doublet diagnostics required to compare native and corrected
+representations. Set `score_doublets=True` to request advisory scoring as well. Neither option
+automatically removes cells.
+
+Correction requires an assessed design that protects relevant biology. When that design permits
+correction, the workflow evaluates Harmony rather than treating uncertain benefit as a reason
+to skip it. Demonstrated confounding can prohibit correction; improved mixing does not override
+that constraint or the preservation checks.
 
 ## Use the result
 
@@ -65,7 +81,9 @@ from scarf.agent.orchestrator import (
     AutomatedWorkflowRequest,
 )
 
-runner = AgentOrchestrator(model, config=AutomatedWorkflowConfig(inputPolicy="pause"))
+runner = AgentOrchestrator(model, config=AutomatedWorkflowConfig(
+    inputPolicy="pause", scoreDoublets=False,
+))
 result = runner.run(AutomatedWorkflowRequest(
     sourcePath="study.zarr",
     workspace="analysis",
@@ -75,12 +93,57 @@ result = runner.run(AutomatedWorkflowRequest(
 ```
 
 The advanced interface exposes numerical limits, provider limits, existing-store workspaces, and
-explicit pauses. Inspect its returned status and questions before continuing. Defaults allow
-50,000 screening cells, one enlargement to 100,000, 24 evaluations per screen and 48 across
-screens, four additional final-validation graphs, eight additional partitions, and one targeted
-full-cohort repair. Screening includes every retained cell in small datasets; those comparisons
-are counted in the screening allowance, and exact artifacts are reused for final validation. These counts bound distinct admitted work, including failed attempts; exact reuse does
-not spend another slot. They do not bound every QC, marker, I/O, or provider cost.
+explicit pauses. Inspect its returned status and questions before continuing. The example sets
+`scoreDoublets=False` to match the beginner call. The advanced configuration retains
+`scoreDoublets=True` as its default, including for compatible older saved configurations.
+
+### Screening and work limits
+
+`screeningCells=None` selects automatic sampling: 10% of the QC-retained cohort, rounded up,
+bounded to 10,000–100,000 cells, and capped by the retained population. An integer of at least 20 sets
+a fixed-size override. A compatible saved integer keeps its exact meaning on resume; the new
+default does not resize an existing screening population.
+
+| Default allowance | Limit |
+|---|---:|
+| Initial screening population | Automatic sampling as above |
+| Evidence-triggered enlargement | One, up to 100,000 cells |
+| Candidate evaluations per screening population | 24 |
+| Candidate evaluations across screening populations | 48 |
+| Additional full-cohort validation graphs | 4 |
+| Additional full-cohort validation partitions | 8 |
+| Targeted full-cohort repair | 1, within those graph and partition allowances |
+
+The selected settings are executed and validated on all retained cells. Screening includes
+every retained cell in small datasets; those comparisons count in the screening allowance, and
+exact artifacts can be reused for final validation. The additional-validation allowance is not
+a cap on every graph built during all-cell screening. A recovery comparison and its required
+controls must fit the remaining allowance before execution. Four corrected resolutions plus
+four matched native controls, for example, use all eight additional partitions.
+
+These limits count distinct admitted work, including failed attempts. Exact completed reuse
+does not spend another slot. They do not bound wall time, retries, diagnostic suboperations,
+or provider spend. QC, markers, stability, doublet diagnostics, I/O, and the final UMAP also
+have costs.
+
+### Failures and saved history
+
+Beginner failures raise `AnalysisError`; its message includes the stage, reason, and available
+resume location. Its `result` retains the structured outcome used by advanced callers. Keep the
+store and repeat the same call, including model configuration and doublet setting, to reuse
+matching work. An unresolved scientific requirement may need investigation before a repeat can
+succeed. Changed data, metadata, study text, model configuration, or execution settings cannot
+silently reinterpret an existing history.
+
+The stage journal owns requests, committed evidence, validated decisions, rationales, and artifact
+references. Failed model attempts retain available usage and validation feedback. History
+separates attempted and completed operation calls from restored evidence and confirmed reuse.
+Counts of saved artifacts do not establish how many computations ran: a core call may itself
+reuse work, and older histories without operation records have unknown counts, not zero.
+
+Compatible histories can append a context-evidence revision when a requested joint or
+conditional question was unanswered. Previous records remain immutable; changed scientific
+evidence must be reassessed.
 
 The previous agent workflow records, result fields, candidate-budget aliases, and root imports
 are unsupported. Histories without mandatory objective requirements and completed comparison
