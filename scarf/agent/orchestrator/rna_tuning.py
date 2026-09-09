@@ -1,7 +1,7 @@
 """Objective-led RNA experiments on frozen screening and full-cohort cells."""
 
-import hashlib
 import base64
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -25,19 +25,12 @@ from ..config.agent_exec import (
     build_visual_evidence_prompt,
     run_agent_sync,
 )
+from ..experimental_context.contracts import CovariateComparison
 from ..experimental_context.study import (
     StudyContract,
     unsupported_comparison_limitations,
 )
-from ..experimental_context.contracts import CovariateComparison
 from ..parameter_tuning.agent import prepare_parameter_tuning_dependencies
-from ..parameter_tuning.contracts import (
-    ArtifactRecord,
-    ParameterCandidate,
-    ParameterCandidateEvaluation,
-    ParameterTuningNeedsInput,
-    ParameterTuningReport,
-)
 from ..parameter_tuning.comparisons import (
     CombinedSettings,
     ComparisonConclusion,
@@ -45,9 +38,16 @@ from ..parameter_tuning.comparisons import (
     PopulationConcern,
     bind_comparison_measurements,
     comparison_advantages,
-    setting_changes,
     partition_comparison_evidence,
+    setting_changes,
     validate_comparison_review,
+)
+from ..parameter_tuning.contracts import (
+    ArtifactRecord,
+    ParameterCandidate,
+    ParameterCandidateEvaluation,
+    ParameterTuningNeedsInput,
+    ParameterTuningReport,
 )
 from ..parameter_tuning.diagnostics import (
     SCARF_DEFAULT_DIAGNOSTIC_FAMILIES,
@@ -83,7 +83,6 @@ from .models import (
     PreprocessedAssayHandoff,
     artifact_model_to_ref,
 )
-
 
 _STRUCTURED_VISUAL_LIMITATION = (
     "The model assessed structured marker, PCA loading and diagnostic evidence; "
@@ -213,7 +212,9 @@ def _assessment_output_type(
                     "metric and your interpretation. Explanations in quantitativeReason "
                     "or biologicalReason do not replace these entries. For combine or "
                     "accept, use [] only when this preference has no measured "
-                    "alternative advantages. Scarf attaches the measured values."
+                    "alternative advantages. Include only matching inventory rows: "
+                    "ties and measurements favoring your preference belong in "
+                    "quantitativeReason, not tradeoffs. Scarf attaches the measured values."
                 )
             ),
         ),
@@ -2503,6 +2504,9 @@ class RnaTuningRun:
                 "Scarf will execute it and compare four resolutions on its exact graph before acceptance. Do not request already covered settings as experiments. "
                 "comparisonConclusions must include quantitativeReason, biologicalReason and a short plainLanguageSummary for each axis. Explain how split or merged marker programs serve the stated objective, not just larger clusters or a single numerical maximum. "
                 "comparisonAdvantages enumerates the exact measured advantages for each possible preference on every axis. For each row belonging to your preference, include a tradeoffs entry naming alternativeCandidateId, metric and interpretation. Scarf attaches the exact saved values; do not transcribe numbers into tradeoff fields. Address every listed advantage, including small differences; these require explanation, not automatic winner selection. "
+                "tradeoffs contains only counterevidence: an alternative's measurement is strictly better than your preference. Copy only inventory rows matching the exact axis and preferredCandidateId; general comparisons favoring your preference and ties belong in quantitativeReason. "
+                "If validation requests repair, fix every listed error in the same response using permittedTradeoffs for your current preferences. Preserve unaffected choices and explanations. Explicitly explain any changed preference, update its combinedSettings field when applicable, and use comparisonAdvantages for that new preference. "
+                "Every numerical explanation must agree with the saved measurements, including direction and candidate identity. Unsupported biological interpretations must remain hypotheses or limitations; do not call protected sex-linked or cell-cycle programs artifacts merely because they appear in PCA loadings. "
                 "For each selected cluster with empty topMarkerGenes, populationConcerns must name candidateId, clusterId, cited evidenceIds and explain whether it is a nonEssentialLimitation or unresolvedEssential. An unresolved essential population blocks acceptance; do not invent marker support. "
                 "The action plainLanguageSummary should state the selected settings, what evidence changed the choice, and any unresolved population interpretations without workflow jargon. "
                 "QC/capture retention, batch associations per PC and protected biological structure. "
@@ -2562,7 +2566,16 @@ class RnaTuningRun:
                     )
                     if mode == "visual"
                     else serialized_evidence,
-                    config=self.request.config.agentRunConfig,
+                    config=self.request.config.agentRunConfig.model_copy(
+                        update={
+                            "retries": min(
+                                self.request.config.agentRunConfig.retries, 2
+                            ),
+                            "requestLimit": min(
+                                self.request.config.agentRunConfig.requestLimit, 3
+                            ),
+                        }
+                    ),
                     name=f"rna_{scope}_assessment",
                     output_validator=validate,
                     on_attempt=journal.model_attempt_callback(

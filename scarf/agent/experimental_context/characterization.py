@@ -1,7 +1,7 @@
 """Characterize cell covariates and study-design confounding."""
 
-import re
 import hashlib
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -23,8 +23,8 @@ from ...metadata.rows import (
 )
 from ...metadata.selection import resolve_cell_aligned_artifact
 from ...metrics.association import directional_mapping, report_confounding
-from ...storage.refs import ArtifactRef
 from ...storage.artifacts import fingerprint_array
+from ...storage.refs import ArtifactRef
 from ...storage.selections import read_stored_selection_indices
 from ..decisions.selection import DecisionValidationError, decide
 from ..tools import artifact_reference

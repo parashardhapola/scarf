@@ -3,8 +3,8 @@
 import json
 import math
 import re
-from dataclasses import dataclass, field
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import numpy as np

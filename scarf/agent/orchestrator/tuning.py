@@ -24,7 +24,6 @@ from ..parameter_tuning.execution import (
     _metadata_column_fingerprint,
     candidate_metric_cache,
 )
-from .models import StageEvidenceReference, WorkflowIdentity
 from ..types import ArtifactReferenceModel
 from . import journal
 from .decisions import DecisionStagesMixin
@@ -33,6 +32,8 @@ from .models import (
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
     PreprocessedAssayHandoff,
+    StageEvidenceReference,
+    WorkflowIdentity,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,

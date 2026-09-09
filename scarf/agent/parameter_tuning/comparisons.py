@@ -1,16 +1,16 @@
 """Exact RNA sensitivity comparisons and their review requirements."""
 
-from collections.abc import Mapping
+import json
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any, Literal, get_args
 
-from pydantic import Field
 import numpy as np
+from pydantic import Field
 
-from ..types import AgentDataModel
 from ...storage.refs import ArtifactRef
+from ..types import AgentDataModel
 from .contracts import ParameterCandidateEvaluation
-
 
 type ComparisonAxis = Literal[
     "hvgCount", "hvgRanking", "featurePolicy", "pca", "neighbors", "partition"
@@ -100,20 +100,39 @@ def bind_comparison_measurements(
         for row in comparison_advantages(coverage)
     }
     conclusions = []
+    errors = []
+    permitted = {}
     for conclusion in action.get("comparisonConclusions", []):
+        preference = (conclusion["axis"], conclusion["preferredCandidateId"])
+        required = {key: row for key, row in inventory.items() if key[:2] == preference}
+        permitted.update(required)
+        prefix = (
+            f"comparisonConclusions[axis={preference[0]!r}, "
+            f"preferredCandidateId={preference[1]!r}].tradeoffs"
+        )
         tradeoffs = []
+        supplied = set()
         for interpretation in conclusion.get("tradeoffs", []):
             key = (
-                conclusion["axis"],
-                conclusion["preferredCandidateId"],
+                *preference,
                 interpretation["alternativeCandidateId"],
                 interpretation["metric"],
             )
+            if key in supplied:
+                errors.append(f"{prefix}: duplicate tradeoff entry {key[2:]!r}")
+            supplied.add(key)
             measured = inventory.get(key)
             if measured is None:
-                raise ValueError(
-                    f"Tradeoff does not identify an observed advantage: {key!r}"
+                settings = coverage["candidateSettings"]
+                left = settings.get(preference[1], {}).get("metrics", {}).get(key[3])
+                right = settings.get(key[2], {}).get("metrics", {}).get(key[3])
+                errors.append(
+                    f"{prefix}: {key[2:]!r} does not identify an observed advantage "
+                    f"(preferred={left!r}, alternative={right!r}). "
+                    "Only permittedTradeoffs rows belong here; comparisons favoring "
+                    "the preference and ties belong in quantitativeReason."
                 )
+                continue
             values = {
                 field: measured[field]
                 for field in ("preferredValue", "alternativeValue")
@@ -122,11 +141,36 @@ def bind_comparison_measurements(
                 interpretation.get(field) is not None and interpretation[field] != value
                 for field, value in values.items()
             ):
-                raise ValueError(
-                    f"Tradeoff must use exact preferred and alternative measurements for {key!r}: {values!r}"
+                errors.append(
+                    f"{prefix}: use exact preferred and alternative measurements "
+                    f"for {key[2:]!r}: {values!r}"
                 )
             tradeoffs.append({**interpretation, **values})
+        if action.get("action") in {"accept", "combine"}:
+            for key in sorted(required.keys() - supplied):
+                errors.append(
+                    f"{prefix}: add alternativeCandidateId={key[2]!r}, "
+                    f"metric={key[3]!r} and an interpretation of its measured advantage"
+                )
         conclusions.append({**conclusion, "tradeoffs": tradeoffs})
+    if errors:
+        raise ValueError(
+            "Repair all comparisonConclusions tradeoffs errors together. "
+            "permittedTradeoffs contains the exact allowed rows for your current "
+            "axis and preferredCandidateId choices. For accept or combine, explain "
+            "every matching row using alternativeCandidateId, metric and interpretation. "
+            "Do not include other comparisons, worse alternatives or ties in tradeoffs; "
+            "put general comparisons in quantitativeReason. Expanding quantitativeReason "
+            "or biologicalReason does not replace required entries. Scarf supplies "
+            "preferredValue and alternativeValue; do not transcribe them. "
+            "Preserve unaffected choices and explanations. If you reconsider a "
+            "preference, update its conclusion and combinedSettings consistently and "
+            "use comparisonAdvantages for the new preference. Required repairs: "
+            + json.dumps(
+                {"errors": errors, "permittedTradeoffs": list(permitted.values())},
+                sort_keys=True,
+            )
+        )
     return {**action, "comparisonConclusions": conclusions}
 
 
@@ -434,8 +478,6 @@ def validate_comparison_review(
             raise ValueError(
                 "Conclude every required comparison axis before combining or accepting"
             )
-        inventory = comparison_advantages(coverage)
-        tradeoff_errors: list[str] = []
         for axis, ids in axis_candidates.items():
             conclusion = by_axis[axis]
             if not ids.issubset(conclusion.candidateIds) or not set(
@@ -448,55 +490,7 @@ def validate_comparison_review(
                 raise ValueError(
                     "A comparison preference must name its observed candidate"
                 )
-            required_tradeoffs = {
-                (row["alternativeCandidateId"], row["metric"]): (
-                    row["preferredValue"],
-                    row["alternativeValue"],
-                )
-                for row in inventory
-                if row["axis"] == axis
-                and row["preferredCandidateId"] == conclusion.preferredCandidateId
-            }
-            supplied = {
-                (row.alternativeCandidateId, row.metric): row
-                for row in conclusion.tradeoffs
-            }
-            prefix = (
-                f"comparisonConclusions[axis={axis!r}, "
-                f"preferredCandidateId={conclusion.preferredCandidateId!r}].tradeoffs"
-            )
-            if len(supplied) != len(conclusion.tradeoffs):
-                tradeoff_errors.append(f"{prefix}: duplicate tradeoff entries")
-            for key in sorted(required_tradeoffs.keys() - supplied.keys()):
-                left, right = required_tradeoffs[key]
-                tradeoff_errors.append(
-                    f"{prefix}: add alternativeCandidateId={key[0]!r}, metric={key[1]!r}, "
-                    "and an interpretation "
-                    f"(preferred={left!r}, alternative={right!r})"
-                )
-            for key, row in supplied.items():
-                if (
-                    key not in required_tradeoffs
-                    or (row.preferredValue, row.alternativeValue)
-                    != required_tradeoffs[key]
-                ):
-                    tradeoff_errors.append(
-                        f"{prefix}: use exact preferred and alternative measurements "
-                        f"for {key!r}; expected {required_tradeoffs.get(key)!r}"
-                    )
-        if tradeoff_errors:
-            raise ValueError(
-                "Repair the comparisonConclusions entries' tradeoffs arrays. Each "
-                "missing entry must contain alternativeCandidateId, metric and "
-                "interpretation explaining the measured alternative advantage and "
-                "its tradeoff with the objective. Expanding quantitativeReason, "
-                "biologicalReason or the overall rationale does not fill these arrays. "
-                "Do not leave them empty when advantages are listed. Scarf supplies "
-                "preferredValue and alternativeValue; do not transcribe them. "
-                "A larger listed value is an advantage on that metric, even if "
-                "you prefer another candidate for other reasons. Required repairs: "
-                + "; ".join(tradeoff_errors)
-            )
+        bind_comparison_measurements(coverage, action)
     if action["action"] == "combine":
         if coverage["phase"] != "sensitivity":
             raise ValueError(

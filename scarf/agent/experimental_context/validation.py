@@ -20,12 +20,12 @@ from .contracts import (
 from .qc_evidence import (
     _offered_qc_profiles,
 )
-from .tools import characterize_context, contrast_plans_from_characterization
 from .requirements import (
     active_batch_safety,
     objective_evidence,
     unmet_objective_requirements,
 )
+from .tools import characterize_context, contrast_plans_from_characterization
 
 try:
     from pydantic import ValidationError

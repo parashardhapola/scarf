@@ -151,7 +151,12 @@ def scientific_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     )
     if population:
         for key in ("cellSelection", "clusters"):
-            if artifact_ref(population.get(key)) != artifact_ref(final.get(key)):
+            reference = population.get(key)
+            if not isinstance(reference, Mapping):
+                raise ValueError(
+                    f"Reported population support lacks its {key} reference"
+                )
+            if ArtifactRef.from_dict(reference) != artifact_ref(final.get(key)):
                 raise ValueError(
                     "Reported population support differs from the final analysis"
                 )

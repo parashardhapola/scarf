@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -18,6 +19,7 @@ from scarf.agent.report.artifacts import (
 )
 from scarf.agent.report.rendering import render_analysis_document
 from scarf.agent.types import ArtifactReferenceModel
+from scarf.storage.refs import ArtifactRef
 from tests.test_agent_analysis_plots import display_store
 
 
@@ -139,10 +141,34 @@ def test_one_page_shows_recorded_choices_evidence_and_qualitative_findings(
         mode == "structured"
     )
     assert (
-        document.index("Limits of this analysis")
-        < document.index("final_umap.png")
+        document.index("final_umap.png")
         < document.index("Cell quality")
+        < document.index("Selected methods and evidence")
+        < document.index("Limits of this analysis")
+        < document.index("<footer>")
     )
+
+
+def test_report_uses_nygen_page_styles() -> None:
+    document = render_analysis_document(
+        scientific_summary(snapshot()) | display_payload()
+    )
+    header = document.split("<header>", 1)[1].split("</header>", 1)[0]
+    assert '<a href="https://www.nygen.io/">Nygen Analytics</a>' in header
+    assert '<a href="https://www.nygen.io/products/scarfweb">ScarfWeb</a>' in header
+    assert '<a href="https://www.nygen.io/products/cytetype">CyteType</a>' in header
+    assert "Distributed, secure infrastructure" not in header
+    assert "justify-content:space-between" in document
+    assert "family=Inter:wght@300;400" in document
+    assert "font-family:Inter,sans-serif" in document
+    assert "line-height:1.2" in document
+    assert "background:#ffffff" in document
+    assert "#0077fc" in document
+    assert "color:#b4b4b4" in document
+    assert "font-weight:300" in document and "font-weight:400" in document
+    assert "letter-spacing:-.04em" in document
+    assert "border-radius:999px" in document
+    assert all(color not in document for color in ("#237e6a", "#f4f6f5", "#bd8b22"))
 
 
 def test_all_untrusted_scientific_text_is_escaped() -> None:
@@ -209,8 +235,17 @@ def population_snapshot() -> dict[str, Any]:
     review["populationSupport"] = {
         "candidate-two": {
             "candidateId": "candidate-two",
-            "cellSelection": cells,
-            "clusters": clusters,
+            "cellSelection": ArtifactRef(
+                scope="datastore",
+                kind="cell_selection",
+                artifact_id=cells["artifactId"],
+            ).to_dict(),
+            "clusters": ArtifactRef(
+                scope="assay",
+                assay="RNA2",
+                kind="cluster_labels",
+                artifact_id=clusters["artifactId"],
+            ).to_dict(),
             "columns": {
                 "donor": {
                     "status": "computed",
@@ -248,6 +283,45 @@ def test_population_support_is_descriptive_and_missing_rows_are_unavailable() ->
     assert "@media(max-width:800px)" in document
 
 
+def test_report_consumes_population_diagnostics_without_recomputing_or_mutating(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scarf.agent.parameter_tuning.diagnostics import population_support_evidence
+    from tests.test_agent_population_support import _setup
+
+    store, evaluation, _ = _setup(
+        monkeypatch,
+        np.repeat([1, 2], 6),
+        {"donor": np.tile(["d1", "d2"], 6)},
+    )
+    evaluation.candidateId = "candidate-two"
+    population = population_support_evidence(store, evaluation, ["donor"])
+    state = population_snapshot()
+    review = state["analysisReviews"][0]
+    review["populationSupport"] = {evaluation.candidateId: population}
+    for key in ("cellSelection", "clusters"):
+        state["finalAnalysis"][key] = ArtifactReferenceModel.from_artifact_ref(
+            ArtifactRef.from_dict(population[key])
+        ).model_dump(mode="json")
+    original = copy.deepcopy(state)
+    calls = store.calls.copy()
+    monkeypatch.setattr(
+        generator,
+        "collect_analysis_artifacts",
+        lambda *_: display_payload() | {"clusterCounts": {"1": 6, "2": 6}},
+    )
+
+    path = generator.render_analysis_report(store, state, tmp_path)
+
+    assert path == tmp_path / "index.html"
+    assert "12 cells" in path.read_text()
+    assert "50.0%" in path.read_text()
+    assert state == original
+    assert store.calls == calls
+    assert "artifact_id" in population["clusters"]
+    assert "artifactId" in state["finalAnalysis"]["clusters"]
+
+
 def test_selected_population_concerns_and_study_limits_remain_prominent() -> None:
     state = snapshot()
     explanation = "Population 1 lacks qualifying markers and remains unclassified."
@@ -265,8 +339,10 @@ def test_selected_population_concerns_and_study_limits_remain_prominent() -> Non
     state["finalAnalysis"]["limitations"].append(explanation)
     document = render_analysis_document(scientific_summary(state) | display_payload())
     assert document.count(explanation) == 1
-    assert document.index(explanation) < document.index("final_umap.png")
-    assert document.index(study_limit) < document.index("final_umap.png")
+    assert document.index("final_umap.png") < document.index(explanation)
+    assert document.index("final_umap.png") < document.index(study_limit)
+    assert document.index(explanation) < document.index("<footer>")
+    assert document.index(study_limit) < document.index("<footer>")
 
 
 def test_report_keeps_the_recorded_tradeoff_beside_its_comparison() -> None:
@@ -288,10 +364,42 @@ def test_population_support_must_match_the_final_candidate_and_artifacts(field) 
     population[field] = (
         "different-candidate"
         if field == "candidateId"
-        else {**population[field], "artifactId": "f" * 64}
+        else {**population[field], "artifact_id": "f" * 64}
     )
     with pytest.raises(ValueError, match="Reported population support"):
         scientific_summary(state)
+
+
+@pytest.mark.parametrize("field", ["clusters", "cellSelection"])
+@pytest.mark.parametrize("value", [None, "unbound-reference"])
+def test_report_requires_population_artifact_reference_mappings(field, value) -> None:
+    state = population_snapshot()
+    state["analysisReviews"][0]["populationSupport"]["candidate-two"][field] = value
+    original = copy.deepcopy(state)
+    with pytest.raises(ValueError, match=f"lacks its {field} reference"):
+        scientific_summary(state)
+    assert state == original
+
+
+@pytest.mark.parametrize("field", ["clusters", "cellSelection"])
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        ({"artifact_id": "malformed"}, "64-character lowercase hex"),
+        ({"artifactId": "f" * 64}, "fields do not match"),
+        ({"type": "external_artifact"}, "type must be 'artifact'"),
+    ],
+)
+def test_report_rejects_malformed_population_artifact_references(
+    field: str, mutation: dict[str, str], message: str
+) -> None:
+    state = population_snapshot()
+    population = state["analysisReviews"][0]["populationSupport"]["candidate-two"]
+    population[field].update(mutation)
+    original = copy.deepcopy(state)
+    with pytest.raises(ValueError, match=message):
+        scientific_summary(state)
+    assert state == original
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import FunctionModel
 
 from scarf.agent.orchestrator import rna_tuning
 from scarf.agent.experimental_context.contracts import (
@@ -13,6 +16,7 @@ from scarf.agent.experimental_context.contracts import (
 )
 from scarf.agent.experimental_context.study import unsupported_comparison_limitations
 from scarf.agent.parameter_tuning.contracts import ParameterCandidateEvaluation
+from tests.agent_comparison_examples import observed_action
 from tests.test_agent_rna_adaptive import checkpoints as memory_checkpoints  # noqa: F401
 from tests.test_agent_rna_evidence_mode import assess, make_run
 
@@ -35,6 +39,92 @@ def _run(
     )
     selected.metrics.crossUnitSupport = 0.9
     return run, selected
+
+
+@pytest.mark.parametrize(
+    ("retries", "request_limit", "repair", "expected_calls"),
+    [
+        (5, 10, False, 3),
+        (1, 10, False, 2),
+        (0, 10, False, 1),
+        (5, 2, False, 2),
+        (5, 10, True, 2),
+    ],
+)
+def test_review_repairs_are_bounded_without_changing_saved_config_or_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    retries: int,
+    request_limit: int,
+    repair: bool,
+    expected_calls: int,
+) -> None:
+    saved = request.getfixturevalue("memory_checkpoints")
+    calls = []
+    key = "parameter_tuning/full/review0"
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Output repair must not repeat candidate or diagnostic work")
+
+    def provider(messages: Any, info: Any) -> ModelResponse:
+        evidence = json.loads(
+            next(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            )
+        )
+        prepared = saved[f"{key}/evidence/structured"]
+        assert prepared["outputs"]["evidence"] == evidence
+        calls.append(json.dumps(prepared, sort_keys=True))
+        # Prepared evidence must also be reused across the SDK's repair attempts.
+        monkeypatch.setattr(run, "execute", forbidden)
+        monkeypatch.setattr(run, "_augment_evaluation", forbidden)
+        monkeypatch.setattr(run, "feature_evidence", forbidden)
+        monkeypatch.setattr(run, "comparison_coverage", forbidden)
+        monkeypatch.setattr(rna_tuning, "population_support_evidence", forbidden)
+        monkeypatch.setattr(rna_tuning, "partition_comparison_evidence", forbidden)
+        monkeypatch.setattr(rna_tuning, "_neighbor_overlap", forbidden)
+        action = observed_action(evidence)
+        if not repair or len(calls) == 1:
+            conclusion = next(
+                c for c in action["comparisonConclusions"] if c["axis"] == "partition"
+            )
+            conclusion["tradeoffs"] = [
+                {
+                    "alternativeCandidateId": "resolution-half",
+                    "metric": "seedStability",
+                    "interpretation": "The stability measurements tie, so neither has an advantage.",
+                }
+            ]
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, action)])
+
+    model = FunctionModel(provider, profile={"supports_image_input": False})
+    run, selected = make_run(monkeypatch, model)
+    run.request.config.agentRunConfig = run.request.config.agentRunConfig.model_copy(
+        update={"retries": retries, "requestLimit": request_limit}
+    )
+    original_config = run.request.config.model_dump_json()
+    if repair:
+        assert run.review("full", 0, selected, {}).action == "accept"
+        assert key in saved
+    else:
+        with pytest.raises((UnexpectedModelBehavior, UsageLimitExceeded)):
+            run.review("full", 0, selected, {})
+        assert key not in saved
+    assert len(calls) == expected_calls
+    assert len(set(calls)) == 1
+    assert run.request.config.model_dump_json() == original_config
+    attempts = [
+        record["outputs"]["runInfo"]
+        for name, record in saved.items()
+        if name.startswith(f"{key}/model_attempts/")
+    ]
+    assert len(attempts) == 1
+    assert attempts[0]["usage"]["requests"] == expected_calls
+    assert attempts[0]["status"] == ("done" if repair else "failed")
+    assert len(attempts[0]["validationRetries"]) == (1 if repair else expected_calls)
 
 
 def _experiment_response(kwargs: dict[str, Any], correction_need: str) -> Any:

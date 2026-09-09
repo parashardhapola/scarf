@@ -3,22 +3,23 @@
 import hashlib
 import json
 import math
+from collections.abc import Sequence
 from copy import deepcopy
 from functools import wraps
-from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any, Literal
+
 import numpy as np
 
 from ...metadata.queries import reduce_observation_units
 from ...metrics.association import coefficient_estimability
-from ...storage.refs import ArtifactRef
 from ...storage.artifacts import fingerprint_array
+from ...storage.refs import ArtifactRef
 from ...utils.logging import logger
 from .._deps import AGENT_INSTALL_HINT
+from ..record_io import canonical_json_bytes
 from ..tools import artifact_reference, core_artifact_reference
 from ..types import BatchSafetyEvidence, BatchSafetyStatus
-from ..record_io import canonical_json_bytes
 from .characterization import characterize_covariates
 from .comparisons import (
     DESIGN_ROUND_LIMITS,
@@ -26,6 +27,7 @@ from .comparisons import (
     evaluate_proposals,
 )
 from .contracts import (
+    BatchCorrectionPlan,
     CaptureProposal,
     ColumnDomain,
     ContrastPlan,
@@ -34,7 +36,6 @@ from .contracts import (
     CovariateCharacterization,
     CovariateEvidence,
     CovariateProposal,
-    BatchCorrectionPlan,
     ExperimentalContextDecision,
     ExperimentalContextDependencies,
     InferenceUnit,

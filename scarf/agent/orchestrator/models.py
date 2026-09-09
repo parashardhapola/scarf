@@ -2,8 +2,8 @@
 
 import re
 from collections.abc import Mapping
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator, model_validator

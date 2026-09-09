@@ -39,7 +39,6 @@ from ..experimental_context.study import StudyContract
 from ..parameter_tuning.execution import (
     candidate_metric_cache,
 )
-from .models import WorkflowIdentity
 from ..types import ArtifactReferenceModel
 from . import journal
 from .decisions import DecisionStagesMixin
@@ -49,6 +48,7 @@ from .models import (
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
     PreprocessedAssayHandoff,
+    WorkflowIdentity,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,
@@ -56,7 +56,6 @@ from .models import (
     WorkflowStageName,
     artifact_model_to_ref,
 )
-
 from .rna import (
     selected_store_rna_assay,
     validate_rna_context,

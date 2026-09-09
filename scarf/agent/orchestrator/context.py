@@ -1,7 +1,7 @@
 """Ingest, RNA enrichment, quality metrics, and experimental-context stages."""
 
-from collections.abc import Mapping, Sequence
 import hashlib
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from ...datastore.datastore import DataStore
@@ -16,22 +16,22 @@ from ..experimental_context.contracts import (
     ExperimentalContextResult,
     NamedArtifactSource,
 )
+from ..experimental_context.requirements import objective_evidence
 from ..experimental_context.study import (
     StudyContract,
     build_study_contract,
     validate_objective_evidence,
 )
-from ..experimental_context.requirements import objective_evidence
 from ..ingest import IngestResult
 from ..ingest.manifest import DatasetManifest, is_author_label_column
-from ..types import AgentRunInfo, ArtifactReferenceModel
 from ..record_io import canonical_json_bytes
+from ..types import AgentRunInfo, ArtifactReferenceModel
 from . import journal
 from .models import (
-    WorkflowIdentity,
-    StageEvidenceReference,
     OrchestrationRequestRecord,
     OrchestrationResumeRecord,
+    StageEvidenceReference,
+    WorkflowIdentity,
     WorkflowNeedsInput,
     WorkflowQuestion,
     WorkflowStageAttempt,

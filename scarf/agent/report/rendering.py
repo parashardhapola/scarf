@@ -7,25 +7,30 @@ from typing import Any
 
 from .contracts import label, mapping, mappings, scalar, texts
 
-
 _STYLES = """
-:root{color-scheme:light;font:16px/1.6 system-ui,sans-serif;color:#223137;background:#f4f6f5}
-*{box-sizing:border-box}body{margin:0}main{max-width:1060px;margin:auto;padding:36px 28px 64px}
-header{border-bottom:2px solid #237e6a;padding-bottom:22px}h1,h2,h3{line-height:1.25;color:#164c40}
-h1{font-size:2.2rem;margin:8px 0}h2{font-size:1.4rem;margin-top:36px}h3{font-size:1.05rem}
-p{max-width:90ch}a{color:#17644f}small,.muted{color:#586763}.numbers{font-size:1.25rem;font-weight:600}
-.fraction{white-space:nowrap}progress{width:86px;height:12px;accent-color:#237e6a}.notice{background:#fff6df;border-left:4px solid #bd8b22;padding:12px 18px;margin:20px 0}.notice h2{margin-top:0}
+:root{color-scheme:light;font-family:Inter,sans-serif;font-size:16px;font-weight:300;line-height:1.2;color:#000000;background:#ffffff;letter-spacing:-.04em}
+*{box-sizing:border-box}body{margin:0;background:#ffffff}main{max-width:1120px;margin:auto;padding:48px 32px 72px}
+header{border-bottom:1px solid #000000;padding-bottom:32px}h1,h2,h3{line-height:1.2;color:#000000;font-weight:400}
+h1{font-size:3.5rem;letter-spacing:0;margin:12px 0 20px}h2{font-size:2rem;letter-spacing:-.04em;margin:56px 0 20px}h3{font-size:1.25rem;letter-spacing:-.04em;margin:32px 0 12px}
+p{max-width:82ch}header h1+p{font-size:1.5rem;font-weight:300;margin:0 0 24px}a{color:#0077fc}
+small{display:block;color:#b4b4b4;font-size:.75rem;font-weight:400;letter-spacing:-.04em;text-transform:uppercase}.muted{color:#b4b4b4}
+.header-links{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px 24px;margin-bottom:40px;font-size:.9rem}.header-links a{font-weight:400}
+.numbers{display:inline-block;margin:0 0 20px;padding:10px 18px;border-radius:999px;background:#0077fc;color:#ffffff;font-size:1rem;font-weight:400}
+.fraction{white-space:nowrap}progress{width:86px;height:8px;border:0;border-radius:999px;overflow:hidden;accent-color:#0077fc;background:#b4b4b4}
+progress::-webkit-progress-bar{background:#b4b4b4;border-radius:999px}progress::-webkit-progress-value{background:#0077fc;border-radius:999px}progress::-moz-progress-bar{background:#0077fc;border-radius:999px}
+section{margin-top:64px}section>h2:first-child{margin-top:0}.limitations::before{content:"";display:block;width:72px;height:8px;margin-bottom:24px;border-radius:999px;background:#0077fc}
 .population-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:20px;align-items:start}.population-overview figure{position:sticky;top:20px}.population-overview>div{min-width:0}
-figure{margin:24px 0;background:white;padding:12px;border-radius:8px}figure img{width:100%;height:auto}
-figcaption{font-size:.9rem;text-align:center}.decision{border-top:1px solid #ccd7d1;padding:14px 0}
-.decision h3{margin:0}.decision p{margin:8px 0}details{margin:12px 0}summary{cursor:pointer;color:#17644f}
+figure{margin:24px 0;background:#ffffff;padding:0}figure img{width:100%;height:auto}
+figcaption{color:#b4b4b4;font-size:.9rem;text-align:center}.decision{border-top:1px solid #b4b4b4;padding:14px 0}
+.decision h3{margin:0}.decision p{margin:8px 0}details{margin:20px 0}summary{display:inline-block;cursor:pointer;padding:10px 18px;border-radius:999px;box-shadow:inset 0 0 0 2px #0077fc;color:#0077fc;font-weight:400}
+details[open] summary{background:#0077fc;color:#ffffff;box-shadow:none}summary:focus-visible{outline:2px solid #000000;outline-offset:3px}
 .table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:14px 0}
-th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid #d9e0dc}
-th{background:#e9efeb}td p{margin:0}li{margin:6px 0}
-footer{margin-top:36px;border-top:1px solid #ccd7d1;padding-top:18px;font-size:.85rem}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid #b4b4b4}
+th,strong{font-weight:400}th{background:#ffffff}td p{margin:0}li{margin:8px 0}
+footer{margin-top:64px;border-top:1px solid #000000;padding-top:20px;color:#b4b4b4;font-size:.85rem}
 @media(max-width:800px){.population-overview{display:block}.population-overview figure{position:static}}
-@media(max-width:600px){main{padding:20px 14px}h1{font-size:1.7rem}th,td{padding:7px}}
-@media print{body{background:white}main{padding:0}details{break-inside:avoid}}
+@media(max-width:600px){main{padding:32px 16px 48px}h1{font-size:2.5rem}h2{font-size:1.75rem}header h1+p{font-size:1.25rem}th,td{padding:8px}}
+@media print{body{background:#ffffff}main{padding:0}details{break-inside:avoid}}
 """
 
 
@@ -472,13 +477,13 @@ def render_analysis_document(payload: Mapping[str, Any]) -> str:
             )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scarf analysis summary</title><style>{_STYLES}</style></head><body><main>
-<header><small>Scarf analysis</small><h1>Analysis summary</h1><p>{_escape(objective)}</p>
+<title>Scarf analysis summary</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400&amp;display=swap" rel="stylesheet"><style>{_STYLES}</style></head><body><main>
+<header><nav class="header-links" aria-label="Nygen links"><a href="https://www.nygen.io/">Nygen Analytics</a><a href="https://www.nygen.io/products/scarfweb">ScarfWeb</a><a href="https://www.nygen.io/products/cytetype">CyteType</a></nav><small>Scarf analysis</small><h1>Analysis summary</h1><p>{_escape(objective)}</p>
 <p class="numbers">{total:,} cells · {len(counts):,} clusters · {_escape(assay)}</p>{qc_text}<p>{_escape(outcome)}</p></header>
-{'<aside class="notice"><h2>Limits of this analysis</h2>' + limitations + "</aside>" if limitations else ""}
 <section><h2>Populations and markers</h2><div{' class="population-overview"' if map_markup else ""}>{map_markup}<div>{_population_table(payload)}</div></div></section>
 {_qc_section(payload)}{_design_section(payload)}{_comparison_sections(payload)}
 <details><summary>Selected methods and evidence</summary>{methods}{mode_note}{usage_note}<p>Repeat and subsample agreement use adjusted Rand index. Marker coverage is the fraction of clusters with qualifying markers. These describe the selected analysis; they are not probabilities of biological correctness.</p></details>
 {"<details><summary>Unavailable displays</summary>" + display_notes + "</details>" if display_notes else ""}
+{'<section class="limitations"><h2>Limits of this analysis</h2>' + limitations + "</section>" if limitations else ""}
 <footer>Generated locally by <a href="https://scarf.readthedocs.io/">Scarf</a>. All numerical evidence is read from the saved analysis; report generation makes no analysis or model calls.</footer>
 </main></body></html>"""

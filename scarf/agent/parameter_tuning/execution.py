@@ -7,8 +7,8 @@ from typing import Any, Literal, cast
 
 import numpy as np
 
-from ...metrics import graph_connectivity
 from ...metadata.rows import iter_metadata_column_blocks, metadata_missing_mask
+from ...metrics import graph_connectivity
 from ...storage.refs import ArtifactRef
 from ...storage.types import as_zarr_array
 from ...utils.logging import logger
