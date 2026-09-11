@@ -158,7 +158,7 @@ clean = ds.select_cells(doublets, high=cut, keep_bounds=True)  # downstream uses
 ```
 
 
-## Section 5 — Normalization compares cells; feature selection chooses the lens.
+## Section 5 — Normalization allows you compare cells; Feature Selection lets you put different lenses on
 
 Cells sequenced at different depths cannot have their gene expression counts compared. Scaling each profile to a common
 size factor and log-transforming tames the skew so a unit of difference reads roughly as
@@ -186,31 +186,27 @@ hvg = ds.select_hvgs(sel, top_n=500)
 ds.inspect_artifact(hvg).parameters  # what exactly defines this gene set
 ```
 
-The selected set is a lens: change it and the atlas can change, which is expected rather
-than a bug. A selection 80 percent ribosomal builds a depth graph in biology costume, and
-normalized values over mito giants let one program set every cell's scale. Demand both
-controls before moving on: housekeeping flat, lineage separation kept, known markers
-surviving selection across abundances. Carry out: pass both controls or revisit the lens.
+The selected set is a simple lens: change it and the atlas can change, which is expected as we choose a different set to analyze.
 
 
-## Section 6 — PCA compresses, the graph connects, and UMAP draws the neighborhoods.
+## Section 6 — PCA shrinks the data down, graphs link similar cells, and UMAP draws the map.
 
-Genes move in correlated programs, so the data's real dimensionality sits far below the
-gene count. PCA finds dominant axes of ranked weighted combinations; the first dozen
-usually carry identity while later axes fade into noise, and the elbow makes the cutoff
-visible. Our six cells compress to myeloid-versus-lymphoid then T-versus-B, with `Doub`
-landing between and already hinting at mixture. Name each kept axis in words before using
-it:
+Genes often move together in programs, so the true number of dimensions is far below the
+gene count. PCA finds the main axes of variation, ranked by how much variance each
+explains. The first dozen or so usually carry identity, and later axes fade into noise.
+The elbow plot shows where to cut. Our six cells compress to myeloid-versus-lymphoid,
+then T-versus-B, with `Doub` landing between and already hinting at mixture. Name each
+kept axis in words before using it:
 
 ```python
 pca = ds.run_pca(norm, dims=15, show_elbow_plot=True)
 ds.inspect_artifact(pca).parameters  # name each kept axis before using it
 ```
 
-In PCA space each cell's k nearest neighbors wire into a weighted graph, and this graph,
-not the matrix, is what embeddings, clusters, trajectories, and imputation all consume. At
-k=2, `T1` wires to `T2` and `Doub` on shared `CD3D` while `Doub`'s split loyalty shows as
-edges to both lineages. Stages stay separate and persisted so alternatives branch cleanly:
+In PCA space, each cell's k nearest neighbors are wired into a weighted graph. This graph,
+not the matrix, is what embeddings, clusters, trajectories, and imputation all use. At
+k=2, `T1` wires to `T2` and `Doub` on shared `CD3D`, while `Doub` also links toward B.
+Stages stay separate and persisted so alternatives branch cleanly:
 
 ```python
 index = ds.build_ann_index(pca)
@@ -218,49 +214,48 @@ neighbors = ds.query_neighbors(index, k=11)
 graph = ds.build_connectivity_map(neighbors)  # everything downstream consumes this
 ```
 
-Certify three numbers before continuing: every active cell covered, isolates near zero,
-and degree uncorrelated with depth. Tiny k shatters rare types into isolates that look
-like discovery; huge k absorbs real boundaries into mush; a depth-redrawn graph is the
-quietest failure because it looks healthy while measuring library size. Read the elbow the
-same disciplined way: keep axes you can name in words, cut where variance flattens into
-noise, and distrust any axis whose top genes tell no story.
+Check three numbers before continuing: all active cells covered, almost no isolates, and
+degree not tracking depth. Tiny k shatters rare types into fake discoveries. Huge k melts
+real boundaries together. A graph that just redraws depth looks healthy while measuring
+library size. Read the elbow the same way: keep axes you can name, cut where variance
+flattens, and drop any axis whose top genes tell no story.
 
-UMAP then places cells so graph neighbors stay close, preserving local evidence while
-sacrificing global geometry: adjacency reads fine, but island distances and empty space are
-not measurements, and seeds reshape the drawing without touching the graph. Our cast draws
-a T pair, a doublet bridging toward `B1`, and a distant `Mono1`: the bridge is honest, the
-gap widths decoration. Coordinates store beside their graph:
+UMAP then places cells so graph neighbors stay close. Nearby placement is trustworthy, but
+island distances and empty space are not measurements. Seeds reshape the drawing without
+touching the graph. Our cast draws a T pair, a doublet bridging toward `B1`, and a distant
+`Mono1`: the bridge is real, and the gap widths are decoration. Coordinates store beside
+their graph:
 
 ```python
 init = ds.build_embedding_initialization(pca)
 umap = ds.run_umap(graph, init)  # coordinates only; the graph holds the biology
 ```
 
-No biological sentence should depend on the seed, and tuning parameters until the picture
-confirms the hypothesis is how this plot lies for you. The layout must agree with graph QC
-and the marker heatmap first. Carry out: certify the graph, then read neighbors, never
+No biological sentence should depend on the seed. Tuning settings until the picture
+confirms your hypothesis is how this plot lies to you. The layout must agree with graph QC
+and the marker heatmap first. Certify the graph first, then read neighbors, never
 distances.
 
 
-## Section 7 — Populations are defined, named, and cleaned, in that order.
+## Section 7 — Clustering finds groups, markers name them, and doublets get cleaned out.
 
 Community detection cuts the graph where edges run sparse, so dense pockets become
-clusters. Resolution sets granularity, and hierarchical Paris offers a second view of the
-same graph with its own cut. Nature holds no optimal partition, only partitions fit for
-questions. Low resolution splits our cast into `{T1, T2, Doub, B1}` versus `{Mono1}`;
-higher resolution separates T from B while `Doub` wobbles between runs, marking it as
-boundary rather than population. Both methods run on one graph with every partition kept:
+clusters. Resolution sets how fine the groups are, and hierarchical Paris gives a second
+view of the same graph with its own cut. There is no single best partition, only
+partitions that fit your question. Low resolution splits our cast into `{T1, T2, Doub,
+B1}` versus `{Mono1}`. Higher resolution separates T from B while `Doub` wobbles between
+runs, marking it as boundary rather than population. Both methods run on one graph with
+every partition kept:
 
 ```python
 leiden = ds.run_leiden_clustering(graph, resolution=0.5)
 paris = ds.run_paris_clustering(graph)  # hierarchical second view, same graph
 ```
 
-Stable blocks across methods and resolutions are populations; flickering boundaries are
-hypotheses. Turn the resolution dial deliberately: sweep low to high, watch which splits
-persist and which shimmer, and cross-tabulate Leiden against the Paris cut so agreement
-reads as a table rather than an impression. Extra high-resolution clusters are not new
-types until proven. Carry out: sweep, crosstab, then name.
+Stable blocks across methods and resolutions are populations. Flickering boundaries are
+hypotheses. Sweep the dial low to high, watch which splits persist and which shimmer, and
+crosstab Leiden against Paris so agreement reads as a table. Extra high-resolution
+clusters are not new types until proven. Sweep, crosstab, then name.
 
 
 Clusters become cell types by ranking genes and matching known positives and negatives:
@@ -276,10 +271,10 @@ top = ds.get_markers(marker=analysis_run["markers"], group_id=labels[0],
                      min_score=0.1, min_frac_exp=0.1)  # positives AND negatives both matter
 ```
 
-Doublets blend two programs, sit between populations with mixed markers and elevated
-counts, and split their neighborhoods across identities. Scores simulate artificial
-doublets and measure resemblance, but no score is a verdict: simulation, counts, markers,
-and graph position must converge, since genuine transitional states can look similar:
+Doublets blend two programs, sit between populations with mixed markers and high counts,
+and split their neighborhoods across identities. Scores simulate artificial doublets and
+measure resemblance, but no score is a verdict. Simulation, counts, markers, and graph
+position must all agree, since true transitional states can look similar:
 
 ```python
 scores = ds.run_doublet_detection(analysis_run["clusters"],
@@ -292,16 +287,16 @@ operations as inspect, then subcluster the suspicious, then remove: a bridge car
 unique marker found nowhere else earns subclustering before any decision, while a "type"
 that vanishes entirely on removal never was one.
 
-## Section 8 — Ask differences of populations, counts of samples, and proof of replicates.
+## Section 8 — Testing differences, counting cells, and proving things with replicates.
 
-With an atlas built, three questions share one dataset and must never be confused:
-expression shifts within a fixed population, abundance shifts of types across samples, and
-definition shifts where the boundary itself moves. Within T cells, `MKI67` rising while
-`CD3D` holds is a within-population shift, distinct from recruiting more T cells or
-redrawing the T boundary. Groupwise tests rank candidates with correction across the gene
-family, and with thousands of cells trivial shifts go significant, so effect size and
-overlap lead while p-values follow. Each test variant persists for exact retrieval with
-brackets read from the table, never recomputed:
+With an atlas built, three questions share one dataset and must never be confused. One:
+expression shifts inside a fixed population. Two: abundance shifts of types across
+samples. Three: definition shifts where the boundary itself moves. Within T cells, `MKI67`
+rising while `CD3D` holds is a within-population shift. It is distinct from recruiting
+more T cells or redrawing the T boundary. Groupwise tests rank candidates with correction
+across the gene family, and with thousands of cells tiny shifts go significant, so effect
+size and overlap lead while p-values follow. Each test variant persists for exact
+retrieval with brackets read from the table, never recomputed:
 
 ```python
 from scarf.plotting import CellField
@@ -309,7 +304,7 @@ res = ds.run_statistical_testing("ISG15", grouping=CellField("sample_id"), test=
 # Effect first: mean_1, mean_2, mean_difference in res.tables["ISG15"]. p second.
 ```
 
-Declare one-sided alternatives, panels, and correction families before running, and declare
+Declare one-sided alternatives, panels, and correction families before running. Declare
 the design once for testing and plotting together so mismatches refuse to draw:
 
 ```python
@@ -318,10 +313,10 @@ design = StudyDesign(sample_by="donor_id", condition_by="disease", pair_by="pair
 # Same design object drives the test and the brackets; a mismatch warns and skips.
 ```
 
-Composition is a sample-level question in cell-level costume: tally per sample from live
-metadata, never from a pooled table, and show stacked bars per sample with points visible.
-Types compete for 100 percent, so a rise in one is a fall somewhere else until proven
-otherwise: always ask which type paid for the increase. A B-cell rise driven by one
+Composition is a sample-level question in cell-level costume. Tally per sample from live
+metadata, never from a pooled table, and show stacked bars per sample with points
+visible. Types compete for 100 percent, so a rise in one is a fall somewhere else until
+proven otherwise. Always ask which type paid for the increase. A B-cell rise driven by one
 treated donor is reported as exactly that:
 
 ```python
@@ -331,55 +326,54 @@ tally.groupby(["sample_id", "cluster"]).size()  # per-sample, never pooled
 ```
 
 Condition claims with proper replicates aggregate per biological unit within type into
-bulk-like profiles for bulk machinery, deliberately trading resolution for valid
-inference. Six cells from two donors aggregate to an honestly weak N=2 instead of four
-cells pretending at strength, and Scarf ships no replicate-aware model of its own, which
-is an intentional boundary:
+bulk-like profiles for bulk machinery. This trades resolution for valid inference on
+purpose. Six cells from two donors aggregate to an honestly weak N=2 instead of four
+cells pretending at strength. Scarf ships no replicate-aware model of its own, which is
+an intentional boundary:
 
 ```python
 bulk = ds.make_bulk(groups=analysis_run["clusters"], aggr_type="sum")
 # bulk rows are replicates now: export to DESeq2/edgeR, not a cell-level test.
 ```
 
-Resist the pseudo-replicate shortcut: randomly splitting one donor's cells into groups
-produces descriptive resamples of the same cells, not independent biological replicates,
-and testing them as replicates is pseudoreplication wearing a lab coat. Aggregate within
-type, never across the whole mixture, or the rare signal of interest dissolves into the
-average it was meant to escape. Carry out: name the N, the denominator, and the family
-before running anything.
+Resist the pseudo-replicate shortcut. Randomly splitting one donor's cells into groups
+produces resamples of the same cells, not independent replicates. Testing them as
+replicates is pseudoreplication wearing a lab coat. Aggregate within type, never across
+the whole mixture, or the rare signal dissolves into the average it was meant to escape.
+Name the N, the denominator, and the family before running anything.
 
 
-## Section 9 — Programs, states, signals, and time orderings.
+## Section 9 — Gene programs, cell states, cell talk, and journeys through time.
 
-Genes act in teams, and scoring a set per cell turns noisy flickers into one activity
-number: the team can read confidently up while each player stays borderline. Score T
-activation and `T1` with `T2` run high even where members read 0, because the rank pattern
-holds, while `B1` stays low despite sharing `GAPDH`. Cite the set definition, the overlap
-with measured genes, and member spot checks, never the score alone:
+Genes act in teams. Scoring a set per cell turns noisy flickers into one activity number:
+the team can read confidently up while each player stays borderline. Score T activation
+and `T1` with `T2` run high even where members read 0, because the rank pattern holds,
+while `B1` stays low despite sharing `GAPDH`. Cite the set definition, the overlap with
+measured genes, and member spot checks, never the score alone:
 
 ```python
 act = ds.run_aucell(net, sel, features=universe)  # net: gene-set table, universe: all_features ref
 # Then spot-check members: the team claim needs at least some players visible.
 ```
 
-A program sharing 90 percent of its genes with cell cycle is measuring cell cycle, and a
-five-gene set with four unmeasured genes measures nothing. Know which scorer you ran:
+A program sharing 90 percent of its genes with cell cycle is measuring cell cycle. A
+five-gene set with four unmeasured genes measures nothing. Know which scorer you ran.
 AUCell walks down each cell's ranked genes and measures how fast set members accumulate,
-so it asks about rank recovery and tolerates dropout; WAGGR takes a weighted average over
+so it asks about rank recovery and tolerates dropout. WAGGR takes a weighted average over
 the set, so it asks about magnitude and leans on detected values. Different questions,
 different sensitivities, same duty to check members. See
-{doc}`tutorials/gene_set_scoring` for the full call. Carry out: name the scorer, the
-overlap, and one surviving member before believing any program.
+{doc}`tutorials/gene_set_scoring` for the full call. Name the scorer, the overlap, and
+one surviving member before believing any program.
 
 
-States are graded overlays on discrete identity, scored as numbers per cell rather than
-forced into new clusters: a proliferating T cell stays a T cell with a high cycle score.
+States are graded overlays on discrete identity. Score them as numbers per cell rather
+than forcing new clusters: a proliferating T cell stays a T cell with a high cycle score.
 `T2`'s `MKI67` against `T1`'s zero is same identity, different state, so score both and
-cluster neither apart; see {doc}`tutorials/cell_cycle`. Splitting G2M off as a novel type,
-or regressing cycle out when cycle is the biology, are the symmetric errors.
+cluster neither apart; see {doc}`tutorials/cell_cycle`. Splitting G2M off as a novel type
+is one error. Regressing cycle out when cycle is the biology is the other.
 
 Cell-cell communication matches ligands in candidate senders against receptors in receivers
-from prior databases. Every arrow is opportunity, not proof: dissociated co-expression
+from prior databases. Every arrow is opportunity, not proof. Dissociated co-expression
 cannot show contact, direction, or causation. `Mono1`'s ligand against T-cell receptors
 proposes Mono-to-T talk without saying they ever neighbored. Scarf stops at export by
 design:
@@ -388,31 +382,31 @@ design:
 adata = ds.to_anndata()  # active cells with labels; CCC runs externally from here
 ```
 
-Write "consistent with signaling" with the missing evidence named in the same sentence,
-and keep pairs whose receptor appears in 2 percent of receivers out of the main figure
-unless a rule puts them there.
+Write "consistent with signaling" with the missing evidence named in the same sentence.
+Keep pairs whose receptor appears in 2 percent of receivers out of the main figure unless
+a rule puts them there.
 
-Trajectories order cells along a continuum where biology moves them along a path: the graph
-stretches into a trail and pseudotime walks it from a declared start. Sources and sinks
-supervise the orientation; no method discovers termini from nothing, and reversing the
-declared source reverses the "trajectory" while the data never changes. Real pancreas work
-orders progenitors toward alpha, beta, and delta fates from supplied termini with validity
-keys; the full arc is {doc}`tutorials/pseudotime`, {doc}`tutorials/expression_dynamics`,
-{doc}`tutorials/fate_mapping`, and {doc}`tutorials/trajectory_validation`. Demand all four
-validity readings before believing: graph components connected along the claimed path,
-expected markers trending monotonically, modules coherent along the axis, and fate
-probabilities valid rather than leaking everywhere. Every trajectory sentence carries its
-supervision, and pseudotime tracking total counts is a depth gradient until two
-graph-level checks say otherwise. Carry out: components, trends, modules, validity keys,
-or no trajectory sentence.
+Trajectories order cells along a continuum where biology moves them along a path. The
+graph stretches into a trail and pseudotime walks it from a declared start. Sources and
+sinks supervise the orientation. No method discovers termini from nothing, and reversing
+the declared source reverses the "trajectory" while the data never changes. Real pancreas
+work orders progenitors toward alpha, beta, and delta fates from supplied termini with
+validity keys; the full arc is {doc}`tutorials/pseudotime`,
+{doc}`tutorials/expression_dynamics`, {doc}`tutorials/fate_mapping`, and
+{doc}`tutorials/trajectory_validation`. Demand all four validity readings before
+believing: connected graph components along the path, markers trending monotonically,
+coherent modules along the axis, and fate probabilities that stay valid instead of leaking
+everywhere. Every trajectory sentence carries its supervision. Pseudotime tracking total
+counts is a depth gradient until two graph-level checks say otherwise. Components,
+trends, modules, validity keys, or no trajectory sentence.
 
-## Section 10 — Batches confound, N decides, and ten familiar failures cover the rest.
+## Section 10 — Batch effects, replicates, and knowing when to trust your results.
 
 Batches shift measurements globally, and correction pulls them together while trying to
-preserve type structure. Under-correction leaves batch clusters, over-correction erases
-real biology, and correcting a variable confounded with condition deletes the finding while
+preserve type structure. Under-correction leaves batch clusters. Over-correction erases
+real biology. Correcting a variable confounded with condition deletes the finding while
 claiming to preserve it. Our cast sequenced across two days at 20 percent offset needs day
-correction to realign; with all T cells on day one and all B on day two, no method
+correction to realign. With all T cells on day one and all B on day two, no method
 separates type from day and the honest answer is a new experiment. Correct, then diagnose
 mixing gained against structure kept, never one score alone:
 
@@ -422,16 +416,16 @@ fixed = ds.run_harmony(analysis_run["pca"], batch_columns=["batch"])
 # Compare uncorrected vs corrected graphs on mixing AND structure kept. Never one score.
 ```
 
-Harmony edits coordinates, not counts, and it edits them blind: with no batch term for a
+Harmony edits coordinates, not counts, and it edits them blind. With no batch term for a
 confounded design there is nothing innocent to remove, so check the uncorrected baseline
 first and keep it in the figure. Rankings should survive new data, new seeds, and one
-held-out diagnostic nobody tuned against, or the benchmark measured tuning effort instead
-of methods. Carry out: baseline kept, both diagnostics quoted, seeds fixed.
+held-out diagnostic nobody tuned against. Otherwise the benchmark measured tuning effort
+instead of methods. Baseline kept, both diagnostics quoted, seeds fixed.
 
 
-The unit of inference follows the question: cells answer annotation and ranking, subjects
+The unit of inference follows the question. Cells answer annotation and ranking. Subjects
 and runs answer whether treatment works. Thousands of cells as independent observations
-manufacture significance, and neither Welch nor rank tests escape because the dependence
+manufacture significance. Neither Welch nor rank tests escape, because the dependence
 lives in the design, not the formula. The RA workflow averages within donors and tests 18
 matched pairs, refusing 1,386 cells as replicates. Every claim carries its unit, and every
 figure that matters shows both Ns:
@@ -444,18 +438,18 @@ res = ds.run_statistical_testing("ISG15", grouping=CellField("sample_id"),
 
 Findings that need cell N to survive are descriptive and should say so. Labels earn trust
 from positives present, negatives absent, reference and method agreement, and replicate
-support; build references once with diagnostics beside every transferred label:
+support. Build references once with diagnostics beside every transferred label:
 
 ```python
 ref = ds.build_mapping_reference(neighbors)  # fixed reference; queries stay comparable
 ```
 
 Compare methods on fixed data with fixed seeds, one change at a time, judged by several
-independent diagnostics: `metric_ilisi` for mixing against `metric_graph_connectivity` for
-structure kept, letting the pair argue instead of either ruling. Computation proposes and
-independent data disposes, up the ladder from held-out donors through orthogonal assays to
+independent diagnostics. Use `metric_ilisi` for mixing against `metric_graph_connectivity`
+for structure kept, letting the pair argue instead of either ruling. Computation proposes
+and independent data disposes. Climb from held-out donors through orthogonal assays to
 perturbation, with every sentence carrying its rung. Reproducibility is provenance plus
-environment plus data identity, written where the next reader trips over it, and lineage
+environment plus data identity, written where the next reader trips over it. Lineage
 reports turn any headline result into a diagram from counts to claim:
 
 ```python
@@ -467,11 +461,11 @@ Nearly every disaster is one of ten familiar confusions: soup called cells, doub
 called types, depth called biology, batch called condition, resolution called discovery,
 means called distributions, cells called subjects, correlation called circuit, layout
 distances called measurements, and parameters called defaults-that-must-be-right. Tape the
-two honesty colorings, total counts and batch, to every embedding forever, add one
+two honesty colorings, total counts and batch, to every embedding forever. Add one
 crosstab per clustering decision, and prosecute each presentable figure under all ten
 headings. Finish by posing one narrow question on the 5K PBMC data with its population,
 comparison, unit of inference, and kill criterion stated before any code runs, in three
-figures maximum, and ship the strongest objection you could not dismiss alongside the
+figures maximum. Ship the strongest objection you could not dismiss alongside the
 claim.
 
 ---
