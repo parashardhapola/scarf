@@ -189,24 +189,19 @@ ds.inspect_artifact(hvg).parameters  # what exactly defines this gene set
 The selected set is a simple lens: change it and the atlas can change, which is expected as we choose a different set to analyze.
 
 
-## Section 6 — PCA shrinks the data down, graphs link similar cells, and UMAP draws the map.
+## Section 6 — Principal Component Analysis shrinks the data down, graphs link similar cells, and UMAP draws the map.
 
 Genes often move together in programs, so the true number of dimensions is far below the
-gene count. PCA finds the main axes of variation, ranked by how much variance each
-explains. The first dozen or so usually carry identity, and later axes fade into noise.
-The elbow plot shows where to cut. Our six cells compress to myeloid-versus-lymphoid,
-then T-versus-B, with `Doub` landing between and already hinting at mixture. Name each
-kept axis in words before using it:
+gene count. Principal Component Analysis (PCA) finds the main axes of variation, ranked by how much variance each explains. This allows us to simplify from higher dimensional data, and get the 2d/3d representations of the data.
+Usually, you can use an elbow plot to know where to cut off your data.
 
 ```python
 pca = ds.run_pca(norm, dims=15, show_elbow_plot=True)
 ds.inspect_artifact(pca).parameters  # name each kept axis before using it
 ```
 
-In PCA space, each cell's k nearest neighbors are wired into a weighted graph. This graph,
-not the matrix, is what embeddings, clusters, trajectories, and imputation all use. At
-k=2, `T1` wires to `T2` and `Doub` on shared `CD3D`, while `Doub` also links toward B.
-Stages stay separate and persisted so alternatives branch cleanly:
+If you wanna get a little more in depth, in the PCA space, we get each cell's k nearest neighbors by putting them on a weighted graph based on what we get from PCA. 
+not the matrix, is what embeddings, clusters, trajectories, and imputation all use. 
 
 ```python
 index = ds.build_ann_index(pca)
@@ -214,56 +209,44 @@ neighbors = ds.query_neighbors(index, k=11)
 graph = ds.build_connectivity_map(neighbors)  # everything downstream consumes this
 ```
 
-Check three numbers before continuing: all active cells covered, almost no isolates, and
-degree not tracking depth. Tiny k shatters rare types into fake discoveries. Huge k melts
-real boundaries together. A graph that just redraws depth looks healthy while measuring
-library size. Read the elbow the same way: keep axes you can name, cut where variance
-flattens, and drop any axis whose top genes tell no story.
+Most of the plots you see in recent publications use the Uniform Manifold Approximation and Projection (UMAP)method to plot the data in 2 dimensions.
 
-UMAP then places cells so graph neighbors stay close. Nearby placement is trustworthy, but
-island distances and empty space are not measurements. Seeds reshape the drawing without
-touching the graph. Our cast draws a T pair, a doublet bridging toward `B1`, and a distant
-`Mono1`: the bridge is real, and the gap widths are decoration. Coordinates store beside
-their graph:
+Essentially, all UMAP does it from the PCA space, it places cells so graph neighbors stay close.
+Nearby placements indicate cells similiar to one another, with distances between 'islands'  showing that one group of cells is different from another. The empty spaces and distances are not measurements. When you select a seed, all it does  reshape the drawing without touching the graph. The graph always stays the same, but the way we can project our data differs!  
 
 ```python
 init = ds.build_embedding_initialization(pca)
 umap = ds.run_umap(graph, init)  # coordinates only; the graph holds the biology
 ```
 
-No biological sentence should depend on the seed. Tuning settings until the picture
-confirms your hypothesis is how this plot lies to you. The layout must agree with graph QC
-and the marker heatmap first. Certify the graph first, then read neighbors, never
-distances.
+See the difference on the same cells, colored identically. PCA shows axes of variation,
+UMAP shows neighborhoods and a 2d representations of the cells. Plot the recomputed
+layout the Scarf way, colored by the run's own clusters:
+
+```python
+analysis_run = ds.pipeline.open(label="docs_default")  # named run, reused in later sections
+ds.plots.embedding(layout=umap, color_by=analysis_run["clusters"])  # same cells, same colors
+```
+
+No biological pattern will depend on the seed or parameters you use. All this does it tune how you see the picture!
 
 
-## Section 7 — Clustering finds groups, markers name them, and doublets get cleaned out.
+## Section 7 — Clustering finds groups, markers name them, and doublets get removed
 
 Community detection cuts the graph where edges run sparse, so dense pockets become
-clusters. Resolution sets how fine the groups are, and hierarchical Paris gives a second
-view of the same graph with its own cut. There is no single best partition, only
-partitions that fit your question. Low resolution splits our cast into `{T1, T2, Doub,
-B1}` versus `{Mono1}`. Higher resolution separates T from B while `Doub` wobbles between
-runs, marking it as boundary rather than population. Both methods run on one graph with
-every partition kept:
+clusters. 
+
+Resolution sets how fine the groups are, with higher values giving you more communities and groups. 
+You can use hierarchical Paris clustering as well to get a second view of the same graph with its own flavor. There is no single best resoluton, only the resolution that best allows you to represent your data based on what you same expect
 
 ```python
 leiden = ds.run_leiden_clustering(graph, resolution=0.5)
 paris = ds.run_paris_clustering(graph)  # hierarchical second view, same graph
 ```
 
-Stable blocks across methods and resolutions are populations. Flickering boundaries are
-hypotheses. Sweep the dial low to high, watch which splits persist and which shimmer, and
-crosstab Leiden against Paris so agreement reads as a table. Extra high-resolution
-clusters are not new types until proven. Sweep, crosstab, then name.
+Stable blocks across methods and resolutions are populations. Flickering boundaries could be hypothesis to investigate. Extra high-resolution clusters are not new types until proven, and may just be part of a larger population.
 
-
-Clusters become cell types by ranking genes and matching known positives and negatives:
-`CD14` plus `LYZ` without `CD3D` reads monocyte, `MS4A1` without `CD3D` reads B. Mixed
-signatures earn explicitly uncertain labels, because an honest unknown beats a confident
-mislabel that poisons everything downstream. `Doub` ranking `CD3D` with `MS4A1` and no
-clean negatives is mixed or putative doublet, never a new type. Fetch both sides of the
-evidence from the stored table:
+To identify the identity of the cluster/community, you can rank genes and identify potential "marker genes" that represent the cell's identity. You can then visualize the spatial orientation of these certain genes on your UMAP to identify what communities may correspond to what cell identity.
 
 ```python
 labels = analysis_run.cells.fetch("clusters")
@@ -271,53 +254,31 @@ top = ds.get_markers(marker=analysis_run["markers"], group_id=labels[0],
                      min_score=0.1, min_frac_exp=0.1)  # positives AND negatives both matter
 ```
 
-Doublets blend two programs, sit between populations with mixed markers and high counts,
-and split their neighborhoods across identities. Scores simulate artificial doublets and
-measure resemblance, but no score is a verdict. Simulation, counts, markers, and graph
-position must all agree, since true transitional states can look similar:
-
-```python
-scores = ds.run_doublet_detection(analysis_run["clusters"],
-                                  analysis_run["connectivity_map"])
-# High score plus mixed markers plus bridge position: remove. Any one alone: inspect.
-```
-
-Doublets are a removal category, so report how many left and from where. Run the order of
-operations as inspect, then subcluster the suspicious, then remove: a bridge carrying a
-unique marker found nowhere else earns subclustering before any decision, while a "type"
-that vanishes entirely on removal never was one.
 
 ## Section 8 — Testing differences, counting cells, and proving things with replicates.
 
-With an atlas built, three questions share one dataset and must never be confused. One:
-expression shifts inside a fixed population. Two: abundance shifts of types across
-samples. Three: definition shifts where the boundary itself moves. Within T cells, `MKI67`
-rising while `CD3D` holds is a within-population shift. It is distinct from recruiting
-more T cells or redrawing the T boundary. Groupwise tests rank candidates with correction
-across the gene family, and with thousands of cells tiny shifts go significant, so effect
-size and overlap lead while p-values follow. Each test variant persists for exact
-retrieval with brackets read from the table, never recomputed:
+Groupwise tests rank candidates with correction across the gene family. It is important
+to note that with thousands of cells, even tiny shifts go significant, so read effect
+size and overlap first and p-values second. Take the simplest case to start: one gene &
+two conditions. Say you want to know if ISG15 differs between control and stimulated
+cells. Group the cells by sample_id and run a Welch's t-test, which stays descriptive at
+the cell level.
 
 ```python
-from scarf.plotting import CellField
+from scarf.plotting import CellField, StudyDesign
+analysis_run = ds.pipeline.open(label="docs_default")  # named run reused through this section
 res = ds.run_statistical_testing("ISG15", grouping=CellField("sample_id"), test="welch")
 # Effect first: mean_1, mean_2, mean_difference in res.tables["ISG15"]. p second.
 ```
 
-Declare one-sided alternatives, panels, and correction families before running. Declare
-the design once for testing and plotting together so mismatches refuse to draw:
+For example, say your study design has donors measured in both conditions. 
+First begin by setting your basic rules, such as what statistical test are you running, what correction methods are you using, and how are you doing to do it. After that, denote the information in your Study Design, like the donor_id or the disease status
 
 ```python
-from scarf.plotting import StudyDesign
 design = StudyDesign(sample_by="donor_id", condition_by="disease", pair_by="pair_index")
-# Same design object drives the test and the brackets; a mismatch warns and skips.
 ```
 
-Composition is a sample-level question in cell-level costume. Tally per sample from live
-metadata, never from a pooled table, and show stacked bars per sample with points
-visible. Types compete for 100 percent, so a rise in one is a fall somewhere else until
-proven otherwise. Always ask which type paid for the increase. A B-cell rise driven by one
-treated donor is reported as exactly that:
+Cell type composition is a different question entirely, one that can be particulary insightful, and it lives at the sample level, not the cell level. Usually, you tally proportions per independent sample directly from raw metadata, which can avoid issues like pseudoreplication.
 
 ```python
 tally = ds.cells.to_pandas_dataframe(columns=["sample_id"])
@@ -325,11 +286,7 @@ tally["cluster"] = analysis_run.cells.fetch("clusters")
 tally.groupby(["sample_id", "cluster"]).size()  # per-sample, never pooled
 ```
 
-Condition claims with proper replicates aggregate per biological unit within type into
-bulk-like profiles for bulk machinery. This trades resolution for valid inference on
-purpose. Six cells from two donors aggregate to an honestly weak N=2 instead of four
-cells pretending at strength. Scarf ships no replicate-aware model of its own, which is
-an intentional boundary:
+Condition claims with proper replicates often need one more step to point out key differences/changes. This is where we can aggregate counts within each cekk-type into bulk-like profiles to replicate the bulk-RNAseq modality. We can do this because summing the counts for our genes often yields a distribution that we would observe in bulk data for that sample. This downside of this is trading resolution for valid inference of our hypothesis. Regardless, we still get a good degree of resolution from bulking specific cell types of interest
 
 ```python
 bulk = ds.make_bulk(groups=analysis_run["clusters"], aggr_type="sum")
@@ -340,7 +297,9 @@ Resist the pseudo-replicate shortcut. Randomly splitting one donor's cells into 
 produces resamples of the same cells, not independent replicates. Testing them as
 replicates is pseudoreplication wearing a lab coat. Aggregate within type, never across
 the whole mixture, or the rare signal dissolves into the average it was meant to escape.
-Name the N, the denominator, and the family before running anything.
+Name the N, the denominator, and the family before running anything. Remember, do what
+fits the question being asked: cells answer cell-level questions, and donors answer
+condition-level ones.
 
 
 ## Section 9 — Gene programs, cell states, cell talk, and journeys through time.
