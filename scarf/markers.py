@@ -417,7 +417,8 @@ def knn_clustering(
         """
 
         idxmax = show_dask_progress(data.argmax(axis=1), "Sorting clusters", t)
-        cmm = pd.DataFrame([idxmax, clusters]).T.groupby(1).median()[0].sort_values()
+        cmm = pd.DataFrame([idxmax, clusters]).T.groupby(1).median()[0]
+        cmm = cmm.sort_values(kind="stable")
         return (
             pd.Series(clusters)
             .replace(dict(zip(cmm.index, range(1, 1 + len(cmm)))))

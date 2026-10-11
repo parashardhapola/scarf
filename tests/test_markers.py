@@ -3,7 +3,25 @@ import pandas as pd
 import pytest
 from scipy.stats import mannwhitneyu
 
-from scarf.markers import mannwhitneyu_from_ranks
+from scarf.markers import knn_clustering, mannwhitneyu_from_ranks
+
+
+def test_knn_clustering_orders_tied_peaks_by_cluster_size():
+    import dask.array as da
+
+    data = np.random.default_rng(123).normal(size=(240, 4))
+    data[:, 0] = 10
+
+    labels = knn_clustering(
+        da.from_array(data, chunks=(80, 4)),
+        n_neighbours=11,
+        n_clusters=20,
+        n_threads=1,
+    )
+
+    np.testing.assert_array_equal(np.unique(labels), np.arange(1, 21))
+    counts = np.bincount(labels)[1:]
+    np.testing.assert_array_equal(counts, np.sort(counts)[::-1])
 
 
 @pytest.mark.parametrize(
