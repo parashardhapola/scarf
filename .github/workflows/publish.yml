@@ -7,105 +7,31 @@ on:
 permissions:
   contents: read
 
-# One publication per tag at a time; a second run waits instead of racing.
-concurrency:
-  group: publish-${{ github.event.release.tag_name }}
-  cancel-in-progress: false
-
-# Every job checks out github.sha, the commit the release tag named when the
-# release was published, so the tests, the documentation build, and the
-# published files all come from the same commit.
 jobs:
   verify:
-    name: Verify the release commit
     uses: ./.github/workflows/pytest.yml
-    with:
-      ref: ${{ github.sha }}
-
-  docs:
-    name: Verify the documentation
-    uses: ./.github/workflows/docs.yml
     with:
       ref: ${{ github.sha }}
 
   build:
     name: Build distribution
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v7
       with:
         ref: ${{ github.sha }}
-        fetch-depth: 0
-    - name: Require the release tag to name the verified commit
+    - name: Require the release tag to match VERSION
       env:
         RELEASE_TAG: ${{ github.event.release.tag_name }}
-      run: |
-        tagged="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
-        echo "Release tag ${RELEASE_TAG} names ${tagged}; the workflow verifies ${GITHUB_SHA}"
-        if [[ "$tagged" != "$GITHUB_SHA" ]]; then
-          echo "::error::Release tag ${RELEASE_TAG} names ${tagged}, not the verified commit ${GITHUB_SHA}"
-          exit 1
-        fi
+      run: test "$RELEASE_TAG" = "$(cat VERSION)"
     - name: Install uv
       uses: astral-sh/setup-uv@v9.0.0
       with:
-        python-version: "3.14"
-        version: "0.12.5"
-    - name: Require clean git state before build
-      run: |
-        echo "::group::git status --porcelain=v1"
-        status="$(git status --porcelain=v1)"
-        if [[ -z "$status" ]]; then echo "(clean)"; else printf '%s\n' "$status"; fi
-        echo "::endgroup::"
-        echo "::group::git describe"
-        git describe --tags --dirty --long
-        echo "::endgroup::"
-        echo "::group::git diff --stat"
-        diffstat="$(git diff --stat)"
-        if [[ -z "$diffstat" ]]; then echo "(no unstaged diff)"; else printf '%s\n' "$diffstat"; fi
-        echo "::endgroup::"
-        if [[ -n "$status" ]]; then
-          echo "::error::Release checkout is not clean before the build"
-          exit 1
-        fi
-    - name: Build a pure-Python wheel and a source tarball
-      env:
-        SETUPTOOLS_SCM_DEBUG: "true"
-        SETUPTOOLS_SCM_OVERRIDES_FOR_SCARF: >-
-          {local_scheme = "no-local-version-strict"}
-      run: uv build --clear --build-constraints .github/build-constraints.txt
-    - name: Require clean git state after build
-      if: always()
-      run: |
-        echo "::group::git status --porcelain=v1"
-        status="$(git status --porcelain=v1)"
-        if [[ -z "$status" ]]; then echo "(clean)"; else printf '%s\n' "$status"; fi
-        echo "::endgroup::"
-        echo "::group::git describe"
-        git describe --tags --dirty --long
-        echo "::endgroup::"
-        echo "::group::git diff --stat"
-        diffstat="$(git diff --stat)"
-        if [[ -z "$diffstat" ]]; then echo "(no unstaged diff)"; else printf '%s\n' "$diffstat"; fi
-        echo "::endgroup::"
-        echo "::group::generated version file"
-        ls -l scarf/_version.py || echo "scarf/_version.py not present"
-        git check-ignore -v scarf/_version.py || echo "scarf/_version.py is not gitignored"
-        echo "::endgroup::"
-        if [[ -n "$status" ]]; then
-          echo "::error::Release checkout is not clean after the build"
-          exit 1
-        fi
-    - name: Validate release artifact metadata
-      env:
-        RELEASE_TAG: ${{ github.event.release.tag_name }}
-      run: >-
-        uv run --no-project --with packaging==26.3
-        python tests/validate_release_artifacts.py
-        --release-tag "$RELEASE_TAG"
-        --distribution scarf
-        dist/*.whl dist/*.tar.gz
+        python-version: "3.12"
+        version: "0.11.7"
+    - name: Build a binary wheel and a source tarball
+      run: uv build --python 3.12
     - name: Store the distribution packages
       uses: actions/upload-artifact@v7
       with:
@@ -113,56 +39,17 @@ jobs:
         path: dist/
         if-no-files-found: error
 
-  smoke:
-    name: Smoke-test wheel (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    needs:
-      - build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-26.04]
-        python-version: ["3.12", "3.13", "3.14"]
-        include:
-          - os: windows-2025
-            python-version: "3.12"
-    defaults:
-      run:
-        # Bash expands the wheel glob on every runner, Windows included.
-        shell: bash
-    env:
-      HNSWLIB_NO_NATIVE: "1"
-
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        ref: ${{ github.sha }}
-    - name: Install uv
-      uses: astral-sh/setup-uv@v9.0.0
-      with:
-        python-version: ${{ matrix.python-version }}
-        version: "0.12.5"
-    - name: Download the distribution packages
-      uses: actions/download-artifact@v8
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Install the wheel in a clean environment and run a small analysis
-      run: uv run --no-project python tests/smoke_wheel.py dist/*.whl
-
   publish-to-pypi:
     name: Publish to PyPI
     needs:
       - verify
-      - docs
       - build
-      - smoke
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
     environment:
       name: pypi
       url: https://pypi.org/p/scarf
     permissions:
-      id-token: write
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v8

@@ -1,157 +1,76 @@
 [build-system]
-requires = ["setuptools>=80", "setuptools-scm>=8", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scarf"
-dynamic = ["version"]
-description = "Out-of-core, graph-first workflows for million-cell RNA-seq and CITE-seq"
-readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.12"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "Scarf: A scalable tool for single-cell omics data analysis"
+readme = "pypi_README.rst"
+requires-python = ">=3.11,<3.13"
 license = "BSD-3-Clause"
-authors = [
-    {name = "Parashar Dhapola", email = "parashar.dhapola@gmail.com"},
-]
-keywords = [
-    "single-cell",
-    "scRNA-seq",
-    "scATAC-seq",
-    "CITE-seq",
-    "Harmony",
-    "WNN",
-    "batch-correction",
-    "Zarr",
-    "memory-efficient",
-]
+license-files = ["LICENSE"]
+authors = [{name = "Parashar Dhapola", email = "parashar.dhapola@gmail.com"}]
+keywords = ["single-cell"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Natural Language :: English",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-]
-dependencies = [
-    "h5py>=3.11",
-    "hnswlib>=0.8",
-    "leidenalg>=0.12",
-    "loguru>=0.7",
-    "networkx>=3",
-    "numba>=0.60",
-    "numcodecs>=0.16",
-    "numpy>=2",
-    "packaging",
-    "pandas>=2.2.2",
-    "scikit-learn>=1.5",
-    "scipy>=1.15,!=1.17.0",
-    "statsmodels>=0.14.5",
-    "threadpoolctl>=3.5.0",
-    "tqdm>=4.60",
-    "umap-learn>=0.5.12",
-    "zarr>=3.2.0",
-    "obstore>=0.5.1",
-    "huggingface-hub>=2.0.0",
-    "zstandard>=0.25.0",
-    "igraph>=1.0.0",
-]
-
-[project.optional-dependencies]
-cytebase = [
-    "duckdb>=1.5.5",
-    "httpx>=0.28.1",
-    "matplotlib>=3.9",
-    "pytz>=2026.3.post1",
-    "seaborn>=0.13",
-]
-agent = [
-    "pydantic-ai-slim[openai]>=2.51.0",
-]
-extra = [
-    "anndata>=0.12",
-    # kneed 0.8.0 opens its VERSION file relative to the working directory,
-    # so it cannot be imported from an installed environment.
-    "kneed>=0.8.1",
-    "matplotlib>=3.9",
-    "seaborn>=0.13",
-    "ipython-autotime>=0.3",
-    "ipywidgets>=8",
-]
-# t-SNE's only backend. sgtsnepi is GPLv3 and publishes wheels only for Linux
-# x86_64 and macOS 26 or newer on arm64; elsewhere it compiles from source.
-tsne = [
-    "sgtsnepi>=0.7",
-]
-test = [
-    "pytest>=7.0",
-    "pytest-cov>=4",
-    "pytest-xdist>=3",
-    "topacedo>=0.2.10",
-    "anndata>=0.12",
-    "scikit-network>=0.33.1",
-    "rdata>=1.1.0",
-    "pydantic-ai-slim[openai]>=2.51.0",
-    # CI runs t-SNE on Linux x86_64, where sgtsnepi has wheels.
-    "sgtsnepi>=0.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
-docs = [
-    "jinja2",
-    "jedi",
-    "myst-parser",
-    "myst-nb",
-    "sphinx",
-    "sphinx_autodoc_typehints",
-    "sphinx-book-theme",
-    "sphinx-copybutton",
-    "sphinx-external-toc",
-    "sphinx-tabs",
-    "topacedo",
-    "nbclient",
-    "jupyter-cache>=1.0.1",
-    "sphinx-reredirects>=1.1.0",
-    "sphinxcontrib-mermaid>=2.1.0",
-    # The tutorials run t-SNE on Linux x86_64, where sgtsnepi has wheels.
-    "sgtsnepi>=0.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.urls]
 Homepage = "https://github.com/NygenAnalytics/scarf"
 Documentation = "https://scarf.readthedocs.io/en/latest/"
-Installation = "https://scarf.readthedocs.io/en/latest/installation.html"
-Issues = "https://github.com/NygenAnalytics/scarf/issues"
 
 [tool.setuptools]
 include-package-data = false
+script-files = ["bin/sgtsne"]
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["scarf*"]
-exclude = ["profiling*", "scripts*", "tests*", "docs*"]
+exclude = ["scarf.tests*"]
+namespaces = false
 
-[tool.setuptools_scm]
-version_file = "scarf/_version.py"
+[tool.setuptools.dynamic]
+version = {file = ["VERSION"]}
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+extra = {file = ["requirements_extra.txt"]}
+
+[dependency-groups]
+test = [
+    "pytest",
+    "pytest-cov",
+    "topacedo",
+    "anndata==0.11.4",
+    "pcst-fast",
+]
+docs = [
+    "anndata==0.11.4",
+    "jinja2",
+    "jedi",
+    "myst-parser",
+    "myst-nb",
+    "sphinx",
+    "sphinx-autodoc-typehints",
+    "sphinx-book-theme",
+    "sphinx-copybutton",
+    "sphinx-external-toc",
+    "sphinx-tabs",
+    "topacedo",
+    "nbclient<=0.8",
+]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -v -n logical --dist loadfile"
-markers = [
-    "integration: live network tests",
-    "slow: tests that build graphs or run iterative numerical workflows",
-    "visual: deterministic image comparison tests",
-    "benchmark: scaling micro-benchmarks, timed only with SCARF_RUN_BENCHMARKS=1",
-]
+addopts = "-ra -v"
 testpaths = [
+    "scarf/tests",
     "tests",
 ]
-norecursedirs = [
-    "datasets",
-]
-
-[tool.coverage.run]
-source = ["scarf"]
-omit = ["scarf/_version.py"]
-parallel = true
-# sys.monitoring measures the same lines with less overhead than the C tracer
-# on Python 3.12 and 3.13; coverage already uses it on Python 3.14.
-core = "sysmon"
 
 [tool.interrogate]
 ignore-init-method = true
@@ -166,8 +85,9 @@ ignore-nested-classes = true
 ignore-setters = false
 fail-under = 50
 exclude = [
+    "setup.py",
     "docs",
-    "tests"
+    "scarf/tests"
 ]
 ignore-regex = [
     "^get$",
@@ -180,119 +100,3 @@ whitelist-regex = []
 color = true
 generate-badge = '.'
 badge-format = "svg"
-
-[dependency-groups]
-cytebase = [
-    "modal>=1.5.2",
-    "fastapi>=0.141.1",
-    "httpx>=0.28.1",
-    "pydantic>=2.13.4",
-    "duckdb>=1.5.5",
-    "natsort>=8.4.0",
-    "pytz>=2026.3.post1",
-]
-profiling = [
-    "anndata>=0.12.18",
-    "modal>=1.5.2",
-    "pydantic>=2.13.4",
-]
-dev = [
-    "ipykernel>=7.3.0",
-    "ipython>=9.16.1",
-    "mypy>=2.1.0",
-    "ruff>=0.15.20",
-]
-docs-modal = [
-    "modal>=1.5.2",
-]
-
-[tool.uv]
-cache-keys = [
-    { file = "pyproject.toml" },
-    { git = { commit = true, tags = true } },
-]
-no-binary-package = ["pcst-fast", "hnswlib"]
-extra-build-variables = { hnswlib = { HNSWLIB_NO_NATIVE = "1" } }
-
-[tool.uv.pip]
-no-binary = ["hnswlib"]
-extra-build-variables = { hnswlib = { HNSWLIB_NO_NATIVE = "1" } }
-
-[tool.uv.extra-build-dependencies]
-pcst-fast = ["pybind11>=2.11"]
-
-[tool.ruff]
-exclude = [
-    ".git",
-    ".venv",
-    "docs/.jupyter_cache",
-    "docs/build",
-    "docs/source/tutorials/scarf_datasets",
-    "scarf/_version.py",
-]
-
-# Keep the pre-0.16 default rule set until the wider 0.16 defaults are triaged.
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
-
-[tool.mypy]
-strict = false
-
-python_version = "3.12"
-exclude = ["^docs/", "^scarf/_version\\.py$"]
-
-disable_error_code = ["import-untyped"]
-
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-
-check_untyped_defs = true
-disallow_untyped_calls = true
-no_implicit_optional = true
-
-warn_return_any = true
-warn_unused_configs = true
-warn_redundant_casts = true
-warn_unused_ignores = false
-
-ignore_missing_imports = false
-
-[[tool.mypy.overrides]]
-module = [
-    "scarf.plotting",
-    "scarf.plotting.*",
-]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "numba",
-    "numba.*",
-    "pydantic_ai",
-    "pydantic_ai.*",
-    "sgtsnepi",
-]
-ignore_missing_imports = true
-
-# Numba primitives are untyped and expose runtime-only attributes.
-[[tool.mypy.overrides]]
-module = [
-    "scarf.utils.numba",
-    "scarf.clustering._paris_core",
-    "scarf.embeddings.umap",
-    "scarf.assay.rna",
-    "scarf.features.markers.*",
-    "scarf.features.enrichment.aucell",
-    "scarf.datastore._operations.features",
-]
-disallow_untyped_calls = false
-disable_error_code = ["attr-defined", "arg-type"]
-
-[[tool.mypy.overrides]]
-module = ["profiling.*"]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-check_untyped_defs = false
-warn_return_any = false
-ignore_errors = true

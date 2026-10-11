@@ -1,20 +1,27 @@
-FROM ubuntu:26.04
+FROM ubuntu:20.04 AS cilk-runtime
 
-RUN apt update -y && apt autoremove -y && apt clean -y && apt autoclean -y && apt upgrade -y
-RUN apt install -y wget build-essential git nano curl
+# The bundled sgtsne executable requires the Cilk runtime from Ubuntu 20.04.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcilkrts5 \
+    && rm -rf /var/lib/apt/lists/*
 
-ARG TZ="Europe/Stockholm"
-RUN DEBIAN_FRONTEND="noninteractive" TZ=$TZ apt-get -y install tzdata
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+FROM ubuntu:22.04
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.7 /uv /uvx /usr/local/bin/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates libfftw3-double3 libmetis5 libtbbmalloc2 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=cilk-runtime /usr/lib/x86_64-linux-gnu/libcilkrts.so.5* /usr/local/lib/
+COPY --from=cilk-runtime /usr/share/doc/libcilkrts5/copyright /usr/share/doc/libcilkrts5/copyright
+RUN ldconfig
 
 WORKDIR /workspace
-COPY . /workspace
+COPY pyproject.toml uv.lock setup.py VERSION requirements.txt requirements_extra.txt pypi_README.rst LICENSE .python-version ./
+COPY bin/sgtsne ./bin/sgtsne
+COPY scarf/*.py ./scarf/
+COPY scarf/datastore/*.py ./scarf/datastore/
+RUN uv sync --locked --no-editable --extra extra --python 3.12 \
+    && uv cache clean
 
-# t-SNE is optional: add --extra tsne for sgtsnepi, which has wheels for
-# linux/amd64 and must otherwise be compiled with a C++ compiler and FFTW.
-RUN uv python install 3.14 && uv sync --extra extra
 ENV PATH="/workspace/.venv/bin:$PATH"
-
-RUN echo "export PATH=/workspace/.venv/bin:$PATH" >> /root/.bashrc

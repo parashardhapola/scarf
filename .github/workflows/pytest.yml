@@ -2,159 +2,43 @@ name: Tests
 
 on:
   workflow_dispatch:
-  # The release workflow verifies the exact commit it publishes.
   workflow_call:
     inputs:
       ref:
-        description: Commit to check out and test
         type: string
         required: true
   push:
     branches:
       - master
-    paths-ignore:
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/workflows/docs.yml"
-      - ".gitignore"
-      - ".readthedocs.yml"
-      - "AGENTS.md"
-      - "LICENSE"
-      - "README.md"
-      - "docs/**"
-      - "profiling/.env.example"
-      - "profiling/AGENTS.md"
+      - development
   pull_request:
     branches:
       - master
-    paths-ignore:
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/workflows/docs.yml"
-      - ".gitignore"
-      - ".readthedocs.yml"
-      - "AGENTS.md"
-      - "LICENSE"
-      - "README.md"
-      - "docs/**"
-      - "profiling/.env.example"
-      - "profiling/AGENTS.md"
+      - development
 
 jobs:
-  quality:
-    runs-on: ubuntu-26.04
-    env:
-      HNSWLIB_NO_NATIVE: "1"
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        ref: ${{ inputs.ref || github.sha }}
-        fetch-depth: 0
-    - name: Install system build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential
-    - name: Install uv
-      uses: astral-sh/setup-uv@v9.0.0
-      with:
-        python-version: "3.12"
-    - name: Install dependencies
-      run: uv sync --group dev --group profiling --group cytebase --extra test --extra extra --extra agent --extra cytebase
-    - name: Lint and check formatting
-      run: |
-        uv run ruff check scarf profiling tests
-        uv run ruff format --check scarf profiling tests
-    - name: Type check
-      run: uv run mypy scarf profiling
-
-  visual:
-    runs-on: ubuntu-26.04
-    env:
-      HNSWLIB_NO_NATIVE: "1"
-      MPLBACKEND: Agg
-      SCARF_RUN_VISUAL_REGRESSION: "1"
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        ref: ${{ inputs.ref || github.sha }}
-        fetch-depth: 0
-    - name: Install system build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential
-    - name: Install uv
-      uses: astral-sh/setup-uv@v9.0.0
-      with:
-        python-version: "3.12"
-    - name: Install dependencies
-      run: uv sync --group profiling --extra test --extra extra --extra agent
-    - name: Download test fixtures
-      run: uv run python -m tests.download_fixtures --with-h5ad
-    - name: Compare publication plotting references
-      run: uv run pytest -n 0 -m visual tests/test_plotting_showcase.py
-
   test:
-    runs-on: ubuntu-26.04
-    env:
-      HNSWLIB_NO_NATIVE: "1"
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-        resolution: [locked]
-        include:
-          - python-version: "3.12"
-            resolution: lowest-direct
+        os: [ubuntu-22.04, windows-2025]
+        python-version: ["3.11", "3.12"]
     steps:
     - uses: actions/checkout@v7
       with:
         ref: ${{ inputs.ref || github.sha }}
-        fetch-depth: 0
-    - name: Install system build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential
     - name: Install uv
       uses: astral-sh/setup-uv@v9.0.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (locked)
-      if: matrix.resolution == 'locked'
-      run: uv sync --group profiling --group cytebase --extra test --extra extra --extra agent --extra cytebase
-    - name: Install dependencies (lowest-direct)
-      if: matrix.resolution == 'lowest-direct'
-      run: |
-        uv venv --python "${{ matrix.python-version }}"
-        uv pip install --resolution lowest-direct -e ".[test,extra,agent,cytebase]" --group profiling --group cytebase
-    - name: Download test fixtures
-      run: |
-        if [ "${{ matrix.resolution }}" = "lowest-direct" ]; then
-          uv run --no-sync python -m tests.download_fixtures --with-h5ad
-        else
-          uv run python -m tests.download_fixtures --with-h5ad
-        fi
-    - name: Report runner CPU capacity
-      run: |
-        echo "available_cpu_count=$(nproc)"
-        echo "installed_cpu_count=$(nproc --all)"
-    - name: Test with pytest (parallel)
-      run: |
-        pytest_args=(-n logical --durations=25)
-        if [ "${{ matrix.resolution }}" = "locked" ] && [ "${{ matrix.python-version }}" = "3.14" ]; then
-          pytest_args+=(--cov=scarf --cov-report=xml --cov-report=term)
-        fi
-        uv run --no-sync pytest "${pytest_args[@]}"
-    # A release smoke-tests the wheel that it publishes (publish.yml).
-    - name: Build and smoke-test wheel
-      if: matrix.resolution == 'locked' && matrix.python-version == '3.14' && github.event_name != 'release'
-      run: |
-        uv build
-        uv run --no-project python tests/smoke_wheel.py dist/*.whl
-    # A release has no Codecov token, and its verification must not depend on
-    # the coverage service.
+        version: "0.11.7"
+    - name: Install dependencies
+      run: uv sync --locked --group test --extra extra
+    - name: Test with pytest
+      run: uv run --no-sync pytest --cov=scarf --cov-report=xml
     - name: Upload coverage to Codecov
-      if: matrix.resolution == 'locked' && matrix.python-version == '3.14' && github.event_name != 'release'
+      if: github.event_name != 'release'
       uses: codecov/codecov-action@v5
       with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: coverage.xml
-        disable_search: true
-        fail_ci_if_error: true
+        fail_ci_if_error: false

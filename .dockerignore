@@ -1,0 +1,15 @@
+**
+!Dockerfile
+!.dockerignore
+!.python-version
+!LICENSE
+!VERSION
+!pyproject.toml
+!pypi_README.rst
+!requirements.txt
+!requirements_extra.txt
+!setup.py
+!uv.lock
+!bin/sgtsne
+!scarf/*.py
+!scarf/datastore/*.py
