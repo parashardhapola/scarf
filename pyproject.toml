@@ -64,6 +64,9 @@ docs = [
     "nbclient<=0.8",
 ]
 
+[tool.uv.extra-build-variables]
+hnswlib = { HNSWLIB_NO_NATIVE = "1" }
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -v"
