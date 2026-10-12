@@ -27,7 +27,7 @@ subtrees:
         title: Merging samples and datasets
   - caption: Trajectory analysis tutorials
     entries:
-      - file: vignettes/pseudotime_dynamics.md
+      - file: vignettes/pseudotime_dynamics
         title: Pseudotime dynamics
   - caption: Vignettes
     entries:

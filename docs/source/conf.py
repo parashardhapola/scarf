@@ -61,8 +61,9 @@ htmlhelp_basename = "Scarf Documentation"
 
 man_pages = [(master_doc, "scarf", "Scarf Documentation", [author], 1)]
 
-nb_execution_allow_errors = True
-nb_execution_mode = "auto"
+nb_execution_allow_errors = False
+nb_execution_raise_on_error = True
+nb_execution_mode = "off"
 nb_execution_timeout = 200
 
 import matplotlib
