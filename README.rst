@@ -1,3 +1,7 @@
+**Scarf is now in maintenance mode.**
+`CyteArc <https://github.com/NygenAnalytics/CyteArc>`_ supersedes most of Scarf's
+memory-efficient analysis capabilities and provides a fast way to work with remote files.
+
 .. raw:: html
 
      <embed>
