@@ -54,6 +54,22 @@ def datastore_ephemeral():
     remove(out_fn)
 
 
+@pytest.fixture
+def target_datastore():
+    # Separate path, so that changing its cell keys can't affect `datastore`
+    import tarfile
+
+    from ..datastore.datastore import DataStore
+
+    fn = full_path("1K_pbmc_citeseq.zarr.tar.gz")
+    out_fn = full_path("1K_pbmc_citeseq_target.zarr")
+    remove(out_fn)
+    tar = tarfile.open(fn, "r:gz")
+    tar.extractall(out_fn)
+    yield DataStore(out_fn, default_assay="RNA")
+    remove(out_fn)
+
+
 @pytest.fixture(scope="class")
 def auto_filter_cells(datastore):
     datastore.auto_filter_cells(show_qc_plots=False)

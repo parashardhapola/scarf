@@ -191,7 +191,7 @@ class MappingDatastore(GraphDataStore):
         if "projections" not in source_assay.z:
             source_assay.z.create_group("projections")
         store = source_assay.z["projections"].create_group(target_name, overwrite=True)
-        nc, nk = target_assay.cells.fetch_all("I").sum(), save_k
+        nc, nk = target_data.shape[0], save_k
         zi = create_zarr_dataset(store, "indices", (batch_size,), "u8", (nc, nk))
         zd = create_zarr_dataset(store, "distances", (batch_size,), "f8", (nc, nk))
         entry_start = 0

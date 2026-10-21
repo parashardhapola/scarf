@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from . import full_path, remove
 
@@ -165,6 +166,29 @@ class TestDataStore:
     def test_coral_mapping_score(self, run_mapping_coral, cell_attrs, datastore):
         # TODO: add test values for coral
         assert 1 == 1
+
+    @pytest.mark.parametrize("run_coral", [False, True])
+    @pytest.mark.parametrize("shared_fraction", [0.25, 0.75])
+    def test_run_mapping_with_target_cell_key(
+        self, make_graph, datastore, target_datastore, shared_fraction, run_coral
+    ):
+        # Map half the target cells while "I" holds fewer, or more, cells than that
+        cells = target_datastore.cells
+        mapped = np.arange(cells.N) < cells.N // 2
+        cells.insert("I_mapped", mapped)
+        cells.reset_key("I")
+        cells.update_key(np.arange(cells.N) < int(cells.N * shared_fraction), key="I")
+        datastore.run_mapping(
+            target_assay=target_datastore.RNA,
+            target_name="target_subset",
+            target_feat_key="hvgs_target",
+            target_cell_key="I_mapped",
+            save_k=3,
+            run_coral=run_coral,
+        )
+        store = datastore.z["RNA"].projections["target_subset"]
+        assert store["indices"].shape == (mapped.sum(), 3)
+        assert store["distances"].shape == (mapped.sum(), 3)
 
     def test_repr(self, datastore):
         # TODO: Test if the expected values are printed
