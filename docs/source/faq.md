@@ -55,7 +55,8 @@ visualize them together using `plot_cluster_tree` like this::
                          fill_by_value='RNA_leiden_cluster')
 
 This will allow you test the robustness of clusters and visualize the relationship between
-Leiden clusters as well.
+Leiden clusters as well. Leiden clustering needs the optional `leiden` extra; see
+{ref}`installation`.
 
 ## How do I create a count matrix for my single-cell data?
 Generating count matrices is the primary step of single-cell data analysis. For scRNA-Seq one can

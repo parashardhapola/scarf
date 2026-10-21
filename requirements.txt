@@ -3,7 +3,6 @@ h5py>=3.3.0
 hnswlib==0.8.0
 importlib_metadata
 joblib
-leidenalg==0.10.2
 loguru
 networkx==3.4.2
 numba<=0.61.2

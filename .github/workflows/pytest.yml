@@ -34,7 +34,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
         version: "0.11.7"
     - name: Install dependencies
-      run: uv sync --locked --group test --extra extra
+      run: uv sync --locked --group test --extra extra --extra harmony --extra leiden
     - name: Test with pytest
       run: uv run --no-sync pytest --cov=scarf --cov-report=xml
     - name: Upload coverage to Codecov

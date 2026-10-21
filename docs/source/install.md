@@ -4,7 +4,7 @@
 ## Installation through PyPi
 If you already have Python version 3.11.0 or greater, then you can install scarf using `pip`
 
-    pip install scarf[extra]
+    pip install scarf[extra,leiden,harmony]
 
 
 ````{note}
@@ -18,6 +18,23 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
 This will enable long path lengths on Window. Read more [here](https://docs.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
 ````
+
+## Optional GPL-licensed packages
+
+Scarf is licensed under the BSD 3-Clause License. A few of its methods use packages that are
+licensed under the GPL, which a plain `pip install scarf` leaves out. The command above adds them
+through two extras:
+
+- `leiden` installs [leidenalg](https://github.com/vtraag/leidenalg) (GPL-3.0-or-later) and
+  [igraph](https://github.com/igraph/python-igraph) (GPL-2.0-or-later), for `run_leiden_clustering`.
+- `harmony` installs [harmonypy](https://github.com/slowkow/harmonypy) (GPL-3.0-or-later), for
+  Harmony batch correction (`make_graph` with `harmonize=True`) and `metric_lisi`.
+
+Without them, these methods raise an `ImportError` that names the extra to install. Everything
+else works without them, including Paris clustering with `run_clustering`.
+
+Scarf also includes the `sgtsne` program, which `run_tsne` runs. It is licensed under the GPL-3.0;
+see the [License](license.md) page.
 
 ## Installing Python
 
@@ -109,7 +126,7 @@ https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.h
 **Step 4:**
 
 Now, in your terminal, type this to install the latest version of Scarf:
-`pip install scarf[extra]`
+`pip install scarf[extra,leiden,harmony]`
 
 **Step 4.5 (Optional)**
 

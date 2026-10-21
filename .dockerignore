@@ -3,11 +3,15 @@
 !.dockerignore
 !.python-version
 !LICENSE
+!THIRD_PARTY_NOTICES.md
+!licenses/*.txt
 !VERSION
 !pyproject.toml
 !pypi_README.rst
 !requirements.txt
 !requirements_extra.txt
+!requirements_harmony.txt
+!requirements_leiden.txt
 !setup.py
 !uv.lock
 !bin/sgtsne
