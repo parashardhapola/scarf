@@ -17,11 +17,12 @@ COPY --from=cilk-runtime /usr/share/doc/libcilkrts5/copyright /usr/share/doc/lib
 RUN ldconfig
 
 WORKDIR /workspace
-COPY pyproject.toml uv.lock setup.py VERSION requirements.txt requirements_extra.txt pypi_README.rst LICENSE .python-version ./
+COPY pyproject.toml uv.lock setup.py VERSION requirements.txt requirements_extra.txt requirements_harmony.txt requirements_leiden.txt pypi_README.rst LICENSE THIRD_PARTY_NOTICES.md .python-version ./
+COPY licenses ./licenses
 COPY bin/sgtsne ./bin/sgtsne
 COPY scarf/*.py ./scarf/
 COPY scarf/datastore/*.py ./scarf/datastore/
-RUN uv sync --locked --no-editable --extra extra --python 3.12 \
+RUN uv sync --locked --no-editable --extra extra --extra harmony --extra leiden --python 3.12 \
     && uv cache clean
 
 ENV PATH="/workspace/.venv/bin:$PATH"

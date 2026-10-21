@@ -2072,7 +2072,9 @@ class DataStore(MappingDatastore):
         """Calculate Local Inverse Simpson Index (LISI) scores for cell populations.
 
         LISI measures how well mixed different cell populations are in the local neighborhood
-        of each cell. Higher scores indicate better mixing of different populations.
+        of each cell. Higher scores indicate better mixing of different populations. This
+        needs the optional `harmonypy` package, which can be installed with:
+        pip install scarf[harmony]
 
         Args:
             label_colnames: Column names from cell metadata containing population labels

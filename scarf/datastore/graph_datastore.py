@@ -641,7 +641,8 @@ class GraphDataStore(BaseDataStore):
                           turned off when during cross sample mapping using CORAL normalized values are being used.
                           Read more about this in `run_mapping` method.
             lsi_skip_first: Whether to remove the first LSI dimension when using ATAC-Seq data.
-            harmonize: Run Harmony to perform batch integration
+            harmonize: Run Harmony to perform batch integration. This needs the optional `harmonypy` package,
+                       which can be installed with: pip install scarf[harmony]
             batch_columns: Columns in cell metadata table to use for batch integration
             show_elbow_plot: If True, then an elbow plot is shown when PCA is fitted to the data. Not shown when using
                             existing PCA loadings or custom loadings. (Default value: False)
@@ -832,6 +833,11 @@ class GraphDataStore(BaseDataStore):
         if harmonized_data is not None:
             # Moved this statement here to print after the status of dim loadings
             logger.info(f"Using existing harmonized data with {dims} dims")
+        elif harmonize:
+            from ..harmony import import_harmonypy
+
+            # Without harmonypy, fail now rather than after transforming the data
+            import_harmonypy()
 
         ann_idx = None
         if ann_loc in self.zw:
@@ -1389,7 +1395,9 @@ class GraphDataStore(BaseDataStore):
         random_seed: int = 4444,
     ) -> None:
         """Executes Leiden graph clustering algorithm on the cell-neighbourhood
-        graph and saves cluster identities in the cell metadata column.
+        graph and saves cluster identities in the cell metadata column. This
+        needs the optional `leidenalg` package, which can be installed with:
+        pip install scarf[leiden]
 
         Args:
             from_assay: Name of assay to be used. If no value is provided then the default assay will be used.
@@ -1410,9 +1418,10 @@ class GraphDataStore(BaseDataStore):
             import leidenalg
         except ImportError:
             raise ImportError(
-                "ERROR: 'leidenalg' package is not installed. Please find the installation instructions "
-                "here: https://github.com/vtraag/leidenalg#installation. Also, consider running Paris "
-                "instead of Leiden clustering using `run_clustering` method"
+                "ERROR: 'leidenalg' package is not installed. Scarf does not install it by default "
+                "because it is licensed under the GPL-3.0-or-later. Install it with: "
+                "pip install scarf[leiden]. Also, consider running Paris instead of Leiden "
+                "clustering using `run_clustering` method"
             )
         # noinspection PyPackageRequirements
         import igraph  # python-igraph

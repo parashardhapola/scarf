@@ -8,8 +8,8 @@ dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Scarf: A scalable tool for single-cell omics data analysis"
 readme = "pypi_README.rst"
 requires-python = ">=3.11,<3.13"
-license = "BSD-3-Clause"
-license-files = ["LICENSE"]
+license = "BSD-3-Clause AND MIT AND GPL-3.0-only"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
 authors = [{name = "Parashar Dhapola", email = "parashar.dhapola@gmail.com"}]
 keywords = ["single-cell"]
 classifiers = [
@@ -39,6 +39,9 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.dynamic.optional-dependencies]
 extra = {file = ["requirements_extra.txt"]}
+# GPL-licensed packages, which the default installation leaves out
+harmony = {file = ["requirements_harmony.txt"]}
+leiden = {file = ["requirements_leiden.txt"]}
 
 [dependency-groups]
 test = [

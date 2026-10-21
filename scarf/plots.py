@@ -939,17 +939,54 @@ def shade_scatter(
         return axs
 
 
+def _pie_wedge_paths(values):
+    """Return unit-diameter pie wedges, counter-clockwise from the +x axis.
+
+    Each wedge spans its value's share of a full turn. Arcs are cubic Bezier
+    segments of at most a quarter turn, which stay within 0.03% of the circle.
+    """
+    from matplotlib.path import Path
+
+    cumulative = np.cumsum(values, dtype=np.float64)
+    bounds = 2 * np.pi * np.concatenate(([0.0], cumulative / cumulative[-1]))
+    spans = np.diff(bounds)
+    n_segments = int(np.ceil(spans.max() / (np.pi / 2)))
+    steps = np.linspace(0.0, 1.0, n_segments + 1)
+    rim = 0.5 * np.exp(1j * (bounds[:-1, None] + spans[:, None] * steps))
+    # Control points lie on the segment end tangents, (4 / 3) tan(angle / 4) radii out.
+    handle = 1j * (4 / 3) * np.tan(spans / (4 * n_segments))[:, None]
+    curves = np.stack(
+        (rim[:, :-1] * (1 + handle), rim[:, 1:] * (1 - handle), rim[:, 1:]),
+        axis=-1,
+    ).reshape(len(spans), -1)
+    center = np.zeros((len(spans), 1))
+    points = np.concatenate((center, rim[:, :1], curves, center), axis=1)
+    codes = np.full(points.shape[1], Path.CURVE4, dtype=Path.code_type)
+    codes[[0, 1, -1]] = Path.MOVETO, Path.LINETO, Path.CLOSEPOLY
+    vertices = np.stack((points.real, points.imag), axis=-1)
+    return [Path(wedge, codes) for wedge in vertices]
+
+
 def _draw_pie(ax, dist, colors, xpos, ypos, size):
-    # https://stackoverflow.com/questions/56337732/how-to-plot-scatter-pie-chart-using-matplotlib
-    cumsum = np.cumsum(dist)
-    cumsum = cumsum / cumsum[-1]
-    pie = [0] + cumsum.tolist()
-    for r1, r2, c in zip(pie[:-1], pie[1:], colors):
-        angles = np.linspace(2 * np.pi * r1, 2 * np.pi * r2)
-        x = [0] + np.cos(angles).tolist()
-        y = [0] + np.sin(angles).tolist()
-        xy = np.column_stack([x, y])
-        ax.scatter([xpos], [ypos], marker=xy, s=size, c=c)
+    from matplotlib.collections import PathCollection
+    from matplotlib.transforms import IdentityTransform
+
+    # Sized and offset like a scatter marker, so the pie stays a circle
+    # sqrt(size) points across whatever the data limits, aspect or dpi.
+    pie = PathCollection(
+        _pie_wedge_paths(dist),
+        sizes=[size],
+        offsets=[(xpos, ypos)],
+        offset_transform=ax.transData,
+        transform=IdentityTransform(),
+        facecolors=colors,
+        edgecolors="none",
+        linewidths=0,
+        zorder=3,
+        gid="cluster-tree-pie",
+    )
+    # The node marker underneath already holds this position in the limits.
+    ax.add_collection(pie, autolim=False)
 
 
 def hierarchy_pos(
@@ -958,6 +995,7 @@ def hierarchy_pos(
     """This function was lifted from here: https://github.com/springer-
     math/Mathematics-of-Epidemics-on-
     Networks/blob/80c8accbe0c6b7710c0a189df17529696ac31bf9/EoN/auxiliary.py.
+    EoN is distributed under the MIT License; see THIRD_PARTY_NOTICES.md.
 
     If the graph is a tree this will return the positions to plot this in a
     hierarchical layout.
@@ -1212,6 +1250,8 @@ def plot_cluster_hierarchy(
                 clust_id = sg.nodes[i]["partition_id"]
                 idx = clusts == clust_id
                 counts = color_values[idx].value_counts()
+                # Categories absent from this cluster would draw empty wedges.
+                counts = counts[counts > 0]
                 _draw_pie(
                     ax,
                     counts.values,

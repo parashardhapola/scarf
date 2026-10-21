@@ -11,6 +11,7 @@ from zarr.core import Array as zarrArrayType
 
 from .ann import AnnStream
 from .datastore.datastore import DataStore
+from .harmony import import_harmonypy
 from .utils import (
     logger,
     tqdmbar,
@@ -50,21 +51,24 @@ def compute_lisi(
         Korsunsky et al. 2019 doi: 10.1038/s41592-019-0619-0
     """
 
-    n_cells = metadata.shape[0]
-    n_labels = len(label_colnames)
-    # Don't count yourself
-    indices = indices[:, 1:]
-    distances = distances[:, 1:]
-    lisi_df = np.zeros((n_cells, n_labels))
-    for i, label in enumerate(label_colnames):
+    # The nearest neighbour of every cell is the cell itself
+    distances = distances[:, 1:].T
+    indices = indices[:, 1:].T
+    lisi = np.zeros((metadata.shape[0], len(label_colnames)))
+    for n, label in enumerate(label_colnames):
         logger.info(f"Computing LISI for {label}")
         labels = pd.Categorical(metadata[label])
-        n_categories = len(labels.categories)
+        # Scarf has always passed the number of categories as the perplexity and
+        # `perplexity` as the tolerance, so this keeps LISI scores as they were.
         simpson = compute_simpson(
-            distances.T, indices.T, labels, n_categories, perplexity
+            distances,
+            indices,
+            labels,
+            perplexity=len(labels.categories),
+            tol=perplexity,
         )
-        lisi_df[:, i] = 1 / simpson
-    return lisi_df
+        lisi[:, n] = 1 / simpson
+    return lisi
 
 
 def compute_simpson(
@@ -77,7 +81,8 @@ def compute_simpson(
     """Compute Simpson's diversity index with Gaussian kernel weighting.
 
     This function implements the core calculation for LISI, computing a diversity score
-    based on the distribution of categories in each cell's neighborhood.
+    based on the distribution of categories in each cell's neighborhood. The calculation is
+    done by the optional `harmonypy` package (install it with: pip install scarf[harmony]).
 
     Args:
         distances: Distance matrix between points, shape (n_neighbors, n_points)
@@ -89,64 +94,10 @@ def compute_simpson(
     Returns:
         np.ndarray: Array of Simpson's diversity indices, one per point
     """
-    n = distances.shape[1]
-    P = np.zeros(distances.shape[0])
-    simpson = np.zeros(n)
-    logU = np.log(perplexity)
-    # Loop through each cell.
-    for i in tqdmbar(range(n), desc="Computing Simpson's Diversity Index"):
-        beta = 1
-        betamin = -np.inf
-        betamax = np.inf
-        # Compute Hdiff
-        P = np.exp(-distances[:, i] * beta)
-        P_sum = np.sum(P)
-        if P_sum == 0:
-            H = 0
-            P = np.zeros(distances.shape[0])
-        else:
-            H = np.log(P_sum) + beta * np.sum(distances[:, i] * P) / P_sum
-            P = P / P_sum
-        Hdiff = H - logU
-        n_tries = 50
-        for t in range(n_tries):
-            # Stop when we reach the tolerance
-            if abs(Hdiff) < tol:
-                break
-            # Update beta
-            if Hdiff > 0:
-                betamin = beta
-                if not np.isfinite(betamax):
-                    beta *= 2
-                else:
-                    beta = (beta + betamax) / 2
-            else:
-                betamax = beta
-                if not np.isfinite(betamin):
-                    beta /= 2
-                else:
-                    beta = (beta + betamin) / 2
-            # Compute Hdiff
-            P = np.exp(-distances[:, i] * beta)
-            P_sum = np.sum(P)
-            if P_sum == 0:
-                H = 0
-                P = np.zeros(distances.shape[0])
-            else:
-                H = np.log(P_sum) + beta * np.sum(distances[:, i] * P) / P_sum
-                P = P / P_sum
-            Hdiff = H - logU
-        # distancesefault value
-        if H == 0:
-            simpson[i] = -1
-        # Simpson's index
-        for label_category in labels.categories:
-            ix = indices[:, i]
-            q = labels[ix] == label_category
-            if np.any(q):
-                P_sum = np.sum(P[q])
-                simpson[i] += P_sum * P_sum
-    return simpson
+    harmonypy = import_harmonypy()
+    return harmonypy.lisi.compute_simpson(
+        distances, indices, labels, len(labels.categories), perplexity, tol
+    )
 
 
 # SILHOUETTE SCORE - The Silhouette Score

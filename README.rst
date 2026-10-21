@@ -48,7 +48,7 @@ memory-efficient analysis capabilities and provides a fast way to work with remo
          
           <p align="center">
                Install with all the dependencies:
-               <code style="background-color: #F0F0F0; padding: 2px 4px; border-radius: 4px; font-family: monospace;">pip install scarf[extra]</code>
+               <code style="background-color: #F0F0F0; padding: 2px 4px; border-radius: 4px; font-family: monospace;">pip install scarf[extra,leiden,harmony]</code>
           </p>          
 
           <br />

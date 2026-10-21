@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -101,6 +103,11 @@ class TestDataStore:
         assert len(set(leiden_clustering)) == 10
         # Disabled the following test because failing on CI
         # assert np.array_equal(leiden_clustering, cell_attrs['RNA_leiden_cluster'].values)
+
+    def test_run_leiden_clustering_without_leidenalg(self, datastore, monkeypatch):
+        monkeypatch.setitem(sys.modules, "leidenalg", None)
+        with pytest.raises(ImportError, match=r"pip install scarf\[leiden\]"):
+            datastore.run_leiden_clustering()
 
     def test_paris_values(self, paris_clustering, cell_attrs):
         assert np.array_equal(paris_clustering, cell_attrs["RNA_cluster"].values)
@@ -264,6 +271,38 @@ class TestDataStore:
 
     def test_plot_cluster_tree(self, datastore):
         datastore.plot_cluster_tree(cluster_key="RNA_cluster", show_fig=False)
+
+    def test_plot_cluster_tree_pies(self, paris_clustering, datastore):
+        import matplotlib.pyplot as plt
+
+        # plot_cluster_tree caches each tree by its number of clusters, and fails to plot a
+        # cached tree because it reloads integer cluster ids as strings. A cut into a number
+        # of clusters that no other test plots keeps this test off the cache.
+        datastore.run_clustering(n_clusters=7, label="pie_cluster")
+        # Cluster 1 holds only "a", which then is absent from every other cluster
+        clusters = datastore.cells.fetch_all("RNA_pie_cluster")
+        rng = np.random.default_rng(0)
+        fill = np.where(clusters == 1, "a", rng.choice(["b", "c"], clusters.size))
+        datastore.cells.insert("tree_fill", fill, overwrite=True)
+        fig, ax = plt.subplots()
+        datastore.plot_cluster_tree(
+            cluster_key="RNA_pie_cluster",
+            fill_by_value="tree_fill",
+            ax=ax,
+            show_fig=False,
+        )
+        pies = [c for c in ax.collections if c.get_gid() == "cluster-tree-pie"]
+        present = (
+            pd.crosstab(
+                datastore.cells.fetch("RNA_pie_cluster"),
+                datastore.cells.fetch("tree_fill"),
+            )
+            > 0
+        )
+        assert sorted(len(pie.get_paths()) for pie in pies) == sorted(
+            present.sum(axis=1)
+        )
+        plt.close(fig)
 
     def test_plot_marker_heatmap(self, marker_search, datastore):
         datastore.plot_marker_heatmap(group_key="RNA_cluster", show_fig=False)

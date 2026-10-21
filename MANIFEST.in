@@ -12,6 +12,8 @@ prune .circleci
 prune .github
 include requirements.txt
 include requirements_extra.txt
+include requirements_harmony.txt
+include requirements_leiden.txt
 include VERSION
 include pypi_README.rst
 graft bin
